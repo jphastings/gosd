@@ -1,0 +1,103 @@
+{
+  "board": "pi-zero-2w",
+  "bootFiles": {
+    "source": {
+      "repo": "https://github.com/raspberrypi/firmware",
+      "ref": "1.20260521",
+      "commit": "09267f5354d40519d82fbd2193b9e211ec304055"
+    },
+    "destDir": "",
+    "files": [
+      {
+        "name": "bootcode.bin",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/bootcode.bin",
+        "sha256": "e8b59fe10a4daa3cd2b127479f40b9856cfe3677154e8f24ae2aa70e3bb7c8eb"
+      },
+      {
+        "name": "start.elf",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/start.elf",
+        "sha256": "55049e2e35d6ddff3e5b93d6cface5cdc6df4e7ab1474af78d1af6ce8db4c9df"
+      },
+      {
+        "name": "fixup.dat",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/fixup.dat",
+        "sha256": "b2d19b8c300b5a4ddbd0fcff3a0f7de61a171046269d8724e74f616058417d4b"
+      }
+    ]
+  },
+  "wifiFirmware": {
+    "source": {
+      "repo": "https://github.com/RPi-Distro/firmware-nonfree",
+      "commit": "9794282eb9f4a2de1f23b41a738926740e975d83",
+      "path": "debian/config/brcm80211/brcm"
+    },
+    "destDir": "brcm",
+    "files": [
+      {
+        "name": "brcmfmac43436-sdio.bin",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43436-sdio.bin",
+        "sha256": "510a7dd1e056199b309425548ee0bd846993a1837ac7fa1e4d3e641f05a1327a",
+        "chipRevisions": ["cyw43436", "cyw43430b0"]
+      },
+      {
+        "name": "brcmfmac43436-sdio.clm_blob",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43436-sdio.clm_blob",
+        "sha256": "fce7cbb62ffa6a5a65ca97b13f6fbf28d06c02d986c2072d65bf72164755fc34",
+        "chipRevisions": ["cyw43436", "cyw43430b0"]
+      },
+      {
+        "name": "brcmfmac43436-sdio.txt",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43436-sdio.txt",
+        "sha256": "4cda90facd8844cff60d80b34b24ecbae76adb9a62508a109461b8bf42b478d1",
+        "chipRevisions": ["cyw43436", "cyw43430b0"]
+      },
+      {
+        "name": "brcmfmac43436s-sdio.bin",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43436s-sdio.bin",
+        "sha256": "68b9bcc9855d91733cd44c21de4cb507c91b0d32d838c0696def5eb96c99e2de",
+        "chipRevisions": ["cyw43430"]
+      },
+      {
+        "name": "brcmfmac43436s-sdio.txt",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43436s-sdio.txt",
+        "sha256": "37a8b85a5a9742761101b764a07bc4d0c8b09f2e180eaea3b503a834277ad595",
+        "chipRevisions": ["cyw43430"]
+      }
+    ],
+    "aliases": [
+      {
+        "dest": "brcmfmac43436-sdio.raspberrypi,model-zero-2-w.bin",
+        "of": "brcmfmac43436-sdio.bin"
+      },
+      {
+        "dest": "brcmfmac43436-sdio.raspberrypi,model-zero-2-w.clm_blob",
+        "of": "brcmfmac43436-sdio.clm_blob"
+      },
+      {
+        "dest": "brcmfmac43436-sdio.raspberrypi,model-zero-2-w.txt",
+        "of": "brcmfmac43436-sdio.txt"
+      },
+      {
+        "dest": "brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.bin",
+        "of": "brcmfmac43436-sdio.bin"
+      },
+      {
+        "dest": "brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.clm_blob",
+        "of": "brcmfmac43436-sdio.clm_blob"
+      },
+      {
+        "dest": "brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.txt",
+        "of": "brcmfmac43436-sdio.txt"
+      },
+      {
+        "dest": "brcmfmac43430-sdio.raspberrypi,model-zero-2-w.bin",
+        "of": "brcmfmac43436s-sdio.bin"
+      },
+      {
+        "dest": "brcmfmac43430-sdio.raspberrypi,model-zero-2-w.txt",
+        "of": "brcmfmac43436s-sdio.txt"
+      }
+    ],
+    "notes": "The Zero 2 W ships with either a CYW43436 or a CYW43430(b0) WiFi/BT combo chip depending on production revision; the brcmfmac driver probes the chip at runtime and requests firmware named '<base>-sdio.raspberrypi,model-zero-2-w.<ext>'. In RPi-Distro/firmware-nonfree these board-specific names are git symlinks, not distinct blobs: both the cyw43436 (43436) and cyw43430b0 chip IDs resolve to the SAME brcmfmac43436-sdio.* blob, while the plain cyw43430 (no b0) chip ID resolves to the separate brcmfmac43436s-sdio.* blob (which has no clm_blob — its calibration data is baked into the .bin). This manifest fetches the two underlying blob sets once each and records the alias filenames a board profile must create (as symlinks or copies) under /lib/firmware/brcm/ so whichever chip a given unit has, its firmware request resolves. Wiring these aliases into FirmwareFiles is deferred to gosd-3zrc (Board interface not implemented yet)."
+  }
+}
