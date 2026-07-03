@@ -22,7 +22,7 @@ func TestResolveBoardsFiltersAndDeduplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveBoards: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "pi-zero-2w" {
+	if len(got) != 1 || got[0].Name() != "pi-zero-2w" {
 		t.Errorf("resolveBoards([pi-zero-2w, pi-zero-2w]) = %v, want a single pi-zero-2w entry", got)
 	}
 }
@@ -33,8 +33,17 @@ func TestResolveBoardsRejectsUnknownBoard(t *testing.T) {
 	}
 }
 
+func mustFindBoard(t *testing.T, id string) boards.Board {
+	t.Helper()
+	b, ok := boards.Find(id)
+	if !ok {
+		t.Fatalf("boards.Find(%q) = not found; registered boards: %v", id, boards.IDs())
+	}
+	return b
+}
+
 func TestResolveOutputsSingleBoardUsesOutputAsFile(t *testing.T) {
-	selected := []boards.Board{{ID: "pi-zero-2w"}}
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
 
 	got, err := resolveOutputs(selected, "myapp", "/tmp/x.img")
 	if err != nil {
@@ -46,7 +55,7 @@ func TestResolveOutputsSingleBoardUsesOutputAsFile(t *testing.T) {
 }
 
 func TestResolveOutputsSingleBoardDefaultsToAppNameBoard(t *testing.T) {
-	selected := []boards.Board{{ID: "pi-zero-2w"}}
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
 
 	got, err := resolveOutputs(selected, "myapp", "")
 	if err != nil {
@@ -65,9 +74,9 @@ func TestResolveOutputsMultiBoardTreatsOutputAsDirectory(t *testing.T) {
 		t.Fatalf("resolveOutputs: %v", err)
 	}
 	for _, b := range selected {
-		want := "/tmp/out/myapp-" + b.ID + ".img"
-		if got[b.ID] != want {
-			t.Errorf("outputs[%s] = %q, want %q", b.ID, got[b.ID], want)
+		want := "/tmp/out/myapp-" + b.Name() + ".img"
+		if got[b.Name()] != want {
+			t.Errorf("outputs[%s] = %q, want %q", b.Name(), got[b.Name()], want)
 		}
 	}
 }
@@ -80,9 +89,9 @@ func TestResolveOutputsMultiBoardDefaultsToCurrentDirectory(t *testing.T) {
 		t.Fatalf("resolveOutputs: %v", err)
 	}
 	for _, b := range selected {
-		want := "myapp-" + b.ID + ".img"
-		if got[b.ID] != want {
-			t.Errorf("outputs[%s] = %q, want %q", b.ID, got[b.ID], want)
+		want := "myapp-" + b.Name() + ".img"
+		if got[b.Name()] != want {
+			t.Errorf("outputs[%s] = %q, want %q", b.Name(), got[b.Name()], want)
 		}
 	}
 }

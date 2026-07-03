@@ -1,11 +1,11 @@
 ---
 # gosd-eu2x
 title: 'Pi Zero 2W boot files: firmware blobs, config.txt, cmdline.txt, WiFi firmware manifest'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T20:56:21Z
-updated_at: 2026-07-03T17:52:31Z
+updated_at: 2026-07-03T23:21:23Z
 parent: gosd-vmgw
 ---
 
@@ -17,7 +17,7 @@ Assemble everything except the kernel that the Pi FAT partition and initramfs ne
 4. `cmdline.txt` template (single line, locked): `console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w`
 
 - [x] manifest.json + fetch-and-verify helper (Go, reused later by artifact pipeline; verify sha256 on download)
-- [ ] Fill in the pi-zero-2w board profile BootFiles/FirmwareFiles using the manifest (deferred: depends on the `Board` interface from gosd-3zrc, which doesn't exist yet — this bean stays in-progress until gosd-3zrc lands and this can be wired up)
+- [x] Fill in the pi-zero-2w board profile BootFiles/FirmwareFiles using the manifest
 - [x] Templates as go:embed, unit test rendering
 
 ## Acceptance
@@ -44,3 +44,16 @@ So "43436 vs 43430b0" isn't actually a fork in the data: 43430b0 units get the 4
 - Added `internal/fetch`: stdlib-only `fetch.ToDir(ctx, client, File, cacheDir, name)` — GETs a pinned URL, verifies sha256, atomically renames into the cache dir, skips the network call on a cache hit, replaces a stale/corrupt cache entry. Covered by httptest-based tests including the corrupted-checksum case.
 - Added `internal/boards/pizero2w/templates`: go:embed `text/template` sources for `config.txt` and `cmdline.txt` with the bean's locked content, rendered via `RenderConfigTxt`/`RenderCmdlineTxt`; unit tests assert the exact locked output and that cmdline.txt renders as a single line.
 - Left "Fill in the pi-zero-2w board profile BootFiles/FirmwareFiles" unchecked: it needs the `Board` interface from gosd-3zrc, which doesn't exist yet. Bean stays in-progress until that lands.
+
+## Note (2026-07-04, from gosd-3zrc)
+
+gosd-3zrc landed the `Board` interface and wired it up: `internal/boards/pizero2w`
+(new package) now implements `BootFiles`/`FirmwareFiles` for real, reading
+`build/boards/pi-zero-2w/manifest.json` through a small embedded loader
+(`build/boards/pi-zero-2w/manifest.go`). `BootFiles` places the kernel, the
+three GPU boot firmware files, the rendered config.txt/cmdline.txt, and the
+pipeline-built initramfs into the FAT partition; `FirmwareFiles` places the
+five WiFi blob files plus all 8 board-specific alias names (as duplicate
+entries, per this bean's finding that the initramfs format can't carry
+symlinks) under `brcm/`. Covered by `internal/boards/pizero2w/board_test.go`
+and exercised end-to-end by `cmd/gosd`'s new fake-artifacts integration test.

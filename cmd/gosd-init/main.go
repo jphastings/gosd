@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/initcfg"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 const (
