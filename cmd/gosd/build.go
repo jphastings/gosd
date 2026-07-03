@@ -89,7 +89,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	var initramfsBuilder initramfs.Builder = initramfs.DefaultBuilder{}
 
 	for _, b := range selected {
-		spec := image.Spec{
+		spec := image.AssembleSpec{
 			Board:          b,
 			AppBinaryPath:  appBinary,
 			InitBinaryPath: initBinary,
