@@ -44,7 +44,7 @@ func TestRunDHCPRetriesDiscoveryWithBackoffUntilSuccess(t *testing.T) {
 	got := &leaseLog{}
 	done := make(chan struct{})
 	go func() {
-		RunDHCP(ctx, deps, "eth0", got.add)
+		_ = RunDHCP(ctx, deps, "eth0", got.add)
 		close(done)
 	}()
 
@@ -96,7 +96,7 @@ func TestRunDHCPRenewsAtT1(t *testing.T) {
 	got := &leaseLog{}
 	done := make(chan struct{})
 	go func() {
-		RunDHCP(ctx, deps, "eth0", got.add)
+		_ = RunDHCP(ctx, deps, "eth0", got.add)
 		close(done)
 	}()
 
@@ -145,7 +145,7 @@ func TestRunDHCPFallsBackToRebindWhenRenewFails(t *testing.T) {
 	got := &leaseLog{}
 	done := make(chan struct{})
 	go func() {
-		RunDHCP(ctx, deps, "eth0", got.add)
+		_ = RunDHCP(ctx, deps, "eth0", got.add)
 		close(done)
 	}()
 
@@ -195,7 +195,7 @@ func TestRunDHCPRestartsDiscoveryWhenRebindFails(t *testing.T) {
 	got := &leaseLog{}
 	done := make(chan struct{})
 	go func() {
-		RunDHCP(ctx, deps, "eth0", got.add)
+		_ = RunDHCP(ctx, deps, "eth0", got.add)
 		close(done)
 	}()
 

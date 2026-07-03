@@ -49,6 +49,17 @@ say so in the bean rather than silently diverging.
 - **Supported CLI hosts:** macOS and Linux (amd64/arm64), enforced by CI.
   Windows is untested best-effort; don't break it gratuitously.
 
+## Quality gates — run ALL of these before every commit/PR
+
+- `go test ./...`
+- `go vet ./...`
+- `gofmt -l .` (must print nothing)
+- `golangci-lint run ./...` AND `GOOS=linux golangci-lint run ./...` — CI lints
+  from Linux, so the second invocation is the one that must match CI; run both
+  so darwin-only and linux-only files are each checked. A finding that is a
+  cross-GOOS false positive (symbol only used in a `_linux.go` file) gets a
+  `//nolint:<linter> // <reason>` comment, not an exclusion rule.
+
 ## Code conventions
 
 - Errors shown to CLI users must be actionable ("X failed because Y; try Z"),

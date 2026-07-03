@@ -80,7 +80,7 @@ func (netlinkLinks) Watch(stop <-chan struct{}) (<-chan LinkEvent, error) {
 				if !ok {
 					return
 				}
-				attrs := u.Link.Attrs()
+				attrs := u.Attrs()
 				ev := LinkEvent{
 					Name: attrs.Name,
 					Up:   attrs.OperState == netlink.OperUp,
@@ -108,7 +108,7 @@ func (nclient4Client) Request(ctx context.Context, iface string) (*Lease, error)
 	if err != nil {
 		return nil, fmt.Errorf("creating DHCP client on %s: %w", iface, err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	lease, err := c.Request(ctx)
 	if err != nil {
@@ -127,7 +127,7 @@ func (nclient4Client) Renew(ctx context.Context, iface string, lease *Lease) (*L
 	if err != nil {
 		return nil, fmt.Errorf("creating DHCP client on %s: %w", iface, err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	renewed, err := c.Renew(ctx, raw)
 	if err != nil {

@@ -65,7 +65,7 @@ func ToDir(ctx context.Context, client *http.Client, f File, cacheDir, name stri
 	if err != nil {
 		return "", fmt.Errorf("fetching %s: %w", f.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("fetching %s: unexpected status %s", f.URL, resp.Status)
@@ -76,11 +76,11 @@ func ToDir(ctx context.Context, client *http.Client, f File, cacheDir, name stri
 		return "", fmt.Errorf("creating temp file in %s: %w", cacheDir, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmpPath) }() // no-op once the rename below succeeds
 
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return "", fmt.Errorf("downloading %s: %w", f.URL, err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -105,7 +105,7 @@ func sha256File(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {

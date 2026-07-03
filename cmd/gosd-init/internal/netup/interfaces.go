@@ -35,7 +35,7 @@ type Lease struct {
 	// opaque to everything else in this package by design: fakes used in
 	// tests can leave it nil or set any placeholder value, since nothing
 	// but the real DHCPClient implementation ever inspects it.
-	raw any
+	raw any //nolint:unused // only referenced from platform_linux.go; the unused linter can't see it when run with GOOS=darwin
 }
 
 // DHCPClient performs the DHCPv4 conversations netup needs. Implementations

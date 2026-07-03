@@ -80,11 +80,11 @@ func TestBuildEntries(t *testing.T) {
 	}
 
 	for _, r := range records {
-		if r.Info.MTime != 0 {
-			t.Errorf("record %q MTime = %d, want 0 (epoch)", r.Info.Name, r.Info.MTime)
+		if r.MTime != 0 {
+			t.Errorf("record %q MTime = %d, want 0 (epoch)", r.Name, r.MTime)
 		}
-		if want := wantModes[r.Info.Name]; r.Info.Mode != want {
-			t.Errorf("record %q Mode = %#o, want %#o", r.Info.Name, r.Info.Mode, want)
+		if want := wantModes[r.Name]; r.Mode != want {
+			t.Errorf("record %q Mode = %#o, want %#o", r.Name, r.Mode, want)
 		}
 	}
 
@@ -125,11 +125,11 @@ func assertContent(t *testing.T, records []cpio.Record, name, fixture string) {
 	}
 
 	for _, r := range records {
-		if r.Info.Name != name {
+		if r.Name != name {
 			continue
 		}
-		got := make([]byte, r.Info.FileSize)
-		if _, err := r.ReaderAt.ReadAt(got, 0); err != nil && err != io.EOF {
+		got := make([]byte, r.FileSize)
+		if _, err := r.ReadAt(got, 0); err != nil && err != io.EOF {
 			t.Fatalf("reading record %q content: %v", name, err)
 		}
 		if !bytes.Equal(got, want) {
@@ -143,7 +143,7 @@ func assertContent(t *testing.T, records []cpio.Record, name, fixture string) {
 func recordNames(records []cpio.Record) []string {
 	out := make([]string, len(records))
 	for i, r := range records {
-		out[i] = r.Info.Name
+		out[i] = r.Name
 	}
 	return out
 }

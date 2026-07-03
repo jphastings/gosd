@@ -40,7 +40,7 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening the written image failed: %v", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	part, err := d.GetPartition(1)
 	if err != nil {

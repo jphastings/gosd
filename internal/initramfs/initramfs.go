@@ -64,7 +64,7 @@ func Build(w io.Writer, spec Spec) error {
 	for _, r := range records {
 		if err := cw.WriteRecord(r); err != nil {
 			_ = zw.Close()
-			return fmt.Errorf("initramfs: writing %q: %w", r.Info.Name, err)
+			return fmt.Errorf("initramfs: writing %q: %w", r.Name, err)
 		}
 	}
 	if err := cpio.WriteTrailer(cw); err != nil {

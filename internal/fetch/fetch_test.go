@@ -20,7 +20,7 @@ func sha256Hex(s string) string {
 
 func TestToDir_DownloadsAndVerifies(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}))
 	defer srv.Close()
 
@@ -46,7 +46,7 @@ func TestToDir_DownloadsAndVerifies(t *testing.T) {
 
 func TestToDir_ChecksumMismatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}))
 	defer srv.Close()
 
@@ -76,7 +76,7 @@ func TestToDir_CacheHitSkipsNetwork(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}))
 	defer srv.Close()
 
@@ -100,7 +100,7 @@ func TestToDir_CacheHitSkipsNetwork(t *testing.T) {
 
 func TestToDir_StaleCacheIsReplaced(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}))
 	defer srv.Close()
 
