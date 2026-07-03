@@ -1,0 +1,45 @@
+// Package initcfg owns the schema gosd-init reads at boot: the config.json
+// baked onto every image by the gosd CLI, and the gosd.* kernel command-line
+// parameters. Both are pure data formats with no syscall dependencies, so
+// this package has no build tags and is fully unit-testable on any OS.
+//
+// Later beans (gosd.toml parsing, provisioning-file consumption) are
+// expected to import this package for the Config type rather than defining
+// their own.
+package initcfg
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// Config is the schema of /etc/gosd/config.json, baked into every image at
+// build time by the gosd CLI.
+type Config struct {
+	Board    string `json:"board"`
+	Hostname string `json:"hostname"`
+	Wifi     Wifi   `json:"wifi"`
+}
+
+// Wifi holds the baked-in WPA2-PSK or open network credentials. Both fields
+// empty means no WiFi is configured.
+type Wifi struct {
+	SSID       string `json:"ssid"`
+	Passphrase string `json:"passphrase"`
+}
+
+// ParseConfig parses config.json contents into a Config. Missing data (a nil
+// or empty slice, as when the file doesn't exist on disk) yields a zero
+// Config rather than an error, since every field is optional. Malformed JSON
+// is reported as an actionable error rather than crashing the caller.
+func ParseConfig(data []byte) (Config, error) {
+	if len(data) == 0 {
+		return Config{}, nil
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("config.json is not valid JSON: %w", err)
+	}
+	return cfg, nil
+}
