@@ -17,7 +17,7 @@ func TestCrossCompileProducesStaticARM64Binary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("output is not a valid ELF binary: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if f.Class != elf.ELFCLASS64 {
 		t.Errorf("Class = %v, want %v (64-bit)", f.Class, elf.ELFCLASS64)

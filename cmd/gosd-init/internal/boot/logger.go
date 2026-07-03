@@ -24,5 +24,5 @@ func NewLogger(w io.Writer) *Logger {
 // Printf formats and writes a single log line. format should not include a
 // trailing newline; Printf adds one.
 func (l *Logger) Printf(format string, args ...any) {
-	fmt.Fprintf(l.out, consolePrefix+format+"\n", args...)
+	_, _ = fmt.Fprintf(l.out, consolePrefix+format+"\n", args...)
 }

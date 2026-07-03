@@ -23,7 +23,7 @@ func main() {
 	fmt.Printf("gosd hello, host=%s board=%s\n", hostname, os.Getenv("GOSD_BOARD"))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "host=%s uptime=%s remote=%s\n", hostname, time.Since(startTime), r.RemoteAddr)
+		_, _ = fmt.Fprintf(w, "host=%s uptime=%s remote=%s\n", hostname, time.Since(startTime), r.RemoteAddr)
 	})
 
 	listener, err := net.Listen("tcp", ":80")
