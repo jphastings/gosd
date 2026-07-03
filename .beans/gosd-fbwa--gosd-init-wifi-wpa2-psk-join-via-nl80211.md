@@ -3,11 +3,13 @@
 title: 'gosd-init WiFi: WPA2-PSK join via nl80211'
 status: todo
 type: task
+priority: normal
 created_at: 2026-07-02T21:03:54Z
-updated_at: 2026-07-02T21:03:54Z
+updated_at: 2026-07-03T16:59:34Z
 parent: gosd-ko20
 blocked_by:
     - gosd-kkz4
+    - gosd-vtce
 ---
 
 Join a WPA2-PSK network with no wpa_supplicant, using the brcmfmac firmware SME.
