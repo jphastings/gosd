@@ -86,7 +86,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 	var assembler image.Assembler = image.NotImplemented{}
-	var initramfsBuilder initramfs.Builder = initramfs.NotImplemented{}
+	var initramfsBuilder initramfs.Builder = initramfs.DefaultBuilder{}
 
 	for _, b := range selected {
 		spec := image.Spec{
