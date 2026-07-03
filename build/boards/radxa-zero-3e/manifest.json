@@ -1,0 +1,21 @@
+{
+  "$schema_note": "Third-party binary blobs for the Radxa Zero 3E, pinned per GoSD's no-rehosting policy: fetched from upstream at build time by URL + sha256, never re-hosted in our releases.",
+  "rkbin": {
+    "repo": "https://github.com/rockchip-linux/rkbin",
+    "commit": "ecb4fcbe954edf38b3ae037d5de6d9f5bccf81f4",
+    "license_file": "LICENSE",
+    "license_note": "Rockchip's rkbin LICENSE (at the pinned commit, repo root) grants a non-exclusive license to use, copy, and distribute the software, and to modify/sublicense modifications. This permits idbloader.img and u-boot.itb -- which necessarily embed these blobs -- to be produced and distributed by GoSD.",
+    "blobs": {
+      "ddr_tpl": {
+        "path": "bin/rk35/rk3568_ddr_1560MHz_v1.25.bin",
+        "sha256": "ab1d9b822a256b6ef4b3aa54b911c4d1e0faaebc882403c7a6b3efc3e69e07fc",
+        "purpose": "DDR-init TPL (ROCKCHIP_TPL): rk3566 has no open-source DRAM init, so it uses the rk3568 DDR blob per U-Boot's doc/board/rockchip.rst (rk3566 shares the rk3568 boot chain)."
+      },
+      "bl31": {
+        "path": "bin/rk35/rk3568_bl31_v1.46.elf",
+        "sha256": "c81ac7e8e1fd727cf7f0db62a9aaea760bde2b270e34d98eb264a264b86df749",
+        "purpose": "ARM Trusted Firmware BL31 (EL3 runtime firmware). rk3566 has no open TF-A port; it reuses the rk3568 BL31 binary, as documented in U-Boot's doc/board/rockchip.rst."
+      }
+    }
+  }
+}
