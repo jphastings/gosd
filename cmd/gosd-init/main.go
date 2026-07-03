@@ -6,11 +6,13 @@
 package main
 
 import (
+	"net"
 	"os"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/initcfg"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
 )
 
 const (
@@ -48,6 +50,9 @@ func main() {
 		ReadCmdline: readCmdline,
 		Sleep:       time.Sleep,
 		Now:         time.Now,
+		StartNetworking: func(log func(format string, args ...any)) {
+			netup.Run(netupDeps(log), netup.Options{})
+		},
 	}
 	opts := boot.Options{
 		AppPath:     appPath,
@@ -85,4 +90,20 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 // fallbackLog is used before /dev/console is open (or if opening it fails).
 func fallbackLog(format string, args ...any) {
 	boot.NewLogger(os.Stderr).Printf(format, args...)
+}
+
+// netupDeps wires the real, netlink/DHCP-backed networking implementation,
+// logging through log (boot's console logger, once available).
+func netupDeps(log func(format string, args ...any)) netup.Deps {
+	platform := netup.NewPlatform()
+	return netup.Deps{
+		Links:           platform.Links,
+		DHCP:            platform.DHCP,
+		Clock:           netup.NewRealClock(),
+		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
+		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
+		MarkNetworkUp:   func() error { return netup.MarkNetworkUp(netup.DefaultNetworkUpPath) },
+		ClearNetworkUp:  func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
+		Log:             log,
+	}
 }
