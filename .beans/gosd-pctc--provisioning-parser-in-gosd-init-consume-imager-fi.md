@@ -1,0 +1,29 @@
+---
+# gosd-pctc
+title: 'Provisioning parser in gosd-init: consume Imager files from GOSD-BOOT'
+status: todo
+type: task
+priority: normal
+created_at: 2026-07-02T21:07:10Z
+updated_at: 2026-07-02T21:10:20Z
+parent: gosd-b22t
+blocked_by:
+    - gosd-qvoq
+    - gosd-fbwa
+---
+
+Implement `internal/provision`: at boot, gosd-init reads the mounted /boot partition and extracts hostname + WiFi credentials from whatever Raspberry Pi Imager wrote, per docs/provisioning-formats.md.
+
+Rules:
+- Parse ONLY against the committed fixtures — every extraction path has a fixture-driven test. firstrun.sh parsing is targeted regex extraction (we never execute it); custom.toml via TOML; cloud-init network-config via YAML (gopkg.in/yaml.v3)
+- Precedence (locked): gosd.toml > custom.toml > cloud-init files > firstrun.sh > baked config.json
+- Support plaintext passphrase AND 64-hex PBKDF2 PSK (reuse the WiFi task derivation code)
+- Unknown/unparseable files: log a warning with the filename, never crash, fall through to next source
+- Result feeds the credential-source interface the WiFi task defined; hostname applies before /app launch if possible (re-exec not required — set it when discovered and log)
+
+- [ ] Parser + fixture tests for every scenario captured in research
+- [ ] Wire into gosd-init boot sequence after /boot mount
+- [ ] On-hardware test: flash with real Imager + customization, device joins WiFi (record Imager version used)
+
+## Acceptance
+End-to-end: image built by gosd with NO baked credentials, flashed via Imager with WiFi entered in the dialog, boots and joins that network.
