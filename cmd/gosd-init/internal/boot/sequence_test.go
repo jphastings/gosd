@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/initcfg"
+	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/initcfg"
+	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 // Deps bundles every side-effecting dependency the boot sequence needs.

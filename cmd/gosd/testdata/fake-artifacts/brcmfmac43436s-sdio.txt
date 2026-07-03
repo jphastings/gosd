@@ -1,0 +1,1 @@
+fake brcmfmac43436s-sdio.txt content for gosd integration tests

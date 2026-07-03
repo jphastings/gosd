@@ -9,11 +9,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/boards/pizero2w"
+	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/build"
-	"github.com/jphastings/gosd/internal/image"
-	"github.com/jphastings/gosd/internal/initramfs"
 	"github.com/jphastings/gosd/internal/naming"
+	"github.com/jphastings/gosd/internal/pipeline"
 )
+
+func init() {
+	boards.Register(pizero2w.New())
+	boards.Register(radxazero3e.New())
+}
 
 // gosdInitPkg is the import path gosd cross-compiles for the init binary
 // baked into every image. Building it via an absolute import path (rather
@@ -23,11 +29,12 @@ import (
 const gosdInitPkg = "github.com/jphastings/gosd/cmd/gosd-init"
 
 var (
-	boardIDs []string
-	output   string
-	hostname string
-	wifiSSID string
-	wifiPass string
+	boardIDs     []string
+	output       string
+	hostname     string
+	wifiSSID     string
+	wifiPass     string
+	artifactsDir string
 )
 
 func newBuildCmd() *cobra.Command {
@@ -46,6 +53,8 @@ func newBuildCmd() *cobra.Command {
 		"device hostname (default: sanitized main package name)")
 	cmd.Flags().StringVar(&wifiSSID, "wifi-ssid", "", "WiFi SSID to bake into the image")
 	cmd.Flags().StringVar(&wifiPass, "wifi-pass", "", "WiFi password to bake into the image (WPA2-PSK or open networks only)")
+	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
+		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
 
 	return cmd
 }
@@ -85,26 +94,42 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := cmd.Context()
-	var assembler image.Assembler = image.NotImplemented{}
-	var initramfsBuilder initramfs.Builder = initramfs.DefaultBuilder{}
+	cacheDir, err := artifactCacheDir()
+	if err != nil {
+		return err
+	}
 
 	for _, b := range selected {
-		spec := image.AssembleSpec{
+		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  appBinary,
 			InitBinaryPath: initBinary,
-			Initramfs:      initramfsBuilder,
-			Hostname:       deviceHostname,
-			WifiSSID:       wifiSSID,
-			WifiPassword:   wifiPass,
-			OutputPath:     outputs[b.ID],
+			Config: boards.BuildConfig{
+				Hostname:     deviceHostname,
+				WifiSSID:     wifiSSID,
+				WifiPassword: wifiPass,
+			},
+			ArtifactsDir: artifactsDir,
+			CacheDir:     cacheDir,
+			OutputPath:   outputs[b.Name()],
 		}
-		if err := assembler.Assemble(ctx, spec); err != nil {
-			return fmt.Errorf("building %s for %s failed: %w", appName, b.ID, err)
+		if err := pipeline.Assemble(ctx, opts); err != nil {
+			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
 		}
 	}
 
 	return nil
+}
+
+// artifactCacheDir returns the directory pinned-URL artifact downloads are
+// cached in across builds, so a board's firmware isn't re-fetched every
+// run.
+func artifactCacheDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("locating a user cache directory for downloaded artifacts failed: %w; try passing --artifacts-dir instead", err)
+	}
+	return filepath.Join(base, "gosd", "artifacts"), nil
 }
 
 // resolveBoards turns the --board flag values into a de-duplicated list of
@@ -143,9 +168,9 @@ func resolveOutputs(selected []boards.Board, appName, output string) (map[string
 		b := selected[0]
 		path := output
 		if path == "" {
-			path = fmt.Sprintf("%s-%s.img", appName, b.ID)
+			path = fmt.Sprintf("%s-%s.img", appName, b.Name())
 		}
-		outputs[b.ID] = path
+		outputs[b.Name()] = path
 		return outputs, nil
 	}
 
@@ -154,7 +179,7 @@ func resolveOutputs(selected []boards.Board, appName, output string) (map[string
 		dir = "."
 	}
 	for _, b := range selected {
-		outputs[b.ID] = filepath.Join(dir, fmt.Sprintf("%s-%s.img", appName, b.ID))
+		outputs[b.Name()] = filepath.Join(dir, fmt.Sprintf("%s-%s.img", appName, b.Name()))
 	}
 	return outputs, nil
 }
