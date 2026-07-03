@@ -79,6 +79,49 @@ func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
 	}
 }
 
+func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
+	// StartNetworking must never delay /app's launch: Run should
+	// dispatch it and move straight on to supervision.
+	clock := newFakeClock(time.Unix(0, 0))
+	var sleeps []time.Duration
+	stop := make(chan struct{})
+	networkingStarted := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d); clock.Sleep(d) },
+		Now:         clock.Now,
+		StartNetworking: func(log func(string, ...any)) {
+			close(networkingStarted)
+		},
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	select {
+	case <-networkingStarted:
+	case <-time.After(time.Second):
+		t.Error("StartNetworking was never called")
+	}
+}
+
 func TestRunReadsCmdlineOnlyAfterProcIsMounted(t *testing.T) {
 	// Regression test: gosd.board / gosd.debug come from /proc/cmdline,
 	// which isn't readable until step 1 (mountEarly) has mounted /proc.

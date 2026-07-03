@@ -3,8 +3,9 @@
 title: Go developer quickstart + runtime documentation
 status: todo
 type: task
+priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-02T21:10:00Z
+updated_at: 2026-07-03T17:59:44Z
 parent: gosd-y0x3
 ---
 
@@ -19,3 +20,7 @@ Content:
 
 ## Acceptance
 A Go developer with no embedded experience gets examples/hello running on a Pi Zero 2W using only these docs.
+
+## Note from gosd-vtce (Ethernet networking)
+
+gosd-init cannot set `GOSD_IP` as an env var: DHCP completes asynchronously, after /app has already been launched (networking must never block app start). When this quickstart/runtime doc is written, document that the app must discover its own address at runtime — e.g. via Go's `net.Interfaces()`/`net.InterfaceAddrs()` — rather than expecting an env var. `/run/gosd/network-up` (an empty marker file) exists as a signal that an address has been assigned, if polling for that is useful.
