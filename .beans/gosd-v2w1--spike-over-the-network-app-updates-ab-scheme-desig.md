@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: low
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-04T12:23:02Z
+updated_at: 2026-07-04T20:34:09Z
 parent: gosd-jge2
 ---
 
@@ -30,3 +30,22 @@ Added `docs/design/ab-updates.md`: a design-only spike answering the four requir
 - Recommended board-native mechanisms (Pi tryboot across two FAT partitions, Radxa bootcount+dual-extlinux-entry in one partition) over one shared software-only scheme, and listed nine proposed v0.4 beans with one-line scopes in the doc (not created, per the bean's acceptance requiring JP's review first). Noted as a side effect that this design resolves gosd-xelb's deferred 'does data survive an update' question for free, since GOSD-DATA is untouched by a kernel+initramfs slot swap.
 
 Bean stays in-progress: the acceptance checklist (doc reviewed; follow-up beans created) requires JP and is left unchecked.
+
+## Revision: per-board recommendation rejected
+
+JP rejected the per-board boot-slot recommendation (Pi `tryboot`, Radxa U-Boot
+`bootcount`): GoSD intends to support many boards over time, and maintaining a
+distinct bootloader-level A/B mechanism per board does not scale as a
+maintenance burden. `docs/design/ab-updates.md` has been revised to recommend
+a single board-agnostic **app-slot** scheme instead: OTA updates replace only
+the app binary (kernel/initramfs/bootloader are reflash-only), via two slot
+files on the existing `GOSD-BOOT` partition, a write-temp/fsync/rename commit
+protocol, a new Supervisor probation mode with a three-rung fallback ladder
+(new slot → previous good slot → factory), and the same HMAC-at-build-time
+authn story adapted to gate activation on a verified signature. The rejected
+per-board research is kept as an appendix, alongside a new kexec-chooser
+appendix documenting (but not adopting) a board-agnostic escape hatch for
+kernel-level OTA if that ever becomes a hard requirement.
+
+Bean stays in-progress: the acceptance checklist (doc reviewed; follow-up
+beans created) still requires JP and remains unchecked.
