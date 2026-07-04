@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-03T23:55:17Z
+updated_at: 2026-07-04T12:27:30Z
 parent: gosd-y0x3
 ---
 
@@ -44,3 +44,12 @@ Wrote developer-facing documentation grounded in the current `main` codebase, no
 - Added docs/runtime.md: the runtime contract for app authors — supervision/restart behavior, the exact two env vars gosd-init sets (`GOSD_BOARD`, `GOSD_HOSTNAME`) and why there's no `GOSD_IP`, async network bring-up (wired-only today) and the `/run/gosd/network-up` marker, the epoch-clock/SNTP-not-yet-built situation, RAM-only storage with read-only `/boot`, serial-only logging, CGO/arm64 build constraints, GPIO/I2C/SPI library pointers (v0.3 examples), and a generous gokrazy comparison.
 - No Go files, go.mod, or workflows touched. Verified `gofmt -l .` is empty and the Go snippet in the README quickstart compiles (checked in a throwaway scratch module, then deleted).
 - Filed the four findings above rather than fixing code, per task scope.
+
+## Note from gosd-c8oj (SNTP time sync)
+
+SNTP time sync has now landed (`cmd/gosd-init/internal/timesync`), so docs/runtime.md's "Clock: starts at 1970 until SNTP lands" section (lines ~79-94) is now stale and should be rewritten when this docs task is next picked up. What changed:
+
+- /run/gosd/time-synced (`timesync.DefaultTimeSyncedPath`) now exists and is created on the first successful NTP sync — the marker the old text said didn't exist yet.
+- gosd-init waits for /run/gosd/network-up, then retries SNTP (github.com/beevik/ntp) with backoff until the first success, sets the clock via settimeofday, and re-syncs hourly afterward.
+- config.json gained an optional `ntpServers` field (`initcfg.Config.NTPServers`), defaulting to pool.ntp.org (`timesync.DefaultServers`) when omitted.
+- App authors should gate TLS/x509-dependent calls on /run/gosd/time-synced existing, or just retry on failure until it does — please make this the documented guidance in place of the old "not yet built" caveat.

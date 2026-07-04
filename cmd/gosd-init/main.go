@@ -12,6 +12,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -59,6 +60,11 @@ func main() {
 		Now:          time.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any)) {
 			go netup.Run(netupDeps(log), netup.Options{})
+			go timesync.Run(timesyncDeps(log), timesync.Options{
+				Servers:               ntpServers(cfg),
+				ResyncEvery:           timesync.DefaultResyncInterval,
+				NetworkUpPollInterval: timesync.DefaultNetworkUpPollInterval,
+			})
 
 			wifiClient, err := wifiup.NewPlatform()
 			if err != nil {
@@ -139,6 +145,36 @@ func netupDeps(log func(format string, args ...any)) netup.Deps {
 		ClearNetworkUp:  func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
 		Log:             log,
 	}
+}
+
+// timesyncDeps wires the real, settimeofday/NTP-backed time-sync
+// implementation, logging through log (boot's console logger, once
+// available).
+func timesyncDeps(log func(format string, args ...any)) timesync.Deps {
+	platform := timesync.NewPlatform()
+	return timesync.Deps{
+		NTP:    platform.NTP,
+		System: platform.System,
+		Clock:  timesync.NewRealClock(),
+		NewBackoff: func() *timesync.Backoff {
+			return timesync.NewBackoff(timesync.DefaultBackoffBase, timesync.DefaultBackoffCap)
+		},
+		NetworkUp: func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
+		MarkTimeSynced: func() error {
+			return timesync.WriteTimeSynced(timesync.DefaultTimeSyncedPath)
+		},
+		Log: log,
+	}
+}
+
+// ntpServers returns cfg.NTPServers, falling back to timesync.DefaultServers
+// when config.json doesn't specify one (including every config.json baked
+// before this field existed) — the bean requires this field stay optional.
+func ntpServers(cfg initcfg.Config) []string {
+	if len(cfg.NTPServers) > 0 {
+		return cfg.NTPServers
+	}
+	return timesync.DefaultServers
 }
 
 // wifiupDeps wires the real, nl80211-backed WiFi implementation (client)
