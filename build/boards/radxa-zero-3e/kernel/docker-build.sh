@@ -7,6 +7,10 @@ set -euo pipefail
 : "${KERNEL_REPO:?KERNEL_REPO must be set}"
 
 DTB_PATH="arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dtb"
+# The ARCH=arm64 dtb make target is resolved relative to
+# arch/arm64/boot/dts/, so it must NOT be prefixed with that path (unlike
+# DTB_PATH above, which is used for the cp step and needs the full path).
+DTB_MAKE_TARGET="rockchip/rk3566-radxa-zero-3e.dtb"
 SRC_DIR="/build/linux"
 
 apt-get update -qq
@@ -67,8 +71,8 @@ fi
 echo "==> Building Image"
 make ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc)" Image
 
-echo "==> Building ${DTB_PATH}"
-make ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc)" "${DTB_PATH}"
+echo "==> Building ${DTB_MAKE_TARGET}"
+make ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc)" "${DTB_MAKE_TARGET}"
 
 echo "==> Copying outputs to /out"
 {
