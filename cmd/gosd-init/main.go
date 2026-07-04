@@ -13,14 +13,16 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 const (
-	configPath  = "/etc/gosd/config.json"
-	cmdlinePath = "/proc/cmdline"
-	appPath     = "/app"
-	bootTarget  = "/boot"
+	configPath   = "/etc/gosd/config.json"
+	cmdlinePath  = "/proc/cmdline"
+	gosdTomlPath = "/boot/gosd.toml"
+	appPath      = "/app"
+	bootTarget   = "/boot"
 
 	// bootMountTimeout bounds how long gosd-init retries mounting the
 	// GOSD-BOOT partition: the MMC controller may still be probing when
@@ -49,9 +51,13 @@ func main() {
 		// mounted; boot.Run calls this itself, after the early mounts
 		// (step 1), rather than main reading it up front.
 		ReadCmdline: readCmdline,
-		Sleep:       time.Sleep,
-		Now:         time.Now,
-		StartNetworking: func(cfg initcfg.Config, log func(format string, args ...any)) {
+		// ReadGosdToml reads /boot/gosd.toml, which only exists once the
+		// GOSD-BOOT partition is mounted; boot.Run calls this itself,
+		// after that mount (step 5), rather than main reading it up front.
+		ReadGosdToml: readGosdToml,
+		Sleep:        time.Sleep,
+		Now:          time.Now,
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any)) {
 			go netup.Run(netupDeps(log), netup.Options{})
 
 			wifiClient, err := wifiup.NewPlatform()
@@ -61,7 +67,7 @@ func main() {
 				log("WiFi unavailable, skipping: %v", err)
 				return
 			}
-			wifiup.Run(wifiupDeps(wifiClient, cfg, log), wifiup.Options{})
+			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, log), wifiup.Options{})
 		},
 	}
 	opts := boot.Options{
@@ -97,6 +103,23 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 	return initcfg.ParseCmdline(string(data)), nil
 }
 
+// readGosdToml reads and parses /boot/gosd.toml, the hand-editable fallback
+// config on the GOSD-BOOT partition. The file is entirely optional — a
+// missing file is not logged as a problem at all, since most users will
+// never touch it — but a present-and-unreadable-as-TOML file (a typo from
+// hand-editing) is surfaced as an error for boot.Run to log as a warning;
+// either way, boot never fails over it.
+func readGosdToml() (gosdtoml.Config, error) {
+	data, err := os.ReadFile(gosdTomlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return gosdtoml.Config{}, nil
+		}
+		return gosdtoml.Config{}, err
+	}
+	return gosdtoml.Parse(data)
+}
+
 // fallbackLog is used before /dev/console is open (or if opening it fails).
 func fallbackLog(format string, args ...any) {
 	boot.NewLogger(os.Stderr).Printf(format, args...)
@@ -121,13 +144,13 @@ func netupDeps(log func(format string, args ...any)) netup.Deps {
 // wifiupDeps wires the real, nl80211-backed WiFi implementation (client)
 // together with the same netlink/DHCP building blocks netupDeps uses —
 // DHCP itself doesn't care whether the underlying medium is wired or
-// wireless — and config.json's wifi block as the (v0.1) credential
-// source.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, log func(format string, args ...any)) wifiup.Deps {
+// wireless — and the credential source: config.json's wifi block, unless
+// gosd.toml hand-edits one in, in which case that takes precedence.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, log func(format string, args ...any)) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
-		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi},
+		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi, GosdToml: gosdWifi},
 		Links:           platform.Links,
 		DHCP:            platform.DHCP,
 		Clock:           netup.NewRealClock(),

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
@@ -67,6 +68,35 @@ func TestConfigCredentialsPreHashedHexPSKIsUsedDirectly(t *testing.T) {
 	asPassphrase, _ := DerivePSK(pskHex, "office")
 	if asPassphrase == derived {
 		t.Fatal("test fixture is degenerate: treating the hex string as a passphrase coincidentally produced the same key")
+	}
+}
+
+func TestConfigCredentialsGosdTomlTakesPrecedenceOverConfigJSON(t *testing.T) {
+	src := ConfigCredentials{
+		Wifi:     initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
+		GosdToml: gosdtoml.Wifi{SSID: "hand-edited-network", Passphrase: "hand-edited-password"},
+	}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	want, _ := DerivePSK("hand-edited-password", "hand-edited-network")
+	if !ok || creds.SSID != "hand-edited-network" || creds.PSK != want {
+		t.Errorf("Credentials() = %+v, ok=%v, want the gosd.toml network to win", creds, ok)
+	}
+}
+
+func TestConfigCredentialsFallsBackToConfigJSONWhenGosdTomlHasNoSSID(t *testing.T) {
+	src := ConfigCredentials{
+		Wifi: initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
+	}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	want, _ := DerivePSK("baked-in-password", "baked-in-network")
+	if !ok || creds.SSID != "baked-in-network" || creds.PSK != want {
+		t.Errorf("Credentials() = %+v, ok=%v, want the config.json network as fallback", creds, ok)
 	}
 }
 
