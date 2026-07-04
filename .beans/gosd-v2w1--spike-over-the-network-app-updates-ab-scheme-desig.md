@@ -1,11 +1,11 @@
 ---
 # gosd-v2w1
 title: 'Spike: over-the-network app updates (A/B scheme) — design doc only'
-status: in-progress
+status: completed
 type: task
 priority: low
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-04T20:34:09Z
+updated_at: 2026-07-04T21:09:30Z
 parent: gosd-jge2
 ---
 
@@ -49,3 +49,6 @@ kernel-level OTA if that ever becomes a hard requirement.
 
 Bean stays in-progress: the acceptance checklist (doc reviewed; follow-up
 beans created) still requires JP and remains unchecked.
+
+## Resolution
+Design accepted and merged (PR #15, revised to the unified app-slot scheme after JP rejected per-board mechanisms). Follow-up beans created under epic gosd-vxal (deferred until after v0.2).
