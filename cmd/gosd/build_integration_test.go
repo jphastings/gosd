@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,6 +121,127 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 		if !strings.Contains(string(configJSON), want) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
+	}
+}
+
+// TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts is the
+// acceptance test for gosd-gbsz: a full `gosd build` for radxa-zero-3e,
+// using --artifacts-dir to supply fake bootloader/kernel files, produces an
+// image with idbloader.img and u-boot.itb raw-written at their locked
+// offsets ahead of the boot partition, and a boot partition containing the
+// kernel, DTB, initramfs, and a rendered extlinux.conf.
+func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-radxa-zero-3e.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "radxa-zero-3e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	assertRawWriteAt(t, imgPath, 32768, "fake idbloader.img")
+	assertRawWriteAt(t, imgPath, 8388608, "fake u-boot.itb")
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{"Image", "rk3566-radxa-zero-3e.dtb", "initramfs.cpio.zst", "extlinux/extlinux.conf"} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	wantExtlinuxConf := "default gosd\n" +
+		"timeout 0\n" +
+		"label gosd\n" +
+		"    kernel /Image\n" +
+		"    fdt /rk3566-radxa-zero-3e.dtb\n" +
+		"    initrd /initramfs.cpio.zst\n" +
+		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e\n"
+	if string(extlinuxConf) != wantExtlinuxConf {
+		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
+	}
+}
+
+// TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
+// gosd's locked "no --board builds every board" decision requires) now
+// produces both the pi-zero-2w and the radxa-zero-3e images, not just the
+// former.
+func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", outDir,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-radxa-zero-3e.img"} {
+		path := filepath.Join(outDir, want)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("expected output image %q was not produced: %v", path, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("output image %q is empty", path)
+		}
+	}
+}
+
+// assertRawWriteAt reads want's length worth of bytes from imgPath at
+// offset and fails the test if they don't match want exactly.
+func assertRawWriteAt(t *testing.T, imgPath string, offset int64, want string) {
+	t.Helper()
+
+	f, err := os.Open(imgPath)
+	if err != nil {
+		t.Fatalf("opening %s: %v", imgPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	got := make([]byte, len(want))
+	if _, err := f.ReadAt(got, offset); err != nil {
+		t.Fatalf("reading %d bytes at offset %d: %v", len(want), offset, err)
+	}
+	if string(got) != want {
+		t.Errorf("raw bytes at offset %d = %q, want %q", offset, got, want)
 	}
 }
 
