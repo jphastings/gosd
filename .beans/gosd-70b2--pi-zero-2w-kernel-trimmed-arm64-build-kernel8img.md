@@ -1,10 +1,11 @@
 ---
 # gosd-70b2
 title: 'Pi Zero 2W kernel: trimmed arm64 build (kernel8.img)'
-status: todo
+status: in-progress
 type: task
+priority: normal
 created_at: 2026-07-02T20:56:21Z
-updated_at: 2026-07-02T20:56:21Z
+updated_at: 2026-07-03T17:01:07Z
 parent: gosd-vmgw
 ---
 
