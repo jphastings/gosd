@@ -1,10 +1,11 @@
 ---
 # gosd-c7tk
 title: 'Radxa Zero 3E kernel: trimmed mainline arm64 build'
-status: todo
+status: in-progress
 type: task
+priority: normal
 created_at: 2026-07-02T21:02:28Z
-updated_at: 2026-07-02T21:02:28Z
+updated_at: 2026-07-03T17:52:48Z
 parent: gosd-v370
 ---
 
@@ -26,3 +27,10 @@ Config requirements (all =y, CONFIG_MODULES=n), beyond the same core/initramfs/v
 
 ## Acceptance
 Clean build outputs Image + dtb; CONFIG_MODULES=n; boots to gosd-init with eth0 present.
+
+## Verification findings (2026-07-03)
+
+- **DT filename**: confirmed exact — `arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dts` exists in-tree at the pinned tag (includes shared `rk3566-radxa-zero-3.dtsi`), matching the bean's guess exactly.
+- **Ethernet PHY**: the DT's `&mdio1/ethernet-phy@1` node uses the generic `compatible = "ethernet-phy-ieee802.3-c22"` (PHY model is autodetected at runtime via the MDIO ID registers, not named in the DT). The physical chip is Radxa's documented RTL8211F-CG gigabit transceiver, matched at runtime by drivers/net/phy/realtek/ (CONFIG_REALTEK_PHY) — confirms the bean's expectation.
+- **Kconfig symbol correction**: the bean names `CONFIG_PHY_ROCKCHIP_NANENG_COMBPHY`; verified against drivers/phy/rockchip/Kconfig in the pinned tree — the actual mainline symbol is `CONFIG_PHY_ROCKCHIP_NANENG_COMBO_PHY` (COMBO_PHY, not COMBPHY). Used the correct symbol in kernel-fragment.config.
+- **Pinned source**: mainline stable "longterm" tag `v6.18.37` (kernel.org releases.json moniker "longterm", satisfies >= 6.12).
