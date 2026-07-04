@@ -19,6 +19,14 @@ type Config struct {
 	Board    string `json:"board"`
 	Hostname string `json:"hostname"`
 	Wifi     Wifi   `json:"wifi"`
+
+	// NTPServers is the ordered list of NTP servers gosd-init's timesync
+	// package queries. Optional: a nil/empty slice (including every
+	// config.json baked before this field existed) means "use
+	// timesync.DefaultServers" (pool.ntp.org); this package only owns the
+	// schema, not that default, to keep it free of other packages'
+	// constants.
+	NTPServers []string `json:"ntpServers,omitempty"`
 }
 
 // Wifi holds the baked-in WPA2-PSK or open network credentials. Both fields

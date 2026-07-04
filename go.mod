@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/beevik/ntp v1.5.0
 	github.com/diskfs/go-diskfs v1.9.3
 	github.com/insomniacslk/dhcp v0.0.0-20260603135910-a415979eb11e
 	github.com/klauspost/compress v1.19.0
