@@ -89,6 +89,11 @@ CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
 # CONFIG_DRM is not set
 # CONFIG_FB is not set
 # CONFIG_BT is not set
+# No camera/video: disabling the whole media subsystem also removes
+# raspberrypi/linux's rp1-cfe and rp1_cfe driver directories, which
+# both build and collide at link time (multiple definition of
+# dphy_start/dphy_stop/dphy_probe) when CONFIG_MEDIA_SUPPORT is on.
+# CONFIG_MEDIA_SUPPORT is not set
 
 # --- Cut aggressively: no filesystems beyond the above ---
 # CONFIG_EXT4_FS is not set
