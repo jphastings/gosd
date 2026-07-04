@@ -12,6 +12,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
@@ -50,8 +51,17 @@ func main() {
 		ReadCmdline: readCmdline,
 		Sleep:       time.Sleep,
 		Now:         time.Now,
-		StartNetworking: func(log func(format string, args ...any)) {
-			netup.Run(netupDeps(log), netup.Options{})
+		StartNetworking: func(cfg initcfg.Config, log func(format string, args ...any)) {
+			go netup.Run(netupDeps(log), netup.Options{})
+
+			wifiClient, err := wifiup.NewPlatform()
+			if err != nil {
+				// Expected on an Ethernet-only board with no WiFi
+				// hardware/driver at all; not fatal to boot.
+				log("WiFi unavailable, skipping: %v", err)
+				return
+			}
+			wifiup.Run(wifiupDeps(wifiClient, cfg, log), wifiup.Options{})
 		},
 	}
 	opts := boot.Options{
@@ -97,6 +107,27 @@ func fallbackLog(format string, args ...any) {
 func netupDeps(log func(format string, args ...any)) netup.Deps {
 	platform := netup.NewPlatform()
 	return netup.Deps{
+		Links:           platform.Links,
+		DHCP:            platform.DHCP,
+		Clock:           netup.NewRealClock(),
+		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
+		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
+		MarkNetworkUp:   func() error { return netup.MarkNetworkUp(netup.DefaultNetworkUpPath) },
+		ClearNetworkUp:  func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
+		Log:             log,
+	}
+}
+
+// wifiupDeps wires the real, nl80211-backed WiFi implementation (client)
+// together with the same netlink/DHCP building blocks netupDeps uses —
+// DHCP itself doesn't care whether the underlying medium is wired or
+// wireless — and config.json's wifi block as the (v0.1) credential
+// source.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, log func(format string, args ...any)) wifiup.Deps {
+	platform := netup.NewPlatform()
+	return wifiup.Deps{
+		Wifi:            client,
+		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi},
 		Links:           platform.Links,
 		DHCP:            platform.DHCP,
 		Clock:           netup.NewRealClock(),

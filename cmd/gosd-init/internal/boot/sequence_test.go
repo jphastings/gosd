@@ -104,7 +104,7 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d); clock.Sleep(d) },
 		Now:         clock.Now,
-		StartNetworking: func(log func(string, ...any)) {
+		StartNetworking: func(cfg initcfg.Config, log func(string, ...any)) {
 			close(networkingStarted)
 		},
 	}

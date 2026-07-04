@@ -44,13 +44,15 @@ type Deps struct {
 	Now   func() time.Time
 
 	// StartNetworking, if non-nil, is called in its own goroutine
-	// immediately before /app supervision begins, and is passed Run's
-	// current logger (the console, if opening it succeeded) so its
+	// immediately before /app supervision begins, and is passed the
+	// fully-resolved config (cmdline overrides already applied) plus
+	// Run's current logger (the console, if opening it succeeded) so its
 	// output goes to the same place as the rest of gosd-init's. Networking
-	// (link up, DHCP, DNS) must never block or delay /app's start, so Run
-	// doesn't wait for it and doesn't know or care what it does beyond
-	// that; production wires this to netup.Run, tests leave it nil.
-	StartNetworking func(log func(format string, args ...any))
+	// (link up, DHCP, DNS, WiFi) must never block or delay /app's start,
+	// so Run doesn't wait for it and doesn't know or care what it does
+	// beyond that; production wires this to start both netup.Run (wired)
+	// and wifiup.Run (WiFi), tests leave it nil.
+	StartNetworking func(cfg initcfg.Config, log func(format string, args ...any))
 }
 
 // Options holds the per-boot paths the sequence acts on.
@@ -118,7 +120,7 @@ func Run(deps Deps, opts Options) error {
 	log("boot partition mounted at %s", opts.BootTarget)
 
 	if deps.StartNetworking != nil {
-		go deps.StartNetworking(log)
+		go deps.StartNetworking(cfg, log)
 	}
 
 	env := []string{
