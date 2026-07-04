@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
@@ -104,7 +105,7 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d); clock.Sleep(d) },
 		Now:         clock.Now,
-		StartNetworking: func(cfg initcfg.Config, log func(string, ...any)) {
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(string, ...any)) {
 			close(networkingStarted)
 		},
 	}
@@ -117,6 +118,145 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 
 	select {
 	case <-networkingStarted:
+	case <-time.After(time.Second):
+		t.Error("StartNetworking was never called")
+	}
+}
+
+func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
+	// gosd.toml's hostname must win over config.json's, and take effect
+	// via a second SetHostname call, since gosd.toml can only be read
+	// after the boot partition is mounted (step 5) — after step 4 already
+	// applied config.json's hostname.
+	mounter := &fakeMounter{}
+	hostname := &fakeHostname{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     mounter,
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, error) {
+			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantCalls := []string{"baked-in-name", "hand-edited-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "gosd.toml applied") {
+		t.Errorf("console output missing gosd.toml re-apply log line: %q", console.String())
+	}
+}
+
+func TestRunFallsBackToConfigJSONWhenGosdTomlFailsToParse(t *testing.T) {
+	// A hand-editing typo in gosd.toml must never crash boot: Run logs a
+	// warning and keeps config.json's hostname.
+	console := &bytes.Buffer{}
+	hostname := &fakeHostname{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, error) { return gosdtoml.Config{}, errors.New("garbage TOML") },
+		Sleep:        func(d time.Duration) { clock.Sleep(d) },
+		Now:          clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a broken gosd.toml is not fatal)", err)
+	}
+
+	wantCalls := []string{"baked-in-name", "baked-in-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v (falls back to config.json both times)", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "reading gosd.toml failed") {
+		t.Errorf("console output missing gosd.toml warning log line: %q", console.String())
+	}
+}
+
+func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	gosdTomlReceived := make(chan gosdtoml.Config, 1)
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:      &fakeMounter{},
+		Hostname:     &fakeHostname{},
+		AppStarter:   appStarter,
+		Reaper:       fakeReaper{},
+		Rebooter:     &fakeRebooter{},
+		OpenConsole:  func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:  func(string, ...any) {},
+		ReadConfig:   func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, error) { return gosdtoml.Config{Wifi: gosdtoml.Wifi{SSID: "hand-edited"}}, nil },
+		Sleep:        func(d time.Duration) { clock.Sleep(d) },
+		Now:          clock.Now,
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(string, ...any)) {
+			gosdTomlReceived <- gosdToml
+		},
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	select {
+	case gotGosdToml := <-gosdTomlReceived:
+		if gotGosdToml.Wifi.SSID != "hand-edited" {
+			t.Errorf("StartNetworking got gosdToml.Wifi.SSID = %q, want %q", gotGosdToml.Wifi.SSID, "hand-edited")
+		}
 	case <-time.After(time.Second):
 		t.Error("StartNetworking was never called")
 	}

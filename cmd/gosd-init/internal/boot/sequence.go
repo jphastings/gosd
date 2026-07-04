@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
@@ -40,19 +41,31 @@ type Deps struct {
 	// real hardware, where /proc isn't mounted until step 1 runs.
 	ReadCmdline func() (initcfg.CmdlineArgs, error)
 
+	// ReadGosdToml reads and parses /boot/gosd.toml, the hand-editable
+	// fallback config on the GOSD-BOOT partition. It's nil-checked (like
+	// StartNetworking) rather than required, so tests that don't care
+	// about gosd.toml can leave it unset. Unlike ReadConfig, this can only
+	// be called after the GOSD-BOOT partition is mounted (step 5), which
+	// is why Run calls it right after MountBootPartition succeeds — and
+	// why the hostname it may override has to be re-applied there too,
+	// even though step 4 already applied config.json's value.
+	ReadGosdToml func() (gosdtoml.Config, error)
+
 	Sleep func(time.Duration)
 	Now   func() time.Time
 
 	// StartNetworking, if non-nil, is called in its own goroutine
 	// immediately before /app supervision begins, and is passed the
-	// fully-resolved config (cmdline overrides already applied) plus
-	// Run's current logger (the console, if opening it succeeded) so its
-	// output goes to the same place as the rest of gosd-init's. Networking
-	// (link up, DHCP, DNS, WiFi) must never block or delay /app's start,
-	// so Run doesn't wait for it and doesn't know or care what it does
-	// beyond that; production wires this to start both netup.Run (wired)
-	// and wifiup.Run (WiFi), tests leave it nil.
-	StartNetworking func(cfg initcfg.Config, log func(format string, args ...any))
+	// fully-resolved config (cmdline overrides already applied), the
+	// parsed gosd.toml (zero value if absent, unreadable, or garbage) so
+	// wifiup can prefer its wifi block over cfg's, and Run's current
+	// logger (the console, if opening it succeeded) so its output goes to
+	// the same place as the rest of gosd-init's. Networking (link up,
+	// DHCP, DNS, WiFi) must never block or delay /app's start, so Run
+	// doesn't wait for it and doesn't know or care what it does beyond
+	// that; production wires this to start both netup.Run (wired) and
+	// wifiup.Run (WiFi), tests leave it nil.
+	StartNetworking func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any))
 }
 
 // Options holds the per-boot paths the sequence acts on.
@@ -119,8 +132,31 @@ func Run(deps Deps, opts Options) error {
 	}
 	log("boot partition mounted at %s", opts.BootTarget)
 
+	// gosd.toml lives on the just-mounted GOSD-BOOT partition, so it can
+	// only be read from here on — never before. Its hostname (if set)
+	// takes precedence over config.json's, which means the hostname
+	// applied at step 4 above may already be stale and has to be
+	// re-applied now, before /app starts.
+	var gosdToml gosdtoml.Config
+	if deps.ReadGosdToml != nil {
+		parsed, err := deps.ReadGosdToml()
+		if err != nil {
+			log("reading gosd.toml failed, using config.json instead: %v", err)
+		} else {
+			gosdToml = parsed
+			if gosdToml.Hostname != "" {
+				cfg.Hostname = gosdToml.Hostname
+			}
+		}
+
+		if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
+			return fatal(deps, log, "re-applying hostname after gosd.toml", err)
+		}
+		log("hostname set to %q (gosd.toml applied)", cfg.Hostname)
+	}
+
 	if deps.StartNetworking != nil {
-		go deps.StartNetworking(cfg, log)
+		go deps.StartNetworking(cfg, gosdToml, log)
 	}
 
 	env := []string{

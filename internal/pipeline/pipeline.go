@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/initramfs"
@@ -112,7 +113,15 @@ func Assemble(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("assembling boot files for %s: %w", opts.Board.Name(), err)
 	}
+	if bootFiles == nil {
+		bootFiles = make(map[string]io.Reader, 1)
+	}
 	defer closeReaders(bootFiles)
+
+	// gosd.toml is common to every board (unlike config.txt/extlinux.conf,
+	// which are board-specific), so it's added here rather than inside any
+	// Board.BootFiles implementation: both boards get it at the FAT root.
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword))
 
 	if err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles: bootFiles,

@@ -113,6 +113,49 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 			t.Errorf("config.json = %s, want it to contain %q", config, want)
 		}
 	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	for _, want := range []string{`hostname = "myhost"`, `ssid = "ssid"`, `passphrase = "pass"`} {
+		if !strings.Contains(string(gosdToml), want) {
+			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
+		}
+	}
+}
+
+func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	imgPath := filepath.Join(dir, "out.img")
+	if err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+	}); err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	if !strings.Contains(string(gosdToml), `# hostname = "my-device"`) {
+		t.Errorf("gosd.toml = %s, want a commented-out hostname example when unset", gosdToml)
+	}
 }
 
 func TestAssembleAppliesRawWrites(t *testing.T) {
