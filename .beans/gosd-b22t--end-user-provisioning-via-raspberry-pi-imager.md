@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-07-02T20:50:25Z
-updated_at: 2026-07-04T13:09:02Z
+updated_at: 2026-07-05T07:07:13Z
 parent: gosd-cij4
 ---
 
@@ -17,3 +17,6 @@ Also includes the non-Imager fallback (hand-editable gosd.toml on GOSD-BOOT) and
 
 ## Strategic finding from gosd-qvoq source analysis (2026-07-04)
 Raspberry Pi Imager GUI DISABLES the OS-customization dialog for "Use custom" local .img files — customization is gated on catalog metadata (init_format) that local files never carry. The imagined end-user flow (flash local .img + enter WiFi in dialog) does not work as-is. Candidate paths, pending JP decision: (a) developers publish an os_list.json catalog entry (with init_format) hosted alongside their image, users add the repo URL to Imager; (b) rely on rpi-imager-cli flags; (c) lean on gosd.toml hand-editing as the primary flow; (d) ship our own minimal flasher later. See docs/provisioning-formats.md (PR #18) for citations. The provisioning parser (gosd-pctc) remains worthwhile regardless: any of (a)/(b) still writes the standard files.
+
+## Decision (2026-07-05, JP)
+Flashing path chosen: Option A (Imager custom-repository catalog entry, init_format=cloudinit) as the flagship flow, Option C (gosd.toml hand-editing, already shipped) as the universal fallback. firstrun.sh parsing is out of scope. Recorded in CLAUDE.md.

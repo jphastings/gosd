@@ -5,7 +5,7 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-02T21:10:20Z
+updated_at: 2026-07-05T07:07:13Z
 parent: gosd-b22t
 blocked_by:
     - gosd-qvoq
@@ -27,3 +27,6 @@ Rules:
 
 ## Acceptance
 End-to-end: image built by gosd with NO baked credentials, flashed via Imager with WiFi entered in the dialog, boots and joins that network.
+
+## Re-scope (2026-07-05, supersedes the parse list above)
+Per the flashing-path decision and the gosd-qvoq source-analysis findings (docs/provisioning-formats.md): custom.toml DOES NOT EXIST in rpi-imager (drop it), and firstrun.sh parsing is OUT OF SCOPE (the catalog flow declares init_format=cloudinit, so Imager writes cloud-init files). Parse: cloud-init user-data + network-config (YAML) only, plus the existing gosd.toml/config.json chain. Precedence: gosd.toml > cloud-init > baked config.json. If a firstrun.sh is detected on /boot, log one clear line pointing the user at gosd.toml instead of parsing it. PSK note: Imager writes the 64-hex PBKDF2 PSK — identical derivation to wifiup.DerivePSK, accept it directly. Still fixture-driven: blocked on gosd-qvoq bench capture (cloud-init scenarios via a custom repo).

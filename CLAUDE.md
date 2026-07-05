@@ -49,6 +49,19 @@ say so in the bean rather than silently diverging.
   releases (`artifacts/vX.Y.Z` tags) contain only what we compile — kernels and
   U-Boot — with source repo, commit, and config recorded in the manifest (GPL
   compliance). CLI releases are plain `vX.Y.Z` tags and pin an artifact version.
+- **End-user flashing path (decided 2026-07-05):** the flagship flow is a
+  Raspberry Pi Imager custom-repository catalog entry — `gosd build` can emit
+  an `os_list.json` entry declaring `init_format: "cloudinit"`, the developer
+  hosts it next to their image, and end users paste the repo URL into Imager's
+  Settings → Custom repository to get the full WiFi/hostname wizard.
+  `gosd.toml` hand-editing is the always-present fallback (works with any
+  flasher). Consequence: gosd-init's provisioning parser reads cloud-init
+  YAML + gosd.toml only; `firstrun.sh` parsing is out of scope (log-and-point
+  -at-gosd.toml if encountered). See docs/provisioning-formats.md.
+- **qemu-virt board:** an internal-only board profile for CI and local
+  testing (`qemu-system-aarch64 -M virt`, virtio, SD appears as /dev/vda).
+  It is EXCLUDED from default all-boards builds and from end-user docs;
+  build it only via an explicit `--board=qemu-virt`.
 - **gosd-init has no interactive surface**: no shell, no SSH, no remote debug,
   ever. Serial console output and app logs only. The only network listeners in
   gosd-init are mDNS (and, later, the explicitly-designed update endpoint).
