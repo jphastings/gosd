@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -301,6 +304,108 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		if info.Size() == 0 {
 			t.Errorf("output image %q is empty", path)
 		}
+	}
+}
+
+// TestBuildCatalogWritesOsListJSON is the acceptance test for gosd-t6cs:
+// `gosd build --catalog --publish-base-url=...` writes a combined
+// os_list.json (and a per-image fragment) next to the built image, with the
+// entry's extract_size/extract_sha256 matching the real .img file gosd just
+// wrote.
+func TestBuildCatalogWritesOsListJSON(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	imgBytes, err := os.ReadFile(imgPath)
+	if err != nil {
+		t.Fatalf("reading built image: %v", err)
+	}
+	wantSum := sha256.Sum256(imgBytes)
+	wantHex := hex.EncodeToString(wantSum[:])
+
+	for _, listPath := range []string{
+		filepath.Join(outDir, "os_list.json"),
+		filepath.Join(outDir, "hello-pi-zero-2w.os_list.json"),
+	} {
+		data, err := os.ReadFile(listPath)
+		if err != nil {
+			t.Fatalf("reading %s: %v", listPath, err)
+		}
+
+		var list struct {
+			OSList []struct {
+				Name              string `json:"name"`
+				URL               string `json:"url"`
+				ExtractSize       int64  `json:"extract_size"`
+				ExtractSHA256     string `json:"extract_sha256"`
+				ImageDownloadSize int64  `json:"image_download_size"`
+				InitFormat        string `json:"init_format"`
+			} `json:"os_list"`
+		}
+		if err := json.Unmarshal(data, &list); err != nil {
+			t.Fatalf("unmarshaling %s: %v", listPath, err)
+		}
+		if len(list.OSList) != 1 {
+			t.Fatalf("%s has %d entries, want 1", listPath, len(list.OSList))
+		}
+
+		entry := list.OSList[0]
+		if entry.URL != "https://example.com/downloads/hello-pi-zero-2w.img" {
+			t.Errorf("%s: url = %q, want the joined base-url + filename", listPath, entry.URL)
+		}
+		if entry.ExtractSize != int64(len(imgBytes)) {
+			t.Errorf("%s: extract_size = %d, want %d (the real image size)", listPath, entry.ExtractSize, len(imgBytes))
+		}
+		if entry.ImageDownloadSize != int64(len(imgBytes)) {
+			t.Errorf("%s: image_download_size = %d, want %d", listPath, entry.ImageDownloadSize, len(imgBytes))
+		}
+		if entry.ExtractSHA256 != wantHex {
+			t.Errorf("%s: extract_sha256 = %q, want %q (the real image's hash)", listPath, entry.ExtractSHA256, wantHex)
+		}
+		if entry.InitFormat != "cloudinit" {
+			t.Errorf("%s: init_format = %q, want %q", listPath, entry.InitFormat, "cloudinit")
+		}
+	}
+}
+
+// TestBuildCatalogWithoutBaseURLFailsActionably confirms --catalog refuses
+// to run without --publish-base-url, per its locked requirement, instead of
+// building images it can't produce usable download links for.
+func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --catalog with no --publish-base-url succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "--publish-base-url") {
+		t.Errorf("error = %q, want it to mention --publish-base-url", err.Error())
 	}
 }
 

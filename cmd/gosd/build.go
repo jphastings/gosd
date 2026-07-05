@@ -14,6 +14,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/build"
+	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
@@ -24,14 +25,16 @@ func init() {
 }
 
 var (
-	boardIDs     []string
-	output       string
-	hostname     string
-	wifiSSID     string
-	wifiPass     string
-	artifactsDir string
-	gosdInitSrc  string
-	dataSize     string
+	boardIDs       []string
+	output         string
+	hostname       string
+	wifiSSID       string
+	wifiPass       string
+	artifactsDir   string
+	gosdInitSrc    string
+	dataSize       string
+	catalogFlag    bool
+	publishBaseURL string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -61,12 +64,20 @@ func newBuildCmd() *cobra.Command {
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
 		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); 0 omits the partition entirely")
+	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
+		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
+	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
+		"base URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog")
 
 	return cmd
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
 	pkgPath := args[0]
+
+	if catalogFlag && publishBaseURL == "" {
+		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
+	}
 
 	selected, err := resolveBoards(boardIDs)
 	if err != nil {
@@ -130,6 +141,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if catalogFlag {
+		if err := writeCatalog(selected, appName, outputs); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -167,6 +184,30 @@ func parseDataSize(s string) (int64, error) {
 		return 0, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
 	}
 	return n * multiplier, nil
+}
+
+// writeCatalog builds and writes the Raspberry Pi Imager custom-repository
+// catalog (--catalog) for the images just built at outputs, reading each
+// finished .img back off disk to compute its size/hash. All of selected's
+// images share one output directory (resolveOutputs always maps every
+// board into the same directory when there's more than one, and a single
+// board's own directory when there's just one), so the combined
+// os_list.json is written next to the first image.
+func writeCatalog(selected []boards.Board, appName string, outputs map[string]string) error {
+	images := make([]catalog.Image, 0, len(selected))
+	for _, b := range selected {
+		images = append(images, catalog.Image{
+			AppName: appName,
+			BoardID: b.Name(),
+			Path:    outputs[b.Name()],
+		})
+	}
+
+	dir := filepath.Dir(images[0].Path)
+	if _, err := catalog.WriteFiles(dir, images, catalog.Options{BaseURL: publishBaseURL}); err != nil {
+		return fmt.Errorf("writing the Imager catalog failed: %w", err)
+	}
+	return nil
 }
 
 // artifactCacheDir returns the directory pinned-URL artifact downloads are

@@ -1,0 +1,32 @@
+{
+  "os_list": [
+    {
+      "name": "hello (Raspberry Pi Zero 2 W)",
+      "description": "hello, built with GoSD for Raspberry Pi Zero 2 W",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-pi-zero-2w.img",
+      "extract_size": 30,
+      "extract_sha256": "739a829f3af1d518f3f9be4de0dd47c4565ff1c32e2ed1ccb639a4a3e595d2a3",
+      "image_download_size": 30,
+      "release_date": "2026-01-15",
+      "devices": [
+        "pi-zero-2w"
+      ],
+      "init_format": "cloudinit"
+    },
+    {
+      "name": "hello (Radxa Zero 3E)",
+      "description": "hello, built with GoSD for Radxa Zero 3E",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-radxa-zero-3e.img",
+      "extract_size": 33,
+      "extract_sha256": "9493eb16b765a7d3968ca551857003449ec17e17c86b3864c0fbb03df0932127",
+      "image_download_size": 33,
+      "release_date": "2026-01-15",
+      "devices": [
+        "radxa-zero-3e"
+      ],
+      "init_format": "cloudinit"
+    }
+  ]
+}
