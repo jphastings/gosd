@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
@@ -59,12 +60,20 @@ func main() {
 		Sleep:        time.Sleep,
 		Now:          time.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any)) {
-			go netup.Run(netupDeps(log), netup.Options{})
+			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
+			// ClearNetworkUp hooks, additionally fanned out to the mDNS
+			// responder below: no change to either package, just an
+			// extra notification wrapped around the closures main.go
+			// already builds for them (see netupDeps/wifiupDeps).
+			mdnsChanged := mdnsresponder.NewSignal()
+
+			go netup.Run(netupDeps(log, mdnsChanged), netup.Options{})
 			go timesync.Run(timesyncDeps(log), timesync.Options{
 				Servers:               ntpServers(cfg),
 				ResyncEvery:           timesync.DefaultResyncInterval,
 				NetworkUpPollInterval: timesync.DefaultNetworkUpPollInterval,
 			})
+			go mdnsresponder.Run(mdnsresponderDeps(log, mdnsChanged), mdnsresponder.Options{Hostname: cfg.Hostname})
 
 			wifiClient, err := wifiup.NewPlatform()
 			if err != nil {
@@ -73,7 +82,7 @@ func main() {
 				log("WiFi unavailable, skipping: %v", err)
 				return
 			}
-			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, log), wifiup.Options{})
+			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, log, mdnsChanged), wifiup.Options{})
 		},
 	}
 	opts := boot.Options{
@@ -132,8 +141,11 @@ func fallbackLog(format string, args ...any) {
 }
 
 // netupDeps wires the real, netlink/DHCP-backed networking implementation,
-// logging through log (boot's console logger, once available).
-func netupDeps(log func(format string, args ...any)) netup.Deps {
+// logging through log (boot's console logger, once available). changed is
+// notified alongside every real MarkNetworkUp/ClearNetworkUp call so the
+// mDNS responder restarts on link-down and on every lease (initial or
+// renewed) — see mdnsresponderDeps and gosd-r796.
+func netupDeps(log func(format string, args ...any), changed *mdnsresponder.Signal) netup.Deps {
 	platform := netup.NewPlatform()
 	return netup.Deps{
 		Links:           platform.Links,
@@ -141,9 +153,17 @@ func netupDeps(log func(format string, args ...any)) netup.Deps {
 		Clock:           netup.NewRealClock(),
 		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
 		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
-		MarkNetworkUp:   func() error { return netup.MarkNetworkUp(netup.DefaultNetworkUpPath) },
-		ClearNetworkUp:  func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
-		Log:             log,
+		MarkNetworkUp: func() error {
+			err := netup.MarkNetworkUp(netup.DefaultNetworkUpPath)
+			changed.Notify()
+			return err
+		},
+		ClearNetworkUp: func() error {
+			err := netup.ClearNetworkUp(netup.DefaultNetworkUpPath)
+			changed.Notify()
+			return err
+		},
+		Log: log,
 	}
 }
 
@@ -181,8 +201,9 @@ func ntpServers(cfg initcfg.Config) []string {
 // together with the same netlink/DHCP building blocks netupDeps uses —
 // DHCP itself doesn't care whether the underlying medium is wired or
 // wireless — and the credential source: config.json's wifi block, unless
-// gosd.toml hand-edits one in, in which case that takes precedence.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, log func(format string, args ...any)) wifiup.Deps {
+// gosd.toml hand-edits one in, in which case that takes precedence. changed
+// is wired the same way netupDeps wires it: see that function's doc.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, log func(format string, args ...any), changed *mdnsresponder.Signal) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
@@ -192,8 +213,28 @@ func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.
 		Clock:           netup.NewRealClock(),
 		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
 		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
-		MarkNetworkUp:   func() error { return netup.MarkNetworkUp(netup.DefaultNetworkUpPath) },
-		ClearNetworkUp:  func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
-		Log:             log,
+		MarkNetworkUp: func() error {
+			err := netup.MarkNetworkUp(netup.DefaultNetworkUpPath)
+			changed.Notify()
+			return err
+		},
+		ClearNetworkUp: func() error {
+			err := netup.ClearNetworkUp(netup.DefaultNetworkUpPath)
+			changed.Notify()
+			return err
+		},
+		Log: log,
+	}
+}
+
+// mdnsresponderDeps wires the real, pion/mdns-backed responder
+// implementation, logging through log and restarting whenever changed
+// fires (see netupDeps/wifiupDeps: both notify the same *Signal from their
+// MarkNetworkUp/ClearNetworkUp closures).
+func mdnsresponderDeps(log func(format string, args ...any), changed *mdnsresponder.Signal) mdnsresponder.Deps {
+	return mdnsresponder.Deps{
+		NewServer: func(hostname string) (mdnsresponder.Server, error) { return mdnsresponder.NewServer(hostname, log) },
+		Changed:   changed.C(),
+		Log:       log,
 	}
 }
