@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -441,6 +442,129 @@ func TestRunFatalPathOnBootPartitionMountTimeout(t *testing.T) {
 		t.Fatalf("Run() = %v, want an error about mounting the boot partition", err)
 	}
 	assertFatalPathTriggered(t, rebooter, sleeps)
+}
+
+// testDataOptions returns Options with the data partition configured, for
+// tests exercising the /data mount.
+func testDataOptions() Options {
+	opts := testOptions()
+	opts.DataTarget = "/data"
+	opts.DataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}
+	opts.DataTimeout = 10 * time.Second
+	return opts
+}
+
+func TestRunMountsDataPartitionAndExportsGosdData(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	markerCreated := false
+	var gotEnv []string
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		gotEnv = env
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:              mounter,
+		Hostname:             &fakeHostname{},
+		AppStarter:           appStarter,
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		EnsureDataMarker:     func() error { markerCreated = true; return nil },
+		Sleep:                func(d time.Duration) { clock.Sleep(d) },
+		Now:                  clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if mounter.callsFor("/data") == 0 {
+		t.Error("data partition was never mounted")
+	}
+	found := false
+	for _, e := range gotEnv {
+		if e == "GOSD_DATA=/data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("app env = %v, want it to contain GOSD_DATA=/data", gotEnv)
+	}
+	if !markerCreated {
+		t.Error("the .gosd-data marker was never created after a successful data mount")
+	}
+	if !strings.Contains(console.String(), "data partition mounted") {
+		t.Errorf("console output missing data mount log line: %q", console.String())
+	}
+}
+
+func TestRunContinuesWithoutGosdDataWhenPartitionIsMissing(t *testing.T) {
+	// An image built with --data-size=0 (or from before GOSD-DATA existed)
+	// has no partition 2: boot must proceed normally, the app must start,
+	// and it simply gets no GOSD_DATA.
+	mounter := &fakeMounter{fn: func(c mountCall) error {
+		if c.target == "/data" {
+			return fs.ErrNotExist
+		}
+		return nil
+	}}
+	rebooter := &fakeRebooter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		gotEnv = env
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:              mounter,
+		Hostname:             &fakeHostname{},
+		AppStarter:           appStarter,
+		Reaper:               fakeReaper{},
+		Rebooter:             rebooter,
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		EnsureDataMarker:     func() error { t.Error("EnsureDataMarker called though the data partition never mounted"); return nil },
+		Sleep:                func(d time.Duration) { clock.Sleep(d) },
+		Now:                  clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a missing data partition is not fatal)", err)
+	}
+
+	if rebooter.rebooted {
+		t.Error("Run() rebooted over a missing data partition")
+	}
+	for _, e := range gotEnv {
+		if strings.HasPrefix(e, "GOSD_DATA=") {
+			t.Errorf("app env contains %q; want no GOSD_DATA when the partition is missing", e)
+		}
+	}
+	if !strings.Contains(console.String(), "no data partition") {
+		t.Errorf("console output missing the no-data-partition log line: %q", console.String())
+	}
 }
 
 func testDepsForFatalPath(mounter Mounter, hostname HostnameSetter, rebooter Rebooter, clock *fakeClock, sleeps *[]time.Duration) Deps {

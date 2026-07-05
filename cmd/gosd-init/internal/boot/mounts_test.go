@@ -1,6 +1,8 @@
 package boot
 
 import (
+	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +100,79 @@ func TestMountBootPartitionGivesUpAfterTimeout(t *testing.T) {
 	}
 	if clock.Now().Sub(time.Unix(0, 0)) < 10*time.Second {
 		t.Errorf("MountBootPartition() gave up before the 10s timeout elapsed")
+	}
+}
+
+func TestMountDataPartitionMountsReadWriteWithFlush(t *testing.T) {
+	m := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	if err != nil {
+		t.Fatalf("MountDataPartition() = %v, want nil", err)
+	}
+
+	call := m.calls[0]
+	if call.flags&msRdOnly != 0 {
+		t.Error("data partition was mounted read-only; want read-write")
+	}
+	if call.data != "flush" {
+		t.Errorf("data partition mount options = %q, want \"flush\"", call.data)
+	}
+	if call.fstype != "vfat" {
+		t.Errorf("data partition fstype = %q, want vfat", call.fstype)
+	}
+}
+
+func TestMountDataPartitionRetriesTransientFailures(t *testing.T) {
+	attempt := 0
+	m := &fakeMounter{fn: func(mountCall) error {
+		attempt++
+		if attempt <= 2 {
+			return errBoom // transient, not ENOENT
+		}
+		return nil
+	}}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	if err != nil {
+		t.Fatalf("MountDataPartition() = %v, want nil after retrying transient failures", err)
+	}
+	if attempt != 3 {
+		t.Errorf("MountDataPartition() made %d Mount attempts, want 3", attempt)
+	}
+}
+
+func TestMountDataPartitionReportsMissingPartitionImmediately(t *testing.T) {
+	// Both candidate device nodes not existing means the image has no data
+	// partition; that must be detected on the first round rather than
+	// burning the whole timeout on retries.
+	m := &fakeMounter{fn: func(mountCall) error { return fs.ErrNotExist }}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	if !errors.Is(err, ErrDataPartitionMissing) {
+		t.Fatalf("MountDataPartition() = %v, want ErrDataPartitionMissing", err)
+	}
+	if got := clock.Now().Sub(time.Unix(0, 0)); got != 0 {
+		t.Errorf("MountDataPartition() slept %s before reporting a missing partition; want no delay", got)
+	}
+}
+
+func TestMountDataPartitionGivesUpAfterTimeout(t *testing.T) {
+	m := &fakeMounter{fn: func(mountCall) error { return errBoom }}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	if err == nil {
+		t.Fatal("MountDataPartition() = nil, want error after exhausting the timeout")
+	}
+	if errors.Is(err, ErrDataPartitionMissing) {
+		t.Errorf("MountDataPartition() = %v; a persistent non-ENOENT failure must not read as a missing partition", err)
+	}
+	if clock.Now().Sub(time.Unix(0, 0)) < 10*time.Second {
+		t.Error("MountDataPartition() gave up before the timeout elapsed")
 	}
 }
 

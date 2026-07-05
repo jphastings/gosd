@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,17 @@ type Deps struct {
 	// even though step 4 already applied config.json's value.
 	ReadGosdToml func() (gosdtoml.Config, error)
 
+	// EnsureDataMountpoint creates the data mount target directory on the
+	// RAM-backed rootfs (the initramfs archive carries no empty
+	// directories, so /data doesn't exist until something makes it).
+	// Nil-checked, like ReadGosdToml: tests that don't exercise the data
+	// partition leave it unset.
+	EnsureDataMountpoint func() error
+	// EnsureDataMarker creates the .gosd-data marker file on the mounted
+	// data partition if it isn't already there (i.e. on the partition's
+	// first boot). Only called after the data partition mounts.
+	EnsureDataMarker func() error
+
 	Sleep func(time.Duration)
 	Now   func() time.Time
 
@@ -75,6 +87,14 @@ type Options struct {
 	BootTarget  string
 	BootDevices []string
 	BootTimeout time.Duration
+
+	// DataTarget is where the GOSD-DATA partition is mounted read-write;
+	// empty skips the data mount entirely (tests that don't care about
+	// it). A missing or unmountable data partition is never fatal — the
+	// app just doesn't get GOSD_DATA.
+	DataTarget  string
+	DataDevices []string
+	DataTimeout time.Duration
 
 	// Stop, if non-nil, ends app supervision when closed. Production
 	// leaves this nil so supervision runs forever, as PID 1 must; tests
@@ -155,13 +175,16 @@ func Run(deps Deps, opts Options) error {
 		log("hostname set to %q (gosd.toml applied)", cfg.Hostname)
 	}
 
-	if deps.StartNetworking != nil {
-		go deps.StartNetworking(cfg, gosdToml, log)
-	}
-
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
+	}
+	if dataDir := mountDataPartition(deps, opts, log); dataDir != "" {
+		env = append(env, "GOSD_DATA="+dataDir)
+	}
+
+	if deps.StartNetworking != nil {
+		go deps.StartNetworking(cfg, gosdToml, log)
 	}
 	sup := &Supervisor{
 		Start: func() (int, error) {
@@ -176,6 +199,43 @@ func Run(deps Deps, opts Options) error {
 	}
 	sup.Run(opts.Stop)
 	return nil
+}
+
+// mountDataPartition performs the optional GOSD-DATA mount and returns the
+// mounted directory, or "" when the app should get no GOSD_DATA. Nothing in
+// here is ever fatal: a missing partition (an image built with
+// --data-size=0, or from before the partition existed) or a failing mount
+// just means no persistent storage this boot.
+func mountDataPartition(deps Deps, opts Options, log func(format string, args ...any)) string {
+	if opts.DataTarget == "" {
+		return ""
+	}
+
+	if deps.EnsureDataMountpoint != nil {
+		if err := deps.EnsureDataMountpoint(); err != nil {
+			log("creating %s failed, continuing without persistent storage: %v", opts.DataTarget, err)
+			return ""
+		}
+	}
+
+	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, deps.Sleep, deps.Now); err != nil {
+		if errors.Is(err, ErrDataPartitionMissing) {
+			log("no data partition on this image, continuing without persistent storage")
+		} else {
+			log("mounting data partition failed, continuing without persistent storage: %v", err)
+		}
+		return ""
+	}
+	log("data partition mounted read-write at %s", opts.DataTarget)
+
+	if deps.EnsureDataMarker != nil {
+		if err := deps.EnsureDataMarker(); err != nil {
+			// Worth surfacing (first sign of a bad card), but the mount
+			// itself succeeded, so the app still gets GOSD_DATA.
+			log("creating the data partition marker file failed: %v", err)
+		}
+	}
+	return opts.DataTarget
 }
 
 // fatal implements step 8 of the boot sequence: log, sync, sleep 5s, then

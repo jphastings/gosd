@@ -56,6 +56,11 @@ type Options struct {
 
 	// OutputPath is where the finished .img file is written.
 	OutputPath string
+
+	// DataSizeBytes is the size of the optional writable GOSD-DATA
+	// partition, passed straight through to image.Spec.DataSizeBytes.
+	// Zero disables the partition.
+	DataSizeBytes int64
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -125,8 +130,9 @@ func Assemble(ctx context.Context, opts Options) error {
 	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword))
 
 	if err := image.Write(opts.OutputPath, image.Spec{
-		BootFiles: bootFiles,
-		RawWrites: opts.Board.RawWrites(resolved),
+		BootFiles:     bootFiles,
+		RawWrites:     opts.Board.RawWrites(resolved),
+		DataSizeBytes: opts.DataSizeBytes,
 	}); err != nil {
 		return fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)
 	}

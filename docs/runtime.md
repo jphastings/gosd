@@ -32,13 +32,18 @@ manager, no SSH. Whatever your Go binary does is the whole system.
 
 ## Environment variables
 
-`gosd-init` sets exactly two environment variables before starting `/app`
+`gosd-init` sets these environment variables before starting `/app`
 (see `cmd/gosd-init/internal/boot/sequence.go`):
 
 - `GOSD_BOARD` — the board ID the image was built for (e.g. `pi-zero-2w`),
   as recorded in `config.json` (and overridable at boot via the `gosd.board=`
   kernel command-line parameter).
 - `GOSD_HOSTNAME` — the hostname `gosd-init` just applied via `sethostname(2)`.
+- `GOSD_DATA` — the mount point of the writable `GOSD-DATA` partition
+  (`/data`), **only set when that partition exists and mounted**. Images
+  built with `--data-size=0`, or with a gosd from before the data partition
+  existed, boot normally with `GOSD_DATA` unset — check for it rather than
+  assuming it. See "Persistent storage" below.
 
 There is deliberately no `GOSD_IP` or similar. Networking comes up
 asynchronously after `/app` has already started (see below), so no address
@@ -95,24 +100,61 @@ Time sync over SNTP is **planned, not yet built** (tracked as bean
   than treating an early failure as permanent, and not to hard-fail your app
   if a certificate check fails once shortly after boot.
 
-## Storage: RAM only, `/boot` read-only
+## Storage: RAM rootfs, `/boot` read-only, `/data` persistent
 
 GoSD's boot sequence never leaves the initramfs: there's no `pivot_root` or
 `switch_root` to a separate root filesystem. The root filesystem your app
 runs on is Linux's initramfs `rootfs` — a RAM-backed, writable filesystem —
 so:
 
-- Anything your app writes to disk (outside `/boot`) is writable at runtime,
-  but **lives in RAM and is gone on reboot or power loss.** There is no
-  persistent storage yet. A persistence mechanism is planned for a later
-  release (tracked under the `gosd-g...` line of beans) — don't design your
-  app around durable local writes until that lands.
+- Anything your app writes outside `/data` and `/boot` is writable at
+  runtime, but **lives in RAM and is gone on reboot or power loss.** For
+  durable writes, use the `GOSD_DATA` partition (below).
 - `/boot` — the `GOSD-BOOT` FAT partition containing the kernel, initramfs,
   and boot configuration — is mounted **read-only**. Don't expect to write
   to it from your app.
-- Because everything is RAM-resident, be mindful of memory: both supported
+- Because the rootfs is RAM-resident, be mindful of memory: both supported
   boards are small, memory-constrained devices, and anything you write to
-  disk is really consuming RAM.
+  the rootfs is really consuming RAM.
+
+## Persistent storage: `/data`
+
+Images are built with a second FAT32 partition, labelled `GOSD-DATA`, sized
+by `gosd build --data-size` (1GiB unless you say otherwise; `--data-size=0`
+omits it). `gosd-init` mounts it read-write at `/data` and sets
+`GOSD_DATA=/data` in your app's environment. Data written there survives
+reboots and power cycles.
+
+Rules of engagement:
+
+- **Gate on `GOSD_DATA` being set.** If the image was built with
+  `--data-size=0` (or by an older gosd), the partition doesn't exist,
+  `GOSD_DATA` is unset, and `/data` isn't mounted — boot still proceeds
+  normally. A well-behaved app treats "no `GOSD_DATA`" as "no persistence
+  available" rather than failing.
+- **It's FAT32, with FAT32's limits.** No unix permissions, no ownership,
+  no symlinks or hard links, 4GiB max file size, coarse (2s) mtime
+  granularity. Don't design around any of those existing.
+- **It is not power-loss-robust.** FAT has no journal. The partition is
+  mounted with the `flush` option so data reaches the card promptly, but a
+  power cut mid-write can still corrupt the file being written (and, less
+  commonly, the filesystem). Write durable state the boring, robust way:
+  write to a temporary name, `fsync` the file, then `rename` it over the
+  real name — readers then always see either the old version or the new
+  one. Never rewrite your only copy of something in place.
+- **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
+  first time the partition mounts; leave it alone, and don't be surprised
+  by it when listing `/data`.
+- **Reflashing wipes `/data`.** In v0.3, flashing a new image version
+  recreates the data partition from scratch — everything your app stored is
+  gone. This is deliberate for now. The planned app-slot update mechanism
+  (`docs/design/ab-updates.md`) changes only files inside `GOSD-BOOT` and
+  never touches the partition table, so once it lands, over-the-network app
+  updates will leave `GOSD-DATA` intact — it's a full reflash, and only a
+  full reflash, that wipes it.
+
+For a worked example, `examples/hello` persists a boot counter to
+`GOSD_DATA` using exactly the write-rename-fsync pattern above.
 
 ## Logging
 
