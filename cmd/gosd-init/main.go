@@ -45,11 +45,14 @@ const (
 
 // bootDevices are the candidate device nodes for the GOSD-BOOT FAT
 // partition, tried in order, with no udev available to discover it.
-var bootDevices = []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1"}
+// /dev/vda1 is qemu-virt's virtio-blk SD card (see internal/boards/qemuvirt)
+// - listed last since it's never present alongside the real mmcblk devices,
+// checked with the exact same probe logic as those.
+var bootDevices = []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1", "/dev/vda1"}
 
 // dataDevices are the candidate device nodes for the optional GOSD-DATA FAT
-// partition: partition 2 of the same cards bootDevices covers.
-var dataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}
+// partition: partition 2 of the same devices bootDevices covers.
+var dataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
 
 func main() {
 	platform := boot.NewPlatform()

@@ -305,6 +305,118 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			t.Errorf("output image %q is empty", path)
 		}
 	}
+
+	// qemu-virt is internal-only: the default no---board build must produce
+	// exactly the two public boards' images, never a third for it.
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		t.Fatalf("reading output directory: %v", err)
+	}
+	var imgNames []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".img") {
+			imgNames = append(imgNames, e.Name())
+		}
+	}
+	if len(imgNames) != 2 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 2 (qemu-virt must stay excluded)", len(imgNames), imgNames)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
+		t.Error("default build produced hello-qemu-virt.img; qemu-virt is internal-only and must be excluded from the default build set")
+	}
+}
+
+// TestBuildProducesAQemuVirtImageFromFakeArtifacts is the acceptance test for
+// gosd-2v40: an explicit `gosd build --board=qemu-virt`, using
+// --artifacts-dir to supply a fake kernel image, produces an image whose
+// boot partition contains exactly the kernel (Image), the initramfs, and
+// gosd.toml (added by the pipeline for every board) - no config.txt or
+// extlinux.conf, since qemu boots -kernel/-initrd directly (see
+// internal/boards/qemuvirt).
+func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-qemu-virt.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "qemu-virt",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=qemu-virt failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{"Image", "initramfs.cpio.zst", "gosd.toml"} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+	for _, absent := range []string{"config.txt", "cmdline.txt", "extlinux/extlinux.conf"} {
+		if _, err := fs.ReadFile(absent); err == nil {
+			t.Errorf("boot partition unexpectedly contains %q; qemu-virt has no on-device bootloader to configure", absent)
+		}
+	}
+}
+
+// TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
+// behavior for --catalog when every selected board is internal-only: no
+// os_list.json is written, and the build itself still succeeds (this is not
+// treated as an error - see writeCatalog's doc comment for why).
+func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-qemu-virt.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "qemu-virt",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=qemu-virt --catalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("the image itself should still be built: %v", err)
+	}
+	for _, listPath := range []string{
+		filepath.Join(outDir, "os_list.json"),
+		filepath.Join(outDir, "hello-qemu-virt.os_list.json"),
+	} {
+		if _, err := os.Stat(listPath); err == nil {
+			t.Errorf("%s was written for a qemu-virt-only build; qemu-virt is internal-only and must never appear in a catalog", listPath)
+		}
+	}
 }
 
 // TestBuildCatalogWritesOsListJSON is the acceptance test for gosd-t6cs:

@@ -80,16 +80,22 @@ var ErrDataPartitionMissing = errors.New("no data partition device exists")
 // MountDataPartition mounts the GOSD-DATA FAT partition read-write at
 // target, trying each candidate device in turn with the same retry pattern
 // as MountBootPartition. The vfat "flush" option makes the driver push file
-// data to the card promptly after writes — FAT has no journal, so the less
+// data to storage promptly after writes — FAT has no journal, so the less
 // time dirty data sits in RAM on a device with no clean-shutdown story, the
 // better.
 //
 // A round in which every candidate fails with "no such file or directory"
 // means the device nodes simply don't exist. This step runs only after the
-// boot partition (partition 1 of the same card) has mounted, so the kernel
-// has already scanned the card's partition table: a missing p2 node is a
+// boot partition (partition 1 of the same underlying block device - an SD
+// card, eMMC, or qemu-virt's virtio-blk disk) has mounted, so the kernel has
+// already scanned that device's partition table: a missing p2 node is a
 // definitive "this image has no data partition", reported immediately as
-// ErrDataPartitionMissing rather than burning the whole timeout on it.
+// ErrDataPartitionMissing rather than burning the whole timeout on it. This
+// holds candidate-by-candidate even as the device list grows (mmcblk0,
+// mmcblk1, vda, ...): whichever one the boot partition actually mounted
+// from is the one already known-scanned, and only real hardware/VM ever
+// exposes one of them at a time, so "every candidate" and "the one that
+// matters" are the same check in practice.
 func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, sleep func(time.Duration), now func() time.Time) error {
 	deadline := now().Add(timeout)
 	var lastErr error

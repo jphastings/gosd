@@ -160,6 +160,27 @@ func TestMountDataPartitionReportsMissingPartitionImmediately(t *testing.T) {
 	}
 }
 
+// TestMountDataPartitionReportsMissingPartitionImmediatelyWithThreeCandidates
+// covers the longer, three-device candidate list gosd-init now probes
+// (mmcblk0, mmcblk1, vda - see main.go): the fast-ENOENT path must still
+// fire on the first round no matter how many candidates it has to check.
+func TestMountDataPartitionReportsMissingPartitionImmediatelyWithThreeCandidates(t *testing.T) {
+	m := &fakeMounter{fn: func(mountCall) error { return fs.ErrNotExist }}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	devices := []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
+	err := MountDataPartition(m, "/data", devices, 10*time.Second, clock.Sleep, clock.Now)
+	if !errors.Is(err, ErrDataPartitionMissing) {
+		t.Fatalf("MountDataPartition() = %v, want ErrDataPartitionMissing", err)
+	}
+	if got := clock.Now().Sub(time.Unix(0, 0)); got != 0 {
+		t.Errorf("MountDataPartition() slept %s before reporting a missing partition; want no delay", got)
+	}
+	if got := m.callsFor("/data"); got != len(devices) {
+		t.Errorf("MountDataPartition() made %d attempts, want exactly %d (one per candidate, no retry round)", got, len(devices))
+	}
+}
+
 func TestMountDataPartitionGivesUpAfterTimeout(t *testing.T) {
 	m := &fakeMounter{fn: func(mountCall) error { return errBoom }}
 	clock := newFakeClock(time.Unix(0, 0))

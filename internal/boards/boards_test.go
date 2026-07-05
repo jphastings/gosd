@@ -70,3 +70,43 @@ func TestRegisterPanicsOnDuplicateName(t *testing.T) {
 	}()
 	boards.Register(fakeBoard{name: "test-board-duplicate"})
 }
+
+func TestRegisterInternalIsFindableButExcludedFromAllAndIDs(t *testing.T) {
+	boards.RegisterInternal(fakeBoard{name: "test-board-internal"})
+
+	b, ok := boards.Find("test-board-internal")
+	if !ok {
+		t.Fatal("Find(test-board-internal) = not found, want an internal board still findable by explicit ID")
+	}
+	if b.Name() != "test-board-internal" {
+		t.Errorf("Find(test-board-internal).Name() = %q, want test-board-internal", b.Name())
+	}
+
+	for _, id := range boards.IDs() {
+		if id == "test-board-internal" {
+			t.Error("IDs() contains an internal-only board; it must be excluded from user-facing listings")
+		}
+	}
+	for _, b := range boards.All() {
+		if b.Name() == "test-board-internal" {
+			t.Error("All() contains an internal-only board; it must be excluded from the default build set")
+		}
+	}
+	if !boards.IsInternal("test-board-internal") {
+		t.Error("IsInternal(test-board-internal) = false, want true")
+	}
+	if boards.IsInternal("test-board-listed") {
+		t.Error("IsInternal(test-board-listed) = true, want false: it was registered via Register, not RegisterInternal")
+	}
+}
+
+func TestRegisterAndRegisterInternalShareOneNamespace(t *testing.T) {
+	boards.Register(fakeBoard{name: "test-board-shared-namespace"})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("RegisterInternal with a name already used by Register did not panic")
+		}
+	}()
+	boards.RegisterInternal(fakeBoard{name: "test-board-shared-namespace"})
+}
