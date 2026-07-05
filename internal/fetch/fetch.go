@@ -48,8 +48,10 @@ func ToDir(ctx context.Context, client *http.Client, f File, cacheDir, name stri
 	}
 
 	dest := filepath.Join(cacheDir, name)
-	if _, err := os.Stat(dest); err == nil && sha256File(dest) == f.SHA256 {
-		return dest, nil
+	if _, err := os.Stat(dest); err == nil {
+		if got, err := SHA256File(dest); err == nil && got == f.SHA256 {
+			return dest, nil
+		}
 	}
 
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -98,18 +100,21 @@ func ToDir(ctx context.Context, client *http.Client, f File, cacheDir, name stri
 	return dest, nil
 }
 
-// sha256File returns the lowercase-hex SHA-256 digest of the file at path,
-// or "" if it can't be read.
-func sha256File(path string) string {
+// SHA256File returns the lowercase-hex SHA-256 digest of the file at path.
+// It exists (rather than being a private helper of ToDir) so other packages
+// that verify pinned files by sha256 — e.g. internal/artifacts, which
+// verifies every file inside a downloaded artifact tarball — don't
+// reimplement it.
+func SHA256File(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return ""
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

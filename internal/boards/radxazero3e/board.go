@@ -3,9 +3,11 @@
 // unpartitioned gap ahead of the FAT boot partition, and the kernel, DTB,
 // initramfs, and extlinux.conf U-Boot reads from that partition. The
 // bootloader and kernel artifacts are built by
-// build/boards/radxa-zero-3e/{uboot,kernel}/build.sh and have no automatic
-// fetch source yet, so they always come from --artifacts-dir. Locked byte
-// offsets and extlinux.conf content: see bean gosd-gbsz.
+// build/boards/radxa-zero-3e/{uboot,kernel}/build.sh; they have no per-file
+// pinned URL, so they're resolved from --artifacts-dir or, falling back,
+// from the CI-built artifact release (see bean gosd-wtpa and
+// internal/artifacts). Locked byte offsets and extlinux.conf content: see
+// bean gosd-gbsz.
 package radxazero3e
 
 import (
@@ -22,10 +24,10 @@ const (
 	// boardName is the --board flag value.
 	boardName = "radxa-zero-3e"
 
-	// Artifact names: the file names expected inside --artifacts-dir.
-	// None of these have an automatic fetch source yet (no pinned URL),
-	// so ArtifactRef leaves URL/SHA256 empty for all of them, same as
-	// pi-zero-2w's not-yet-buildable kernel.
+	// Artifact names: the file names expected inside --artifacts-dir, and
+	// inside the radxa-zero-3e CI-built artifact release tarball. None of
+	// these have a per-file pinned URL, so ArtifactRef leaves URL/SHA256
+	// empty for all of them, same as pi-zero-2w's kernel.
 	idbloaderArtifactName = "idbloader.img"
 	ubootArtifactName     = "u-boot.itb"
 	kernelArtifactName    = "Image"
@@ -63,9 +65,9 @@ func New() boards.Board { return board{} }
 func (board) Name() string { return boardName }
 
 // Artifacts implements boards.Board: the bootloader and kernel files built
-// by build/boards/radxa-zero-3e/{uboot,kernel}/build.sh. None can be
-// fetched automatically yet, so every ref must be supplied via
-// --artifacts-dir.
+// by build/boards/radxa-zero-3e/{uboot,kernel}/build.sh. None has a
+// per-file pinned URL; ResolveArtifacts resolves them from --artifacts-dir
+// or, falling back, from the radxa-zero-3e CI-built artifact release.
 func (board) Artifacts() []boards.ArtifactRef {
 	return []boards.ArtifactRef{
 		{Name: idbloaderArtifactName},

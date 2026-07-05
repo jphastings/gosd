@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,7 @@ func TestResolveArtifactsPrefersArtifactsDirOverFetching(t *testing.T) {
 	refs := []boards.ArtifactRef{
 		{Name: "kernel8.img", URL: "http://example.invalid/kernel8.img", SHA256: "0000"},
 	}
-	art, err := boards.ResolveArtifacts(context.Background(), refs, dir, t.TempDir())
+	art, err := boards.ResolveArtifacts(context.Background(), "pi-zero-2w", refs, dir, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("ResolveArtifacts: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestResolveArtifactsFetchesWhenNotFoundLocally(t *testing.T) {
 	defer srv.Close()
 
 	refs := []boards.ArtifactRef{{Name: "start.elf", URL: srv.URL, SHA256: sha256Hex(content)}}
-	art, err := boards.ResolveArtifacts(context.Background(), refs, "", t.TempDir())
+	art, err := boards.ResolveArtifacts(context.Background(), "pi-zero-2w", refs, "", t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("ResolveArtifacts: %v", err)
 	}
@@ -77,10 +78,109 @@ func TestResolveArtifactsFetchesWhenNotFoundLocally(t *testing.T) {
 	}
 }
 
-func TestResolveArtifactsWithNoURLAndNoLocalFileIsActionable(t *testing.T) {
+func TestResolveArtifactsWithNoURLNoLocalFileAndNoFallbackIsActionable(t *testing.T) {
 	refs := []boards.ArtifactRef{{Name: "kernel8.img"}}
 
-	_, err := boards.ResolveArtifacts(context.Background(), refs, t.TempDir(), t.TempDir())
+	_, err := boards.ResolveArtifacts(context.Background(), "pi-zero-2w", refs, t.TempDir(), t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("ResolveArtifacts() succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "--artifacts-dir") {
+		t.Errorf("error = %q, want it to mention --artifacts-dir", err)
+	}
+}
+
+func TestResolveArtifactsFallsBackToBoardArtifactsFuncForRefsWithNoURL(t *testing.T) {
+	boardDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(boardDir, "Image"), []byte("ci-built kernel"), 0o644); err != nil {
+		t.Fatalf("seeding fake CI-built artifact: %v", err)
+	}
+
+	var gotBoard, gotCacheDir string
+	fetchBoardArtifacts := func(_ context.Context, cacheDir, board string) (string, error) {
+		gotBoard, gotCacheDir = board, cacheDir
+		return boardDir, nil
+	}
+
+	cacheDir := t.TempDir()
+	refs := []boards.ArtifactRef{{Name: "Image"}}
+	art, err := boards.ResolveArtifacts(context.Background(), "radxa-zero-3e", refs, "", cacheDir, fetchBoardArtifacts)
+	if err != nil {
+		t.Fatalf("ResolveArtifacts: %v", err)
+	}
+
+	if gotBoard != "radxa-zero-3e" {
+		t.Errorf("fetchBoardArtifacts was called with board = %q, want radxa-zero-3e", gotBoard)
+	}
+	if gotCacheDir != cacheDir {
+		t.Errorf("fetchBoardArtifacts was called with cacheDir = %q, want %q", gotCacheDir, cacheDir)
+	}
+
+	r, err := art.Open("Image")
+	if err != nil {
+		t.Fatalf("Open(Image): %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading artifact: %v", err)
+	}
+	if string(got) != "ci-built kernel" {
+		t.Errorf("artifact content = %q, want %q", got, "ci-built kernel")
+	}
+}
+
+func TestResolveArtifactsCallsBoardArtifactsFuncAtMostOnce(t *testing.T) {
+	boardDir := t.TempDir()
+	for _, name := range []string{"Image", "rk3566-radxa-zero-3e.dtb"} {
+		if err := os.WriteFile(filepath.Join(boardDir, name), []byte("fake "+name), 0o644); err != nil {
+			t.Fatalf("seeding fake CI-built artifact %q: %v", name, err)
+		}
+	}
+
+	calls := 0
+	fetchBoardArtifacts := func(context.Context, string, string) (string, error) {
+		calls++
+		return boardDir, nil
+	}
+
+	refs := []boards.ArtifactRef{{Name: "Image"}, {Name: "rk3566-radxa-zero-3e.dtb"}}
+	if _, err := boards.ResolveArtifacts(context.Background(), "radxa-zero-3e", refs, "", t.TempDir(), fetchBoardArtifacts); err != nil {
+		t.Fatalf("ResolveArtifacts: %v", err)
+	}
+
+	if calls != 1 {
+		t.Errorf("fetchBoardArtifacts was called %d times for 2 no-URL refs, want 1 (memoized per ResolveArtifacts call)", calls)
+	}
+}
+
+func TestResolveArtifactsSurfacesBoardArtifactsFuncErrorActionably(t *testing.T) {
+	wantErr := errors.New("network unreachable")
+	fetchBoardArtifacts := func(context.Context, string, string) (string, error) {
+		return "", wantErr
+	}
+
+	refs := []boards.ArtifactRef{{Name: "Image"}}
+	_, err := boards.ResolveArtifacts(context.Background(), "radxa-zero-3e", refs, "", t.TempDir(), fetchBoardArtifacts)
+	if err == nil {
+		t.Fatal("ResolveArtifacts() succeeded, want an error")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want it to wrap %v", err, wantErr)
+	}
+	if !strings.Contains(err.Error(), "--artifacts-dir") {
+		t.Errorf("error = %q, want it to mention --artifacts-dir as an alternative", err)
+	}
+}
+
+func TestResolveArtifactsWithNoURLNotFoundInDownloadedArtifactsIsActionable(t *testing.T) {
+	fetchBoardArtifacts := func(context.Context, string, string) (string, error) {
+		return t.TempDir(), nil // empty: doesn't contain the requested artifact
+	}
+
+	refs := []boards.ArtifactRef{{Name: "Image"}}
+	_, err := boards.ResolveArtifacts(context.Background(), "radxa-zero-3e", refs, "", t.TempDir(), fetchBoardArtifacts)
 	if err == nil {
 		t.Fatal("ResolveArtifacts() succeeded, want an error")
 	}
@@ -90,7 +190,7 @@ func TestResolveArtifactsWithNoURLAndNoLocalFileIsActionable(t *testing.T) {
 }
 
 func TestArtifactsOpenUnresolvedNameErrors(t *testing.T) {
-	art, err := boards.ResolveArtifacts(context.Background(), nil, "", "")
+	art, err := boards.ResolveArtifacts(context.Background(), "pi-zero-2w", nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("ResolveArtifacts: %v", err)
 	}
@@ -101,7 +201,7 @@ func TestArtifactsOpenUnresolvedNameErrors(t *testing.T) {
 }
 
 func TestArtifactsMustOpenPanicsOnUnresolvedName(t *testing.T) {
-	art, err := boards.ResolveArtifacts(context.Background(), nil, "", "")
+	art, err := boards.ResolveArtifacts(context.Background(), "pi-zero-2w", nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("ResolveArtifacts: %v", err)
 	}

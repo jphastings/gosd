@@ -6,6 +6,7 @@
 package boards
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -16,20 +17,32 @@ import (
 // ArtifactRef pins one file a Board needs to assemble its image: a kernel,
 // device tree blob, firmware, or bootloader file. Board.Artifacts lists
 // these; ResolveArtifacts turns the list into local files, preferring an
-// --artifacts-dir override over a pinned-URL fetch.
+// --artifacts-dir override, then a pinned-URL fetch, then (for refs with no
+// URL) the CI-built artifact release fetched via a BoardArtifactsFunc.
 type ArtifactRef struct {
 	// Name identifies the artifact; it is both the file name expected
 	// inside --artifacts-dir and the cache key used when fetching URL.
 	Name string
 	// URL is the upstream location to fetch Name from when it isn't found
-	// in --artifacts-dir. Empty means this artifact has no automatic
-	// fetch source yet (e.g. a kernel build that hasn't landed) and must
-	// be supplied via --artifacts-dir.
+	// in --artifacts-dir. Empty means Name isn't fetched by its own
+	// pinned URL — either because it's a third-party blob with no
+	// per-file source yet, or (more commonly) because it's one of the
+	// kernel/DTB/bootloader files GoSD compiles itself and ships as part
+	// of a whole per-board artifact release instead (see
+	// BoardArtifactsFunc).
 	URL string
 	// SHA256 is the expected digest of the fetched file, required
 	// whenever URL is set.
 	SHA256 string
 }
+
+// BoardArtifactsFunc downloads and caches every CI-built artifact (kernel,
+// DTB, bootloader — whatever a board doesn't fetch via a per-file pinned
+// URL) for the given board under cacheDir, and returns the local directory
+// they were extracted into. internal/artifacts.EnsureBoard implements this
+// signature; ResolveArtifacts calls it, when non-nil, as the fallback for
+// any ArtifactRef with no URL that isn't found in --artifacts-dir.
+type BoardArtifactsFunc func(ctx context.Context, cacheDir, board string) (string, error)
 
 // BuildConfig holds the per-build values a Board's BootFiles may need to
 // bake into rendered templates (most boards only need these inside
