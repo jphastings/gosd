@@ -1,11 +1,11 @@
 ---
 # gosd-wtpa
 title: 'Artifact pipeline: CI kernel/bootloader builds, versioned releases, CLI download+cache'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-05T17:11:25Z
+updated_at: 2026-07-05T18:58:58Z
 parent: gosd-y0x3
 blocked_by:
     - gosd-70b2
@@ -165,3 +165,6 @@ apt-get/HOSTCC stage, which is what was exercised).
 PR: bean/gosd-wtpa-ci-host-toolchain — "Install native host toolchain in
 board build containers". Does not merge; after merge, JP still needs to
 delete the failed `artifacts/v0.1.0` release + tag and re-push it.
+
+## Clean-machine acceptance (2026-07-05)
+Verified after the repo went public and artifacts/v0.1.0 published (second attempt; first failed on missing host toolchain on amd64 runners, fixed in PR #27, then 404s traced to repo privacy): with a fresh HOME/cache, `gosd build ./examples/hello` with no flags downloaded both board tarballs from the release, sha256-verified, and produced hello-pi-zero-2w.img + hello-radxa-zero-3e.img; an immediate rebuild with a dead HTTPS proxy (offline simulation) succeeded from the cache alone. Acceptance met; bean complete.
