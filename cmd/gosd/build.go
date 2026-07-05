@@ -21,13 +21,6 @@ func init() {
 	boards.Register(radxazero3e.New())
 }
 
-// gosdInitPkg is the import path gosd cross-compiles for the init binary
-// baked into every image. Building it via an absolute import path (rather
-// than a path relative to the caller's working directory) only works today
-// because gosd is run from within its own module; packaging/distributing
-// gosd for use outside this repo is a separate, later concern.
-const gosdInitPkg = "github.com/jphastings/gosd/cmd/gosd-init"
-
 var (
 	boardIDs     []string
 	output       string
@@ -35,6 +28,7 @@ var (
 	wifiSSID     string
 	wifiPass     string
 	artifactsDir string
+	gosdInitSrc  string
 )
 
 func newBuildCmd() *cobra.Command {
@@ -55,6 +49,8 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&wifiPass, "wifi-pass", "", "WiFi password to bake into the image (WPA2-PSK or open networks only)")
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
 		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
+	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", "",
+		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
 
 	return cmd
 }
@@ -89,7 +85,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	initBinary := filepath.Join(tempDir, "gosd-init")
-	if err := build.CrossCompile(gosdInitPkg, initBinary); err != nil {
+	if err := build.CrossCompileGosdInit(initBinary, gosdInitSrc); err != nil {
 		return fmt.Errorf("cross-compiling gosd-init failed: %w", err)
 	}
 
