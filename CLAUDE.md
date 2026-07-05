@@ -24,9 +24,12 @@ say so in the bean rather than silently diverging.
   root, Docker, or Linux — `go test ./...` must pass on macOS and Linux.
   Linux-only runtime code goes behind build tags.
 - **Target:** `GOOS=linux GOARCH=arm64` only (both boards are arm64).
-- **Board IDs:** `pi-zero-2w`, `radxa-zero-3e`. `gosd build` with no `--board`
-  builds **all** boards, emitting `<appname>-<board>.img` next to each other;
-  `--board` (repeatable) restricts. Reserved for planned support:
+- **Board IDs:** `pi-zero-2w`, `radxa-zero-3e`; also `qemu-virt` (internal —
+  see the "qemu-virt board" decision below: registered and buildable via
+  explicit `--board=qemu-virt`, but excluded from `--help` text, the default
+  build set, and catalog generation). `gosd build` with no `--board`
+  builds **all** (public) boards, emitting `<appname>-<board>.img` next to
+  each other; `--board` (repeatable) restricts. Reserved for planned support:
   `nanopi-zero2` (FriendlyElec, RK3528A — epic gosd-cwjf; gated on verifying
   mainline kernel/U-Boot support, since vendor images run a BSP kernel and
   GoSD is mainline-only; WiFi is an optional M.2 module there, Ethernet-first).

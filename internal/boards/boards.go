@@ -89,39 +89,86 @@ type Board interface {
 
 var registry = map[string]Board{}
 
-// Register adds b to the set of known boards, keyed by b.Name(). It's meant
-// to be called once at startup for every board implementation (see
-// cmd/gosd); registering the same name twice is a programmer error.
+// internalOnly marks the subset of registry that RegisterInternal (rather
+// than Register) added: boards that exist and are fully buildable, but are
+// deliberately left out of every user-facing listing. qemu-virt is the only
+// current member (see that package's doc comment) - it's for CI/local
+// testing, not something an end user should be offered as a flashing
+// target.
+var internalOnly = map[string]bool{}
+
+// Register adds b to the set of known boards, keyed by b.Name(), and
+// includes it in All(), IDs(), and catalog generation. It's meant to be
+// called once at startup for every public board implementation (see
+// cmd/gosd); registering the same name twice (via Register or
+// RegisterInternal) is a programmer error.
 func Register(b Board) {
+	register(b, false)
+}
+
+// RegisterInternal adds b to the set of known boards, keyed by b.Name(),
+// exactly like Register, except All(), IDs(), and catalog generation all
+// skip it - the board is only reachable via an explicit --board=<name>
+// (Find still finds it). Use this for boards that are real and fully
+// buildable but not meant to be offered to end users, e.g. qemu-virt.
+func RegisterInternal(b Board) {
+	register(b, true)
+}
+
+func register(b Board, internal bool) {
 	name := b.Name()
 	if _, exists := registry[name]; exists {
 		panic(fmt.Sprintf("boards: %q is already registered", name))
 	}
 	registry[name] = b
+	if internal {
+		internalOnly[name] = true
+	}
 }
 
-// All returns every registered board, sorted by name.
+// All returns every registered public board, sorted by name - i.e. every
+// board except those registered via RegisterInternal. This is the default
+// no---board build set and the set catalog generation draws from.
 func All() []Board {
 	out := make([]Board, 0, len(registry))
-	for _, b := range registry {
+	for name, b := range registry {
+		if internalOnly[name] {
+			continue
+		}
 		out = append(out, b)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
 }
 
-// Find looks up a board by its ID (Name()).
+// Find looks up a board by its ID (Name()), public or internal-only: an
+// explicit --board=qemu-virt must still resolve even though qemu-virt is
+// absent from All()/IDs().
 func Find(id string) (Board, bool) {
 	b, ok := registry[id]
 	return b, ok
 }
 
-// IDs returns the IDs of every registered board, sorted.
+// IDs returns the IDs of every registered public board, sorted - the same
+// set All() returns, for --help text and error messages that shouldn't
+// advertise internal-only boards.
 func IDs() []string {
 	ids := make([]string, 0, len(registry))
-	for id := range registry {
-		ids = append(ids, id)
+	for name := range registry {
+		if internalOnly[name] {
+			continue
+		}
+		ids = append(ids, name)
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// IsInternal reports whether id refers to a board registered via
+// RegisterInternal. Callers that resolve boards explicitly (e.g. --board)
+// and then need to exclude internal-only ones from a public-facing output -
+// catalog generation is the current example - use this rather than
+// re-deriving the distinction themselves.
+func IsInternal(id string) bool {
+	return internalOnly[id]
 }

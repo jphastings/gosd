@@ -12,6 +12,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
+	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
@@ -22,6 +23,11 @@ import (
 func init() {
 	boards.Register(pizero2w.New())
 	boards.Register(radxazero3e.New())
+	// qemu-virt is internal-only (see CLAUDE.md's locked decision): it's a
+	// real, fully buildable board, but only reachable via an explicit
+	// --board=qemu-virt, never part of the default no---board build set,
+	// --help text, or catalog generation.
+	boards.RegisterInternal(qemuvirt.New())
 }
 
 var (
@@ -142,7 +148,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if catalogFlag {
-		if err := writeCatalog(selected, appName, outputs); err != nil {
+		if err := writeCatalog(cmd, selected, appName, outputs); err != nil {
 			return err
 		}
 	}
@@ -193,14 +199,29 @@ func parseDataSize(s string) (int64, error) {
 // board into the same directory when there's more than one, and a single
 // board's own directory when there's just one), so the combined
 // os_list.json is written next to the first image.
-func writeCatalog(selected []boards.Board, appName string, outputs map[string]string) error {
+//
+// Internal-only boards (currently just qemu-virt) are never listed in a
+// catalog end users are meant to paste into Imager, so they're filtered out
+// of selected before any entry is built - not because they'd fail, but
+// because a catalog is a genuinely public artifact. A build of only
+// internal boards (e.g. `--board=qemu-virt --catalog`) is therefore a
+// silent no-op: nothing to write isn't an error, and --catalog on a normal,
+// public-board build is unaffected either way.
+func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, outputs map[string]string) error {
 	images := make([]catalog.Image, 0, len(selected))
 	for _, b := range selected {
+		if boards.IsInternal(b.Name()) {
+			continue
+		}
 		images = append(images, catalog.Image{
 			AppName: appName,
 			BoardID: b.Name(),
 			Path:    outputs[b.Name()],
 		})
+	}
+	if len(images) == 0 {
+		cmd.PrintErrln("gosd build --catalog: every selected board is internal-only, so no catalog entries were written")
+		return nil
 	}
 
 	dir := filepath.Dir(images[0].Path)
