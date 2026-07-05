@@ -1,6 +1,6 @@
 # GoSD
 
-Turn Go applications into SD card images for the Raspberry Pi Zero 2w and the Radxa Zero 3E.
+Turn Go applications into SD card images for the Raspberry Pi Zero 2w and the Radxa Zero 3E. (Planned: FriendlyElec NanoPi Zero2.)
 
 Like GoKrazy, but the result is something _anyone_ can burn and use.
 

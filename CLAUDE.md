@@ -26,7 +26,10 @@ say so in the bean rather than silently diverging.
 - **Target:** `GOOS=linux GOARCH=arm64` only (both boards are arm64).
 - **Board IDs:** `pi-zero-2w`, `radxa-zero-3e`. `gosd build` with no `--board`
   builds **all** boards, emitting `<appname>-<board>.img` next to each other;
-  `--board` (repeatable) restricts.
+  `--board` (repeatable) restricts. Reserved for planned support:
+  `nanopi-zero2` (FriendlyElec, RK3528A — epic gosd-cwjf; gated on verifying
+  mainline kernel/U-Boot support, since vendor images run a BSP kernel and
+  GoSD is mainline-only; WiFi is an optional M.2 module there, Ethernet-first).
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
   FAT partition labels `GOSD-BOOT` / `GOSD-DATA`; boot-partition config file
   `gosd.toml`.
