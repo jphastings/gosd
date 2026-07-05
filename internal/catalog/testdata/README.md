@@ -3,10 +3,13 @@
 `os-list-schema.json` is vendored, unmodified, from
 [raspberrypi/rpi-imager](https://github.com/raspberrypi/rpi-imager) at the
 pinned commit
-[`204a6eee47c2c46da453d4de4138f08619a8c0e6`](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/doc/json-schema/os-list-schema.json)
-(tag `v2.0.10`), the same commit `docs/provisioning-formats.md` cites
-throughout. The worked example at
-[`doc/schema-notes.md`](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/doc/schema-notes.md)
+[`467be3d3e88f5d83fa78c78788f6e6fdce61a47e`](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/json-schema/os-list-schema.json)
+(tag `v2.0.10`). `docs/provisioning-formats.md` cites the same release via
+commit `204a6eee...`, a SHA that no longer resolves on GitHub (checked
+2026-07-05); the `v2.0.10` tag resolves to `467be3d3...`, and the schema
+blob there was verified byte-identical to this vendored copy. The worked
+example at
+[`doc/schema-notes.md`](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/schema-notes.md)
 at the same commit confirms the "Operating system entry" variant's required
 field set used by `catalog_test.go`.
 
