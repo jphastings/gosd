@@ -105,6 +105,42 @@ func TestBuildRejectsDuplicatePaths(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesExplicitEmptyDirs(t *testing.T) {
+	spec := testSpec(t)
+	spec.Dirs = []string{"/proc", "/sys", "/run", "/dev", "/lib/firmware"} // last one already implied by a File
+
+	var buf bytes.Buffer
+	if err := Build(&buf, spec); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	records := decodeArchive(t, buf.Bytes())
+	names := recordNames(records)
+	for _, want := range []string{"proc", "sys", "run", "dev", "lib/firmware"} {
+		if !contains(names, want) {
+			t.Errorf("archive entries = %v, want to contain %q", names, want)
+		}
+	}
+
+	for _, r := range records {
+		switch r.Name {
+		case "proc", "sys", "run", "dev":
+			if r.Mode != cpio.S_IFDIR|dirMode {
+				t.Errorf("record %q Mode = %#o, want a directory", r.Name, r.Mode)
+			}
+		}
+	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildRejectsFileDirectoryCollision(t *testing.T) {
 	spec := Spec{Files: []File{
 		{Path: "/lib/firmware", Content: bytes.NewReader(nil), Mode: 0o644},

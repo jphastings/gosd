@@ -42,6 +42,15 @@ type File struct {
 // be listed separately.
 type Spec struct {
 	Files []File
+
+	// Dirs lists additional empty directories to create, e.g. mount
+	// points gosd-init needs to already exist before it can mount
+	// something there (mount(2) fails with ENOENT on a missing target,
+	// and this rootfs starts out containing nothing but what this
+	// package writes — the kernel does not create /proc, /sys, or /run
+	// for you). Entries that are already implied by a File's path are
+	// harmless duplicates, not errors.
+	Dirs []string
 }
 
 // Build writes spec's files, plus their inferred parent directories, to w as
@@ -131,6 +140,18 @@ func buildRecords(spec Spec) ([]cpio.Record, error) {
 		}
 
 		for dir := path.Dir(name); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			if err := add(dir, node{kind: kindDir, mode: dirMode}); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	for _, d := range spec.Dirs {
+		name := cpio.Normalize(d)
+		if name == "" || name == "." {
+			return nil, fmt.Errorf("initramfs: invalid directory path %q", d)
+		}
+		for dir := name; dir != "." && dir != "/"; dir = path.Dir(dir) {
 			if err := add(dir, node{kind: kindDir, mode: dirMode}); err != nil {
 				return nil, err
 			}

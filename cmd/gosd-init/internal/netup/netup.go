@@ -120,6 +120,24 @@ func handleLinkEvent(deps Deps, ev LinkEvent, active map[string]context.CancelFu
 			}
 		}()
 
+	case !ev.Up && !running:
+		// A wired interface was just discovered (Watch's ListExisting
+		// dump, or a hotplug) but isn't administratively up yet. Unlike a
+		// desktop distro, there's no udev/NetworkManager to run `ip link
+		// set up` for us, and the kernel never brings an interface up on
+		// its own — so without this, an interface that boots
+		// administratively down (the normal case for every driver we've
+		// checked, virtio-net included) never comes up at all, and DHCP
+		// never starts. SetUp is idempotent; if this succeeds and the
+		// link already has carrier (as virtio-net always does), the
+		// kernel reports the resulting OperUp transition as its own link
+		// event, which the case above turns into a DHCP start. If there's
+		// no carrier yet (a real board with cable unplugged), nothing
+		// further happens until one appears.
+		if err := deps.Links.SetUp(ev.Name); err != nil {
+			deps.Log("bringing up %s failed: %v", ev.Name, err)
+		}
+
 	case !ev.Up && running:
 		cancel := active[ev.Name]
 		cancel()
