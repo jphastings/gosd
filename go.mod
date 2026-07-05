@@ -11,9 +11,11 @@ require (
 	github.com/mdlayher/genetlink v1.4.0
 	github.com/mdlayher/netlink v1.11.2
 	github.com/mdlayher/wifi v0.8.0
+	github.com/pion/mdns/v2 v2.1.0
 	github.com/spf13/cobra v1.10.1
 	github.com/u-root/u-root v0.16.0
 	github.com/vishvananda/netlink v1.3.1
+	golang.org/x/net v0.55.0
 	golang.org/x/sys v0.46.0
 )
 
@@ -29,6 +31,7 @@ require (
 	github.com/mdlayher/packet v1.1.2 // indirect
 	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
+	github.com/pion/logging v0.2.4 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
@@ -36,6 +39,5 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 )
