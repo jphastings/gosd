@@ -3,11 +3,13 @@ name: Build artifacts
 # Triggered by pushing a git tag matching artifacts/v*, e.g. artifacts/v0.1.0
 # (see bean gosd-wtpa and docs/artifacts.md for the full release process).
 # Builds the kernel/DTB/bootloader files GoSD compiles itself for both
-# boards, packages them into per-board tarballs + a manifest.json, and
-# publishes a GitHub Release from them. Third-party blobs (GPU firmware,
-# WiFi firmware, rkbin) are NOT built or re-hosted here — they stay
-# upstream-fetched by the CLI at pinned URL+sha256, per the no-rehosting
-# policy in the repo root CLAUDE.md.
+# end-user boards plus the internal-only qemu-virt board (CI/local boot
+# testing, bean gosd-5wm0 — never shown in end-user docs or the default
+# all-boards build), packages them into per-board tarballs + a
+# manifest.json, and publishes a GitHub Release from them. Third-party
+# blobs (GPU firmware, WiFi firmware, rkbin) are NOT built or re-hosted
+# here — they stay upstream-fetched by the CLI at pinned URL+sha256, per
+# the no-rehosting policy in the repo root CLAUDE.md.
 #
 # Every build/boards/*/build.sh this workflow runs is Dockerized and cross-
 # compiles for arm64 via the aarch64-linux-gnu- toolchain (crossbuild-
@@ -70,9 +72,36 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # qemu-virt is an internal-only board (CI + local dev boot testing, see
+  # bean gosd-5wm0 and the "qemu-virt board" locked decision in CLAUDE.md).
+  # It is still packaged into the same release as the end-user boards so
+  # gosd-27lz's qemu smoke test and local `--board=qemu-virt` builds can
+  # fetch it via the normal internal/artifacts cache path — it's simply
+  # never mentioned in end-user docs or the default all-boards build.
+  qemu-virt-kernel:
+    name: Build qemu-virt kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run build.sh
+        run: build/boards/qemu-virt/kernel/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-virt-kernel
+          path: |
+            build/boards/qemu-virt/kernel/out/Image
+          if-no-files-found: error
+          retention-days: 1
+
   package-and-release:
     name: Package and publish release
-    needs: [pi-zero-2w-kernel, radxa-zero-3e-kernel, radxa-zero-3e-uboot]
+    needs:
+      [
+        pi-zero-2w-kernel,
+        radxa-zero-3e-kernel,
+        radxa-zero-3e-uboot,
+        qemu-virt-kernel,
+      ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -102,6 +131,11 @@ jobs:
           name: radxa-zero-3e-uboot
           path: staging/radxa-zero-3e
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: qemu-virt-kernel
+          path: staging/qemu-virt
+
       - name: Record source provenance
         # Pulls the pinned repo/commit/tag each build.sh already hardcodes
         # (single source of truth) into a small source.json per board, which
@@ -112,6 +146,7 @@ jobs:
           pi_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-2w/build.sh)
           radxa_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/radxa-zero-3e/kernel/build.sh)
           radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
+          qemu_virt_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/qemu-virt/kernel/build.sh)
 
           jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_commit" \
             --arg config "build/boards/pi-zero-2w/kernel.config" \
@@ -125,6 +160,11 @@ jobs:
             --arg uconfig "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
             '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
             >staging/radxa-zero-3e/source.json
+
+          jq -n --arg repo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg ref "$qemu_virt_kernel_tag" \
+            --arg config "build/boards/qemu-virt/kernel/kernel.config" \
+            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
+            >staging/qemu-virt/source.json
 
       - name: Package tarballs and manifest.json
         run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
@@ -143,5 +183,6 @@ jobs:
           files: |
             dist/pi-zero-2w.tar.zst
             dist/radxa-zero-3e.tar.zst
+            dist/qemu-virt.tar.zst
             dist/manifest.json
           fail_on_unmatched_files: true

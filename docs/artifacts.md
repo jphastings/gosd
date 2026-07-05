@@ -19,17 +19,26 @@ Pushing a git tag `artifacts/vX.Y.Z` runs
 `.github/workflows/build-artifacts.yml`, which:
 
 1. Runs `build/boards/pi-zero-2w/build.sh`, `build/boards/radxa-zero-3e/kernel/build.sh`,
-   and `build/boards/radxa-zero-3e/uboot/build.sh` — each Dockerized, each
+   `build/boards/radxa-zero-3e/uboot/build.sh`, and
+   `build/boards/qemu-virt/kernel/build.sh` — each Dockerized, each
    cross-compiling for arm64 via `aarch64-linux-gnu-`, so they run unchanged
    on GitHub's amd64 `ubuntu-latest` runners (no QEMU, no arm64 runner
    needed).
-2. Packages the outputs into two tarballs — `pi-zero-2w.tar.zst` and
-   `radxa-zero-3e.tar.zst` — using `build/artifacts/package.sh`, which also
-   writes a `manifest.json` describing every file's name, sha256, and size,
-   plus each compiled component's source repo/commit-or-tag/config path
-   (GPL provenance).
-3. Publishes a GitHub Release for the pushed tag with the two tarballs and
+2. Packages the outputs into per-board tarballs — `pi-zero-2w.tar.zst`,
+   `radxa-zero-3e.tar.zst`, and `qemu-virt.tar.zst` — using
+   `build/artifacts/package.sh`, which also writes a `manifest.json`
+   describing every file's name, sha256, and size, plus each compiled
+   component's source repo/commit-or-tag/config path (GPL provenance).
+3. Publishes a GitHub Release for the pushed tag with the tarballs and
    `manifest.json` attached.
+
+`qemu-virt` is an **internal-only board**: it's a CI/local-dev boot-testing
+profile (bean gosd-5wm0, epic gosd-c54j), never advertised in end-user docs
+and excluded from the default all-boards `gosd build`. It's still packaged
+into the same release as the two real boards, purely so
+`internal/artifacts.EnsureBoard` and local `--board=qemu-virt` builds can
+fetch its kernel through the exact same cache/download path as any other
+board — there is no separate distribution mechanism for it.
 
 `build/artifacts/package.sh` is a standalone script, runnable and testable
 without Docker, a real kernel build, or network access — point it at any
@@ -47,6 +56,9 @@ staging/
     idbloader.img
     u-boot.itb
     source.json
+  qemu-virt/
+    Image
+    source.json
 ```
 
 and run `build/artifacts/package.sh <version> staging <output-dir>` to get
@@ -63,7 +75,8 @@ the same tarballs + manifest.json the workflow publishes.
 3. Push a tag: `git tag artifacts/vX.Y.Z && git push origin artifacts/vX.Y.Z`.
 4. Watch the `Build artifacts` workflow run. On success it publishes a
    GitHub Release named `Artifacts vX.Y.Z` with `pi-zero-2w.tar.zst`,
-   `radxa-zero-3e.tar.zst`, and `manifest.json` attached.
+   `radxa-zero-3e.tar.zst`, `qemu-virt.tar.zst`, and `manifest.json`
+   attached.
 5. Bump `internal/artifacts.Version` to `vX.Y.Z` in a follow-up commit (a
    normal CLI-code change, part of the *next* `vX.Y.Z` CLI release, not the
    artifact release itself) so newly-built `gosd` binaries pick it up.
