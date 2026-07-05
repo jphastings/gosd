@@ -191,6 +191,36 @@ func TestAssembleAppliesRawWrites(t *testing.T) {
 	}
 }
 
+func TestAssembleThreadsDataSizeBytesIntoTheImage(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	imgPath := filepath.Join(dir, "out.img")
+	const dataSizeBytes = 4 * 1024 * 1024
+	if err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: imgPath, DataSizeBytes: dataSizeBytes,
+	}); err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(2)
+	if err != nil {
+		t.Fatalf("GetFilesystem(2): %v", err)
+	}
+	if label := strings.TrimSpace(fs.Label()); label != "GOSD-DATA" {
+		t.Errorf("partition 2 label = %q, want GOSD-DATA", label)
+	}
+}
+
 func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")

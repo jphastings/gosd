@@ -1,7 +1,9 @@
 package boot
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 )
@@ -63,6 +65,51 @@ func MountBootPartition(m Mounter, target string, devices []string, timeout time
 		}
 		if !now().Before(deadline) {
 			return fmt.Errorf("mounting boot partition at %s failed after retrying for %s (tried %s): %w",
+				target, timeout, strings.Join(devices, ", "), lastErr)
+		}
+		sleep(250 * time.Millisecond)
+	}
+}
+
+// ErrDataPartitionMissing reports that no candidate GOSD-DATA device node
+// exists at all: the image was built without a data partition
+// (--data-size=0, or an image from before the partition existed). Callers
+// treat this as "no persistent storage", never as a boot failure.
+var ErrDataPartitionMissing = errors.New("no data partition device exists")
+
+// MountDataPartition mounts the GOSD-DATA FAT partition read-write at
+// target, trying each candidate device in turn with the same retry pattern
+// as MountBootPartition. The vfat "flush" option makes the driver push file
+// data to the card promptly after writes — FAT has no journal, so the less
+// time dirty data sits in RAM on a device with no clean-shutdown story, the
+// better.
+//
+// A round in which every candidate fails with "no such file or directory"
+// means the device nodes simply don't exist. This step runs only after the
+// boot partition (partition 1 of the same card) has mounted, so the kernel
+// has already scanned the card's partition table: a missing p2 node is a
+// definitive "this image has no data partition", reported immediately as
+// ErrDataPartitionMissing rather than burning the whole timeout on it.
+func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, sleep func(time.Duration), now func() time.Time) error {
+	deadline := now().Add(timeout)
+	var lastErr error
+	for {
+		allMissing := true
+		for _, dev := range devices {
+			err := m.Mount(dev, target, "vfat", msNoSuid|msNoDev, "flush")
+			if err == nil {
+				return nil
+			}
+			lastErr = err
+			if !errors.Is(err, fs.ErrNotExist) {
+				allMissing = false
+			}
+		}
+		if allMissing {
+			return fmt.Errorf("%w (tried %s)", ErrDataPartitionMissing, strings.Join(devices, ", "))
+		}
+		if !now().Before(deadline) {
+			return fmt.Errorf("mounting data partition at %s failed after retrying for %s (tried %s): %w",
 				target, timeout, strings.Join(devices, ", "), lastErr)
 		}
 		sleep(250 * time.Millisecond)

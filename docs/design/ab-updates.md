@@ -30,6 +30,11 @@ an oversight:
   requires a full `gosd build` + reflash. There is no in-place mechanism for
   it, and this document does not propose one (see Appendix B for the escape
   hatch if that ever changes).
+- Because an update never touches the partition table, the writable
+  `GOSD-DATA` partition (bean `gosd-xelb`) is untouched by app-slot updates:
+  app data survives an over-the-network update. Only a full reflash
+  recreates (wipes) it — `docs/runtime.md`'s persistence section documents
+  that from the app's point of view.
 
 This scope cut is what makes a single, board-agnostic scheme possible: the
 previous recommendation needed per-board mechanisms specifically because the

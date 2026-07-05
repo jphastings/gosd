@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,7 +31,13 @@ var (
 	wifiPass     string
 	artifactsDir string
 	gosdInitSrc  string
+	dataSize     string
 )
+
+// defaultDataSize is the GOSD-DATA partition size used when --data-size is
+// not given. The .img file is written sparsely, so an unused data partition
+// costs almost nothing on the build host's disk.
+const defaultDataSize = "1GiB"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -51,6 +59,8 @@ func newBuildCmd() *cobra.Command {
 		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", "",
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
+	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
+		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); 0 omits the partition entirely")
 
 	return cmd
 }
@@ -70,6 +80,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	outputs, err := resolveOutputs(selected, appName, output)
+	if err != nil {
+		return err
+	}
+
+	dataSizeBytes, err := parseDataSize(dataSize)
 	if err != nil {
 		return err
 	}
@@ -105,9 +120,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				WifiSSID:     wifiSSID,
 				WifiPassword: wifiPass,
 			},
-			ArtifactsDir: artifactsDir,
-			CacheDir:     cacheDir,
-			OutputPath:   outputs[b.Name()],
+			ArtifactsDir:  artifactsDir,
+			CacheDir:      cacheDir,
+			OutputPath:    outputs[b.Name()],
+			DataSizeBytes: dataSizeBytes,
 		}
 		if err := pipeline.Assemble(ctx, opts); err != nil {
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
@@ -115,6 +131,42 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// dataSizeUnits are the size suffixes --data-size accepts, all binary
+// (power-of-1024) units: partition sizes are conventionally binary, and
+// offering only one interpretation avoids MB-vs-MiB ambiguity.
+var dataSizeUnits = map[string]int64{
+	"KIB": 1024,
+	"MIB": 1024 * 1024,
+	"GIB": 1024 * 1024 * 1024,
+	"K":   1024,
+	"M":   1024 * 1024,
+	"G":   1024 * 1024 * 1024,
+}
+
+// parseDataSize parses a --data-size value like "512MiB", "2G", or "0" into
+// bytes. A bare number is bytes; 0 (with or without a unit) disables the
+// data partition.
+func parseDataSize(s string) (int64, error) {
+	trimmed := strings.TrimSpace(s)
+	numPart := trimmed
+	var multiplier int64 = 1
+	for suffix, mult := range dataSizeUnits {
+		if n, ok := strings.CutSuffix(strings.ToUpper(trimmed), suffix); ok {
+			numPart, multiplier = strings.TrimSpace(n), mult
+			break
+		}
+	}
+
+	n, err := strconv.ParseInt(numPart, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("--data-size %q is not a valid size; use a number with a binary unit (e.g. 512MiB, 1GiB) or 0 to disable the data partition", s)
+	}
+	if multiplier > 1 && n > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
+	}
+	return n * multiplier, nil
 }
 
 // artifactCacheDir returns the directory pinned-URL artifact downloads are

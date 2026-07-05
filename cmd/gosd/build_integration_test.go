@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	diskfs "github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/disk"
+	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/klauspost/compress/zstd"
 	"github.com/u-root/u-root/pkg/cpio"
 )
@@ -122,6 +124,83 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
 	}
+
+	// With no --data-size flag, the default (1GiB) GOSD-DATA partition must
+	// exist: FAT32 (MBR type 0x0C), starting immediately after GOSD-BOOT.
+	// The 1GiB-plus image stays cheap because go-diskfs writes it sparsely.
+	dataPart, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got, want := dataPart.GetStart(), int64(272*1024*1024); got != want {
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after GOSD-BOOT)", got, want)
+	}
+	if got, want := dataPart.GetSize(), int64(1024*1024*1024); got != want {
+		t.Errorf("partition 2 size = %d bytes, want %d (the 1GiB default)", got, want)
+	}
+	assertMBRPartitionType(t, d, 2, mbr.Fat32LBA)
+
+	dataFS, err := d.GetFilesystem(2)
+	if err != nil {
+		t.Fatalf("GetFilesystem(2) failed: %v", err)
+	}
+	if label := strings.TrimSpace(dataFS.Label()); label != "GOSD-DATA" {
+		t.Errorf("data partition label = %q, want GOSD-DATA", label)
+	}
+}
+
+// TestBuildWithDataSizeZeroOmitsTheDataPartition covers the explicit opt-out:
+// --data-size=0 must produce the original single-partition layout.
+func TestBuildWithDataSizeZeroOmitsTheDataPartition(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-size", "0",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	// The MBR always has 4 entry slots; an unused slot reads back as a
+	// zero-sized partition rather than an error.
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d with --data-size=0, want no partition 2", part2.GetSize())
+	}
+}
+
+// assertMBRPartitionType fails the test unless the MBR entry at index has
+// the given partition type.
+func assertMBRPartitionType(t *testing.T, d *disk.Disk, index int, want mbr.Type) {
+	t.Helper()
+
+	table, err := d.GetPartitionTable()
+	if err != nil {
+		t.Fatalf("GetPartitionTable() failed: %v", err)
+	}
+	mbrTable, ok := table.(*mbr.Table)
+	if !ok {
+		t.Fatalf("GetPartitionTable() returned %T, want *mbr.Table", table)
+	}
+	for _, p := range mbrTable.Partitions {
+		if p.Index == index {
+			if p.Type != want {
+				t.Errorf("partition %d type = %#x, want %#x", index, byte(p.Type), byte(want))
+			}
+			return
+		}
+	}
+	t.Fatalf("mbr table has no entry for partition %d", index)
 }
 
 // TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts is the

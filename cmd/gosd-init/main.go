@@ -25,16 +25,31 @@ const (
 	gosdTomlPath = "/boot/gosd.toml"
 	appPath      = "/app"
 	bootTarget   = "/boot"
+	dataTarget   = "/data"
+
+	// dataMarkerPath is an empty file created on the GOSD-DATA partition
+	// the first time it's mounted, marking it as initialized by gosd.
+	dataMarkerPath = dataTarget + "/.gosd-data"
 
 	// bootMountTimeout bounds how long gosd-init retries mounting the
 	// GOSD-BOOT partition: the MMC controller may still be probing when
 	// gosd-init reaches this step, and there's no udev to wait on.
 	bootMountTimeout = 10 * time.Second
+
+	// dataMountTimeout bounds retries of the GOSD-DATA mount. It runs
+	// after the boot mount has already succeeded (so the card is probed
+	// and a genuinely missing partition is detected instantly, not
+	// retried); the timeout only bounds transient non-ENOENT failures.
+	dataMountTimeout = 10 * time.Second
 )
 
 // bootDevices are the candidate device nodes for the GOSD-BOOT FAT
 // partition, tried in order, with no udev available to discover it.
 var bootDevices = []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1"}
+
+// dataDevices are the candidate device nodes for the optional GOSD-DATA FAT
+// partition: partition 2 of the same cards bootDevices covers.
+var dataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}
 
 func main() {
 	platform := boot.NewPlatform()
@@ -56,9 +71,11 @@ func main() {
 		// ReadGosdToml reads /boot/gosd.toml, which only exists once the
 		// GOSD-BOOT partition is mounted; boot.Run calls this itself,
 		// after that mount (step 5), rather than main reading it up front.
-		ReadGosdToml: readGosdToml,
-		Sleep:        time.Sleep,
-		Now:          time.Now,
+		ReadGosdToml:         readGosdToml,
+		EnsureDataMountpoint: ensureDataMountpoint,
+		EnsureDataMarker:     ensureDataMarker,
+		Sleep:                time.Sleep,
+		Now:                  time.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS
@@ -90,6 +107,9 @@ func main() {
 		BootTarget:  bootTarget,
 		BootDevices: bootDevices,
 		BootTimeout: bootMountTimeout,
+		DataTarget:  dataTarget,
+		DataDevices: dataDevices,
+		DataTimeout: dataMountTimeout,
 	}
 
 	// Run only returns once the fatal (log+sync+sleep+reboot) path has
@@ -133,6 +153,25 @@ func readGosdToml() (gosdtoml.Config, error) {
 		return gosdtoml.Config{}, err
 	}
 	return gosdtoml.Parse(data)
+}
+
+// ensureDataMountpoint creates /data on the RAM-backed rootfs so the
+// GOSD-DATA partition has somewhere to mount; the initramfs archive doesn't
+// contain empty directories.
+func ensureDataMountpoint() error {
+	return os.MkdirAll(dataTarget, 0o755)
+}
+
+// ensureDataMarker creates the .gosd-data marker file on the mounted data
+// partition the first time it's seen; on every later boot the file already
+// exists and this is a no-op.
+func ensureDataMarker() error {
+	if _, err := os.Stat(dataMarkerPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(dataMarkerPath, nil, 0o644)
 }
 
 // fallbackLog is used before /dev/console is open (or if opening it fails).
