@@ -38,6 +38,11 @@ say so in the bean rather than silently diverging.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
   library, v0.3), `device/` (app-facing runtime helpers, v0.3). Everything else
   lives under `internal/`.
+- **gosd-init source location:** `gosd build` builds gosd-init from a local
+  checkout when one's found (current directory's module, or the checkout gosd
+  itself was compiled from), otherwise from `github.com/jphastings/gosd` at
+  gosd's own build version via `go mod download`; `--gosd-init-src <dir>` is
+  the escape hatch. See `internal/build/gosdinit.go`.
 - **Third-party binary blobs** (Pi GPU firmware, WiFi firmware, Rockchip rkbin)
   are never re-hosted in our releases: the CLI downloads them from upstream at
   pinned URL + sha256 (per-board `manifest.json`) and caches them. Our artifact
