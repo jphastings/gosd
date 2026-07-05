@@ -25,7 +25,7 @@ func resolveFakeArtifacts(t *testing.T, b boards.Board) boards.Artifacts {
 		}
 	}
 
-	art, err := boards.ResolveArtifacts(context.Background(), b.Artifacts(), dir, t.TempDir())
+	art, err := boards.ResolveArtifacts(context.Background(), b.Name(), b.Artifacts(), dir, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("ResolveArtifacts: %v", err)
 	}

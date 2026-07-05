@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/jphastings/gosd/internal/artifacts"
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/image"
@@ -61,12 +62,12 @@ type Options struct {
 // build the initramfs, ask the board for its boot files and raw writes, and
 // write the resulting flashable image to opts.OutputPath.
 func Assemble(ctx context.Context, opts Options) error {
-	artifacts, err := boards.ResolveArtifacts(ctx, opts.Board.Artifacts(), opts.ArtifactsDir, opts.CacheDir)
+	resolved, err := boards.ResolveArtifacts(ctx, opts.Board.Name(), opts.Board.Artifacts(), opts.ArtifactsDir, opts.CacheDir, fetchBoardArtifacts)
 	if err != nil {
 		return fmt.Errorf("resolving artifacts for %s: %w", opts.Board.Name(), err)
 	}
 
-	firmware := opts.Board.FirmwareFiles(artifacts)
+	firmware := opts.Board.FirmwareFiles(resolved)
 	defer closeReaders(firmware)
 
 	initBin, err := os.Open(opts.InitBinaryPath)
@@ -107,9 +108,9 @@ func Assemble(ctx context.Context, opts Options) error {
 	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files}); err != nil {
 		return fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
 	}
-	artifacts.Initramfs = &initramfsBuf
+	resolved.Initramfs = &initramfsBuf
 
-	bootFiles, err := opts.Board.BootFiles(opts.Config, artifacts)
+	bootFiles, err := opts.Board.BootFiles(opts.Config, resolved)
 	if err != nil {
 		return fmt.Errorf("assembling boot files for %s: %w", opts.Board.Name(), err)
 	}
@@ -125,12 +126,19 @@ func Assemble(ctx context.Context, opts Options) error {
 
 	if err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles: bootFiles,
-		RawWrites: opts.Board.RawWrites(artifacts),
+		RawWrites: opts.Board.RawWrites(resolved),
 	}); err != nil {
 		return fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)
 	}
 
 	return nil
+}
+
+// fetchBoardArtifacts is the boards.BoardArtifactsFunc every real build uses:
+// download and cache the requested board's CI-built artifact release (see
+// bean gosd-wtpa and internal/artifacts) with the default HTTP client.
+func fetchBoardArtifacts(ctx context.Context, cacheDir, board string) (string, error) {
+	return artifacts.EnsureBoard(ctx, nil, cacheDir, board)
 }
 
 // closeReaders best-effort-closes any reader in files that also implements

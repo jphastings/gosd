@@ -1,0 +1,147 @@
+name: Build artifacts
+
+# Triggered by pushing a git tag matching artifacts/v*, e.g. artifacts/v0.1.0
+# (see bean gosd-wtpa and docs/artifacts.md for the full release process).
+# Builds the kernel/DTB/bootloader files GoSD compiles itself for both
+# boards, packages them into per-board tarballs + a manifest.json, and
+# publishes a GitHub Release from them. Third-party blobs (GPU firmware,
+# WiFi firmware, rkbin) are NOT built or re-hosted here — they stay
+# upstream-fetched by the CLI at pinned URL+sha256, per the no-rehosting
+# policy in the repo root CLAUDE.md.
+#
+# Every build/boards/*/build.sh this workflow runs is Dockerized and cross-
+# compiles for arm64 via the aarch64-linux-gnu- toolchain (crossbuild-
+# essential-arm64) — none of them need an arm64 host or QEMU emulation, so
+# they run unchanged on GitHub's amd64 ubuntu-latest runners.
+on:
+  push:
+    tags:
+      - "artifacts/v*"
+
+permissions:
+  contents: write # required to publish a GitHub Release
+
+jobs:
+  pi-zero-2w-kernel:
+    name: Build pi-zero-2w kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run build.sh
+        run: build/boards/pi-zero-2w/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-zero-2w
+          path: |
+            build/boards/pi-zero-2w/out/kernel8.img
+            build/boards/pi-zero-2w/out/bcm2710-rpi-zero-2-w.dtb
+          if-no-files-found: error
+          retention-days: 1
+
+  radxa-zero-3e-kernel:
+    name: Build radxa-zero-3e kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run build.sh
+        run: build/boards/radxa-zero-3e/kernel/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radxa-zero-3e-kernel
+          path: |
+            build/boards/radxa-zero-3e/kernel/out/Image
+            build/boards/radxa-zero-3e/kernel/out/rk3566-radxa-zero-3e.dtb
+          if-no-files-found: error
+          retention-days: 1
+
+  radxa-zero-3e-uboot:
+    name: Build radxa-zero-3e U-Boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run build.sh
+        run: build/boards/radxa-zero-3e/uboot/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radxa-zero-3e-uboot
+          path: |
+            build/boards/radxa-zero-3e/uboot/out/idbloader.img
+            build/boards/radxa-zero-3e/uboot/out/u-boot.itb
+          if-no-files-found: error
+          retention-days: 1
+
+  package-and-release:
+    name: Package and publish release
+    needs: [pi-zero-2w-kernel, radxa-zero-3e-kernel, radxa-zero-3e-uboot]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF#refs/tags/artifacts/}"
+          if [ "$tag" = "$GITHUB_REF" ]; then
+            echo "error: unexpected ref $GITHUB_REF, expected refs/tags/artifacts/vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "version=$tag" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pi-zero-2w
+          path: staging/pi-zero-2w
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: radxa-zero-3e-kernel
+          path: staging/radxa-zero-3e
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: radxa-zero-3e-uboot
+          path: staging/radxa-zero-3e
+
+      - name: Record source provenance
+        # Pulls the pinned repo/commit/tag each build.sh already hardcodes
+        # (single source of truth) into a small source.json per board, which
+        # package.sh copies verbatim into manifest.json's boards.<board>.
+        # source — GPL compliance requires this alongside the config files
+        # already committed at the paths named below.
+        run: |
+          pi_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-2w/build.sh)
+          radxa_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/radxa-zero-3e/kernel/build.sh)
+          radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
+
+          jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_commit" \
+            --arg config "build/boards/pi-zero-2w/kernel.config" \
+            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
+            >staging/pi-zero-2w/source.json
+
+          jq -n \
+            --arg krepo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg kref "$radxa_kernel_tag" \
+            --arg kconfig "build/boards/radxa-zero-3e/kernel/kernel.config" \
+            --arg urepo "https://github.com/u-boot/u-boot.git" --arg uref "$radxa_uboot_tag" \
+            --arg uconfig "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
+            '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
+            >staging/radxa-zero-3e/source.json
+
+      - name: Package tarballs and manifest.json
+        run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Artifacts ${{ steps.version.outputs.version }}"
+          body: |
+            CI-built kernels and U-Boot for GoSD's supported boards (bean gosd-wtpa).
+
+            Every file's build source (upstream repo, pinned commit/tag, config
+            path) is recorded per-board in manifest.json for GPL compliance; see
+            docs/artifacts.md for how the CLI consumes this release.
+          files: |
+            dist/pi-zero-2w.tar.zst
+            dist/radxa-zero-3e.tar.zst
+            dist/manifest.json
+          fail_on_unmatched_files: true

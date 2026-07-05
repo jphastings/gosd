@@ -50,13 +50,30 @@ func (a Artifacts) MustOpen(name string) io.Reader {
 	return r
 }
 
-// ResolveArtifacts turns refs into an Artifacts value: each ref is looked up
-// by name inside artifactsDir first, falling back to a pinned-URL fetch
-// (verified against ref.SHA256, cached in cacheDir) when it isn't found
-// there. A ref with no URL that isn't found in artifactsDir is reported as
-// an actionable error rather than attempted over the network.
-func ResolveArtifacts(ctx context.Context, refs []ArtifactRef, artifactsDir, cacheDir string) (Artifacts, error) {
+// ResolveArtifacts turns refs into an Artifacts value for board: each ref is
+// looked up by name inside artifactsDir first, then (if it has one) fetched
+// by its pinned URL (verified against ref.SHA256, cached in cacheDir), then
+// — for a ref with no URL — resolved via fetchBoardArtifacts, which lazily
+// downloads and caches board's whole CI-built artifact release into
+// cacheDir at most once per call to ResolveArtifacts, however many such refs
+// there are. A ref with no URL that isn't found in artifactsDir, when
+// fetchBoardArtifacts is nil or itself fails, is reported as an actionable
+// error.
+func ResolveArtifacts(ctx context.Context, board string, refs []ArtifactRef, artifactsDir, cacheDir string, fetchBoardArtifacts BoardArtifactsFunc) (Artifacts, error) {
 	paths := make(map[string]string, len(refs))
+
+	var (
+		boardArtifactsDir      string
+		boardArtifactsErr      error
+		boardArtifactsResolved bool
+	)
+	ensureBoardArtifacts := func() (string, error) {
+		if !boardArtifactsResolved {
+			boardArtifactsDir, boardArtifactsErr = fetchBoardArtifacts(ctx, cacheDir, board)
+			boardArtifactsResolved = true
+		}
+		return boardArtifactsDir, boardArtifactsErr
+	}
 
 	for _, ref := range refs {
 		if artifactsDir != "" {
@@ -67,17 +84,34 @@ func ResolveArtifacts(ctx context.Context, refs []ArtifactRef, artifactsDir, cac
 			}
 		}
 
-		if ref.URL == "" {
-			return Artifacts{}, fmt.Errorf(
-				"artifact %q was not found in --artifacts-dir %q, and it has no automatic download source yet; "+
-					"supply it via --artifacts-dir", ref.Name, artifactsDir)
+		if ref.URL != "" {
+			path, err := fetch.ToDir(ctx, nil, fetch.File{URL: ref.URL, SHA256: ref.SHA256}, cacheDir, ref.Name)
+			if err != nil {
+				return Artifacts{}, fmt.Errorf("fetching artifact %q: %w", ref.Name, err)
+			}
+			paths[ref.Name] = path
+			continue
 		}
 
-		path, err := fetch.ToDir(ctx, nil, fetch.File{URL: ref.URL, SHA256: ref.SHA256}, cacheDir, ref.Name)
-		if err != nil {
-			return Artifacts{}, fmt.Errorf("fetching artifact %q: %w", ref.Name, err)
+		if fetchBoardArtifacts == nil {
+			return Artifacts{}, fmt.Errorf(
+				"artifact %q was not found in --artifacts-dir %q, and no CI-built artifact release source is "+
+					"configured; supply it via --artifacts-dir", ref.Name, artifactsDir)
 		}
-		paths[ref.Name] = path
+
+		dir, err := ensureBoardArtifacts()
+		if err != nil {
+			return Artifacts{}, fmt.Errorf(
+				"artifact %q was not found in --artifacts-dir %q, and downloading %s's CI-built artifact "+
+					"release failed: %w; supply it via --artifacts-dir instead", ref.Name, artifactsDir, board, err)
+		}
+		local := filepath.Join(dir, ref.Name)
+		if _, err := os.Stat(local); err != nil {
+			return Artifacts{}, fmt.Errorf(
+				"artifact %q was not found in --artifacts-dir %q nor in %s's downloaded CI-built artifact "+
+					"release; check the release manifest, or supply it via --artifacts-dir", ref.Name, artifactsDir, board)
+		}
+		paths[ref.Name] = local
 	}
 
 	return Artifacts{paths: paths}, nil

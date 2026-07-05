@@ -24,9 +24,11 @@ const (
 	boardName = "pi-zero-2w"
 
 	// kernelArtifactName is the artifact the pipeline must resolve for
-	// the kernel image config.txt names ("kernel=kernel8.img"). No
-	// automated fetch source exists for it yet (the kernel-build bean
-	// hasn't landed), so it always has to come from --artifacts-dir.
+	// the kernel image config.txt names ("kernel=kernel8.img"). It has no
+	// per-file pinned URL (ArtifactRef.URL is empty): it's one of the
+	// files GoSD compiles itself, resolved either from --artifacts-dir or,
+	// falling back, from the CI-built artifact release (see bean
+	// gosd-wtpa and internal/artifacts).
 	kernelArtifactName = "kernel8.img"
 
 	// initramfsName is the file name the initramfs is written under in

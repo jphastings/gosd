@@ -20,15 +20,17 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
 >
 > - No version of `gosd` has been tagged/released yet, so `go install
 >   .../gosd@latest` has nothing to install.
-> - `gosd build`'s final step — assembling the compiled binaries into a
->   flashable `.img` — isn't wired up yet (tracked as bean `gosd-3zrc`), and
->   the prebuilt kernel/bootloader artifacts it will need aren't published
->   yet either (bean `gosd-wtpa`). Today, `gosd build` cross-compiles your
->   app and `gosd-init` correctly, then fails clearly at the assembly step.
+> - `gosd build` fully assembles a flashable `.img` given `--artifacts-dir`
+>   (a directory of your own kernel/firmware/bootloader files), but no
+>   `artifacts/vX.Y.Z` release exists yet for it to download prebuilt
+>   kernels/U-Boot from automatically (see `docs/artifacts.md` and bean
+>   `gosd-wtpa`) — that's one `git tag artifacts/v0.1.0 && git push` away.
+>   Until then, running `gosd build` with no `--artifacts-dir` fails
+>   clearly at the download step instead of silently succeeding.
 >
-> Once those land, the flow below is what you'll run. In the meantime, see
-> `internal/build`, `examples/hello`, and `docs/runtime.md` for what's real
-> today.
+> Once that release is cut, the flow below is what you'll run. In the
+> meantime, see `internal/build`, `examples/hello`, and `docs/runtime.md`
+> for what's real today.
 
 1. Install the CLI:
 
