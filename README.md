@@ -71,9 +71,17 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    --help` for the full set of flags (`--hostname`, `--wifi-ssid` /
    `--wifi-pass`, repeatable `--board`, `-o`/`--output`).
 
-4. Flash `hello.img` to an SD card (e.g. with [Raspberry Pi
-   Imager](https://www.raspberrypi.com/software/), "Use custom image"), boot
-   the board, and open `http://<hostname>.local/` — or the sanitized name of
+4. Flash `hello.img` to an SD card. The recommended path is [Raspberry Pi
+   Imager](https://www.raspberrypi.com/software/)'s custom-repository
+   catalog: build with `--catalog --publish-base-url=<url>` to also emit an
+   `os_list.json`, host it next to your image, and paste that URL into
+   Imager's Settings → Custom repository to get the full WiFi/hostname
+   customization wizard — see [`docs/publishing.md`](docs/publishing.md)
+   for the full walkthrough. (Imager's plain "Use custom image" file picker
+   skips that wizard entirely for any image, GoSD's included — see
+   `docs/provisioning-formats.md` — so if you use that flow instead,
+   hand-edit the `gosd.toml` file on the flashed boot partition.) Then boot
+   the board and open `http://<hostname>.local/` — or the sanitized name of
    your main package if you didn't pass `--hostname`. A dedicated
    screenshot-driven flashing guide for non-technical users is planned
    (bean `gosd-ufeh`); until then, and until mDNS support lands (bean
