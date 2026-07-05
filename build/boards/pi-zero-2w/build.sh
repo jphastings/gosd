@@ -51,9 +51,14 @@ DTB_NAME="$5"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+# build-essential: native host cc/gcc for HOSTCC tools (e.g.
+# scripts/basic/fixdep). On an arm64 host, crossbuild-essential-arm64 alone
+# happens to pull in a native toolchain too, which masked this dependency
+# until CI ran on amd64 runners, where crossbuild-essential-arm64 only
+# provides the aarch64-linux-gnu-* CROSS tools.
 apt-get install -y -qq --no-install-recommends \
   ca-certificates git make bc bison flex libssl-dev libelf-dev \
-  python3 rsync cpio kmod crossbuild-essential-arm64 >/dev/null
+  python3 rsync cpio kmod build-essential crossbuild-essential-arm64 >/dev/null
 
 mkdir -p /build/linux
 cd /build/linux

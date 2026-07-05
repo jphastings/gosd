@@ -18,8 +18,13 @@ RUN test -n "$UBOOT_TAG" && test -n "$RKBIN_COMMIT" && \
     test -n "$RKBIN_DDR_PATH" && test -n "$RKBIN_DDR_SHA256" && \
     test -n "$RKBIN_BL31_PATH" && test -n "$RKBIN_BL31_SHA256"
 
+# build-essential: native host cc/gcc for HOSTCC tools (e.g.
+# scripts/basic/fixdep). On an arm64 host, crossbuild-essential-arm64 alone
+# happens to pull in a native toolchain too, which masked this dependency
+# until CI ran on amd64 runners, where crossbuild-essential-arm64 only
+# provides the aarch64-linux-gnu-* CROSS tools.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      crossbuild-essential-arm64 \
+      build-essential crossbuild-essential-arm64 \
       git ca-certificates curl \
       make bison flex bc python3 python3-dev python3-setuptools python3-pyelftools \
       swig libssl-dev libgnutls28-dev device-tree-compiler \
