@@ -113,24 +113,30 @@ Practical notes:
   skipped, falling back to the next-lower-precedence source; it never
   blocks boot.
 
-## Clock: starts at 1970 until SNTP lands
+## Clock: starts at 1970 until SNTP syncs
 
 Neither supported board has a battery-backed real-time clock. On boot, the
-system clock starts at the Unix epoch and only becomes correct once
-something sets it.
+system clock starts at the Unix epoch and only becomes correct once SNTP
+sync completes.
 
-Time sync over SNTP is **planned, not yet built** (tracked as bean
-`gosd-c8oj`). Until it exists:
+`gosd-init` syncs the clock itself (`cmd/gosd-init/internal/timesync`) —
+your app doesn't need to do anything to make this happen:
 
-- Anything that checks certificate validity periods (TLS handshakes,
-  `crypto/x509` verification) will fail if attempted before the clock is
-  correct, because the clock may still read 1970.
-- There is currently no signal your app can wait on for "the clock is now
-  correct" — no `/run/gosd/time-synced` marker exists yet. When SNTP lands,
-  that (or gating on retry) is expected to be the mechanism; until then, the
-  safest approach is to retry TLS-dependent operations on failure rather
-  than treating an early failure as permanent, and not to hard-fail your app
-  if a certificate check fails once shortly after boot.
+- Once `/run/gosd/network-up` appears, `gosd-init` queries NTP (retrying
+  with backoff until the first success), sets the clock via
+  `settimeofday`, and re-syncs hourly afterwards for the life of the
+  device.
+- The server list comes from `config.json`'s optional `ntpServers` field
+  (baked in by `gosd build`); when it's absent — including every image
+  built before this field existed — it defaults to `pool.ntp.org`.
+- **`/run/gosd/time-synced`** is an empty marker file `gosd-init` creates on
+  the first successful sync. Gate anything that checks certificate validity
+  periods (TLS handshakes, `crypto/x509` verification) on this file existing
+  — attempting those before the clock is correct fails, because the clock
+  may still read 1970. Polling for the marker or simply retrying
+  TLS-dependent operations on failure both work; either way, don't treat an
+  early failure as permanent, since the clock does become correct within
+  moments of the network coming up.
 
 ## Storage: RAM rootfs, `/boot` read-only, `/data` persistent
 
@@ -208,8 +214,9 @@ reads it.
   main` — `gosd build` checks this up front and fails with an actionable
   error otherwise.
 - `gosd-init` itself has no shell, no interactive surface, and no remote
-  debug access, on purpose — the only thing running alongside your app is
-  the supervisor and (later) mDNS/update listeners. If you need to inspect
+  debug access, on purpose — the only things running alongside your app are
+  the supervisor, its network/time-sync bring-up, and its mDNS responder
+  (and, later, an update listener). If you need to inspect
   a running device, that has to happen through your own app (an HTTP
   endpoint, for instance, as `examples/hello` does) or the serial console.
 

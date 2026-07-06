@@ -5,15 +5,15 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-04T12:27:30Z
+updated_at: 2026-07-06T10:15:19Z
 parent: gosd-y0x3
 ---
 
 Expand README.md (keep the existing GoSD intro) + docs/ for the Go-developer audience.
 
 Content:
-- [x] Quickstart: install (`go install github.com/jphastings/gosd/cmd/gosd@latest`), 10-line main.go, `gosd build`, flash, open http://hostname.local — written, but honestly caveated: no release is tagged yet, and `gosd build`'s image-assembly step is not yet implemented on `main` (see finding below), so the flow isn't runnable end to end today
-- [x] Runtime contract page: docs/runtime.md — supervision, env vars, async networking, clock/SNTP, RAM storage + read-only /boot, serial logging, CGO/arm64 constraints. Also documents (grounded in current netup.go) that WiFi credentials are baked in by the CLI but gosd-init only brings up wired Ethernet today — see finding below
+- [x] Quickstart: install (`go install github.com/jphastings/gosd/cmd/gosd@latest`), 10-line main.go, `gosd build`, flash, open http://hostname.local — written; refreshed 2026-07-06 now that `artifacts/v0.1.0` is published and `gosd build` with no extra flags assembles a real, flashable .img end-to-end on a clean machine (verified). Only hardware bring-up (flashing + booting a real board) remains unconfirmed.
+- [x] Runtime contract page: docs/runtime.md — supervision, env vars, async networking, clock/SNTP, RAM storage + read-only /boot, serial logging, CGO/arm64 constraints. Refreshed 2026-07-06: WiFi bring-up (wifiup, nl80211), mDNS, SNTP/time-synced marker, cloud-init+gosd.toml provisioning precedence, the GOSD_DATA partition, and USB gadget mode are all now implemented and documented as present-tense, not planned.
 - [x] GPIO/I2C/SPI pointers (go-gpiocdev, periph.io) with the note that full examples land in v0.3 — in docs/runtime.md
 - [x] Comparison note: when to use gokrazy instead — in docs/runtime.md
 - [x] No volatile facts (timings, counts) included — qualitative statements + pointers to source files/commands throughout
@@ -27,7 +27,7 @@ gosd-init cannot set `GOSD_IP` as an env var: DHCP completes asynchronously, aft
 
 ## Acceptance status
 
-Not fully met yet, and can't be: the acceptance criterion ("a Go developer gets examples/hello running on a Pi Zero 2W using only these docs") requires real hardware and a working build pipeline. On `main` today, `gosd build`'s image-assembly step is a stub (`image.NotImplemented`, see `internal/image/assembler.go`) that always returns `errNotImplemented` — verified by actually running `go run ./cmd/gosd build ./examples/hello --board=pi-zero-2w -o /tmp/x.img`, which fails with `image assembly not implemented`. No image can be produced, let alone flashed, until gosd-3zrc (board profile + end-to-end build wiring) and gosd-wtpa (artifact pipeline) land. The docs are written honestly against this: the quickstart says so up front rather than promising a working flash+boot flow. Leaving this bean in-progress rather than completed, since the acceptance item is genuinely blocked on other beans, not on missing docs work.
+Updated 2026-07-06: gosd-3zrc and gosd-wtpa have since landed. `gosd build` now fully assembles a real, flashable .img — verified end-to-end on a clean machine (empty HOME/cache, downloads and sha256-verifies `artifacts/v0.1.0`, produces a bootable image; an immediate rebuild with networking killed succeeds from the cache alone). The build/install/assemble portion of the acceptance criterion is met. What remains is genuinely hardware-gated: no image has been flashed to or booted from a real Pi Zero 2W or Radxa Zero 3E yet (beans gosd-m9dj/gosd-nlzf, both blocked on acquiring a bring-up kit, gosd-s4t4). Leaving this bean in-progress rather than completed for that reason alone — the docs themselves (README.md, docs/runtime.md, COMPATIBILITY.md) are believed current as of this PR (bean/gosd-mr2n-docs-refresh).
 
 ## Findings (code/doc mismatches spotted while researching — not fixed, per instructions)
 
@@ -53,3 +53,14 @@ SNTP time sync has now landed (`cmd/gosd-init/internal/timesync`), so docs/runti
 - gosd-init waits for /run/gosd/network-up, then retries SNTP (github.com/beevik/ntp) with backoff until the first success, sets the clock via settimeofday, and re-syncs hourly afterward.
 - config.json gained an optional `ntpServers` field (`initcfg.Config.NTPServers`), defaulting to pool.ntp.org (`timesync.DefaultServers`) when omitted.
 - App authors should gate TLS/x509-dependent calls on /run/gosd/time-synced existing, or just retry on failure until it does — please make this the documented guidance in place of the old "not yet built" caveat.
+
+## Docs refresh (bean/gosd-mr2n-docs-refresh, 2026-07-06)
+
+Re-verified every stale claim against current `main` rather than trusting the earlier notes above, then fixed what had actually gone stale:
+
+- **README.md quickstart**: rewrote the pre-release caveat block. `artifacts/v0.1.0` is published and confirmed (`gh release list`); `go install .../gosd@latest` works today via Go's pseudo-version resolution even with no tagged CLI release (verified with a real `go install` + `gosd build` run from a clean `$HOME`, producing a genuine `.img`). Removed the stale "mDNS not yet built" caveat on the `.local` step — mDNS is implemented and wired in `cmd/gosd-init/main.go`. The only remaining honest caveat is hardware bring-up (no image flashed/booted on a real board yet, beans `gosd-m9dj`/`gosd-nlzf`). Also linked the USB OTG feature bullet to `docs/runtime.md#usb-gadget-mode` and `examples/usbserial`.
+- **docs/runtime.md**: rewrote the "Clock: starts at 1970 until SNTP lands" section (stale per gosd-c8oj's note above) to describe present-tense behavior — `/run/gosd/time-synced`, hourly re-sync, `ntpServers` config field. Updated the build-constraints bullet that still said mDNS/update listeners were "(later)" — mDNS runs today; only the update listener is still future.
+- **COMPATIBILITY.md**: the USB-gadget row/footnote went stale within the same day it was written — PR #35 (bean `gosd-uo9f`) landed the `gadget` package immediately after gosd-jsqa wrote the compatibility matrix describing it as not-yet-written. Flipped the Pi/Radxa cells from 🚧 to ✅ (serial works; USB Ethernet, bean `gosd-30jz`, is still 🚧) and reworded the footnote, keeping the "library ≠ hardware-verified" caveat intact (bring-up beans `gosd-m9dj`/`gosd-nlzf` are still todo, blocked on `gosd-s4t4`).
+- Swept README.md, docs/runtime.md, docs/publishing.md, docs/artifacts.md, docs/provisioning-formats.md for other "not yet"/"forthcoming"/"planned"/"TODO" language; everything else found (GPIO/I2C/SPI worked examples for v0.3, USB Ethernet gadget, OTA updates, the NanoPi Zero2 board profile, the screenshot flashing guide, bench-only provisioning-format todos) is genuinely still future work and was left as-is.
+
+Quality gates (`go test ./...`, `go vet ./...`, `gofmt -l .`, `golangci-lint run ./...` on both host and `GOOS=linux`) all pass — this PR touches only Markdown.

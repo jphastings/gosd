@@ -23,7 +23,7 @@ see `beans list` for what's in flight.
 | mDNS (`<hostname>.local`) | ✅ | ✅ | 🚧 [^board-profile] |
 | SNTP time sync | ✅ | ✅ | 🚧 [^board-profile] |
 | Persistent `/data` partition | ✅ | ✅ | 🚧 [^board-profile] |
-| USB gadget (serial/Ethernet) | 🚧 [^usb-gadget] | 🚧 [^usb-gadget] | ❌ [^nanopi-usb] |
+| USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | GPIO / I2C / SPI | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio][^nanopi-fpc] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
@@ -97,10 +97,15 @@ see `beans list` for what's in flight.
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on the Pi, DWC3 on
     the Radxa; `CONFIG_USB_GADGET`, configfs, ACM/ECM/RNDIS functions) is
     already enabled on both boards' kernels. The pure-Go configfs gadget
-    library itself (package `gadget`, a public v0.3 API surface) hasn't been
-    written yet — bean `gosd-uo9f` (serial/CDC-ACM) and `gosd-30jz` (USB
-    Ethernet) — and both are additionally blocked on hardware bring-up
-    (`gosd-m9dj`, `gosd-nlzf`).
+    library (package `gadget`, a public v0.3 API surface) is implemented and
+    unit-tested against a fake filesystem, with CDC-ACM serial gadget mode
+    working end to end (`gosd build --usb-gadget`, see `examples/usbserial`
+    and `docs/runtime.md`'s "USB gadget mode" section) — bean `gosd-uo9f`.
+    USB Ethernet (ECM/RNDIS) isn't built yet (bean `gosd-30jz`). Like every
+    other ✅ in this table, this means code-complete and unit-tested, not
+    hardware-verified: no on-device USB enumeration has been tried on either
+    board yet, blocked on hardware bring-up (`gosd-m9dj`, `gosd-nlzf`), which
+    are themselves blocked on acquiring a bring-up kit (`gosd-s4t4`).
 
 [^nanopi-usb]: The RK3528 SoC has no USB controller DT node in any numbered
     mainline kernel release as of the pinned tag (v6.18.37) — the `dwc3` node
