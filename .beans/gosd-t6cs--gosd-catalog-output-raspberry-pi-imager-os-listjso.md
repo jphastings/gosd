@@ -1,11 +1,11 @@
 ---
 # gosd-t6cs
 title: 'gosd catalog output: Raspberry Pi Imager os_list.json entry'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-05T07:07:13Z
-updated_at: 2026-07-05T22:11:50Z
+updated_at: 2026-07-06T13:18:22Z
 parent: gosd-b22t
 ---
 
@@ -15,7 +15,7 @@ Implements the flagship end-user flashing flow (decision 2026-07-05, see CLAUDE.
 
 - [x] Flag + generator + unit tests (golden JSON, schema validation)
 - [x] docs/publishing.md for Go developers: host image + JSON, what URL to give end users, and the end-user steps (Imager Settings → Custom repository)
-- [ ] Bench re-check of device filtering in real Imager once the official-device-tags fix ships (JP's 2026-07-05 live Imager test already validated the rest of this todo: catalog loads via Custom repository, entry is selectable, customization wizard appears — see "Device-tag fix" below)
+- [x] Bench re-check of device filtering in real Imager once the official-device-tags fix ships (JP's 2026-07-05 live Imager test already validated the rest of this todo: catalog loads via Custom repository, entry is selectable, customization wizard appears — see "Device-tag fix" below)
 
 ## Acceptance
 A generated catalog served from a local static file server appears in Imager as a selectable OS with the customization wizard enabled (manual step, same bench session as fixture capture).
@@ -148,3 +148,17 @@ The fix (branch bean/gosd-t6cs-imager-device-tags):
   (an Imager limitation) and tells developers what to advise their users.
 - Golden JSON, schema-validation test (now also asserts a non-empty
   devices array), and a behavioral tag-mapping test updated/added.
+
+
+## Bench verification note (2026-07-06)
+
+Verified via JP's screenshot session 2026-07-06, see
+docs/images/flashing/. The seven-screenshot Raspberry Pi Imager v2.0.10
+capture used for docs/flashing.md (bean gosd-ufeh) doubles as the
+outstanding bench re-check for this todo: docs/images/flashing/04-choose-device.png
+shows "Raspberry Pi Zero 2 W" selected on the device page, and
+docs/images/flashing/05-choose-app.png (captured immediately after, same
+session) shows the "hello (Raspberry Pi Zero 2 W)" entry visible and
+selectable under that device selection — confirming the device-tag fix
+(pi-zero-2w -> "pi3-64bit") works end-to-end in real Imager, not just by
+source-code inspection. All three todos are now checked; closing.
