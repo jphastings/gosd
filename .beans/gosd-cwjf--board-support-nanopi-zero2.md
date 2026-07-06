@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: low
 created_at: 2026-07-05T05:34:02Z
-updated_at: 2026-07-06T02:23:09Z
+updated_at: 2026-07-06T06:27:33Z
 ---
 
 Third supported board: FriendlyElec NanoPi Zero2 — Rockchip RK3528A (4x Cortex-A53, arm64), 1/2GB LPDDR4X, GbE RJ45, microSD + eMMC socket, USB 2.0 Type-A host + USB-C device port (gadget candidate), 30-pin FPC GPIO connector (NOT a Pi-style header), 45x45mm, 5V/2A USB-C power. WiFi only via optional M.2 Key-E module — Ethernet-first support; M.2 WiFi module support is explicitly out of scope until a specific module is chosen.
@@ -29,3 +29,6 @@ Mainline Linux has a board DT (`rk3528-nanopi-zero2.dts`, since v6.18-rc1) and m
 U-Boot has a dedicated `nanopi-zero2-rk3528_defconfig` (landing in v2026.07). No vendor
 BSP kernel needed. The KEY RISK called out above is resolved: this board can be built the
 same mainline-only way as the Radxa Zero 3E. Epic is unblocked to proceed after v0.2 ships.
+
+## USB gate discovered during kernel build (2026-07-06, PR #33)
+rk3528.dtsi has NO USB controller node in any numbered kernel release as of v6.18.37 — the RK3528 dwc3 node is merged on Linus master only. Consequence: the NanoPi Zero2 has no USB at all (host or gadget) until a future fleet-wide KERNEL_TAG bump picks it up; Ethernet/SD/serial are unaffected. The bring-up task (gosd-odp7) should expect no USB, and the v0.3 gadget story excludes this board until then. Recheck when bumping KERNEL_TAG past the release containing the rk3528 dwc3 node.
