@@ -109,6 +109,34 @@ func TestBootFilesContents(t *testing.T) {
 	}
 }
 
+func TestBootFilesIgnoresUsbGadget(t *testing.T) {
+	b := radxazero3e.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+	without, err := b.BootFiles(boards.BuildConfig{}, art)
+	if err != nil {
+		t.Fatalf("BootFiles() with UsbGadget=false: %v", err)
+	}
+
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+	with, err := b.BootFiles(boards.BuildConfig{UsbGadget: true}, art)
+	if err != nil {
+		t.Fatalf("BootFiles() with UsbGadget=true: %v", err)
+	}
+
+	extlinuxWithout, err := io.ReadAll(without["extlinux/extlinux.conf"])
+	if err != nil {
+		t.Fatalf("reading extlinux.conf: %v", err)
+	}
+	extlinuxWith, err := io.ReadAll(with["extlinux/extlinux.conf"])
+	if err != nil {
+		t.Fatalf("reading extlinux.conf: %v", err)
+	}
+	if string(extlinuxWithout) != string(extlinuxWith) {
+		t.Errorf("extlinux.conf differs between UsbGadget=false/true; this board needs no boot-time change for USB gadget mode")
+	}
+}
+
 func TestRawWritesOffsetsAndContent(t *testing.T) {
 	b := radxazero3e.New()
 	art := resolveFakeArtifacts(t, b)

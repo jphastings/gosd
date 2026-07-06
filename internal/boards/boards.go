@@ -53,6 +53,13 @@ type BuildConfig struct {
 	Hostname     string
 	WifiSSID     string
 	WifiPassword string
+	// UsbGadget is set when --usb-gadget was passed: the board's USB
+	// controller should boot in peripheral mode so an app using the
+	// gadget package has a UDC to bind to. Boards that need a boot-time
+	// change for this (Pi Zero 2W's dwc2 overlay) read it here; boards
+	// that don't (Radxa Zero 3E's dwc3 negotiates role automatically)
+	// ignore it.
+	UsbGadget bool
 }
 
 // Board is a single supported hardware target: naming, the artifacts it

@@ -69,7 +69,7 @@ func fileRefs(files []manifest.File) []boards.ArtifactRef {
 // BootFiles implements boards.Board: the kernel, GPU boot firmware,
 // rendered config.txt/cmdline.txt, and the initramfs the build pipeline has
 // already built into art.Initramfs.
-func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
+func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	m := manifest.Load()
 
 	files := make(map[string]io.Reader, len(m.BootFiles.Files)+3)
@@ -88,7 +88,7 @@ func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]i
 		files[f.Name] = r
 	}
 
-	configTxt, err := templates.RenderConfigTxt(templates.ConfigTxtData{InitramfsName: initramfsName})
+	configTxt, err := templates.RenderConfigTxt(templates.ConfigTxtData{InitramfsName: initramfsName, UsbGadget: cfg.UsbGadget})
 	if err != nil {
 		return nil, fmt.Errorf("rendering config.txt: %w", err)
 	}

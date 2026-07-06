@@ -228,6 +228,30 @@ the same way your app does. Worked, board-tested examples wiring these up
 under GoSD are planned for v0.3; until then, treat the libraries' own
 examples as your starting point and adjust device paths for your board.
 
+## USB gadget mode
+
+Your app can present the board as a USB peripheral instead of (or alongside)
+its normal role, using the pure-Go `gadget` package — no cgo, no exec, just
+configfs file writes. Today that means CDC-ACM serial; a USB Ethernet
+gadget (device-as-network-interface, no WiFi/cable needed at all) is
+planned for later.
+
+- Build with `gosd build --usb-gadget` so the board's USB controller boots
+  in peripheral mode. On the Pi Zero 2W this repurposes its only USB port
+  from host to peripheral mode (the *inner* micro-USB is the data port, not
+  the one marked PWR); the Radxa Zero 3E needs no flag-driven change at all
+  — its USB-C OTG/power port negotiates role automatically.
+- Activation is your app's job, not `gosd-init`'s: construct a
+  `gadget.Gadget`, add a `gadget.ACM{}` function, and call `Apply()` at
+  startup (`Close()` to tear it down). Without `--usb-gadget` at build time,
+  `Apply()` fails with an actionable error instead of silently doing
+  nothing.
+- Once applied, the device shows up at `/dev/ttyGS0` on the board and as a
+  USB-serial device on the host (`/dev/ttyACM0` on Linux, `/dev/cu.usbmodem*`
+  on macOS).
+- See `examples/usbserial` for a complete worked example: it applies the
+  gadget and echoes back every line it reads over `/dev/ttyGS0`.
+
 ## Testing your app under qemu (no hardware needed)
 
 You don't need a Pi or a Radxa on your desk to see your app run through the

@@ -15,7 +15,7 @@ func TestMountEarlyMountsEverythingInOrder(t *testing.T) {
 		t.Fatalf("mountEarly() = %v, want nil", err)
 	}
 
-	wantTargets := []string{"/dev", "/proc", "/sys", "/run"}
+	wantTargets := []string{"/dev", "/proc", "/sys", "/sys/kernel/config", "/run"}
 	if len(m.calls) != len(wantTargets) {
 		t.Fatalf("mountEarly() made %d Mount calls, want %d", len(m.calls), len(wantTargets))
 	}

@@ -41,6 +41,7 @@ var (
 	dataSize       string
 	catalogFlag    bool
 	publishBaseURL string
+	usbGadget      bool
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -74,6 +75,8 @@ func newBuildCmd() *cobra.Command {
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
 		"base URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog")
+	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
+		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
 
 	return cmd
 }
@@ -136,6 +139,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				Hostname:     deviceHostname,
 				WifiSSID:     wifiSSID,
 				WifiPassword: wifiPass,
+				UsbGadget:    usbGadget,
 			},
 			ArtifactsDir:  artifactsDir,
 			CacheDir:      cacheDir,

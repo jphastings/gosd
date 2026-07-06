@@ -61,3 +61,14 @@ func TestRenderConfigTxt_InterpolatesInitramfsName(t *testing.T) {
 		t.Errorf("RenderConfigTxt() = %q, want it to contain %q", got, want)
 	}
 }
+
+func TestRenderConfigTxt_UsbGadgetAddsDwc2Overlay(t *testing.T) {
+	got, err := RenderConfigTxt(ConfigTxtData{InitramfsName: "initramfs.cpio.zst", UsbGadget: true})
+	if err != nil {
+		t.Fatalf("RenderConfigTxt() error = %v", err)
+	}
+	want := wantConfigTxt + "dtoverlay=dwc2,dr_mode=peripheral\n"
+	if got != want {
+		t.Errorf("RenderConfigTxt() = %q, want %q", got, want)
+	}
+}

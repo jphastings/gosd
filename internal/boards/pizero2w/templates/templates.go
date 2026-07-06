@@ -4,7 +4,9 @@
 // shelling out or reading from disk.
 //
 // The content of both templates is locked by bean gosd-eu2x; do not change
-// it without updating that decision.
+// it without updating that decision. ConfigTxtData.UsbGadget (gosd-uo9f) is
+// an additive exception: it only ever appends a line, never changing what
+// renders when it's unset.
 package templates
 
 import (
@@ -35,6 +37,9 @@ type ConfigTxtData struct {
 	// InitramfsName is the initramfs file name on the FAT boot partition,
 	// e.g. "initramfs.cpio.zst".
 	InitramfsName string
+	// UsbGadget adds the dtoverlay putting the board's USB port into
+	// peripheral mode, needed by an app that uses the gadget package.
+	UsbGadget bool
 }
 
 // CmdlineTxtData holds the values interpolated into cmdline.txt.

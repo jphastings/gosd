@@ -123,6 +123,37 @@ func TestBootFilesContents(t *testing.T) {
 	}
 }
 
+func TestBootFilesConfigTxtAddsUsbGadgetOverlayWhenRequested(t *testing.T) {
+	b := pizero2w.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+
+	without, err := b.BootFiles(boards.BuildConfig{}, art)
+	if err != nil {
+		t.Fatalf("BootFiles() with UsbGadget=false: %v", err)
+	}
+	configWithout, err := io.ReadAll(without["config.txt"])
+	if err != nil {
+		t.Fatalf("reading config.txt: %v", err)
+	}
+	if strings.Contains(string(configWithout), "dtoverlay=dwc2") {
+		t.Errorf("config.txt = %q, want no dwc2 overlay when --usb-gadget is not set", configWithout)
+	}
+
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+	with, err := b.BootFiles(boards.BuildConfig{UsbGadget: true}, art)
+	if err != nil {
+		t.Fatalf("BootFiles() with UsbGadget=true: %v", err)
+	}
+	configWith, err := io.ReadAll(with["config.txt"])
+	if err != nil {
+		t.Fatalf("reading config.txt: %v", err)
+	}
+	if !strings.Contains(string(configWith), "dtoverlay=dwc2,dr_mode=peripheral") {
+		t.Errorf("config.txt = %q, want the dwc2 peripheral-mode overlay when --usb-gadget is set", configWith)
+	}
+}
+
 func TestRawWritesIsEmpty(t *testing.T) {
 	if got := pizero2w.New().RawWrites(boards.Artifacts{}); len(got) != 0 {
 		t.Errorf("RawWrites() = %v, want empty: the Pi boots via the GPU ROM and FAT partition alone", got)

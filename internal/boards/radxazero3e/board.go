@@ -79,7 +79,10 @@ func (board) Artifacts() []boards.ArtifactRef {
 
 // BootFiles implements boards.Board: the kernel, DTB, the initramfs the
 // build pipeline has already built into art.Initramfs, and extlinux.conf
-// rendered from the locked template.
+// rendered from the locked template. BuildConfig.UsbGadget is deliberately
+// ignored: unlike the Pi Zero 2W, this board's USB-C OTG/power port and
+// dwc3 controller negotiate host/peripheral role automatically, so
+// --usb-gadget needs no boot-time change here.
 func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
