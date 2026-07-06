@@ -276,6 +276,61 @@ func TestRunReconnectsAfterAssociationIsLost(t *testing.T) {
 	}
 }
 
+func TestRunLogsProbingMessageForHiddenNetwork(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}}}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "shy-net", Open: true, Hidden: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if wifi.connectCallCount() == 0 {
+		t.Fatal("Connect was never attempted for the hidden network")
+	}
+	if call := wifi.connectCalls; len(call) == 0 || call[0] != "shy-net" {
+		t.Errorf("Connect calls = %v, want a directed connect to %q (no scan match required)", call, "shy-net")
+	}
+	if !log.contains(`hidden SSID "shy-net": probing directly; this can take longer`) {
+		t.Errorf("log missing hidden-network probing message: %v", log.snapshot())
+	}
+}
+
+func TestRunDoesNotLogProbingMessageForVisibleNetwork(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}}}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "open-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if wifi.connectCallCount() == 0 {
+		t.Fatal("Connect was never attempted")
+	}
+	if log.contains("probing directly") {
+		t.Errorf("log unexpectedly mentions hidden-network probing for a non-hidden network: %v", log.snapshot())
+	}
+}
+
 func TestPickInterfacePrefersWlanPrefix(t *testing.T) {
 	ifis := []Interface{{Name: "p2p0", Index: 1}, {Name: "wlan0", Index: 2}}
 	got, ok := pickInterface(ifis)

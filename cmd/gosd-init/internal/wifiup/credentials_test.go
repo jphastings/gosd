@@ -184,6 +184,62 @@ func TestConfigCredentialsProvisionPreHashedHexPSKIsUsedDirectly(t *testing.T) {
 	}
 }
 
+func TestConfigCredentialsProvisionHiddenNetworkSetsHidden(t *testing.T) {
+	src := ConfigCredentials{
+		Provision: []provision.WifiNetwork{{SSID: "shy-network", Password: "shy-password", Hidden: true}},
+	}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	if !ok || !creds.Hidden || creds.SSID != "shy-network" {
+		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=true for %q", creds, ok, "shy-network")
+	}
+}
+
+func TestConfigCredentialsProvisionNonHiddenNetworkLeavesHiddenFalse(t *testing.T) {
+	src := ConfigCredentials{
+		Provision: []provision.WifiNetwork{{SSID: "visible-network", Password: "visible-password"}},
+	}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	if !ok || creds.Hidden {
+		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=false", creds, ok)
+	}
+}
+
+func TestConfigCredentialsGosdTomlOverridingHiddenProvisionClearsHidden(t *testing.T) {
+	// gosd.toml's schema has no hidden field (locked), and it takes
+	// precedence over cloud-init provisioning — so once it wins, the
+	// hidden-ness of the network it replaced must not leak through.
+	src := ConfigCredentials{
+		Provision: []provision.WifiNetwork{{SSID: "shy-network", Password: "shy-password", Hidden: true}},
+		GosdToml:  gosdtoml.Wifi{SSID: "hand-edited-network", Passphrase: "hand-edited-password"},
+	}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	if !ok || creds.SSID != "hand-edited-network" || creds.Hidden {
+		t.Errorf("Credentials() = %+v, ok=%v, want the gosd.toml network with Hidden=false", creds, ok)
+	}
+}
+
+func TestConfigCredentialsConfigJSONNeverHidden(t *testing.T) {
+	// initcfg.Wifi's schema has no hidden field (locked): config.json can
+	// never mark a network hidden, regardless of what else is set.
+	src := ConfigCredentials{Wifi: initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"}}
+	creds, ok, err := src.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	if !ok || creds.Hidden {
+		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=false", creds, ok)
+	}
+}
+
 func TestConfigCredentialsTreats64CharNonHexAsPassphrase(t *testing.T) {
 	// Right length to be mistaken for a pre-hashed PSK, but not valid hex:
 	// isHexPSK's shape check must reject it, so it's derived as an
