@@ -72,6 +72,12 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    --help` for the full set of flags (`--hostname`, `--wifi-ssid` /
    `--wifi-pass`, repeatable `--board`, `-o`/`--output`).
 
+   Don't have a board on hand yet? `gosd run .` cross-compiles your app,
+   builds an image, and boots it under `qemu-system-aarch64` in one step,
+   so you can see the real boot sequence and hit your app's HTTP port
+   locally before ever touching hardware — see
+   [`docs/runtime.md`](docs/runtime.md#testing-your-app-under-qemu-no-hardware-needed).
+
 4. Flash `hello.img` to an SD card. The recommended path is [Raspberry Pi
    Imager](https://www.raspberrypi.com/software/)'s custom-repository
    catalog: build with `--catalog --publish-base-url=<url>` to also emit an
