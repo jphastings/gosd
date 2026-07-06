@@ -8,7 +8,7 @@ exactly what a human needs to do at the bench.
 
 Primary source: [github.com/raspberrypi/rpi-imager](https://github.com/raspberrypi/rpi-imager).
 Current release analyzed: **v2.0.10** (commit
-`204a6eee47c2c46da453d4de4138f08619a8c0e6`). Older behavior analyzed at
+`467be3d3e88f5d83fa78c78788f6e6fdce61a47e`). Older behavior analyzed at
 **v1.6.2** (commit `4a039b78853a87b665b7ab89d819f36af591a1b1`, pre-cloud-init,
 pre-`init_format`) and **v1.7.5** (commit `b49408781a3c347bd6f6c057c68bb34d6c06ad10`,
 transitional). All permalinks below point at these exact commits, not branch
@@ -25,21 +25,21 @@ customization wizard step never appears.
 
 Why: customization availability is gated by `ImageWriter::imageSupportsCustomization()`,
 which is just `!_initFormat.isEmpty()`
-([src/imagewriter.cpp#L4082-L4085](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L4082-L4085)).
+([src/imagewriter.cpp#L4082-L4085](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L4082-L4085)).
 `_initFormat` is populated from the `init_format` field of the *catalog* entry
 (`os_list.json`) the user picked
-([src/oslistmodel.cpp#L342](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/oslistmodel.cpp#L342),
+([src/oslistmodel.cpp#L342](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/oslistmodel.cpp#L342),
 consumed in
-[src/wizard/OSSelectionStep.qml#L717-L730](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/wizard/OSSelectionStep.qml#L717-L730)).
+[src/wizard/OSSelectionStep.qml#L717-L730](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/OSSelectionStep.qml#L717-L730)).
 The "Use custom" entry itself is synthesized with no `init_format` key at all
-([src/imagewriter.cpp#L2364-L2371](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L2364-L2371)),
+([src/imagewriter.cpp#L2364-L2371](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L2364-L2371)),
 and when the user actually picks a local file, the QML handler calls
 `ImageWriterSingleton.setSrc(fileUrl)` with **no** `initFormat` argument at
 all, then explicitly clears every customization flag once it observes
 `customizationSupported` is false
-([src/wizard/OSSelectionStep.qml#L162-L182](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/wizard/OSSelectionStep.qml#L162-L182)).
+([src/wizard/OSSelectionStep.qml#L162-L182](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/OSSelectionStep.qml#L162-L182)).
 The wizard then skips the customization step outright
-([src/wizard/WizardContainer.qml#L840](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/wizard/WizardContainer.qml#L840)).
+([src/wizard/WizardContainer.qml#L840](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/WizardContainer.qml#L840)).
 
 There are exactly two officially-supported ways to get Imager to write
 provisioning data onto a GoSD image, and neither is "select local file, click
@@ -48,19 +48,19 @@ gear icon":
 1. **`rpi-imager-cli`**, which always sets `_initFormat` itself
    (`"systemd"` unless `--cloudinit-userdata`/`--cloudinit-networkconfig` is
    given, forcing `"cloudinit"`) regardless of source
-   ([src/cli.cpp#L120-L121](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/cli.cpp#L120-L121)),
+   ([src/cli.cpp#L120-L121](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/cli.cpp#L120-L121)),
    and accepts a pre-made firstrun.sh / user-data / network-config file on
    the command line
-   ([src/cli.cpp#L216-L289](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/cli.cpp#L216-L289)).
+   ([src/cli.cpp#L216-L289](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/cli.cpp#L216-L289)).
    This only proves file *placement and cmdline.txt mangling* — the content
    is whatever the human hand-crafts, not what the GUI's field-to-file
    generator produces.
 2. **A custom repository** (`ImageWriter::setCustomRepo`,
-   [src/imagewriter.h#L107](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.h#L107)):
+   [src/imagewriter.h#L107](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.h#L107)):
    host a small `os_list.json` (schema documented at
-   [doc/json-schema/os-list-schema.json](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/doc/json-schema/os-list-schema.json),
+   [doc/json-schema/os-list-schema.json](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/json-schema/os-list-schema.json),
    worked example in
-   [doc/schema-notes.md](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/doc/schema-notes.md))
+   [doc/schema-notes.md](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/schema-notes.md))
    listing the GoSD `.img` with `"init_format": "systemd"` (or `"cloudinit"`),
    point Imager's Settings → "Custom repository" at it, and the GoSD image
    then appears as a normal catalog entry with the *full* customization
@@ -84,7 +84,7 @@ Imager has exactly three provisioning mechanisms today, selected by a single
 `init_format` string carried on the OS-list entry (`"systemd"`,
 `"cloudinit"`, `"cloudinit-rpi"`, or empty/`"none"` for "no customization
 available"). Valid values are enforced and unknown ones pruned:
-[src/oslistmodel.cpp#L24-L31](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/oslistmodel.cpp#L24-L31).
+[src/oslistmodel.cpp#L24-L31](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/oslistmodel.cpp#L24-L31).
 There is **no `custom.toml` mechanism anywhere in the current source** —
 `git grep -i "custom.toml"` across the v2.0.10 tree returns nothing. (It may
 be conflated in folk knowledge with Alpine's or other distros' unrelated
@@ -94,19 +94,19 @@ be conflated in folk knowledge with Alpine's or other distros' unrelated
 |---|---|---|---|
 | `"systemd"` | `firstrun.sh`, `cmdline.txt` (appended) | `CustomisationGenerator::generateSystemdScript` | The legacy/universal mechanism. Works on any OS that mounts the FAT partition at `/boot` and boots with systemd. |
 | `"cloudinit"` | `user-data`, `network-config`, `meta-data`, `cmdline.txt` (appended) | `generateCloudInitUserData` + `generateCloudInitNetworkConfig` | Generic cloud-init (NoCloud datasource). Used for non-RPi distros that already ship cloud-init (e.g. Ubuntu). |
-| `"cloudinit-rpi"` | same as `"cloudinit"`, plus an `rpi:` block in `user-data` | same, with `hasCcRpi=true` | Adds the Raspberry-Pi-specific `cc_raspberry_pi` cloud-init module (I2C/SPI/1-Wire/serial/USB-gadget). Gated additionally by the OS entry's `capabilities` list, checked via `imageSupportsCcRpi()` ([src/imagewriter.cpp#L4087-L4090](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L4087-L4090)). |
+| `"cloudinit-rpi"` | same as `"cloudinit"`, plus an `rpi:` block in `user-data` | same, with `hasCcRpi=true` | Adds the Raspberry-Pi-specific `cc_raspberry_pi` cloud-init module (I2C/SPI/1-Wire/serial/USB-gadget). Gated additionally by the OS entry's `capabilities` list, checked via `imageSupportsCcRpi()` ([src/imagewriter.cpp#L4087-L4090](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L4087-L4090)). |
 | `""` / `"none"` | nothing | — | Customization step is skipped entirely. This is the effective value for any locally-selected "Use custom" image (see §0). |
 
 The dispatch is a single branch in
 `ImageWriter::applyCustomisationFromSettings`
-([src/imagewriter.cpp#L3873-L3891](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L3873-L3891)):
+([src/imagewriter.cpp#L3873-L3891](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L3873-L3891)):
 `"systemd"` → `_applySystemdCustomisationFromSettings`; anything else
 non-empty → `_applyCloudInitCustomisationFromSettings`. The actual file
 writes happen later in `DownloadThread::_customizeImage`
-([src/downloadthread.cpp#L2338-L2413](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/downloadthread.cpp#L2338-L2413))
+([src/downloadthread.cpp#L2338-L2413](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/downloadthread.cpp#L2338-L2413))
 for the normal SD-card/USB write path, or in
 `FastbootFlashThread::applyCustomisation`
-([src/fastbootflashthread.cpp#L260-L404](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/fastbootflashthread.cpp#L260-L404))
+([src/fastbootflashthread.cpp#L260-L404](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/fastbootflashthread.cpp#L260-L404))
 for eMMC-over-USB (fastboot/rpiboot) targets like CM4/CM5 in USB-boot mode —
 not relevant to GoSD, which produces plain `.img` files written the first
 way.
@@ -144,11 +144,11 @@ priority target for gosd-init.
 The PSK is **never written as a plaintext passphrase** to any file Imager
 writes. It's derived client-side, in the UI, the moment the user finishes
 typing it, via `ImageWriterSingleton.pbkdf2(pwd, ssid)`
-([src/wizard/WifiCustomizationStep.qml#L479](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/wizard/WifiCustomizationStep.qml#L479)),
+([src/wizard/WifiCustomizationStep.qml#L479](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/WifiCustomizationStep.qml#L479)),
 which calls the `Q_INVOKABLE` `ImageWriter::pbkdf2`
-([src/imagewriter.h#L339](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.h#L339),
+([src/imagewriter.h#L339](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.h#L339),
 implementation at
-[src/imagewriter.cpp#L3997-L3999](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L3997-L3999)):
+[src/imagewriter.cpp#L3997-L3999](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L3997-L3999)):
 
 ```cpp
 QString ImageWriter::pbkdf2(const QByteArray &psk, const QByteArray &ssid) {
@@ -169,9 +169,9 @@ in `gosd-pctc` just needs to extract the 64-hex string and feed it to
 The only value that ever reaches an artifact is the crypted PSK
 (`wifiPasswordCrypt`); the generator prefers it and only falls back to
 hashing a legacy plaintext setting itself if the crypted value is missing
-([src/customization_generator.cpp#L160-L168](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/customization_generator.cpp#L160-L168)
+([src/customization_generator.cpp#L160-L168](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L160-L168)
 for firstrun.sh,
-[src/customization_generator.cpp#L724-L732](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/customization_generator.cpp#L724-L732)
+[src/customization_generator.cpp#L724-L732](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L724-L732)
 for network-config) — either way, only the hash is ever serialized. A
 literal 64-hex-character input is passed through unhashed (treated as an
 already-derived PSK, not double-hashed) — same "is it 64 hex chars"
@@ -188,9 +188,9 @@ same hash, same iteration count, same key length, just built with OpenSSL's
 ## 3. Field-by-field extraction table
 
 Settings map keys (as consumed by `CustomisationGenerator`,
-[src/customization_generator.h](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/customization_generator.h)
+[src/customization_generator.h](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.h)
 and
-[src/customization_generator.cpp](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/customization_generator.cpp))
+[src/customization_generator.cpp](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp))
 against what actually lands in each file:
 
 | Field | Settings key | `firstrun.sh` (systemd) | `user-data` (cloud-init) | `network-config` (cloud-init) |
@@ -215,7 +215,7 @@ Auxiliary files always written alongside cloud-init content:
 `meta-data` (just `instance-id: rpi-imager-<epoch-ms>`, required so
 cloud-init's NoCloud datasource treats the seed as fresh each time it's
 regenerated —
-[src/downloadthread.cpp#L2378-L2384](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/downloadthread.cpp#L2378-L2384)).
+[src/downloadthread.cpp#L2378-L2384](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/downloadthread.cpp#L2378-L2384)).
 
 `cmdline.txt` is appended (never fully rewritten unless it didn't exist — see
 §4) with, depending on format and content:
@@ -224,7 +224,7 @@ regenerated —
 - either format, only if a WiFi country was set: ` cfg80211.ieee80211_regdom=<CC>` (this is how country gets applied even when there's no SSID to attach it to in the YAML)
 
 User account password hashing (`ImageWriter::crypt`,
-[src/imagewriter.cpp#L3960-L3993](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/imagewriter.cpp#L3960-L3993)):
+[src/imagewriter.cpp#L3960-L3993](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L3960-L3993)):
 `yescrypt` for any OS with `release_date >= 2023-01-01`, `sha256crypt`
 (`$5$...`) otherwise. This is a **login password hash**, unrelated to the
 WiFi PSK derivation — gosd-init has no login shell to apply it to (per the
@@ -241,9 +241,9 @@ break, no-op, or fall back?" for boards like Radxa Zero 3E that don't ship a
 **It's a silent no-op, not a break.** `DeviceWrapperFatPartition::readFile`
 returns an empty `QByteArray` when the file doesn't exist — it logs a
 `qDebug()` line and returns cleanly, it does not throw
-([src/devicewrapperfatpartition.cpp#L501-L503](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/devicewrapperfatpartition.cpp#L501-L503),
+([src/devicewrapperfatpartition.cpp#L501-L503](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/devicewrapperfatpartition.cpp#L501-L503),
 general not-found handling throughout
-[L338-L522](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/devicewrapperfatpartition.cpp#L338-L522)).
+[L338-L522](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/devicewrapperfatpartition.cpp#L338-L522)).
 `_customizeImage` treats that empty read as the starting content and just
 appends to it:
 
@@ -252,7 +252,7 @@ QByteArray cmdline = fat->readFile("cmdline.txt").trimmed();   // "" if missing
 cmdline += _cmdline;                                            // append customization tokens
 fat->writeFile("cmdline.txt", cmdline);                         // (re)write
 ```
-([src/downloadthread.cpp#L2406-L2413](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/downloadthread.cpp#L2406-L2413))
+([src/downloadthread.cpp#L2406-L2413](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/downloadthread.cpp#L2406-L2413))
 
 So on a Radxa-style image with no pre-existing `cmdline.txt`, Imager
 **creates a brand-new one** containing only the customization tokens (a
@@ -272,7 +272,7 @@ The upstream schema documentation says this explicitly as a caveat on
 
 > "THIS WILL ONLY WORK IF THE FAT PARTITION IS MOUNTED AT /boot in your
 > /etc/fstab."
-> ([doc/json-schema/os-list-schema.json#L434-L438](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/doc/json-schema/os-list-schema.json#L434-L438))
+> ([doc/json-schema/os-list-schema.json#L434-L438](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/json-schema/os-list-schema.json#L434-L438))
 
 Radxa images fail that precondition twice over: no `/boot` fstab entry
 pointing at the FAT partition in our images' rootfs (there's no rootfs
@@ -293,8 +293,8 @@ One asymmetry worth flagging: the **fastboot/USB-boot path**
 (`FastbootFlashThread::applyCustomisation`, used for CM4/CM5 eMMC recovery
 mode — not GoSD's plain-`.img` path) treats a failed `config.txt`/`cmdline.txt`
 read as a hard error and aborts the whole flash
-([src/fastbootflashthread.cpp#L304-L332](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/fastbootflashthread.cpp#L304-L332),
-[L383-L400](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/fastbootflashthread.cpp#L383-L400)).
+([src/fastbootflashthread.cpp#L304-L332](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/fastbootflashthread.cpp#L304-L332),
+[L383-L400](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/fastbootflashthread.cpp#L383-L400)).
 GoSD boards aren't flashed through this path, so it doesn't apply to us, but
 it's worth knowing the two code paths disagree, in case a future board does
 use fastboot.
@@ -401,7 +401,7 @@ Rationale, source-by-source:
   branch for each field. It contains **both**, unconditionally — every
   field is generated as `if [ -f /usr/lib/raspberrypi-sys-mods/imager_custom
   ]; then ... else ... fi`
-  ([src/customization_generator.cpp#L196-L202](https://github.com/raspberrypi/rpi-imager/blob/204a6eee47c2c46da453d4de4138f08619a8c0e6/src/customization_generator.cpp#L196-L202)
+  ([src/customization_generator.cpp#L196-L202](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L196-L202)
   is one example of the pattern). `gosd-pctc`'s regex needs to handle both
   branches regardless, since the produced script always contains both — a
   real capture will just confirm this, not add new information.
