@@ -263,12 +263,11 @@ planned for later.
 
 You don't need a Pi or a Radxa on your desk to see your app run through the
 whole boot sequence above — `--board=qemu-virt` builds the same kind of
-image for `qemu-system-aarch64 -M virt` instead of real hardware, and
-`scripts/qemu-run.sh` boots it for you:
+image for `qemu-system-aarch64 -M virt` instead of real hardware. The
+fastest way to use it is `gosd run`, which builds and boots in one step:
 
 ```
-go run ./cmd/gosd build ./examples/hello --board=qemu-virt -o dist/
-scripts/qemu-run.sh dist/hello-qemu-virt.img
+go run ./cmd/gosd run ./examples/hello
 ```
 
 This is an internal/CI board (see CLAUDE.md's locked decisions) — it's
@@ -280,14 +279,39 @@ card. `qemu-system-aarch64` needs installing first:
 - macOS: `brew install qemu`
 - Debian/Ubuntu: `apt-get install qemu-system-arm`
 
-`scripts/qemu-run.sh` extracts the kernel `Image` and `initramfs.cpio.zst`
-straight out of the image's FAT boot partition (no root, no mtools — see
-`internal/cmd/imgextract`), then launches qemu with serial console on
+`gosd run` cross-compiles your app and gosd-init, assembles a qemu-virt
+image into a temp directory (reusing the exact same build pipeline, and
+artifact cache, as `gosd build`), then boots it with serial console on
 stdio, so `gosd-init`'s boot log and your app's stdout/stderr print live in
 your terminal exactly as they would over a real serial cable. Your app's
 port 80 is reachable at `http://localhost:8080` once gosd-init starts it
 and networking comes up (virtio-net, DHCP from qemu's own user-mode
-network). Quit with Ctrl-A X, or Ctrl-C to force-kill qemu.
+network). Ctrl-C stops qemu and deletes the temp image; pass `--keep` to
+keep it instead. Useful flags:
+
+- `--port` changes the host port your app's HTTP port 80 is forwarded to
+  (default 8080).
+- `--memory` changes the guest's RAM in MiB (default 512).
+- `--qemu-arg` passes an extra argument straight through to
+  `qemu-system-aarch64` (repeatable) — an escape hatch for anything the
+  above doesn't cover.
+- `--artifacts-dir` and `--gosd-init-src` work exactly as they do for
+  `gosd build`, for testing against a locally-built kernel or gosd-init
+  checkout.
+
+If you already have a `--board=qemu-virt` image built (e.g. from CI, or
+because you want to boot the exact same image repeatedly without
+rebuilding), `scripts/qemu-run.sh <path-to-image.img>` boots it directly,
+using the same underlying qemu invocation (`internal/qemurun`) as
+`gosd run`:
+
+```
+go run ./cmd/gosd build ./examples/hello --board=qemu-virt -o dist/
+scripts/qemu-run.sh dist/hello-qemu-virt.img
+```
+
+Quit either one with Ctrl-A X (inside the qemu console), or Ctrl-C to stop
+qemu from the host side.
 
 ## When to reach for gokrazy instead
 

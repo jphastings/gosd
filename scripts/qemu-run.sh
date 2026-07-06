@@ -10,11 +10,15 @@
 #   macOS:  brew install qemu
 #   Debian/Ubuntu: apt-get install qemu-system-arm
 #
-# The .img's FAT boot partition carries the kernel Image and
-# initramfs.cpio.zst qemu needs for -kernel/-initrd (see
-# internal/boards/qemuvirt): qemu has no bootloader of its own to read them
-# off the partition itself, unlike real hardware, so this script extracts
-# them first via internal/cmd/imgextract (go-diskfs, no root, no mtools).
+# The actual work here - extracting the kernel Image and
+# initramfs.cpio.zst a qemu-virt image carries on its FAT boot partition
+# (qemu has no bootloader of its own to read them off the partition the
+# way real hardware does) and the qemu-system-aarch64 invocation itself -
+# lives in internal/qemurun, the same package `gosd run` (cmd/gosd) uses
+# to build and boot an image in one step. This script is a thin wrapper
+# around internal/cmd/qemuboot so an already-built image (and anything
+# already scripted against this file, including CI's qemu-boot job) keeps
+# working unchanged.
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
@@ -28,39 +32,8 @@ if [ ! -f "$IMG" ]; then
   exit 1
 fi
 
-if ! command -v qemu-system-aarch64 >/dev/null 2>&1; then
-  echo "qemu-run.sh: qemu-system-aarch64 not found on PATH." >&2
-  echo "Install it: 'brew install qemu' (macOS) or 'apt-get install qemu-system-arm' (Debian/Ubuntu)." >&2
-  exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMG="$(cd "$(dirname "$IMG")" && pwd)/$(basename "$IMG")"
 
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${WORKDIR}"' EXIT
-
-echo "qemu-run.sh: extracting Image + initramfs.cpio.zst from ${IMG}'s boot partition..." >&2
-( cd "${REPO_ROOT}" && go run ./internal/cmd/imgextract "${IMG}" "${WORKDIR}" )
-
-for f in Image initramfs.cpio.zst; do
-  if [ ! -f "${WORKDIR}/${f}" ]; then
-    echo "qemu-run.sh: ${IMG}'s boot partition has no ${f}; is this a --board=qemu-virt image?" >&2
-    exit 1
-  fi
-done
-
-echo "qemu-run.sh: booting ${IMG} (Ctrl-A X to quit qemu, Ctrl-C to force-kill)." >&2
-echo "qemu-run.sh: your app will be reachable at http://localhost:8080 once gosd-init starts it and networking comes up." >&2
-
-exec qemu-system-aarch64 \
-  -M virt -cpu cortex-a53 -m 512 \
-  -nographic \
-  -kernel "${WORKDIR}/Image" \
-  -initrd "${WORKDIR}/initramfs.cpio.zst" \
-  -append "console=ttyAMA0 gosd.board=qemu-virt" \
-  -drive if=none,file="${IMG}",format=raw,id=hd0 \
-  -device virtio-blk-pci,drive=hd0,romfile= \
-  -netdev user,id=n0,hostfwd=tcp::8080-:80 \
-  -device virtio-net-pci,netdev=n0,romfile=
+exec go run -C "${REPO_ROOT}" ./internal/cmd/qemuboot "${IMG}"
