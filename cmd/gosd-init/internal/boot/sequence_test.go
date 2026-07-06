@@ -11,6 +11,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/provision"
 )
 
 func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
@@ -106,7 +107,7 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d); clock.Sleep(d) },
 		Now:         clock.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(string, ...any)) {
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
 			close(networkingStarted)
 		},
 	}
@@ -242,7 +243,7 @@ func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
 		ReadGosdToml: func() (gosdtoml.Config, error) { return gosdtoml.Config{Wifi: gosdtoml.Wifi{SSID: "hand-edited"}}, nil },
 		Sleep:        func(d time.Duration) { clock.Sleep(d) },
 		Now:          clock.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(string, ...any)) {
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
 			gosdTomlReceived <- gosdToml
 		},
 	}
@@ -260,6 +261,189 @@ func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Error("StartNetworking was never called")
+	}
+}
+
+func TestRunAppliesCloudInitHostnameWhenGosdTomlHasNone(t *testing.T) {
+	// Precedence: gosd.toml > cloud-init > config.json. With no gosd.toml
+	// hostname (here: no gosd.toml at all), cloud-init's user-data must
+	// still win over the baked-in config.json value.
+	hostname := &fakeHostname{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{Hostname: "cloud-init-name"}
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantCalls := []string{"baked-in-name", "cloud-init-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "hostname from cloud-init user-data") {
+		t.Errorf("console output missing cloud-init hostname source log line: %q", console.String())
+	}
+}
+
+func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
+	hostname := &fakeHostname{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{Hostname: "cloud-init-name"}
+		},
+		ReadGosdToml: func() (gosdtoml.Config, error) {
+			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantCalls := []string{"baked-in-name", "hand-edited-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v (gosd.toml wins over cloud-init)", hostname.set, wantCalls)
+	}
+}
+
+func TestRunPassesCloudInitWifiToStartNetworking(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	wifiReceived := make(chan []provision.WifiNetwork, 1)
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{Wifi: []provision.WifiNetwork{{SSID: "cloud-init-ssid"}}}
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
+			wifiReceived <- provisionWifi
+		},
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	select {
+	case got := <-wifiReceived:
+		if len(got) != 1 || got[0].SSID != "cloud-init-ssid" {
+			t.Errorf("StartNetworking got provisionWifi = %+v, want one network %q", got, "cloud-init-ssid")
+		}
+	case <-time.After(time.Second):
+		t.Error("StartNetworking was never called")
+	}
+}
+
+func TestRunLogsFirstrunShDetectionButDoesNotUseIt(t *testing.T) {
+	hostname := &fakeHostname{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			log("firstrun.sh found on the boot partition; gosd-init never parses or executes it — use gosd.toml to configure this device instead")
+			return provision.Result{FirstrunPresent: true}
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if hostname.set[len(hostname.set)-1] != "baked-in-name" {
+		t.Errorf("SetHostname calls = %v, want the last call to still be config.json's value (firstrun.sh is never parsed)", hostname.set)
+	}
+	if !strings.Contains(console.String(), "firstrun.sh found") {
+		t.Errorf("console output missing the firstrun.sh detection log line: %q", console.String())
 	}
 }
 

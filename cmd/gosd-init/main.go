@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/provision"
 )
 
 const (
@@ -74,12 +75,17 @@ func main() {
 		// ReadGosdToml reads /boot/gosd.toml, which only exists once the
 		// GOSD-BOOT partition is mounted; boot.Run calls this itself,
 		// after that mount (step 5), rather than main reading it up front.
-		ReadGosdToml:         readGosdToml,
+		ReadGosdToml: readGosdToml,
+		// ReadProvisioning reads cloud-init's user-data/network-config,
+		// which — like gosd.toml — only exist once the GOSD-BOOT
+		// partition is mounted (step 5); boot.Run calls this itself,
+		// right alongside ReadGosdToml.
+		ReadProvisioning:     readProvisioning,
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		Sleep:                time.Sleep,
 		Now:                  time.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any)) {
+		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS
 			// responder below: no change to either package, just an
@@ -102,7 +108,7 @@ func main() {
 				log("WiFi unavailable, skipping: %v", err)
 				return
 			}
-			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, log, mdnsChanged), wifiup.Options{})
+			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged), wifiup.Options{})
 		},
 	}
 	opts := boot.Options{
@@ -156,6 +162,17 @@ func readGosdToml() (gosdtoml.Config, error) {
 		return gosdtoml.Config{}, err
 	}
 	return gosdtoml.Parse(data)
+}
+
+// readProvisioning reads cloud-init's user-data/network-config (and checks
+// for firstrun.sh) on the GOSD-BOOT partition — see internal/provision.
+// Like readGosdToml, this only becomes readable once that partition is
+// mounted; boot.Run calls it right alongside readGosdToml (step 5).
+// provision.Read is itself best-effort (a missing/malformed file is logged
+// through log and skipped), so there's no error for this wrapper to
+// propagate.
+func readProvisioning(log func(format string, args ...any)) provision.Result {
+	return provision.Read(bootTarget, log)
 }
 
 // ensureDataMountpoint creates /data on the RAM-backed rootfs so the
@@ -242,14 +259,16 @@ func ntpServers(cfg initcfg.Config) []string {
 // wifiupDeps wires the real, nl80211-backed WiFi implementation (client)
 // together with the same netlink/DHCP building blocks netupDeps uses —
 // DHCP itself doesn't care whether the underlying medium is wired or
-// wireless — and the credential source: config.json's wifi block, unless
-// gosd.toml hand-edits one in, in which case that takes precedence. changed
-// is wired the same way netupDeps wires it: see that function's doc.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, log func(format string, args ...any), changed *mdnsresponder.Signal) wifiup.Deps {
+// wireless — and the credential source, in locked precedence order:
+// gosd.toml's hand-edited network, else the first network cloud-init's
+// network-config named (provisionWifi), else config.json's baked-in wifi
+// block. changed is wired the same way netupDeps wires it: see that
+// function's doc.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, provisionWifi []provision.WifiNetwork, log func(format string, args ...any), changed *mdnsresponder.Signal) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
-		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi, GosdToml: gosdWifi},
+		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi, GosdToml: gosdWifi, Provision: provisionWifi},
 		Links:           platform.Links,
 		DHCP:            platform.DHCP,
 		Clock:           netup.NewRealClock(),

@@ -71,15 +71,47 @@ Practical implications for your app:
 - **DNS** is written to `/etc/resolv.conf` from the DHCP lease once one is
   obtained; it's simply absent before then.
 
-As of today, `gosd-init`'s network bring-up drives **wired Ethernet only**
-(interfaces matching `eth*`, `end*`, `enp*` — see
-`cmd/gosd-init/internal/netup/netup.go`). `gosd build --wifi-ssid` /
-`--wifi-pass` bake WPA2-PSK/open credentials into the image's
-`config.json`, but `gosd-init` does not yet read them or associate to a
-WiFi network — that association step is still to be built. Don't rely on
-WiFi coming up on `main` today; build and test against wired Ethernet, or
-check `cmd/gosd-init/internal/netup` for the current state before depending
-on WiFi in your app.
+`gosd-init` brings up wired Ethernet (interfaces matching `eth*`, `end*`,
+`enp*` — see `cmd/gosd-init/internal/netup/netup.go`) and, if the board has
+WiFi hardware, associates to a single WPA2-PSK or open network (see
+`cmd/gosd-init/internal/wifiup`) using the same DHCP/DNS bring-up either
+way. WPA3/EAP networks are out of scope through v0.x; `gosd-init` logs
+clearly and skips WiFi bring-up rather than attempting to join one.
+
+The network to join comes from whichever of these sources is present, in
+this precedence order (highest wins):
+
+1. **`gosd.toml`**'s `[wifi]` table — the hand-editable fallback on the
+   `GOSD-BOOT` partition (see "Provisioning" below).
+2. **Cloud-init provisioning** written by Raspberry Pi Imager — also
+   below.
+3. **`config.json`**, baked at build time by `gosd build --wifi-ssid` /
+   `--wifi-pass`.
+
+## Provisioning: hostname and WiFi from Raspberry Pi Imager
+
+Beyond `config.json` baked in at build time and `gosd.toml` hand-edited on
+the card, `gosd-init` also reads whatever Raspberry Pi Imager's
+customization wizard wrote to the `GOSD-BOOT` partition — cloud-init's
+`user-data` (hostname) and `network-config` (WiFi access points) — see
+`internal/provision` and `docs/provisioning-formats.md` for the full field
+mapping and precedence rationale. This is the flagship end-user flashing
+path: publish a custom-repository catalog entry for your image
+(`init_format: "cloudinit"`) and Imager's full WiFi/hostname wizard becomes
+available for anyone flashing it.
+
+Practical notes:
+
+- `gosd-init` only ever consumes hostname and WiFi from these files —
+  everything else the wizard can configure (users, SSH keys, locale,
+  passwordless sudo, ...) is RPi-OS-specific and silently ignored, since
+  `gosd-init` has no shell or user accounts to apply them to.
+- `firstrun.sh` (Imager's older, non-cloud-init mechanism) is **never**
+  parsed or executed — if one is found on the boot partition, `gosd-init`
+  logs a line pointing you at `gosd.toml` instead.
+- A malformed or partially-written provisioning file is logged and
+  skipped, falling back to the next-lower-precedence source; it never
+  blocks boot.
 
 ## Clock: starts at 1970 until SNTP lands
 
