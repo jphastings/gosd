@@ -521,6 +521,97 @@ func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
 	}
 }
 
+// TestBuildCreatesMissingMultiBoardOutputDirectory is the regression test
+// for the bug JP hit: `gosd build -o <dir>` for more than one board used to
+// fail with "no such file or directory" the moment <dir> didn't already
+// exist. -o naming a directory should get that directory created for you,
+// per the principle of least surprise.
+func TestBuildCreatesMissingMultiBoardOutputDirectory(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := filepath.Join(t.TempDir(), "does", "not", "exist", "yet")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--board", "radxa-zero-3e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", outDir,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build -o <missing directory> failed: %v", err)
+	}
+
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-radxa-zero-3e.img"} {
+		if info, err := os.Stat(filepath.Join(outDir, want)); err != nil || info.Size() == 0 {
+			t.Errorf("expected non-empty output image %q, got stat error %v", want, err)
+		}
+	}
+}
+
+// TestBuildCreatesMissingSingleBoardOutputParentDirectory covers the
+// single-board case of the same bug: -o names the .img file directly, but
+// its parent directory may not exist yet either.
+func TestBuildCreatesMissingSingleBoardOutputParentDirectory(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "does", "not", "exist", "yet", "hello.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build -o <file in missing directory> failed: %v", err)
+	}
+
+	if info, err := os.Stat(imgPath); err != nil || info.Size() == 0 {
+		t.Errorf("expected non-empty output image at %q, got stat error %v", imgPath, err)
+	}
+}
+
+// TestBuildMultiBoardOutputAsExistingFileFailsActionably confirms that
+// pointing -o at a path that already exists as a plain file, when building
+// more than one board, fails fast with an actionable error instead of the
+// raw "no such file or directory"/"not a directory" error the underlying
+// image writer would otherwise surface.
+func TestBuildMultiBoardOutputAsExistingFileFailsActionably(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "already-a-file")
+	if err := os.WriteFile(outPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("writing fixture file: %v", err)
+	}
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--board", "radxa-zero-3e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", outPath,
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build -o <existing file> for multiple boards succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "-o must be a directory when building multiple boards") {
+		t.Errorf("error = %q, want it to explain that -o must be a directory", err.Error())
+	}
+}
+
 // assertRawWriteAt reads want's length worth of bytes from imgPath at
 // offset and fails the test if they don't match want exactly.
 func assertRawWriteAt(t *testing.T, imgPath string, offset int64, want string) {

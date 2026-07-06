@@ -104,6 +104,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := ensureOutputDir(output, len(selected) > 1); err != nil {
+		return err
+	}
+
 	dataSizeBytes, err := parseDataSize(dataSize)
 	if err != nil {
 		return err
@@ -269,6 +273,35 @@ func resolveBoards(ids []string) ([]boards.Board, error) {
 		selected = append(selected, b)
 	}
 	return selected, nil
+}
+
+// ensureOutputDir makes sure the directory gosd is about to write into
+// already exists, creating it (and any missing parents) if not. In
+// multi-board mode output itself names that directory; in single-board mode
+// output names the .img file, so only its parent directory needs to exist.
+// An empty output (single-board mode with no --output) writes into the
+// current directory, which always exists, so there's nothing to do.
+func ensureOutputDir(output string, multiBoard bool) error {
+	dir := output
+	if multiBoard {
+		if dir == "" {
+			dir = "."
+		}
+	} else if dir == "" {
+		return nil
+	} else {
+		dir = filepath.Dir(dir)
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		if multiBoard {
+			if info, statErr := os.Stat(dir); statErr == nil && !info.IsDir() {
+				return fmt.Errorf("-o must be a directory when building multiple boards; %s is a file", dir)
+			}
+		}
+		return fmt.Errorf("creating output directory %s failed: %w; check the path is writable and try a different -o", dir, err)
+	}
+	return nil
 }
 
 // resolveOutputs maps each selected board to its output .img path. When
