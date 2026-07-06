@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+
+	"github.com/jphastings/gosd/internal/boards"
 )
 
 // GosdModulePath is gosd's own module path. It's used to recognize when a
@@ -45,14 +47,14 @@ const gosdInitRelPkg = "./cmd/gosd-init"
 //     directory. This needs network access only the first time for a given
 //     version; the module cache serves every build after that, same as
 //     gosd's other artifact caching.
-func CrossCompileGosdInit(outputPath, overrideDir string) error {
+func CrossCompileGosdInit(outputPath, overrideDir string, arch boards.Arch) error {
 	if overrideDir != "" {
-		return crossCompileInDir(overrideDir, ".", outputPath,
+		return crossCompileInDir(overrideDir, ".", outputPath, arch,
 			fmt.Sprintf("--gosd-init-src %s", overrideDir))
 	}
 
 	if dir, ok := devCheckoutDir(); ok {
-		return crossCompileInDir(dir, gosdInitRelPkg, outputPath,
+		return crossCompileInDir(dir, gosdInitRelPkg, outputPath, arch,
 			fmt.Sprintf("local checkout at %s", dir))
 	}
 
@@ -60,16 +62,16 @@ func CrossCompileGosdInit(outputPath, overrideDir string) error {
 	if err != nil {
 		return err
 	}
-	return crossCompileInDir(dir, gosdInitRelPkg, outputPath,
+	return crossCompileInDir(dir, gosdInitRelPkg, outputPath, arch,
 		fmt.Sprintf("module cache at %s", dir))
 }
 
 // crossCompileInDir builds relPkg (a package path relative to dir) as found
-// in dir, writing the result to outputPath. It runs `go` with `-C dir`
-// rather than cd-ing the current process into dir, so it works regardless of
-// gosd's own working directory, and never writes into dir itself (dir may be
-// a read-only module cache entry).
-func crossCompileInDir(dir, relPkg, outputPath, source string) error {
+// in dir, for arch, writing the result to outputPath. It runs `go` with `-C
+// dir` rather than cd-ing the current process into dir, so it works
+// regardless of gosd's own working directory, and never writes into dir
+// itself (dir may be a read-only module cache entry).
+func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source string) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("gosd-init source directory %s (%s) does not exist; try passing --gosd-init-src <dir>", dir, source)
 	}
@@ -80,11 +82,7 @@ func crossCompileInDir(dir, relPkg, outputPath, source string) error {
 	}
 
 	cmd := exec.Command("go", "-C", dir, "build", "-o", absOutput, relPkg)
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOOS="+targetGOOS,
-		"GOARCH="+targetGOARCH,
-	)
+	cmd.Env = archEnv(arch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

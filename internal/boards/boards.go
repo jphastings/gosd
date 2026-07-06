@@ -1,6 +1,7 @@
 // Package boards is the registry of SD-card targets gosd knows how to build
-// for, and the Board abstraction each target implements. Every board GoSD
-// supports is arm64; adding a board means implementing Board in its own
+// for, and the Board abstraction each target implements. Boards target
+// per-board architectures (see Arch) - most are arm64, but some (the Pi Zero
+// W, GOARM=6) are 32-bit; adding a board means implementing Board in its own
 // sub-package (see pizero2w and radxazero3e) and registering it (see
 // cmd/gosd).
 package boards
@@ -62,6 +63,29 @@ type BuildConfig struct {
 	UsbGadget bool
 }
 
+// Arch is the Go cross-compile target a board's binaries (the user's app and
+// gosd-init) need: GOOS is always "linux" (internal/build hard-codes it), so
+// only GOARCH and, for architectures that need it (arm), GOARM vary per
+// board.
+type Arch struct {
+	// GOARCH is the target architecture, e.g. "arm64" or "arm".
+	GOARCH string
+	// GOARM is the target ARM architecture version, e.g. "6". Empty for
+	// architectures where GOARM doesn't apply (arm64 and anything other
+	// than GOARCH=arm).
+	GOARM string
+}
+
+// Key returns a short, filesystem- and map-safe identifier for a - the
+// distinct value internal/build's per-arch compile cache and cmd/gosd's
+// dedupe logic key on, e.g. "arm64" or "arm-6".
+func (a Arch) Key() string {
+	if a.GOARM == "" {
+		return a.GOARCH
+	}
+	return a.GOARCH + "-" + a.GOARM
+}
+
 // Board is a single supported hardware target: naming, the artifacts it
 // needs fetched/cached, and how to turn those artifacts into a bootable
 // image's contents.
@@ -69,6 +93,12 @@ type Board interface {
 	// Name is the stable, user-facing identifier used on the --board
 	// flag and in output filenames (e.g. "pi-zero-2w").
 	Name() string
+
+	// Arch is the GOARCH/GOARM this board's binaries must be
+	// cross-compiled for (GOOS is always linux). Two boards that return
+	// the same Arch share one compile pass (see cmd/gosd's build
+	// pipeline): it's compared by value, not by board identity.
+	Arch() Arch
 
 	// Artifacts lists every kernel, DTB, firmware, and bootloader file
 	// this board needs. The build pipeline resolves each ref (via

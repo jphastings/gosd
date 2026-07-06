@@ -118,14 +118,14 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating a temp build directory failed: %w", err)
 	}
 
-	appBinary := filepath.Join(tempDir, appName)
-	if err := build.CrossCompile(pkgPath, appBinary); err != nil {
-		return fmt.Errorf("cross-compiling %s failed: %w", pkgPath, err)
+	archs := make([]boards.Arch, len(selected))
+	for i, b := range selected {
+		archs[i] = b.Arch()
 	}
 
-	initBinary := filepath.Join(tempDir, "gosd-init")
-	if err := build.CrossCompileGosdInit(initBinary, gosdInitSrc); err != nil {
-		return fmt.Errorf("cross-compiling gosd-init failed: %w", err)
+	binaries, err := compileForArchs(archs, tempDir, pkgPath, gosdInitSrc, build.CrossCompile, build.CrossCompileGosdInit)
+	if err != nil {
+		return err
 	}
 
 	ctx := cmd.Context()
@@ -135,10 +135,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, b := range selected {
+		bin := binaries[b.Arch().Key()]
 		opts := pipeline.Options{
 			Board:          b,
-			AppBinaryPath:  appBinary,
-			InitBinaryPath: initBinary,
+			AppBinaryPath:  bin.appPath,
+			InitBinaryPath: bin.initPath,
 			Config: boards.BuildConfig{
 				Hostname:     deviceHostname,
 				WifiSSID:     wifiSSID,
