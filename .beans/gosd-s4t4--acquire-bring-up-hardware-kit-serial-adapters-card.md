@@ -5,7 +5,7 @@ status: todo
 type: task
 priority: high
 created_at: 2026-07-02T21:17:59Z
-updated_at: 2026-07-02T21:17:59Z
+updated_at: 2026-07-06T15:48:45Z
 parent: gosd-sc9w
 blocking:
     - gosd-m9dj
@@ -29,3 +29,6 @@ Wiring reference (record corrections here once verified):
 
 ## Acceptance
 Both boards on the bench, serial consoles showing existing-OS boot output (test with the vendor images first — proves wiring before GoSD is in the loop).
+
+## Addition (2026-07-06): Raspberry Pi Zero W
+- [ ] 1x Raspberry Pi Zero W (the original, armv6) + its own microSD card; PSU/cables shared with the Zero 2W (micro-USB). Serial wiring identical to the Zero 2W.

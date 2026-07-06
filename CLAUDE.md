@@ -23,8 +23,13 @@ say so in the bean rather than silently diverging.
 - **Language:** pure Go everywhere; `CGO_ENABLED=0`. No build step may require
   root, Docker, or Linux — `go test ./...` must pass on macOS and Linux.
   Linux-only runtime code goes behind build tags.
-- **Target:** `GOOS=linux GOARCH=arm64` only (both boards are arm64).
-- **Board IDs:** `pi-zero-2w`, `radxa-zero-3e`; also `qemu-virt` (internal —
+- **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
+  pi-zero-2w / radxa-zero-3e / nanopi-zero2 / qemu-virt, and `GOARCH=arm
+  GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline
+  compiles the app and gosd-init once per architecture needed by the selected
+  boards (decided 2026-07-06; was arm64-only).
+- **Board IDs:** `pi-zero-2w`, `pi-zero-w` (in progress — epic gosd, see
+  beans), `radxa-zero-3e`; also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`
