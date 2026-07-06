@@ -124,3 +124,74 @@ jobs:
               exit 1
             fi
           done
+
+  qemu-boot:
+    name: qemu boot-to-HTTP smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Unlike image-smoke-build (fake artifacts, no network on purpose),
+      # this job exercises the REAL artifact path: no --artifacts-dir, so
+      # `gosd build` downloads the qemu-virt kernel from the GitHub Release
+      # pinned by internal/artifacts.Version. Until that release is
+      # published, this job fails at the build step with the artifact
+      # download error — that error names the missing release and is the
+      # actionable signal, not a bug in this job.
+      - name: Cache downloaded board artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gosd/artifacts
+          # internal/artifacts.Version pins which release gets downloaded,
+          # so hashing the file that declares it keys the cache to exactly
+          # that release: bumping the pinned version invalidates the cache.
+          key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
+      - name: Install qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+          qemu-system-aarch64 --version
+      - name: gosd build ./examples/hello --board=qemu-virt (real artifacts)
+        run: |
+          mkdir -p dist
+          go run ./cmd/gosd build ./examples/hello \
+            --board=qemu-virt \
+            --hostname ci-qemu-hello \
+            -o dist/hello-qemu-virt.img
+      - name: Boot the image and poll until HTTP responds
+        run: |
+          ./scripts/qemu-run.sh dist/hello-qemu-virt.img > serial.log 2>&1 &
+          runner_pid=$!
+
+          # This runner is amd64, so qemu TCG-emulates arm64: boot takes
+          # far longer than the ~3s of an arm64 host. 180s is generous
+          # headroom, not an expectation.
+          expected="host=ci-qemu-hello"
+          success=0
+          for i in $(seq 1 180); do
+            if ! kill -0 "$runner_pid" 2>/dev/null; then
+              echo "qemu-run.sh exited before HTTP ever responded" >&2
+              break
+            fi
+            resp="$(curl -s -m 2 http://localhost:8080/ || true)"
+            if [ -n "$resp" ] && echo "$resp" | grep -q "$expected"; then
+              echo "boot-to-HTTP OK after ~${i}s: $resp"
+              success=1
+              break
+            fi
+            sleep 1
+          done
+
+          kill "$runner_pid" 2>/dev/null || true
+          pkill -f qemu-system-aarch64 2>/dev/null || true
+
+          if [ "$success" -ne 1 ]; then
+            echo "::group::Captured serial log"
+            cat serial.log
+            echo "::endgroup::"
+            echo "hello never responded with '$expected' on http://localhost:8080 within 180s" >&2
+            exit 1
+          fi

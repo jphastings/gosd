@@ -100,6 +100,56 @@ func TestRunBringsLoUpAndConfiguresLeaseOnLinkUp(t *testing.T) {
 	close(stop)
 }
 
+func TestRunBringsUpAFreshlyDiscoveredDownInterface(t *testing.T) {
+	// Mirrors what Watch's ListExisting actually reports for a real NIC
+	// (virtio-net included) that has never been brought up: an initial
+	// "down" event, with no external udev/NetworkManager ever calling `ip
+	// link set up`. Without gosd-init doing it itself, this interface
+	// would never come up and DHCP would never start (see the qemu-virt
+	// boot bug this regresses against).
+	clock := newFakeClock(time.Unix(0, 0))
+	links := newFakeLinks()
+	lease := &Lease{
+		Address:     net.IPNet{IP: net.IPv4(192, 168, 1, 9), Mask: net.CIDRMask(24, 32)},
+		ObtainedAt:  clock.Now(),
+		RenewAfter:  time.Hour,
+		RebindAfter: 2 * time.Hour,
+		ExpireAfter: 3 * time.Hour,
+	}
+	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: lease}}}
+	log := &testLog{}
+	deps, marked, _ := newTestRunDeps(clock, links, dhcp, log)
+
+	stop := make(chan struct{})
+	go Run(deps, Options{Stop: stop})
+
+	links.events <- LinkEvent{Name: "eth0", Up: false}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !links.sawSetUp("eth0") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !links.sawSetUp("eth0") {
+		t.Fatal("a freshly discovered down interface was never brought up")
+	}
+	if dhcp.requestCallCount() != 0 {
+		t.Error("DHCP started before the interface reported operationally up")
+	}
+
+	// The kernel reports the resulting admin-up transition as its own event.
+	links.events <- LinkEvent{Name: "eth0", Up: true}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for marked.load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if marked.load() == 0 {
+		t.Error("DHCP never started once the interface reported operationally up")
+	}
+
+	close(stop)
+}
+
 func TestRunIgnoresNonWiredInterfaces(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	links := newFakeLinks()

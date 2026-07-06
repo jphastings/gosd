@@ -196,6 +196,36 @@ the same way your app does. Worked, board-tested examples wiring these up
 under GoSD are planned for v0.3; until then, treat the libraries' own
 examples as your starting point and adjust device paths for your board.
 
+## Testing your app under qemu (no hardware needed)
+
+You don't need a Pi or a Radxa on your desk to see your app run through the
+whole boot sequence above — `--board=qemu-virt` builds the same kind of
+image for `qemu-system-aarch64 -M virt` instead of real hardware, and
+`scripts/qemu-run.sh` boots it for you:
+
+```
+go run ./cmd/gosd build ./examples/hello --board=qemu-virt -o dist/
+scripts/qemu-run.sh dist/hello-qemu-virt.img
+```
+
+This is an internal/CI board (see CLAUDE.md's locked decisions) — it's
+never built by a plain `gosd build` with no `--board`, and it's not a
+target you'd ship to end users — but it runs the real `gosd-init`, the
+real boot sequence, and your real app, under an emulator instead of an SD
+card. `qemu-system-aarch64` needs installing first:
+
+- macOS: `brew install qemu`
+- Debian/Ubuntu: `apt-get install qemu-system-arm`
+
+`scripts/qemu-run.sh` extracts the kernel `Image` and `initramfs.cpio.zst`
+straight out of the image's FAT boot partition (no root, no mtools — see
+`internal/cmd/imgextract`), then launches qemu with serial console on
+stdio, so `gosd-init`'s boot log and your app's stdout/stderr print live in
+your terminal exactly as they would over a real serial cable. Your app's
+port 80 is reachable at `http://localhost:8080` once gosd-init starts it
+and networking comes up (virtio-net, DHCP from qemu's own user-mode
+network). Quit with Ctrl-A X, or Ctrl-C to force-kill qemu.
+
 ## When to reach for gokrazy instead
 
 GoSD is heavily inspired by [gokrazy](https://gokrazy.org/) — if you haven't

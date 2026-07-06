@@ -28,6 +28,15 @@ const (
 	firmwareFileMode = 0o644
 )
 
+// mountPointDirs are the directories gosd-init unconditionally mounts
+// something onto during boot (see cmd/gosd-init/internal/boot/mounts.go's
+// earlyMounts and sequence.go's MountBootPartition), on every board. The
+// initramfs starts out containing nothing but what this package writes, so
+// without these, mount(2) fails with ENOENT before gosd-init gets anywhere
+// - they must exist in the archive even though nothing is ever written
+// inside them from here.
+var mountPointDirs = []string{"/dev", "/proc", "/sys", "/run", "/boot"}
+
 // Options describes everything needed to assemble one board's image from a
 // full gosd build: the cross-compiled binaries, the board to build for, and
 // where its artifacts and finished image live.
@@ -110,7 +119,7 @@ func Assemble(ctx context.Context, opts Options) error {
 	}
 
 	var initramfsBuf bytes.Buffer
-	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files}); err != nil {
+	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files, Dirs: mountPointDirs}); err != nil {
 		return fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
 	}
 	resolved.Initramfs = &initramfsBuf
