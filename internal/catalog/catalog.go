@@ -57,6 +57,43 @@ func displayName(boardID string) string {
 	return boardID
 }
 
+// boardImagerDeviceTags maps a board's --board ID to the official Raspberry
+// Pi Imager device tags its images should carry in the entry's "devices"
+// array. Imager's device-selection page filters the OS list by intersecting
+// each entry's devices with the selected device's tags (imagewriter.cpp's
+// filterOsListWithHWTags, rpi-imager v2.0.10 commit 467be3d3), so a tag
+// Imager doesn't define hides the entry behind "No filtering".
+//
+// pi-zero-2w carries "pi3-64bit": in the official catalog
+// (downloads.raspberrypi.org/os_list_imagingutility_v4.json) the
+// "Raspberry Pi Zero 2 W" device is defined with tags
+// ["pi3-64bit", "pi3-32bit"] - it shares the Pi 3's tags; no Zero-2W-only
+// tag exists - and GoSD images are arm64-only, so only the 64-bit tag
+// applies (the same single tag Zero-2W-capable arm64 images like Home
+// Assistant OS use). Side effect of the shared namespace: the entry also
+// appears when "Raspberry Pi 3" is selected.
+//
+// Boards absent from this map (all non-Raspberry-Pi hardware - Imager's
+// device list only contains Raspberry Pi models, so no official tag can
+// ever match them) fall back to their raw board ID: a deliberately
+// non-matching but self-describing tag that satisfies the schema's
+// required, conventionally non-empty devices field. Those entries appear
+// only under "No filtering" - an Imager limitation documented for
+// developers in docs/publishing.md.
+var boardImagerDeviceTags = map[string][]string{
+	"pi-zero-2w": {"pi3-64bit"},
+}
+
+// imagerDeviceTags returns the devices array for boardID's catalog entry -
+// official Imager tags where they exist, the raw board ID otherwise (see
+// boardImagerDeviceTags for why).
+func imagerDeviceTags(boardID string) []string {
+	if tags, ok := boardImagerDeviceTags[boardID]; ok {
+		return tags
+	}
+	return []string{boardID}
+}
+
 // Entry is one Raspberry Pi Imager os_list.json OS entry: the fields gosd
 // populates from a real built image. Field names/JSON tags match
 // testdata/os-list-schema.json's "Operating system entry" variant exactly.
@@ -163,7 +200,7 @@ func BuildEntry(img Image, opts Options) (Entry, error) {
 		ExtractSHA256:     sum,
 		ImageDownloadSize: size,
 		ReleaseDate:       releaseDate.Format(dateFormat),
-		Devices:           []string{img.BoardID},
+		Devices:           imagerDeviceTags(img.BoardID),
 		InitFormat:        InitFormatCloudInit,
 	}, nil
 }

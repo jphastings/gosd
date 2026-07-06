@@ -66,13 +66,40 @@ requests for both the catalog JSON and the image. Two things matter:
    save.
 3. Click **CHOOSE OS** — your app now appears in the list, named and
    described the way gosd generated it (app name + board, e.g. "hello
-   (Raspberry Pi Zero 2 W)").
+   (Raspberry Pi Zero 2 W)"). Whether it's visible depends on the device
+   selected on the wizard's device page — see "Device filtering" below
+   (short version: Pi Zero 2 W images show for the "Raspberry Pi Zero 2 W"
+   device; non-Pi boards need "No filtering").
 4. Selecting it and continuing through the wizard shows the **full
    customization step** (hostname, WiFi, etc.) — because the catalog entry
    declares `init_format`, unlike a locally-picked `.img` file.
 5. Flash as normal. Imager verifies the downloaded image against
    `extract_sha256` before writing it, refusing to write on a mismatch
    (protecting against a corrupted download or a stale cache).
+
+## Device filtering: which boards show up for which device selection
+
+Imager's first wizard page asks the user to pick their device, and then
+**hides every OS entry whose `devices` array shares no tag with that
+device's official tag list** (only "No filtering" shows everything).
+The tags are Imager's own vocabulary — defined in the official catalog's
+device list, covering Raspberry Pi models only — so gosd fills each
+entry's `devices` with the matching official tags where they exist:
+
+- **`pi-zero-2w`** entries carry `pi3-64bit`: Imager defines the
+  "Raspberry Pi Zero 2 W" device with the Pi 3's tags
+  (`pi3-64bit`/`pi3-32bit` — there is no Zero-2W-specific tag), and GoSD
+  images are 64-bit only. Users who select **Raspberry Pi Zero 2 W** (or
+  Raspberry Pi 3, an unavoidable consequence of the shared tags) will see
+  your image.
+- **`radxa-zero-3e`** (and any other non-Raspberry-Pi board) has no
+  official tag that can ever match — Imager's device list contains only
+  Raspberry Pi hardware. Those entries keep the gosd board ID as a
+  deliberately non-matching tag, which means they **only appear when the
+  user selects "No filtering"** on the device page. This is a limitation
+  of Raspberry Pi Imager itself, not something a catalog can work around;
+  tell your non-Pi users to pick "No filtering" (the `gosd.toml`
+  hand-edit fallback also always works, with any flasher).
 
 ## Combining catalogs
 

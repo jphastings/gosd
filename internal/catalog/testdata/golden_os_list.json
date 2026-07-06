@@ -10,7 +10,7 @@
       "image_download_size": 30,
       "release_date": "2026-01-15",
       "devices": [
-        "pi-zero-2w"
+        "pi3-64bit"
       ],
       "init_format": "cloudinit"
     },

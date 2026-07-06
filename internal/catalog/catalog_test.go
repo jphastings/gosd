@@ -110,6 +110,39 @@ func TestBuildEntryFallsBackToBoardIDForUnknownBoards(t *testing.T) {
 	}
 }
 
+// Imager's device-selection page hides any entry whose devices array shares
+// no tag with the selected device's official tags, so Raspberry Pi boards
+// must carry Imager's own tags, not GoSD board IDs (see
+// boardImagerDeviceTags). Non-Pi boards have no official tag that can match
+// and deliberately keep their board ID.
+func TestBuildEntryDevicesUseOfficialImagerTags(t *testing.T) {
+	cases := []struct {
+		boardID string
+		want    []string
+	}{
+		{"pi-zero-2w", []string{"pi3-64bit"}},
+		{"radxa-zero-3e", []string{"radxa-zero-3e"}},
+		{"some-future-board", []string{"some-future-board"}},
+	}
+	for _, c := range cases {
+		t.Run(c.boardID, func(t *testing.T) {
+			dir := t.TempDir()
+			imgPath := filepath.Join(dir, "hello-"+c.boardID+".img")
+			if err := os.WriteFile(imgPath, []byte("x"), 0o644); err != nil {
+				t.Fatalf("writing fixture image: %v", err)
+			}
+
+			entry, err := BuildEntry(Image{AppName: "hello", BoardID: c.boardID, Path: imgPath}, Options{BaseURL: "https://example.com"})
+			if err != nil {
+				t.Fatalf("BuildEntry: %v", err)
+			}
+			if len(entry.Devices) != len(c.want) || entry.Devices[0] != c.want[0] {
+				t.Errorf("Devices = %v, want %v", entry.Devices, c.want)
+			}
+		})
+	}
+}
+
 // --- golden JSON for a fake build ---
 
 // fakeBuild writes two fake .img files (standing in for a real gosd build's
@@ -155,7 +188,7 @@ func TestWriteFilesMatchesGoldenOutput(t *testing.T) {
 		t.Fatalf("WriteFiles returned %d entries, want 2", len(entries))
 	}
 	// WriteFiles sorts by BoardID: "pi-zero-2w" < "radxa-zero-3e".
-	if entries[0].Devices[0] != "pi-zero-2w" || entries[1].Devices[0] != "radxa-zero-3e" {
+	if entries[0].Name != "hello (Raspberry Pi Zero 2 W)" || entries[1].Name != "hello (Radxa Zero 3E)" {
 		t.Errorf("WriteFiles entries not sorted by board ID: %+v", entries)
 	}
 
@@ -181,7 +214,7 @@ func TestWriteFilesMatchesGoldenOutput(t *testing.T) {
 	if err := json.Unmarshal(fragment, &fragList); err != nil {
 		t.Fatalf("unmarshaling fragment: %v", err)
 	}
-	if len(fragList.OSList) != 1 || fragList.OSList[0].Devices[0] != "pi-zero-2w" {
+	if len(fragList.OSList) != 1 || fragList.OSList[0].Name != "hello (Raspberry Pi Zero 2 W)" {
 		t.Errorf("hello-pi-zero-2w.os_list.json = %+v, want a single pi-zero-2w entry", fragList.OSList)
 	}
 }
@@ -283,6 +316,13 @@ func TestGeneratedEntriesSatisfySchema(t *testing.T) {
 
 		if !contains(initFormatEnum, entry.InitFormat) {
 			t.Errorf("entry %q has init_format %q, want one of %v", entry.Name, entry.InitFormat, initFormatEnum)
+		}
+
+		// The schema sets no minItems on devices, but Imager hides an
+		// entry whose devices array matches nothing, so gosd always emits
+		// at least one tag (see boardImagerDeviceTags).
+		if len(entry.Devices) == 0 {
+			t.Errorf("entry %q has an empty devices array", entry.Name)
 		}
 	}
 

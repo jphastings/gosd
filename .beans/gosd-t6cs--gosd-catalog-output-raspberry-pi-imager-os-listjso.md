@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-05T07:07:13Z
-updated_at: 2026-07-05T07:57:44Z
+updated_at: 2026-07-05T22:11:50Z
 parent: gosd-b22t
 ---
 
@@ -15,7 +15,7 @@ Implements the flagship end-user flashing flow (decision 2026-07-05, see CLAUDE.
 
 - [x] Flag + generator + unit tests (golden JSON, schema validation)
 - [x] docs/publishing.md for Go developers: host image + JSON, what URL to give end users, and the end-user steps (Imager Settings → Custom repository)
-- [ ] Manual verification with real Imager (needs SD card; coordinate with the gosd-qvoq fixture-capture bench session — same sitting)
+- [ ] Bench re-check of device filtering in real Imager once the official-device-tags fix ships (JP's 2026-07-05 live Imager test already validated the rest of this todo: catalog loads via Custom repository, entry is selectable, customization wizard appears — see "Device-tag fix" below)
 
 ## Acceptance
 A generated catalog served from a local static file server appears in Imager as a selectable OS with the customization wizard enabled (manual step, same bench session as fixture capture).
@@ -84,3 +84,67 @@ doc/schema-notes.md's stated best practice over an empty one).
 
 The manual real-Imager verification todo is left unchecked, as instructed -
 it needs the bench SD-card session.
+
+## Device-tag fix (2026-07-05, JP's live-Imager test)
+
+JP's real-Imager test confirmed two things at once:
+
+1. **The catalog flow itself works**: the hosted os_list.json loads via
+   Settings → Custom repository, the entry appears in CHOOSE OS, and the
+   full customization wizard is enabled — the core acceptance behavior of
+   this bean is validated.
+2. **A real bug**: the earlier "devices is set to [boardID]" judgment call
+   above was wrong. Device-based filtering is NOT embedded-Imager-only:
+   the desktop wizard's Device-selection page filters the OS list by
+   intersecting each entry's devices array with the selected device's
+   official tags, and hides entries with no overlap. With GoSD's own board
+   ID as the tag, selecting "Raspberry Pi Zero 2 W" showed NO images; only
+   "No filtering" revealed the entry.
+
+Evidence for the fix (verified 2026-07-05):
+
+- Official catalog https://downloads.raspberrypi.org/os_list_imagingutility_v4.json:
+  `imager.devices` defines "Raspberry Pi Zero 2 W" with
+  `"tags": ["pi3-64bit", "pi3-32bit"]` (matching_type "inclusive") — the
+  Zero 2 W shares the Pi 3's tags; no Zero-2W-specific tag exists. Every
+  real 64-bit OS entry uses `pi3-64bit` for Zero-2W compatibility:
+  "Raspberry Pi OS (64-bit)" carries
+  `["pi5-64bit", "pi4-64bit", "pi3-64bit"]`, and Zero-2W-class arm64-only
+  images (Home Assistant OS 18.1 (RPi 3), OpenCCU "Pi 3, Pi Zero 2") carry
+  exactly `["pi3-64bit"]`.
+- Filtering source (rpi-imager v2.0.10, commit 467be3d3e88f5d83fa78c78788f6e6fdce61a47e):
+  https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L2286
+  (`filterOsListWithHWTags`): an entry WITH a devices key is kept only if
+  one of its strings appears in the selected device's tags; an entry
+  WITHOUT the key is kept only for matching_type "inclusive" devices. The
+  tags come from the catalog's own imager.devices list
+  (src/hwlistmodel.cpp), not from any hardcoded table.
+- Note: the commit docs/provisioning-formats.md pins (204a6eee...) no
+  longer resolves on GitHub; tag v2.0.10 resolves to 467be3d3..., whose
+  doc/json-schema/os-list-schema.json is byte-identical to our vendored
+  copy (internal/catalog/testdata/README.md updated accordingly; the ~30
+  dangling permalinks in docs/provisioning-formats.md are a candidate
+  follow-up, left untouched here).
+
+The fix (branch bean/gosd-t6cs-imager-device-tags):
+
+- `internal/catalog`: new `boardImagerDeviceTags` lookup (mirroring the
+  existing `boardDisplayNames` table — catalog concerns stay in the
+  catalog package rather than widening the Board interface) maps
+  `pi-zero-2w` → `["pi3-64bit"]` (64-bit only; GoSD images are arm64).
+  Unavoidable consequence of the shared tag namespace: the entry also
+  shows when "Raspberry Pi 3" is selected.
+- `radxa-zero-3e` (and any unmapped board) falls back to its raw board ID
+  as a deliberately non-matching tag. Rationale: Imager's device list
+  contains only Raspberry Pi hardware, so no official tag can ever match a
+  non-Pi board; the vendored schema requires `devices` but sets no
+  minItems (empty would be valid), yet a non-empty self-describing tag
+  follows doc/schema-notes.md's best practice and behaves identically
+  (hidden under any concrete device selection, visible under "No
+  filtering" — with matching_type-inclusive devices only an entry that
+  OMITS the devices key entirely would leak through, which would wrongly
+  show Radxa images for Pi 3/4 selections anyway). docs/publishing.md now
+  states plainly that non-Pi images only appear under "No filtering"
+  (an Imager limitation) and tells developers what to advise their users.
+- Golden JSON, schema-validation test (now also asserts a non-empty
+  devices array), and a behavioral tag-mapping test updated/added.
