@@ -86,9 +86,10 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    your main package if you didn't pass `--hostname`. `gosd-init` runs its
    own mDNS responder, so `.local` should resolve on macOS, Linux, and
    Windows without any extra setup; if it doesn't on your network, fall
-   back to finding the device's address via your router. A dedicated
-   screenshot-driven flashing guide for non-technical users is planned
-   (bean `gosd-ufeh`).
+   back to finding the device's address via your router. Sending an app to
+   someone non-technical? [`docs/flashing.md`](docs/flashing.md) is a
+   screenshot-driven, jargon-free version of these same steps you can point
+   them at directly.
 
 For the runtime contract your app runs under once it's booted — supervision,
 environment variables, networking timing, storage, logging — see

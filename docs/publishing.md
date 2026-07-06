@@ -77,6 +77,11 @@ requests for both the catalog JSON and the image. Two things matter:
    `extract_sha256` before writing it, refusing to write on a mismatch
    (protecting against a corrupted download or a stale cache).
 
+Sending this URL to non-technical end users? Send them to
+[`docs/flashing.md`](flashing.md) instead of this page — it walks through
+the same steps above with screenshots and no jargon, and includes a
+copy-paste snippet for your own README.
+
 ## Device filtering: which boards show up for which device selection
 
 Imager's first wizard page asks the user to pick their device, and then
