@@ -17,7 +17,7 @@ see `beans list` for what's in flight.
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | 🚧 [^nanopi-artifacts] |
 | Ethernet | ➖ [^pi-no-eth] | ✅ | 🚧 [^board-profile] |
 | WiFi (WPA2-PSK / open) | ✅ | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
-| Hidden-SSID WiFi | 🚧 [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
+| Hidden-SSID WiFi | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
 | Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^no-filtering] | 🚧 [^board-profile] |
 | `gosd.toml` config (fallback) | ✅ | ✅ | 🚧 [^board-profile] |
 | mDNS (`<hostname>.local`) | ✅ | ✅ | 🚧 [^board-profile] |
@@ -69,11 +69,15 @@ see `beans list` for what's in flight.
     support is explicitly out of scope for now (epic `gosd-cwjf`). This board
     is Ethernet-first.
 
-[^hidden-ssid]: `internal/provision` already parses Imager's `hidden: true`
-    flag onto a network's `Hidden` field, but `wifiup` only joins networks it
-    finds in an ordinary (broadcast) scan — a hidden SSID is parsed
-    correctly but never actually joined yet. Fix tracked in bean `gosd-lbpm`
-    (directed/active-scan join).
+[^hidden-ssid]: `internal/provision` parses Imager's `hidden: true` flag onto
+    a network's `Hidden` field, and `wifiup` now threads it through the
+    credential chain and joins by issuing nl80211 CONNECT directly for the
+    named SSID rather than requiring a prior scan match — the pinned
+    `mdlayher/wifi` doesn't expose a directed-scan-by-SSID API, but
+    brcmfmac's own join path already does an active/directed probe for the
+    given SSID as part of association, so no scan step was needed either
+    way (bean `gosd-lbpm`). Code-complete and fake-tested; pending bench
+    verification against a real hidden test AP on the Pi Zero 2W.
 
 [^pi-tag]: Raspberry Pi Imager has no device-specific tag for the Zero 2 W —
     it shares the "Raspberry Pi Zero 2 W" device's tags (`pi3-64bit`/

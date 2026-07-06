@@ -18,6 +18,17 @@ type Credentials struct {
 	// Open is true.
 	PSK [32]byte
 
+	// Hidden is true when the network doesn't broadcast its SSID, so it
+	// will never show up in a passive scan. Only internal/provision's
+	// schema (Raspberry Pi Imager's "hidden: true" flag) can currently
+	// express this — config.json's initcfg.Wifi and gosd.toml's
+	// gosdtoml.Wifi schemas are both locked and have no such field —
+	// so this is always false unless the effective network came from
+	// Provision. wifiup.Run joins by issuing nl80211 CONNECT with the
+	// SSID directly regardless of Hidden (see associate); Hidden only
+	// changes what gets logged while the join is pending.
+	Hidden bool
+
 	// Unsupported, if non-empty, names a security mode config.json (or a
 	// future CredentialSource) requested that gosd-init cannot join —
 	// WPA3 and 802.1X/EAP are out of scope through v0.x (locked
@@ -71,18 +82,21 @@ type ConfigCredentials struct {
 // it clearly instead of misinterpreting it as PSK or open.
 func (c ConfigCredentials) Credentials() (Credentials, bool, error) {
 	wifi := c.Wifi
+	var hidden bool
 	if len(c.Provision) > 0 {
 		wifi = initcfg.Wifi{SSID: c.Provision[0].SSID, Passphrase: c.Provision[0].Password}
+		hidden = c.Provision[0].Hidden
 	}
 	if c.GosdToml.SSID != "" {
 		wifi = initcfg.Wifi{SSID: c.GosdToml.SSID, Passphrase: c.GosdToml.Passphrase}
+		hidden = false
 	}
 
 	if wifi.SSID == "" {
 		return Credentials{}, false, nil
 	}
 	if wifi.Passphrase == "" {
-		return Credentials{SSID: wifi.SSID, Open: true}, true, nil
+		return Credentials{SSID: wifi.SSID, Open: true, Hidden: hidden}, true, nil
 	}
 
 	var (
@@ -97,5 +111,5 @@ func (c ConfigCredentials) Credentials() (Credentials, bool, error) {
 	if err != nil {
 		return Credentials{}, false, err
 	}
-	return Credentials{SSID: wifi.SSID, PSK: psk}, true, nil
+	return Credentials{SSID: wifi.SSID, PSK: psk, Hidden: hidden}, true, nil
 }

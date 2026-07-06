@@ -90,6 +90,18 @@ func Run(deps Deps, opts Options) {
 		deps.Log("bringing up %s failed: %v", ifi.Name, err)
 	}
 
+	if creds.Hidden {
+		// A hidden network never appears in a passive scan, so there is
+		// no scan-match step to wait on here (see associate): the join
+		// goes straight to nl80211 CONNECT with the SSID, which drives
+		// an active/directed probe for that SSID as part of the
+		// firmware's own join process (verified against brcmfmac's
+		// cfg80211_connect handling — see credentials.go's Hidden
+		// docstring). This log exists only so a slow join reads as
+		// "expected" on the serial console rather than "stuck".
+		deps.Log("hidden SSID %q: probing directly; this can take longer", creds.SSID)
+	}
+
 	runAssociationLoop(deps, ifi, creds, opts.Stop)
 }
 
@@ -169,6 +181,12 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 // PBKDF2 from a passphrase or decoded directly from a pre-hashed hex
 // value), so this call site never needs to know or care which form the
 // credential started as.
+//
+// This is unconditional on creds.Hidden: there is no prior scan step to
+// gate on here at all (for a hidden or a broadcasting network alike), so a
+// hidden SSID needs no separate directed-scan path — CONNECT already
+// carries the target SSID straight to the driver/firmware, which performs
+// its own active/directed probe for that exact SSID as part of joining.
 func associate(deps Deps, ifi Interface, creds Credentials) error {
 	// Disconnect first, unconditionally: on a fresh boot this is a
 	// harmless no-op (nothing to disconnect from), but after a lost
