@@ -90,3 +90,4 @@ say so in the bean rather than silently diverging.
   never bare wrapped chains.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
 - Comments only where code can't explain itself; docstrings on exported API.
+- Board or feature status changes must update COMPATIBILITY.md in the same PR.
