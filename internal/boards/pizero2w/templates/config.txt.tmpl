@@ -5,3 +5,6 @@ enable_uart=1
 disable_splash=1
 boot_delay=0
 avoid_warnings=1
+{{- if .UsbGadget}}
+dtoverlay=dwc2,dr_mode=peripheral
+{{- end}}

@@ -29,11 +29,17 @@ type mountSpec struct {
 }
 
 // earlyMounts are the filesystems gosd-init mounts before anything else:
-// devtmpfs on /dev, proc on /proc, sysfs on /sys, tmpfs on /run.
+// devtmpfs on /dev, proc on /proc, sysfs on /sys, configfs on
+// /sys/kernel/config, tmpfs on /run. configfs is mounted unconditionally
+// (not gated behind an app's USB gadget mode use) since it costs nothing
+// unused and every supported board's kernel already builds it in as a
+// dependency of CONFIG_USB_CONFIGFS — see the gadget package for what gets
+// written under it.
 var earlyMounts = []mountSpec{
 	{source: "devtmpfs", target: "/dev", fstype: "devtmpfs", flags: msNoSuid, data: "mode=0755"},
 	{source: "proc", target: "/proc", fstype: "proc", flags: msNoSuid | msNoDev | msNoExec},
 	{source: "sysfs", target: "/sys", fstype: "sysfs", flags: msNoSuid | msNoDev | msNoExec},
+	{source: "configfs", target: "/sys/kernel/config", fstype: "configfs", flags: msNoSuid | msNoDev | msNoExec},
 	{source: "tmpfs", target: "/run", fstype: "tmpfs", flags: msNoSuid | msNoDev, data: "mode=0755"},
 }
 

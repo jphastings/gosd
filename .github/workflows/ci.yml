@@ -80,7 +80,7 @@ jobs:
       # narrower, faster check that the pure-Go, no-root, arm64 cross-
       # compile path works for the binaries gosd assembles into images.
       - name: Cross-compile arm64 targets (CGO disabled)
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello ./examples/usbserial
       - name: Build gosd CLI for host
         run: go build ./cmd/gosd
 
