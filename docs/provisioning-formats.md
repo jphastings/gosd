@@ -444,3 +444,14 @@ The capture confirms every source-analysis claim above with no surprises:
 Not yet captured: the two optional scenarios (open/no-password WiFi;
 non-ASCII/control-byte SSID) remain genuinely open per the last bullet
 above.
+
+## Implementation
+
+The parser recommended in §6 (scoped down to cloud-init + gosd.toml only,
+per the re-scope note on bean `gosd-pctc`) lives in `internal/provision`,
+tested directly against the fixtures in this directory, and is wired into
+`gosd-init`'s boot sequence (`cmd/gosd-init/internal/boot`) right after the
+`GOSD-BOOT` mount, alongside the existing `gosd.toml` read. See that
+package's docs for the exact precedence and field handling; `firstrun.sh`
+is detected but deliberately never parsed, per the locked flashing-path
+decision in the root `CLAUDE.md`.

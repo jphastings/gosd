@@ -9,6 +9,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/provision"
 )
 
 // Deps bundles every side-effecting dependency the boot sequence needs.
@@ -52,6 +53,17 @@ type Deps struct {
 	// even though step 4 already applied config.json's value.
 	ReadGosdToml func() (gosdtoml.Config, error)
 
+	// ReadProvisioning reads cloud-init's user-data/network-config (and
+	// checks for firstrun.sh) on the just-mounted GOSD-BOOT partition —
+	// see internal/provision. Nil-checked like ReadGosdToml; it sits
+	// between config.json and gosd.toml in the locked precedence chain
+	// (gosd.toml > cloud-init > config.json), so Run reads it first and
+	// lets a subsequent gosd.toml value override it. log is passed
+	// through so provision.Read can report per-file problems (missing,
+	// unreadable, malformed) at the point they're found, the same as
+	// every other package in gosd-init that owns multi-step diagnostics.
+	ReadProvisioning func(log func(format string, args ...any)) provision.Result
+
 	// EnsureDataMountpoint creates the data mount target directory on the
 	// RAM-backed rootfs (the initramfs archive carries no empty
 	// directories, so /data doesn't exist until something makes it).
@@ -70,14 +82,16 @@ type Deps struct {
 	// immediately before /app supervision begins, and is passed the
 	// fully-resolved config (cmdline overrides already applied), the
 	// parsed gosd.toml (zero value if absent, unreadable, or garbage) so
-	// wifiup can prefer its wifi block over cfg's, and Run's current
-	// logger (the console, if opening it succeeded) so its output goes to
-	// the same place as the rest of gosd-init's. Networking (link up,
-	// DHCP, DNS, WiFi) must never block or delay /app's start, so Run
-	// doesn't wait for it and doesn't know or care what it does beyond
-	// that; production wires this to start both netup.Run (wired) and
-	// wifiup.Run (WiFi), tests leave it nil.
-	StartNetworking func(cfg initcfg.Config, gosdToml gosdtoml.Config, log func(format string, args ...any))
+	// wifiup can prefer its wifi block over cfg's, every WiFi network
+	// cloud-init's network-config named (nil if none/absent — see
+	// internal/provision), and Run's current logger (the console, if
+	// opening it succeeded) so its output goes to the same place as the
+	// rest of gosd-init's. Networking (link up, DHCP, DNS, WiFi) must
+	// never block or delay /app's start, so Run doesn't wait for it and
+	// doesn't know or care what it does beyond that; production wires
+	// this to start both netup.Run (wired) and wifiup.Run (WiFi), tests
+	// leave it nil.
+	StartNetworking func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any))
 }
 
 // Options holds the per-boot paths the sequence acts on.
@@ -152,20 +166,32 @@ func Run(deps Deps, opts Options) error {
 	}
 	log("boot partition mounted at %s", opts.BootTarget)
 
-	// gosd.toml lives on the just-mounted GOSD-BOOT partition, so it can
-	// only be read from here on — never before. Its hostname (if set)
-	// takes precedence over config.json's, which means the hostname
-	// applied at step 4 above may already be stale and has to be
-	// re-applied now, before /app starts.
+	// gosd.toml and cloud-init provisioning both live on the just-mounted
+	// GOSD-BOOT partition, so neither can be read before now. Precedence
+	// (locked, see docs/provisioning-formats.md) is
+	// gosd.toml > cloud-init > config.json: cloud-init is read first so a
+	// subsequent gosd.toml value can still override it, and either one
+	// overriding the hostname applied at step 4 above means it has to be
+	// re-applied here, before /app starts.
+	var provisionResult provision.Result
+	if deps.ReadProvisioning != nil {
+		provisionResult = deps.ReadProvisioning(log)
+		if provisionResult.Hostname != "" {
+			cfg.Hostname = provisionResult.Hostname
+			log("hostname from cloud-init user-data")
+		}
+	}
+
 	var gosdToml gosdtoml.Config
 	if deps.ReadGosdToml != nil {
 		parsed, err := deps.ReadGosdToml()
 		if err != nil {
-			log("reading gosd.toml failed, using config.json instead: %v", err)
+			log("reading gosd.toml failed, using cloud-init/config.json instead: %v", err)
 		} else {
 			gosdToml = parsed
 			if gosdToml.Hostname != "" {
 				cfg.Hostname = gosdToml.Hostname
+				log("hostname from gosd.toml")
 			}
 		}
 
@@ -173,6 +199,23 @@ func Run(deps Deps, opts Options) error {
 			return fatal(deps, log, "re-applying hostname after gosd.toml", err)
 		}
 		log("hostname set to %q (gosd.toml applied)", cfg.Hostname)
+	} else if provisionResult.Hostname != "" {
+		if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
+			return fatal(deps, log, "re-applying hostname after cloud-init", err)
+		}
+		log("hostname set to %q (cloud-init applied)", cfg.Hostname)
+	}
+
+	switch {
+	case gosdToml.Wifi.SSID != "":
+		log("wifi from gosd.toml")
+	case len(provisionResult.Wifi) > 0:
+		log("wifi from cloud-init network-config")
+		if len(provisionResult.Wifi) > 1 {
+			log("cloud-init network-config named %d WiFi networks; gosd-init only ever joins the first (%q)", len(provisionResult.Wifi), provisionResult.Wifi[0].SSID)
+		}
+	case cfg.Wifi.SSID != "":
+		log("wifi from config.json")
 	}
 
 	env := []string{
@@ -184,7 +227,7 @@ func Run(deps Deps, opts Options) error {
 	}
 
 	if deps.StartNetworking != nil {
-		go deps.StartNetworking(cfg, gosdToml, log)
+		go deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
 	}
 	sup := &Supervisor{
 		Start: func() (int, error) {
