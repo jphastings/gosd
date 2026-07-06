@@ -4,10 +4,11 @@
 [raspberrypi/rpi-imager](https://github.com/raspberrypi/rpi-imager) at the
 pinned commit
 [`467be3d3e88f5d83fa78c78788f6e6fdce61a47e`](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/json-schema/os-list-schema.json)
-(tag `v2.0.10`). `docs/provisioning-formats.md` cites the same release via
-commit `204a6eee...`, a SHA that no longer resolves on GitHub (checked
-2026-07-05); the `v2.0.10` tag resolves to `467be3d3...`, and the schema
-blob there was verified byte-identical to this vendored copy. The worked
+(tag `v2.0.10`). `docs/provisioning-formats.md` originally cited this
+release via commit `204a6eee...`, a SHA that stopped resolving on GitHub
+(discovered 2026-07-05; the doc's links have since been repointed at
+`467be3d3...`, whose schema blob was verified byte-identical to this
+vendored copy). The worked
 example at
 [`doc/schema-notes.md`](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/schema-notes.md)
 at the same commit confirms the "Operating system entry" variant's required
