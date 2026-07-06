@@ -409,3 +409,38 @@ Rationale, source-by-source:
   SSID containing non-ASCII/control bytes, to validate the `\xHH`-escaping
   and `ssid=hex:` paths against a real capture rather than only
   source-reading.
+
+## Empirical confirmation (real v2.0.10 capture)
+
+The three required scenarios (`wifi-hostname`, `hostname-only`, `everything`)
+were captured from a real Raspberry Pi Imager v2.0.10 run via the
+custom-repository catalog flow (`init_format: "cloudinit"`) — see
+`internal/provision/testdata/imager-2.0.10/` and its `capture-notes.md`.
+The capture confirms every source-analysis claim above with no surprises:
+
+- The cloud-init trio (`user-data`, `network-config`, `meta-data`) is
+  written exactly as §1 predicts; `network-config` is present only when
+  WiFi was configured in the dialog (absent in `hostname-only`).
+- `cmdline.txt` is **appended to, not replaced**: our own
+  `console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w
+  cfg80211.ieee80211_regdom=GB` tokens survive unchanged, with Imager's
+  `ds=nocloud;i=rpi-imager-<timestamp>` tokens appended after them —
+  confirming gosd-init's `init=` argument is preserved rather than
+  clobbered.
+- The WiFi PSK is delivered as a 64-character hex PBKDF2 digest in
+  `network-config`'s `password` field in every scenario that configured
+  WiFi, never plaintext, matching §2 exactly.
+- `config.txt` and `gosd.toml` were **untouched by Imager**: both are
+  byte-identical, across all three captures, to what GoSD's own builder
+  renders (verified directly against `RenderConfigTxt`/`gosdtoml.Render`
+  — see `capture-notes.md`), so neither is committed as a fixture.
+- One capture-process quirk, not an Imager bug in the generator: the
+  customization dialog persists field values between runs, so
+  `hostname: fixture-one` appears in all three captured `user-data` files
+  rather than a per-scenario name. See `capture-notes.md` for detail —
+  this does not affect the validity of the WiFi/user/SSH/locale fields
+  captured for each scenario.
+
+Not yet captured: the two optional scenarios (open/no-password WiFi;
+non-ASCII/control-byte SSID) remain genuinely open per the last bullet
+above.

@@ -1,0 +1,16 @@
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      regulatory-domain: "GB"
+      access-points:
+        "hidden-network":
+          hidden: true
+          password: "b1b7cc4dd077d74bc3a830ebad9cd885add86ada76f183e6343667a3f70f93b9"
+      optional: true

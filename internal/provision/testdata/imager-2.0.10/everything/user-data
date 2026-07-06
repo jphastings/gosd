@@ -1,0 +1,25 @@
+#cloud-config
+manage_resolv_conf: false
+
+hostname: fixture-one
+manage_etc_hosts: true
+packages:
+- avahi-daemon
+apt:
+  preserve_sources_list: true
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+timezone: Europe/London
+keyboard:
+  model: pc105
+  layout: "gb"
+user:
+  name: user
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "$y$jB5$4/JS7FqNFVLC9VqNnsoGj.$xtfezEEVGXRbcepoowjjzSj7hwWc/TvZhgu3Z0FGgR3"
+ssh_pwauth: true
+runcmd:
+  - [ systemctl, enable, --now, ssh ]

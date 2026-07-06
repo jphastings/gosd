@@ -1,0 +1,1 @@
+console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w cfg80211.ieee80211_regdom=GB ds=nocloud;i=rpi-imager-1783287738187
