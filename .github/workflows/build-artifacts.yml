@@ -91,10 +91,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Kernel only for now: U-Boot for this board is gated on the U-Boot
-  # v2026.07 release (bean gosd-f39b), so there is no nanopi-zero2-uboot job
-  # yet and the released tarball below carries just the kernel/DTB — it will
-  # be completed with U-Boot artifacts once gosd-f39b lands.
   nanopi-zero2-kernel:
     name: Build nanopi-zero2 kernel
     runs-on: ubuntu-latest
@@ -108,6 +104,25 @@ jobs:
           path: |
             build/boards/nanopi-zero2/kernel/out/Image
             build/boards/nanopi-zero2/kernel/out/rk3528-nanopi-zero2.dtb
+          if-no-files-found: error
+          retention-days: 1
+
+  # U-Boot pinned to a v2026.07-rc tag, not a final release yet — see
+  # build/boards/nanopi-zero2/uboot/README.md's "This pins a release
+  # candidate" note and bean gosd-f39b's amended gate.
+  nanopi-zero2-uboot:
+    name: Build nanopi-zero2 U-Boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run build.sh
+        run: build/boards/nanopi-zero2/uboot/build.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nanopi-zero2-uboot
+          path: |
+            build/boards/nanopi-zero2/uboot/out/idbloader.img
+            build/boards/nanopi-zero2/uboot/out/u-boot.itb
           if-no-files-found: error
           retention-days: 1
 
@@ -141,6 +156,7 @@ jobs:
         radxa-zero-3e-kernel,
         radxa-zero-3e-uboot,
         nanopi-zero2-kernel,
+        nanopi-zero2-uboot,
         qemu-virt-kernel,
       ]
     runs-on: ubuntu-latest
@@ -184,6 +200,11 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: nanopi-zero2-uboot
+          path: staging/nanopi-zero2
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           name: qemu-virt-kernel
           path: staging/qemu-virt
 
@@ -199,6 +220,7 @@ jobs:
           radxa_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/radxa-zero-3e/kernel/build.sh)
           radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
           nanopi_zero2_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/nanopi-zero2/kernel/build.sh)
+          nanopi_zero2_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/nanopi-zero2/uboot/build.sh)
           qemu_virt_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/qemu-virt/kernel/build.sh)
 
           jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_commit" \
@@ -219,9 +241,12 @@ jobs:
             '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
             >staging/radxa-zero-3e/source.json
 
-          jq -n --arg repo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg ref "$nanopi_zero2_kernel_tag" \
-            --arg config "build/boards/nanopi-zero2/kernel/kernel.config" \
-            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
+          jq -n \
+            --arg krepo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg kref "$nanopi_zero2_kernel_tag" \
+            --arg kconfig "build/boards/nanopi-zero2/kernel/kernel.config" \
+            --arg urepo "https://github.com/u-boot/u-boot.git" --arg uref "$nanopi_zero2_uboot_tag" \
+            --arg uconfig "build/boards/nanopi-zero2/uboot/bootdelay0.config" \
+            '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
             >staging/nanopi-zero2/source.json
 
           jq -n --arg repo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg ref "$qemu_virt_kernel_tag" \
