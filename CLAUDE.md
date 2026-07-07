@@ -29,15 +29,13 @@ say so in the bean rather than silently diverging.
   compiles the app and gosd-init once per architecture needed by the selected
   boards (decided 2026-07-06; was arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (in progress — epic gosd-ajpz),
-  `radxa-zero-3e`; also `qemu-virt` (internal —
+  `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec, RK3528A — epic gosd-cwjf);
+  also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`
   builds **all** (public) boards, emitting `<appname>-<board>.img` next to
-  each other; `--board` (repeatable) restricts. Reserved for planned support:
-  `nanopi-zero2` (FriendlyElec, RK3528A — epic gosd-cwjf; gated on verifying
-  mainline kernel/U-Boot support, since vendor images run a BSP kernel and
-  GoSD is mainline-only; WiFi is an optional M.2 module there, Ethernet-first).
+  each other; `--board` (repeatable) restricts.
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
   FAT partition labels `GOSD-BOOT` / `GOSD-DATA`; boot-partition config file
   `gosd.toml`.

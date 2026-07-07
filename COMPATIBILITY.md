@@ -11,20 +11,22 @@ see `beans list` for what's in flight.
 > by beans `gosd-m9dj` and `gosd-nlzf`; until those close, treat every ✅ as
 > "should work" rather than "confirmed working." The Pi Zero W is the same:
 > code-complete and fake-artifact-tested (bean `gosd-et0q`), no bring-up bean
-> filed yet.
+> filed yet. The NanoPi Zero2 is the same again: code-complete and
+> fake-artifact-tested (bean `gosd-wskc`), with hardware bring-up tracked by
+> bean `gosd-odp7`.
 
-| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 (planned) |
+| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 |
 |---|---|---|---|---|
-| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | 🚧 [^board-profile] |
-| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | 🚧 [^nanopi-artifacts] |
-| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | 🚧 [^board-profile] |
+| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ |
+| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] |
+| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | ✅ |
 | WiFi (WPA2-PSK / open) | ✅ | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
 | Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
-| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | 🚧 [^board-profile] |
-| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | 🚧 [^board-profile] |
-| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | 🚧 [^board-profile] |
-| SNTP time sync | ✅ | ✅ | ✅ | 🚧 [^board-profile] |
-| Persistent `/data` partition | ✅ | ✅ | ✅ | 🚧 [^board-profile] |
+| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] |
+| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ |
+| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ |
+| SNTP time sync | ✅ | ✅ | ✅ | ✅ |
+| Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | GPIO / I2C / SPI | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio][^nanopi-fpc] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
@@ -33,17 +35,6 @@ see `beans list` for what's in flight.
 (no matching hardware) · ❌ not supported (with a reason below).
 
 ## Footnotes
-
-[^board-profile]: The NanoPi Zero2's board profile (registering it with
-    `internal/boards`, wiring `extlinux.conf`, the bootloader raw-writes, and
-    the artifact pipeline entry) hasn't been written yet — bean `gosd-wskc`,
-    blocked on the U-Boot pipeline (`gosd-f39b`) and the kernel build
-    (`gosd-rqx8`, in progress). Until it lands, `gosd build --board=nanopi-zero2`
-    doesn't exist as an option at all. Every row marked 🚧 for this reason is
-    otherwise board-agnostic gosd-init functionality (mDNS, SNTP, `gosd.toml`,
-    the `/data` partition, and Imager catalog output all run the same way
-    regardless of board) that will apply automatically once the board profile
-    exists — it isn't separate work per feature.
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
     published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,
@@ -150,7 +141,7 @@ see `beans list` for what's in flight.
     bump picks up that commit; Ethernet, SD/eMMC, and serial console are
     unaffected. Recheck when bumping the pinned kernel tag.
 
-[^gpio]: All three boards' kernels already enable the character-device GPIO
+[^gpio]: All four boards' kernels already enable the character-device GPIO
     API (`CONFIG_GPIO_CDEV`), I2C, and SPI drivers, so `/dev/gpiochipN`,
     `/dev/i2c-*`, and `/dev/spidev*` are expected to appear at boot. No
     GoSD-side wiring exists yet beyond documenting the libraries to use

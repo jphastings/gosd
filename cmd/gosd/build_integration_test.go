@@ -277,11 +277,10 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 // produces an image with idbloader.img and u-boot.itb raw-written at their
 // locked offsets ahead of the boot partition, and a boot partition
 // containing the kernel, DTB, initramfs, and a rendered extlinux.conf - the
-// same shape as the Radxa Zero 3E. nanopi-zero2 is internal-only (see
-// internal/boards/nanopizero2's doc comment), so it must be requested
-// explicitly; that exclusion from the default build set and from catalog
-// output is covered by TestBuildWithNoBoardFlagBuildsAllBoards and
-// TestBuildCatalogForNanopiZero2OnlyWritesNothing below.
+// same shape as the Radxa Zero 3E. nanopi-zero2 is now a public board, so
+// it's also part of the default build set (TestBuildWithNoBoardFlagBuilds
+// AllBoards) and appears in catalog output (TestBuildCatalogForNanopiZero2
+// WritesEntry below).
 func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -484,8 +483,8 @@ func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
 
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
-// produces the pi-zero-2w, pi-zero-w, and radxa-zero-3e images, not just a
-// subset.
+// produces the pi-zero-2w, pi-zero-w, radxa-zero-3e, and nanopi-zero2
+// images, not just a subset.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -506,7 +505,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img"} {
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img"} {
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -518,9 +517,9 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt and nanopi-zero2 are both internal-only: the default
-	// no---board build must produce exactly the three public boards'
-	// images, never a fourth or fifth for either of them.
+	// qemu-virt is the only remaining internal-only board: the default
+	// no---board build must produce exactly the four public boards' images,
+	// never a fifth for qemu-virt.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -531,13 +530,11 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 3 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 3 (qemu-virt and nanopi-zero2 must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != 4 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 4 (qemu-virt must stay excluded)", len(imgNames), imgNames)
 	}
-	for _, excluded := range []string{"hello-qemu-virt.img", "hello-nanopi-zero2.img"} {
-		if _, err := os.Stat(filepath.Join(outDir, excluded)); err == nil {
-			t.Errorf("default build produced %s; it is internal-only and must be excluded from the default build set", excluded)
-		}
+	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
+		t.Errorf("default build produced hello-qemu-virt.img; it is internal-only and must be excluded from the default build set")
 	}
 }
 
@@ -634,11 +631,15 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogForNanopiZero2OnlyWritesNothing mirrors
-// TestBuildCatalogForQemuVirtOnlyWritesNothing for nanopi-zero2 (gosd-wskc):
-// it's also internal-only, so --catalog on a nanopi-zero2-only build must
-// write no os_list.json while still producing the image itself.
-func TestBuildCatalogForNanopiZero2OnlyWritesNothing(t *testing.T) {
+// TestBuildCatalogForNanopiZero2WritesEntry confirms that, now that
+// nanopi-zero2 is a public board (gosd-wskc's flip), --catalog on a
+// nanopi-zero2-only build writes a real os_list.json entry - unlike
+// qemu-virt (still internal-only, see
+// TestBuildCatalogForQemuVirtOnlyWritesNothing above), and with its
+// "devices" tag falling back to the raw board ID, matching how
+// internal/catalog already handles the other non-Raspberry-Pi board
+// (radxa-zero-3e): no official Imager device tag exists for either.
+func TestBuildCatalogForNanopiZero2WritesEntry(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
@@ -663,15 +664,33 @@ func TestBuildCatalogForNanopiZero2OnlyWritesNothing(t *testing.T) {
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
-		t.Errorf("the image itself should still be built: %v", err)
+		t.Errorf("the image itself should be built: %v", err)
 	}
-	for _, listPath := range []string{
-		filepath.Join(outDir, "os_list.json"),
-		filepath.Join(outDir, "hello-nanopi-zero2.os_list.json"),
-	} {
-		if _, err := os.Stat(listPath); err == nil {
-			t.Errorf("%s was written for a nanopi-zero2-only build; nanopi-zero2 is internal-only and must never appear in a catalog", listPath)
-		}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "hello-nanopi-zero2.os_list.json"))
+	if err != nil {
+		t.Fatalf("reading hello-nanopi-zero2.os_list.json: %v", err)
+	}
+
+	var list struct {
+		OSList []struct {
+			Name    string   `json:"name"`
+			Devices []string `json:"devices"`
+		} `json:"os_list"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatalf("unmarshaling hello-nanopi-zero2.os_list.json: %v", err)
+	}
+	if len(list.OSList) != 1 {
+		t.Fatalf("hello-nanopi-zero2.os_list.json has %d entries, want 1", len(list.OSList))
+	}
+
+	entry := list.OSList[0]
+	if want := "hello (NanoPi Zero2)"; entry.Name != want {
+		t.Errorf("name = %q, want %q", entry.Name, want)
+	}
+	if len(entry.Devices) != 1 || entry.Devices[0] != "nanopi-zero2" {
+		t.Errorf("devices = %v, want [\"nanopi-zero2\"] (no official Imager tag for non-Pi hardware)", entry.Devices)
 	}
 }
 

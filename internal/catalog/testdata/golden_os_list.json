@@ -1,6 +1,20 @@
 {
   "os_list": [
     {
+      "name": "hello (NanoPi Zero2)",
+      "description": "hello, built with GoSD for NanoPi Zero2",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-nanopi-zero2.img",
+      "extract_size": 32,
+      "extract_sha256": "37f7da838b92bafb04bebf5b41d1df18f282318086605f8594249a0652e52805",
+      "image_download_size": 32,
+      "release_date": "2026-01-15",
+      "devices": [
+        "nanopi-zero2"
+      ],
+      "init_format": "cloudinit"
+    },
+    {
       "name": "hello (Raspberry Pi Zero 2 W)",
       "description": "hello, built with GoSD for Raspberry Pi Zero 2 W",
       "icon": "",

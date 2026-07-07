@@ -47,6 +47,7 @@ var boardDisplayNames = map[string]string{
 	"pi-zero-2w":    "Raspberry Pi Zero 2 W",
 	"pi-zero-w":     "Raspberry Pi Zero W",
 	"radxa-zero-3e": "Radxa Zero 3E",
+	"nanopi-zero2":  "NanoPi Zero2",
 }
 
 // displayName returns the human-friendly name for boardID, falling back to
@@ -85,13 +86,13 @@ func displayName(boardID string) string {
 // catalog entry also appears when a user selects "Raspberry Pi 1" in
 // Imager's device-filter step, not only when they select the Zero/Zero W.
 //
-// Boards absent from this map (all non-Raspberry-Pi hardware - Imager's
-// device list only contains Raspberry Pi models, so no official tag can
-// ever match them) fall back to their raw board ID: a deliberately
-// non-matching but self-describing tag that satisfies the schema's
-// required, conventionally non-empty devices field. Those entries appear
-// only under "No filtering" - an Imager limitation documented for
-// developers in docs/publishing.md.
+// Boards absent from this map (all non-Raspberry-Pi hardware - radxa-zero-3e
+// and nanopi-zero2 today; Imager's device list only contains Raspberry Pi
+// models, so no official tag can ever match them) fall back to their raw
+// board ID: a deliberately non-matching but self-describing tag that
+// satisfies the schema's required, conventionally non-empty devices field.
+// Those entries appear only under "No filtering" - an Imager limitation
+// documented for developers in docs/publishing.md.
 var boardImagerDeviceTags = map[string][]string{
 	"pi-zero-2w": {"pi3-64bit"},
 	"pi-zero-w":  {"pi1-32bit"},
