@@ -102,12 +102,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}()
 
 	appBinary := filepath.Join(workDir, appName)
-	if err := build.CrossCompile(pkgPath, appBinary); err != nil {
+	if err := build.CrossCompile(pkgPath, appBinary, b.Arch()); err != nil {
 		return fmt.Errorf("cross-compiling %s failed: %w", pkgPath, err)
 	}
 
 	initBinary := filepath.Join(workDir, "gosd-init")
-	if err := build.CrossCompileGosdInit(initBinary, runGosdInitSrc); err != nil {
+	if err := build.CrossCompileGosdInit(initBinary, runGosdInitSrc, b.Arch()); err != nil {
 		return fmt.Errorf("cross-compiling gosd-init failed: %w", err)
 	}
 

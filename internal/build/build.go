@@ -1,5 +1,6 @@
-// Package build cross-compiles Go packages into the static linux/arm64
-// binaries that end up on a gosd image (the user's app, and gosd-init).
+// Package build cross-compiles Go packages into the static Linux binaries
+// that end up on a gosd image (the user's app, and gosd-init), targeting
+// whichever GOARCH/GOARM a board's boards.Arch calls for.
 package build
 
 import (
@@ -8,39 +9,49 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/jphastings/gosd/internal/boards"
 )
 
-// Target platform for every gosd build. GoSD only ever targets arm64 Linux
-// boards, and CGO is always disabled so the result never depends on the
-// host's C library.
-const (
-	targetGOOS   = "linux"
-	targetGOARCH = "arm64"
-)
+// targetGOOS is the OS every gosd build targets; only GOARCH/GOARM vary per
+// board (see boards.Arch). CGO is always disabled so the result never
+// depends on the host's C library.
+const targetGOOS = "linux"
 
-// CrossCompile builds the Go main package at pkgPath into a static
-// linux/arm64 binary at outputPath, by shelling out to the host Go
-// toolchain. It fails with an actionable error if pkgPath is not a main
-// package, or if the build itself fails; in the latter case the compiler's
-// stderr is included verbatim.
-func CrossCompile(pkgPath, outputPath string) error {
+// CrossCompile builds the Go main package at pkgPath into a static binary
+// for arch at outputPath, by shelling out to the host Go toolchain. It fails
+// with an actionable error if pkgPath is not a main package, or if the build
+// itself fails; in the latter case the compiler's stderr is included
+// verbatim.
+func CrossCompile(pkgPath, outputPath string, arch boards.Arch) error {
 	if err := requireMainPackage(pkgPath); err != nil {
 		return err
 	}
 
 	cmd := exec.Command("go", "build", "-o", outputPath, pkgPath)
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOOS="+targetGOOS,
-		"GOARCH="+targetGOARCH,
-	)
+	cmd.Env = archEnv(arch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("building %s for %s/%s failed; try running `go build %s` directly to reproduce:\n%s",
-			pkgPath, targetGOOS, targetGOARCH, pkgPath, stderr.String())
+			pkgPath, targetGOOS, arch.GOARCH, pkgPath, stderr.String())
 	}
 	return nil
+}
+
+// archEnv returns the env every gosd cross-compile runs with: the host's own
+// environment plus CGO disabled and GOOS/GOARCH/GOARM set for arch (GOARM
+// omitted when arch doesn't set one, e.g. arm64).
+func archEnv(arch boards.Arch) []string {
+	env := append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOOS="+targetGOOS,
+		"GOARCH="+arch.GOARCH,
+	)
+	if arch.GOARM != "" {
+		env = append(env, "GOARM="+arch.GOARM)
+	}
+	return env
 }
 
 func requireMainPackage(pkgPath string) error {

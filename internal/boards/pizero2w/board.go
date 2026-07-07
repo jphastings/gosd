@@ -45,6 +45,11 @@ func New() boards.Board { return board{} }
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
 
+// Arch implements boards.Board: the Pi Zero 2W's BCM2837 is 64-bit capable,
+// so it runs the same arm64 kernel/userspace as the Radxa Zero 3E (unlike
+// its 32-bit-only predecessor, the Pi Zero W - see bean gosd-ajpz).
+func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
+
 // Artifacts implements boards.Board: the kernel (not yet automatically
 // fetchable), the GPU boot firmware, and the WiFi firmware blobs pinned in
 // manifest.json.

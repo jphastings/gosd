@@ -64,6 +64,9 @@ func New() boards.Board { return board{} }
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
 
+// Arch implements boards.Board: the RK3566 is arm64-only.
+func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
+
 // Artifacts implements boards.Board: the bootloader and kernel files built
 // by build/boards/radxa-zero-3e/{uboot,kernel}/build.sh. None has a
 // per-file pinned URL; ResolveArtifacts resolves them from --artifacts-dir

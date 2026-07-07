@@ -33,6 +33,7 @@ type fakeBoard struct {
 }
 
 func (b *fakeBoard) Name() string                    { return b.name }
+func (b *fakeBoard) Arch() boards.Arch               { return boards.Arch{GOARCH: "arm64"} }
 func (b *fakeBoard) Artifacts() []boards.ArtifactRef { return nil }
 
 func (b *fakeBoard) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {

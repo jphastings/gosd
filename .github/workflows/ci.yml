@@ -81,6 +81,12 @@ jobs:
       # compile path works for the binaries gosd assembles into images.
       - name: Cross-compile arm64 targets (CGO disabled)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello ./examples/usbserial
+      # GOARM=6 is the pi-zero-w board's target (bean gosd-2j6z, keystone for
+      # gosd-et0q): a narrower check than the arm64 one above, just proving
+      # the 32-bit ARM cross-compile path works for the binaries every board
+      # build needs, same as the arm64 check does for the other three boards.
+      - name: Cross-compile armv6 targets (CGO disabled)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./examples/hello
       - name: Build gosd CLI for host
         run: go build ./cmd/gosd
 

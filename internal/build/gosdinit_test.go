@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jphastings/gosd/internal/boards"
 )
 
 func TestCrossCompileGosdInitUsesLocalCheckoutByDefault(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "gosd-init")
 
-	if err := CrossCompileGosdInit(out, ""); err != nil {
+	if err := CrossCompileGosdInit(out, "", arm64); err != nil {
 		t.Fatalf("CrossCompileGosdInit: %v", err)
 	}
 
@@ -29,13 +31,39 @@ func TestCrossCompileGosdInitUsesLocalCheckoutByDefault(t *testing.T) {
 	}
 }
 
+// TestCrossCompileGosdInitProducesStaticARMv6Binary is the gosd-init half of
+// the GOARM=6 keystone test: the local-checkout/module-cache ladder in
+// CrossCompileGosdInit must thread arch through to crossCompileInDir exactly
+// like CrossCompile does, so a GOARM=6 board gets a real 32-bit gosd-init
+// too, not just a 32-bit app binary.
+func TestCrossCompileGosdInitProducesStaticARMv6Binary(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "gosd-init")
+
+	if err := CrossCompileGosdInit(out, "", boards.Arch{GOARCH: "arm", GOARM: "6"}); err != nil {
+		t.Fatalf("CrossCompileGosdInit: %v", err)
+	}
+
+	f, err := elf.Open(out)
+	if err != nil {
+		t.Fatalf("output is not a valid ELF binary: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if f.Class != elf.ELFCLASS32 {
+		t.Errorf("Class = %v, want %v (32-bit)", f.Class, elf.ELFCLASS32)
+	}
+	if f.Machine != elf.EM_ARM {
+		t.Errorf("Machine = %v, want %v (arm)", f.Machine, elf.EM_ARM)
+	}
+}
+
 func TestCrossCompileGosdInitOverrideDirWins(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "gosd-init")
 
 	// ../../cmd/gosd-init is gosd-init's real source, reached directly rather
 	// than through detection - proving --gosd-init-src short-circuits the
 	// ladder entirely.
-	if err := CrossCompileGosdInit(out, "../../cmd/gosd-init"); err != nil {
+	if err := CrossCompileGosdInit(out, "../../cmd/gosd-init", arm64); err != nil {
 		t.Fatalf("CrossCompileGosdInit with override: %v", err)
 	}
 	if info, err := os.Stat(out); err != nil || info.Size() == 0 {
@@ -44,7 +72,7 @@ func TestCrossCompileGosdInitOverrideDirWins(t *testing.T) {
 }
 
 func TestCrossCompileGosdInitRejectsMissingOverrideDir(t *testing.T) {
-	err := CrossCompileGosdInit(filepath.Join(t.TempDir(), "out"), filepath.Join(t.TempDir(), "does-not-exist"))
+	err := CrossCompileGosdInit(filepath.Join(t.TempDir(), "out"), filepath.Join(t.TempDir(), "does-not-exist"), arm64)
 	if err == nil {
 		t.Fatal("CrossCompileGosdInit succeeded with a missing --gosd-init-src directory, want an error")
 	}

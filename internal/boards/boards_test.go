@@ -11,6 +11,7 @@ import (
 type fakeBoard struct{ name string }
 
 func (f fakeBoard) Name() string                  { return f.name }
+func (fakeBoard) Arch() boards.Arch               { return boards.Arch{GOARCH: "arm64"} }
 func (fakeBoard) Artifacts() []boards.ArtifactRef { return nil }
 func (fakeBoard) BootFiles(boards.BuildConfig, boards.Artifacts) (map[string]io.Reader, error) {
 	return nil, nil

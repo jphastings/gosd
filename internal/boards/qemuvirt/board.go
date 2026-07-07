@@ -53,6 +53,10 @@ func New() boards.Board { return board{} }
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
 
+// Arch implements boards.Board: qemu-virt only ever runs under
+// qemu-system-aarch64, so it's always arm64.
+func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
+
 // Artifacts implements boards.Board: just the kernel image. qemu-virt has no
 // GPU firmware or bootloader blobs to fetch - qemu boots the kernel
 // directly.
