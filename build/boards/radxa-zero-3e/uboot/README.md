@@ -57,3 +57,12 @@ So yes: one defconfig, one build, runtime hardware detection -- no separate
 - Not yet serial-verified on real hardware (U-Boot banner, extlinux discovery
   on partition 1). That requires the bring-up hardware kit and is tracked
   separately -- see the parent bean.
+- **No FDT overlay support**: `radxa-zero-3-rk3566_defconfig` (checked at the
+  pinned `UBOOT_TAG`) does not set `CONFIG_OF_LIBFDT_OVERLAY`, and neither
+  `bootdelay0.config` nor any other merged fragment adds it -- confirmed by
+  reading the defconfig directly, not just its absence from a grep. That
+  means extlinux.conf's `fdtoverlays` directive isn't available yet, so
+  per-board peripheral toggles (e.g. the 40-pin header I2C enablement in
+  `../kernel/patches/`) go through a kernel-build-time DTS patch instead of a
+  `.dtbo` (see bean `gosd-85pt`). Revisit if overlay support is ever added to
+  this defconfig upstream or via a merged fragment here.

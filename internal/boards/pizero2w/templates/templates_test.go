@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// Locked content, per bean gosd-eu2x: do not change these expectations
-// without updating that decision.
+// Locked content, per beans gosd-eu2x and gosd-85pt: do not change these
+// expectations without updating that decision.
 const (
 	wantConfigTxt = "arm_64bit=1\n" +
 		"kernel=kernel8.img\n" +
@@ -14,7 +14,8 @@ const (
 		"enable_uart=1\n" +
 		"disable_splash=1\n" +
 		"boot_delay=0\n" +
-		"avoid_warnings=1\n"
+		"avoid_warnings=1\n" +
+		"dtparam=i2c_arm=on\n"
 
 	wantCmdlineTxt = "console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w"
 )
@@ -59,6 +60,16 @@ func TestRenderConfigTxt_InterpolatesInitramfsName(t *testing.T) {
 	want := "initramfs custom-initramfs.cpio.zst followkernel\n"
 	if !strings.Contains(got, want) {
 		t.Errorf("RenderConfigTxt() = %q, want it to contain %q", got, want)
+	}
+}
+
+func TestRenderConfigTxt_I2cEnabledByDefault(t *testing.T) {
+	got, err := RenderConfigTxt(ConfigTxtData{InitramfsName: "initramfs.cpio.zst"})
+	if err != nil {
+		t.Fatalf("RenderConfigTxt() error = %v", err)
+	}
+	if !strings.Contains(got, "dtparam=i2c_arm=on\n") {
+		t.Errorf("RenderConfigTxt() = %q, want it to contain dtparam=i2c_arm=on (I2C is enabled by default, no opt-out flag)", got)
 	}
 }
 

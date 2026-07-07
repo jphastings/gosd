@@ -1,0 +1,22 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dts
+@@ -43,6 +43,19 @@
+ 	};
+ };
+ 
++&i2c3 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's I2C
++	 * bus (physical pins 3/5, GPIO1_A0/A1 - the Pi-header-equivalent I2C
++	 * position). Mainline leaves i2c3 disabled with no board owner; this
++	 * board doesn't wire up any on-SoM device on it, so it's purely for
++	 * header use. See bean gosd-85pt.
++	 */
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c3m0_xfer>;
++	status = "okay";
++};
++
+ &pinctrl {
+ 	gmac1 {
+ 		gmac1_rstn: gmac1-rstn {
