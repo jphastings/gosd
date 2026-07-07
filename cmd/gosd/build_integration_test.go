@@ -270,6 +270,75 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 	}
 }
 
+// TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts is the
+// acceptance test for gosd-wskc: an explicit `gosd build --board=nanopi-
+// zero2`, using --artifacts-dir to supply fake bootloader/kernel files,
+// produces an image with idbloader.img and u-boot.itb raw-written at their
+// locked offsets ahead of the boot partition, and a boot partition
+// containing the kernel, DTB, initramfs, and a rendered extlinux.conf - the
+// same shape as the Radxa Zero 3E. nanopi-zero2 is internal-only (see
+// internal/boards/nanopizero2's doc comment), so it must be requested
+// explicitly; that exclusion from the default build set and from catalog
+// output is covered by TestBuildWithNoBoardFlagBuildsAllBoards and
+// TestBuildCatalogForNanopiZero2OnlyWritesNothing below.
+func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-nanopi-zero2.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "nanopi-zero2",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=nanopi-zero2 failed: %v", err)
+	}
+
+	assertRawWriteAt(t, imgPath, 32768, "fake idbloader.img")
+	assertRawWriteAt(t, imgPath, 8388608, "fake u-boot.itb")
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{"Image", "rk3528-nanopi-zero2.dtb", "initramfs.cpio.zst", "extlinux/extlinux.conf"} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	wantExtlinuxConf := "default gosd\n" +
+		"timeout 0\n" +
+		"label gosd\n" +
+		"    kernel /Image\n" +
+		"    fdt /rk3528-nanopi-zero2.dtb\n" +
+		"    initrd /initramfs.cpio.zst\n" +
+		"    append console=ttyS0,1500000n8 quiet init=/init gosd.board=nanopi-zero2\n"
+	if string(extlinuxConf) != wantExtlinuxConf {
+		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
+	}
+}
+
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
 // produces both the pi-zero-2w and the radxa-zero-3e images, not just the
@@ -306,8 +375,9 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt is internal-only: the default no---board build must produce
-	// exactly the two public boards' images, never a third for it.
+	// qemu-virt and nanopi-zero2 are both internal-only: the default
+	// no---board build must produce exactly the two public boards'
+	// images, never a third or fourth for either of them.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -319,10 +389,12 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 	if len(imgNames) != 2 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 2 (qemu-virt must stay excluded)", len(imgNames), imgNames)
+		t.Errorf("default build produced %d .img files (%v), want exactly 2 (qemu-virt and nanopi-zero2 must stay excluded)", len(imgNames), imgNames)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
-		t.Error("default build produced hello-qemu-virt.img; qemu-virt is internal-only and must be excluded from the default build set")
+	for _, excluded := range []string{"hello-qemu-virt.img", "hello-nanopi-zero2.img"} {
+		if _, err := os.Stat(filepath.Join(outDir, excluded)); err == nil {
+			t.Errorf("default build produced %s; it is internal-only and must be excluded from the default build set", excluded)
+		}
 	}
 }
 
@@ -415,6 +487,47 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 	} {
 		if _, err := os.Stat(listPath); err == nil {
 			t.Errorf("%s was written for a qemu-virt-only build; qemu-virt is internal-only and must never appear in a catalog", listPath)
+		}
+	}
+}
+
+// TestBuildCatalogForNanopiZero2OnlyWritesNothing mirrors
+// TestBuildCatalogForQemuVirtOnlyWritesNothing for nanopi-zero2 (gosd-wskc):
+// it's also internal-only, so --catalog on a nanopi-zero2-only build must
+// write no os_list.json while still producing the image itself.
+func TestBuildCatalogForNanopiZero2OnlyWritesNothing(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-nanopi-zero2.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "nanopi-zero2",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=nanopi-zero2 --catalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("the image itself should still be built: %v", err)
+	}
+	for _, listPath := range []string{
+		filepath.Join(outDir, "os_list.json"),
+		filepath.Join(outDir, "hello-nanopi-zero2.os_list.json"),
+	} {
+		if _, err := os.Stat(listPath); err == nil {
+			t.Errorf("%s was written for a nanopi-zero2-only build; nanopi-zero2 is internal-only and must never appear in a catalog", listPath)
 		}
 	}
 }

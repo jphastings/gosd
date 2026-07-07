@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/boards/nanopizero2"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
@@ -23,6 +24,14 @@ import (
 func init() {
 	boards.Register(pizero2w.New())
 	boards.Register(radxazero3e.New())
+	// nanopi-zero2 is INTERNAL-ONLY FOR NOW (bean gosd-wskc's scope
+	// amendment): the board profile is fully implemented, but no
+	// artifacts-pipeline job publishes its U-Boot files yet (gated on
+	// gosd-f39b), so a real fetch would 404. FLIP THIS TO boards.Register
+	// (and wire up the U-Boot artifact pipeline entries) once that bean
+	// completes and an artifact release contains this board's U-Boot
+	// files - see the checklist item on gosd-wskc.
+	boards.RegisterInternal(nanopizero2.New())
 	// qemu-virt is internal-only (see CLAUDE.md's locked decision): it's a
 	// real, fully buildable board, but only reachable via an explicit
 	// --board=qemu-virt, never part of the default no---board build set,
@@ -209,13 +218,13 @@ func parseDataSize(s string) (int64, error) {
 // board's own directory when there's just one), so the combined
 // os_list.json is written next to the first image.
 //
-// Internal-only boards (currently just qemu-virt) are never listed in a
-// catalog end users are meant to paste into Imager, so they're filtered out
-// of selected before any entry is built - not because they'd fail, but
-// because a catalog is a genuinely public artifact. A build of only
-// internal boards (e.g. `--board=qemu-virt --catalog`) is therefore a
-// silent no-op: nothing to write isn't an error, and --catalog on a normal,
-// public-board build is unaffected either way.
+// Internal-only boards (currently qemu-virt and nanopi-zero2 - see this
+// file's init()) are never listed in a catalog end users are meant to paste
+// into Imager, so they're filtered out of selected before any entry is
+// built - not because they'd fail, but because a catalog is a genuinely
+// public artifact. A build of only internal boards (e.g. `--board=qemu-virt
+// --catalog`) is therefore a silent no-op: nothing to write isn't an error,
+// and --catalog on a normal, public-board build is unaffected either way.
 func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, outputs map[string]string) error {
 	images := make([]catalog.Image, 0, len(selected))
 	for _, b := range selected {
