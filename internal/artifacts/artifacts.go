@@ -36,11 +36,11 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.1.0 has not been published yet as of this package landing (that is the
-// one remaining manual step for gosd-wtpa: pushing the artifacts/v0.1.0 git
-// tag) — every code path that reaches GitHub is exercised instead by this
-// package's httptest-backed tests, which point EnsureBoard's internals at a
-// fake server rather than github.com.
+// NOTE: pi-zero-w artifacts first ship in the artifacts/v0.2.0 release,
+// which does not exist yet — real (non---artifacts-dir) pi-zero-w builds
+// will fail with a clear not-found error until that tag is pushed and this
+// constant is bumped alongside the nanopi-zero2 public flip (per
+// docs/artifacts.md: tag first, bump in a follow-up).
 const Version = "v0.1.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.

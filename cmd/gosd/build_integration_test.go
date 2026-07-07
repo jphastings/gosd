@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -339,10 +340,152 @@ func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T
 	}
 }
 
+// TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts is the
+// acceptance test for gosd-et0q: a full `gosd build` for pi-zero-w, using
+// --artifacts-dir to supply fake kernel/firmware files instead of fetching
+// real ones, produces a structurally valid 32-bit image. Unlike the other
+// boards' fake-artifacts tests, /app and /init here are NOT fakes — the
+// pipeline really cross-compiles examples/hello and gosd-init for
+// GOARCH=arm GOARM=6 (this board's Arch()), so this test closes the loop on
+// the multi-arch build work (gosd-2j6z) by asserting the initramfs actually
+// contains 32-bit ARM ELF binaries, not just that a build "succeeded".
+func TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"--wifi-ssid", "test-network",
+		"--wifi-pass", "test-passphrase",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=pi-zero-w failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"kernel.img", "bcm2835-rpi-zero-w.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
+	} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	cmdlineTxt, err := fs.ReadFile("cmdline.txt")
+	if err != nil {
+		t.Fatalf("reading cmdline.txt: %v", err)
+	}
+	if !strings.Contains(string(cmdlineTxt), "gosd.board=pi-zero-w") {
+		t.Errorf("cmdline.txt = %q, want it to contain gosd.board=pi-zero-w", cmdlineTxt)
+	}
+
+	configTxt, err := fs.ReadFile("config.txt")
+	if err != nil {
+		t.Fatalf("reading config.txt: %v", err)
+	}
+	if strings.Contains(string(configTxt), "arm_64bit") {
+		t.Errorf("config.txt = %q, want no arm_64bit line (pi-zero-w is 32-bit only)", configTxt)
+	}
+	if !strings.Contains(string(configTxt), "kernel=kernel.img") {
+		t.Errorf("config.txt = %q, want it to reference kernel.img", configTxt)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	records := decodeInitramfs(t, initramfsBytes)
+
+	wantEntries := []string{
+		"init",
+		"app",
+		"etc/gosd/config.json",
+		"lib/firmware/brcm/cyfmac43430-sdio.bin",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,model-zero-w.bin",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,model-zero-w.clm_blob",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,model-zero-w.txt",
+	}
+	for _, want := range wantEntries {
+		if !hasRecord(records, want) {
+			t.Errorf("initramfs is missing entry %q; got entries %v", want, recordNames(records))
+		}
+	}
+
+	configJSON := recordContent(t, records, "etc/gosd/config.json")
+	for _, want := range []string{`"board":"pi-zero-w"`, `"hostname":"integration-test"`, `"ssid":"test-network"`, `"passphrase":"test-passphrase"`} {
+		if !strings.Contains(string(configJSON), want) {
+			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
+		}
+	}
+
+	// The real acceptance criterion: /app and /init must be genuine 32-bit
+	// ARM ELF binaries, since pi-zero-w's Arch() (GOARCH=arm, GOARM=6)
+	// isn't faked — the build pipeline really cross-compiled them.
+	for _, name := range []string{"app", "init"} {
+		assertELF32Arm(t, records, name)
+	}
+}
+
+// assertELF32Arm fails the test unless the cpio record named name parses as
+// a 32-bit ARM ELF binary (ELFCLASS32, EM_ARM) — the shape a real GOARCH=arm
+// GOARM=6 cross-compile produces.
+func assertELF32Arm(t *testing.T, records []cpio.Record, name string) {
+	t.Helper()
+
+	rec, ok := findRecord(records, name)
+	if !ok {
+		t.Fatalf("no record named %q found in initramfs", name)
+	}
+
+	f, err := elf.NewFile(rec)
+	if err != nil {
+		t.Fatalf("%s is not a valid ELF binary: %v", name, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if f.Class != elf.ELFCLASS32 {
+		t.Errorf("%s: Class = %v, want %v (32-bit)", name, f.Class, elf.ELFCLASS32)
+	}
+	if f.Machine != elf.EM_ARM {
+		t.Errorf("%s: Machine = %v, want %v (arm)", name, f.Machine, elf.EM_ARM)
+	}
+}
+
+func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
+	for _, r := range records {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return cpio.Record{}, false
+}
+
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
-// produces both the pi-zero-2w and the radxa-zero-3e images, not just the
-// former.
+// produces the pi-zero-2w, pi-zero-w, and radxa-zero-3e images, not just a
+// subset.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -363,7 +506,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-radxa-zero-3e.img"} {
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img"} {
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -376,8 +519,8 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	}
 
 	// qemu-virt and nanopi-zero2 are both internal-only: the default
-	// no---board build must produce exactly the two public boards'
-	// images, never a third or fourth for either of them.
+	// no---board build must produce exactly the three public boards'
+	// images, never a fourth or fifth for either of them.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -388,8 +531,8 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 2 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 2 (qemu-virt and nanopi-zero2 must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != 3 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 3 (qemu-virt and nanopi-zero2 must stay excluded)", len(imgNames), imgNames)
 	}
 	for _, excluded := range []string{"hello-qemu-virt.img", "hello-nanopi-zero2.img"} {
 		if _, err := os.Stat(filepath.Join(outDir, excluded)); err == nil {

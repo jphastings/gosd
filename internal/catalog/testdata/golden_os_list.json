@@ -15,6 +15,20 @@
       "init_format": "cloudinit"
     },
     {
+      "name": "hello (Raspberry Pi Zero W)",
+      "description": "hello, built with GoSD for Raspberry Pi Zero W",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-pi-zero-w.img",
+      "extract_size": 29,
+      "extract_sha256": "8831a500e52a493446ca0640dd0d309eed16ee89cb46a70f69e4f890e8b4effe",
+      "image_download_size": 29,
+      "release_date": "2026-01-15",
+      "devices": [
+        "pi1-32bit"
+      ],
+      "init_format": "cloudinit"
+    },
+    {
       "name": "hello (Radxa Zero 3E)",
       "description": "hello, built with GoSD for Radxa Zero 3E",
       "icon": "",
