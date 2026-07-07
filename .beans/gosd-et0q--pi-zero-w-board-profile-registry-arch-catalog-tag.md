@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-07-06T15:48:45Z
-updated_at: 2026-07-07T14:39:55Z
+updated_at: 2026-07-07T15:21:35Z
 parent: gosd-ajpz
 blocked_by:
     - gosd-2j6z
@@ -77,3 +77,18 @@ Wire it together: internal/boards/pizerow profile (Artifacts: kernel.img + bcm28
 All quality gates pass: `go test ./...`, `go vet ./...`, `gofmt -l .`
 (clean), and `golangci-lint run ./...` both natively and with
 `GOOS=linux`.
+
+## CI note: qemu-boot smoke test goes red until the artifacts/v0.2.0 tag is pushed
+
+`artifacts/v0.1.0` is already published on GitHub (contrary to
+`internal/artifacts.go`'s old comment, which was stale) — CI's "qemu
+boot-to-HTTP smoke test" job downloads that REAL release rather than using
+`--artifacts-dir` fakes. Bumping `Version` to `v0.2.0` in this PR (as
+instructed) means that one job 404s until the `artifacts/v0.2.0` tag is
+pushed and its release publishes — every other job (both fake-artifact
+builds, all unit/integration tests, lint) is green. This is the expected,
+called-out consequence of landing the Version bump ahead of the tag push,
+and deviates from docs/artifacts.md's documented "tag first, bump Version in
+a follow-up commit" order. Flagged prominently on the PR for JP to decide:
+merge as-is (job goes green again once the tag's pushed) or split the
+Version bump into a follow-up PR instead.
