@@ -42,12 +42,45 @@ Outputs land in `out/` (gitignored):
 still set after `make olddefconfig` resolves dependencies, and fails loudly
 if trimming or a kernel version bump silently dropped one.
 
+## Device-tree patches
+
+`patches/` holds GoSD-authored patches applied (via `patch -p1`) to the
+cloned kernel tree right after checkout, before configuring or building.
+Mainline's `rk3566-radxa-zero-3e.dts` doesn't enable every peripheral GoSD
+wants on by default; rather than fork-and-maintain the whole DTS, each patch
+is a small, targeted diff with a comment explaining why it exists.
+
+- `0001-enable-header-i2c3.patch` — enables `i2c3` (`status = "okay"`,
+  `pinctrl-0 = <&i2c3m0_xfer>`), which mainline leaves disabled. This is the
+  bus wired to the 40-pin header's physical pins 3/5 (GPIO1_A0/A1 — the same
+  header position as a Raspberry Pi's GPIO2/3 I2C pins), confirmed against
+  Radxa's own schematic and pinout docs. It already enumerates as
+  `/dev/i2c-3`: `rk356x-base.dtsi` pre-aliases every `i2cN` node to its own
+  number at the SoC level, so no alias addition was needed here (contrast
+  with the NanoPi Zero2's patch, where it was). See bean `gosd-85pt`.
+
+This *is* a kernel-pipeline change: a real rebuild via `./build.sh` (Docker)
+regenerates `rk3566-radxa-zero-3e.dtb` with `i2c3` enabled. GoSD's committed
+artifact releases only ship what's actually compiled (see the repo root
+`CLAUDE.md`'s no-rehosting policy), so **this board's DTB artifact needs a
+new artifacts release** (`artifacts/vX.Y.Z` tag bump) before real `gosd
+build` runs (not using `--artifacts-dir`) pick up the change — the same
+tag-then-bump dance as v0.2.0.
+
+If a future U-Boot bump adds `CONFIG_OF_LIBFDT_OVERLAY` / distro-boot
+overlay support (checked and absent as of the pinned `v2026.04` tag — see
+`../uboot/README.md`), consider migrating this to a `.dtbo` overlay applied
+via extlinux's `fdtoverlays` instead, so peripheral toggles stop requiring a
+full kernel rebuild.
+
 ## Updating the pinned kernel version
 
 Bump `KERNEL_TAG` in `build.sh` to a newer mainline "longterm" tag (see
 <https://www.kernel.org/releases.json>, look for `"moniker": "longterm"`),
 rerun `./build.sh`, then copy `out/kernel.config` over the committed
-`kernel.config` and commit both alongside the version bump.
+`kernel.config` and commit both alongside the version bump. Re-check that
+`patches/*.patch` still applies cleanly against the new tag's DTS — a DTS
+restructure upstream could require regenerating them.
 
 ## Known limitations
 

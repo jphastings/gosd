@@ -28,7 +28,8 @@ see `beans list` for what's in flight.
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
-| GPIO / I2C / SPI | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio][^nanopi-fpc] |
+| I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
+| GPIO / SPI | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio][^nanopi-fpc] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
@@ -141,13 +142,29 @@ see `beans list` for what's in flight.
     bump picks up that commit; Ethernet, SD/eMMC, and serial console are
     unaffected. Recheck when bumping the pinned kernel tag.
 
+[^i2c]: I2C is enabled by default on every board as of bean `gosd-85pt` — no
+    build flag needed, and there's no opt-out today. Mechanism differs by
+    board family: the Pi boards gained `dtparam=i2c_arm=on` in `config.txt`;
+    the two Rockchip boards gained a kernel-build-time device-tree patch
+    (`build/boards/radxa-zero-3e/kernel/patches/`,
+    `build/boards/nanopi-zero2/kernel/patches/`) enabling the header-routed
+    `i2cN` controller node, since the pinned U-Boot on both doesn't support
+    `CONFIG_OF_LIBFDT_OVERLAY`/extlinux `fdtoverlays` (checked directly
+    against both defconfigs) — so this ✅ carries the same "code-complete,
+    fake-artifact-tested, not hardware-verified" caveat as the rest of this
+    table, plus one additional wrinkle: the Rockchip boards' DTB artifact
+    needs a new artifacts release (tag bump) before a real, non-
+    `--artifacts-dir` build picks up the change. Per-board bus and pin
+    numbers are documented in `docs/runtime.md`'s "GPIO, I2C, SPI" section;
+    `examples/i2cscan` is the worked, cross-board example. GPIO and SPI
+    remain unaddressed by this bean — see the row below.
+
 [^gpio]: All four boards' kernels already enable the character-device GPIO
-    API (`CONFIG_GPIO_CDEV`), I2C, and SPI drivers, so `/dev/gpiochipN`,
-    `/dev/i2c-*`, and `/dev/spidev*` are expected to appear at boot. No
-    GoSD-side wiring exists yet beyond documenting the libraries to use
-    (`docs/runtime.md`) — a worked, board-tested example and per-board pin
-    documentation is tracked by bean `gosd-rsrd`, blocked on hardware
-    bring-up.
+    API (`CONFIG_GPIO_CDEV`) and SPI drivers, so `/dev/gpiochipN` and
+    `/dev/spidev*` are expected to appear at boot. No GoSD-side wiring
+    exists yet beyond documenting the libraries to use (`docs/runtime.md`)
+    — a worked, board-tested example and per-board pin documentation is
+    tracked by bean `gosd-rsrd`, blocked on hardware bring-up.
 
 [^nanopi-fpc]: The NanoPi Zero2 exposes GPIO on a 30-pin FPC (flex) connector,
     **not** a Raspberry Pi–style 40-pin header — an example written for the

@@ -73,3 +73,9 @@ BootROM → idbloader → u-boot.itb → extlinux chain:
   `build/boards/nanopi-zero2/kernel/README.md`'s "Known limitations" section.
   This defconfig's `CONFIG_USB_GADGET`/Rockusb support is real and upstream,
   it just has nothing to bind to yet on the Linux side.
+- **No FDT overlay support**: `nanopi-zero2-rk3528_defconfig` (checked at the
+  pinned `UBOOT_TAG`) does not set `CONFIG_OF_LIBFDT_OVERLAY`, same finding
+  as the Radxa Zero 3E's defconfig (see that board's README). extlinux's
+  `fdtoverlays` directive isn't available, so the 30-pin FPC I2C enablement
+  in `../kernel/patches/` is a kernel-build-time DTS patch rather than a
+  `.dtbo` -- see bean `gosd-85pt`.

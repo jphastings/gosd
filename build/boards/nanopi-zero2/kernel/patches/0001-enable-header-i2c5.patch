@@ -1,0 +1,35 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
+@@ -14,6 +14,7 @@
+ 	aliases {
+ 		ethernet0 = &gmac1;
+ 		i2c1 = &i2c1;
++		i2c5 = &i2c5;
+ 		mmc0 = &sdhci;
+ 		mmc1 = &sdmmc;
+ 		serial0 = &uart0;
+@@ -241,6 +242,24 @@
+ 	};
+ };
+ 
++&i2c5 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 30-pin FPC's I2C
++	 * bus (GPIO1_B2/B3, FPC pins 12/13 - see the FriendlyElec schematic's
++	 * GPIO table). rk3528.dtsi assigns no default pinctrl or alias to
++	 * i2c5 and this board doesn't wire up any on-SoM device on it, so
++	 * both the pin group and the "i2c5" alias (unlike i2c3 on the Radxa
++	 * Zero 3E, this SoC's own dtsi doesn't pre-alias any i2c controller)
++	 * are added here to guarantee it enumerates as /dev/i2c-5. The
++	 * FriendlyElec schematic notes an external 2.2k pull-up is required
++	 * on this bus - it has no onboard pull-ups like i2c1's RTC bus does.
++	 * See bean gosd-85pt.
++	 */
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c5m0_xfer>;
++	status = "okay";
++};
++
+ &mdio1 {
+ 	rgmii_phy: ethernet-phy@1 {
+ 		compatible = "ethernet-phy-ieee802.3-c22";

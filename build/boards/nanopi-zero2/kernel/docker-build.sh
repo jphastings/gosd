@@ -16,7 +16,7 @@ SRC_DIR="/build/linux"
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   build-essential crossbuild-essential-arm64 \
-  git ca-certificates bc bison flex libssl-dev libelf-dev \
+  git ca-certificates bc bison flex libssl-dev libelf-dev patch \
   >/dev/null
 
 export ARCH=arm64
@@ -25,6 +25,12 @@ export CROSS_COMPILE=aarch64-linux-gnu-
 echo "==> Cloning ${KERNEL_REPO} at ${KERNEL_TAG} (shallow)"
 git clone --quiet --depth 1 --branch "${KERNEL_TAG}" "${KERNEL_REPO}" "${SRC_DIR}"
 cd "${SRC_DIR}"
+
+echo "==> Applying GoSD device-tree patches"
+for patch in /work/patches/*.patch; do
+  echo "    ${patch}"
+  patch -p1 --forward <"${patch}"
+done
 
 echo "==> Base config: make defconfig"
 make ARCH=arm64 defconfig

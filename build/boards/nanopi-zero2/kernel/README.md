@@ -43,6 +43,33 @@ Outputs land in `out/` (gitignored):
 still set after `make olddefconfig` resolves dependencies, and fails loudly
 if trimming or a kernel version bump silently dropped one.
 
+## Device-tree patches
+
+`patches/` holds GoSD-authored patches applied (via `patch -p1`) to the
+cloned kernel tree right after checkout, before configuring or building —
+same mechanism as the Radxa Zero 3E's (see that board's README).
+
+- `0001-enable-header-i2c5.patch` — enables `i2c5` (`status = "okay"`,
+  `pinctrl-0 = <&i2c5m0_xfer>`), which mainline leaves disabled with no
+  default pinctrl. This is the bus wired to the 30-pin FPC connector's pins
+  12/13 (GPIO1_B2/B3), confirmed against FriendlyElec's own schematic
+  (`NanoPi_Zero2_2407_SCH.pdf`'s GPIO table) — **not** `i2c1`, which this
+  board already enables for its onboard RTC (`hym8563`) but which the
+  schematic shows is not routed to the FPC connector at all. The schematic
+  also notes the FPC's I2C5 pins need an **external 2.2kΩ pull-up**: unlike
+  `i2c1`'s RTC bus, there are no onboard pull-ups on this one. Unlike the
+  Radxa Zero 3E, `rk3528.dtsi` doesn't pre-alias any `i2cN` node at the SoC
+  level (this board's own `aliases` block has to name `i2c1` explicitly
+  already, for the same reason), so the patch also adds an `i2c5 = &i2c5;`
+  alias — without it, `/dev/i2c-5` isn't guaranteed. See bean `gosd-85pt`.
+
+Same artifact-release consequence as the Radxa Zero 3E's patch: this is a
+kernel-pipeline change, so `rk3528-nanopi-zero2.dtb` needs rebuilding and
+re-releasing before a real (non-`--artifacts-dir`) build picks it up. This
+board has no artifacts-pipeline job yet at all (see the package doc comment
+in `internal/boards/nanopizero2/board.go`), so this is folded into that
+same pending work rather than being a new, separate gap.
+
 ## Diff against the Radxa Zero 3E fragment, and why
 
 This fragment was built by starting from

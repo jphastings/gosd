@@ -231,9 +231,40 @@ libraries you'd use on any Linux board:
   (I2C, SPI, and specific sensor/peripheral drivers).
 
 Both are plain Go and work under `CGO_ENABLED=0`, so they cross-compile
-the same way your app does. Worked, board-tested examples wiring these up
-under GoSD are planned for v0.3; until then, treat the libraries' own
-examples as your starting point and adjust device paths for your board.
+the same way your app does. GPIO and SPI don't have a worked, board-tested
+example yet (tracked for a future release); I2C does, covered below.
+
+### I2C is on by default
+
+Every board image `gosd build` produces has one I2C bus enabled and ready as
+a `/dev/i2c-N` character device by the time your app starts — no build flag
+needed, and there's no opt-out flag today (a `gosd.toml` knob to disable it
+may come later if a real use case needs the pins back for plain GPIO). The
+kernel driver has always been built in on every board
+(`CONFIG_I2C_BCM2835`/`CONFIG_I2C_RK3X` plus `CONFIG_I2C_CHARDEV`); what this
+adds is the device-tree/`config.txt` enablement that was previously missing.
+
+| Board | Device | Physical pins | Notes |
+|---|---|---|---|
+| Raspberry Pi Zero 2 W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same pins as `GPIO2`/`GPIO3` on any Pi — the standard Pi I2C position. Using those pins as plain GPIO is unavailable while I2C is enabled. |
+| Raspberry Pi Zero W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
+| Radxa Zero 3E | `/dev/i2c-3` | 40-pin header pins 3 (SDA) / 5 (SCL) | Same physical header position as the Pi's I2C pins, confirmed against Radxa's own schematic and pinout docs. |
+| NanoPi Zero2 | `/dev/i2c-5` | 30-pin FPC pins 12 (SCL) / 13 (SDA) | Confirmed against FriendlyElec's schematic. **Needs an external ~2.2kΩ pull-up on both lines** — unlike the other boards' I2C pins, this bus has no onboard pull-up resistors (FriendlyElec's own schematic note); most breakout boards include their own, but bare sensor modules may not. |
+
+On the Pi boards, enabling I2C means `config.txt` carries
+`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the two
+Rockchip boards, it means the shipped kernel's device tree enables the
+relevant `i2cN` controller node — see
+`build/boards/radxa-zero-3e/kernel/patches/` and
+`build/boards/nanopi-zero2/kernel/patches/` if you're curious about the
+mechanism, or need to add a similar peripheral enablement yourself.
+
+`examples/i2cscan` is a worked example: it opens every `/dev/i2c-*` present,
+scans each bus for a responding device, and additionally checks for a
+BME280/BMP280-family sensor's chip-ID response — a common, cheap way to
+sanity-check your wiring before writing real sensor code. For anything past
+that sanity check, reach for `periph.io` rather than hand-rolling ioctls the
+way the example does.
 
 ## USB gadget mode
 
