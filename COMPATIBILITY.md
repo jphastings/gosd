@@ -43,13 +43,15 @@ see `beans list` for what's in flight.
     regardless of board) that will apply automatically once the board profile
     exists — it isn't separate work per feature.
 
-[^nanopi-artifacts]: The NanoPi Zero2's kernel is built and published by CI
-    (`nanopi-zero2-kernel` job, `.github/workflows/build-artifacts.yml`), but
-    there is no U-Boot job yet: mainline U-Boot's dedicated
-    `nanopi-zero2-rk3528_defconfig` lands in the U-Boot **v2026.07** release,
-    which was not yet tagged as of the last check (bean `gosd-f39b`). The
-    U-Boot build pipeline is written to wait for that tagged release rather
-    than build from a development branch.
+[^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
+    published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,
+    `.github/workflows/build-artifacts.yml`). U-Boot is pinned to
+    **`v2026.07-rc5`** rather than a final release: mainline U-Boot's
+    dedicated `nanopi-zero2-rk3528_defconfig` is new in the v2026.07 cycle
+    and wasn't in any prior tagged release, and JP asked to pin the latest
+    rc now rather than wait for the final tag so this board is
+    hardware-testable sooner (bean `gosd-f39b`'s amended gate). Re-pinning to
+    the final `v2026.07` release once it ships is an open item on that bean.
 
 [^pi-no-eth]: The Raspberry Pi Zero 2 W has no onboard Ethernet port (WiFi
     only) — this is a hardware limitation of the board itself, not a GoSD

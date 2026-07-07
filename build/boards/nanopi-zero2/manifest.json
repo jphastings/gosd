@@ -1,0 +1,21 @@
+{
+  "$schema_note": "Third-party binary blobs for the NanoPi Zero2, pinned per GoSD's no-rehosting policy: fetched from upstream at build time by URL + sha256, never re-hosted in our releases.",
+  "rkbin": {
+    "repo": "https://github.com/rockchip-linux/rkbin",
+    "commit": "ecb4fcbe954edf38b3ae037d5de6d9f5bccf81f4",
+    "license_file": "LICENSE",
+    "license_note": "Rockchip's rkbin LICENSE (at the pinned commit, repo root) grants a non-exclusive license to use, copy, and distribute the software, and to modify/sublicense modifications. This permits idbloader.img and u-boot.itb -- which necessarily embed these blobs -- to be produced and distributed by GoSD. Same commit already pinned for the Radxa Zero 3E (build/boards/radxa-zero-3e/manifest.json); it also carries the RK3528 blobs this board needs.",
+    "blobs": {
+      "ddr_tpl": {
+        "path": "bin/rk35/rk3528_ddr_1056MHz_v1.13.bin",
+        "sha256": "ab88df0d98a882a5ebb50b82f4481a2506448a2ce6e0e6efaf759e4438cc372e",
+        "purpose": "DDR-init TPL (ROCKCHIP_TPL) for RK3528, per bean gosd-vcae's research and U-Boot's doc/board/rockchip/rockchip.rst rk3528 build recipe."
+      },
+      "bl31": {
+        "path": "bin/rk35/rk3528_bl31_v1.21.elf",
+        "sha256": "ab0b30d59e81b8a14ec6f45316d1dd9befc23fae02372a989ec63c90a4790bab",
+        "purpose": "ARM Trusted Firmware BL31 (EL3 runtime firmware) for RK3528, per bean gosd-vcae's research."
+      }
+    }
+  }
+}
