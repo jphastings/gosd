@@ -1,0 +1,71 @@
+{
+  "board": "pi-zero-w",
+  "bootFiles": {
+    "source": {
+      "repo": "https://github.com/raspberrypi/firmware",
+      "ref": "1.20260521",
+      "commit": "09267f5354d40519d82fbd2193b9e211ec304055"
+    },
+    "destDir": "",
+    "files": [
+      {
+        "name": "bootcode.bin",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/bootcode.bin",
+        "sha256": "e8b59fe10a4daa3cd2b127479f40b9856cfe3677154e8f24ae2aa70e3bb7c8eb"
+      },
+      {
+        "name": "start.elf",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/start.elf",
+        "sha256": "55049e2e35d6ddff3e5b93d6cface5cdc6df4e7ab1474af78d1af6ce8db4c9df"
+      },
+      {
+        "name": "fixup.dat",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/fixup.dat",
+        "sha256": "b2d19b8c300b5a4ddbd0fcff3a0f7de61a171046269d8724e74f616058417d4b"
+      }
+    ]
+  },
+  "wifiFirmware": {
+    "source": {
+      "repo": "https://github.com/RPi-Distro/firmware-nonfree",
+      "commit": "9794282eb9f4a2de1f23b41a738926740e975d83",
+      "path": "debian/config/brcm80211"
+    },
+    "destDir": "brcm",
+    "files": [
+      {
+        "name": "cyfmac43430-sdio.bin",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/cypress/cyfmac43430-sdio.bin",
+        "sha256": "0717f8e798f3962230e76e9d840385ba127a38d31d6a55acd5c97cf53e4acc9d",
+        "chipRevisions": ["cyw43430"]
+      },
+      {
+        "name": "cyfmac43430-sdio.clm_blob",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/cypress/cyfmac43430-sdio.clm_blob",
+        "sha256": "3376b9c9b32d16bf762e21c7fafb665365070ae240d092498d0d1987c22022aa",
+        "chipRevisions": ["cyw43430"]
+      },
+      {
+        "name": "brcmfmac43430-sdio.txt",
+        "url": "https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/9794282eb9f4a2de1f23b41a738926740e975d83/debian/config/brcm80211/brcm/brcmfmac43430-sdio.txt",
+        "sha256": "fc3949a4c32f07c18308e7e145c7615be314158e7d714a80e04e4791f16495f9",
+        "chipRevisions": ["cyw43430"]
+      }
+    ],
+    "aliases": [
+      {
+        "dest": "brcmfmac43430-sdio.raspberrypi,model-zero-w.bin",
+        "of": "cyfmac43430-sdio.bin"
+      },
+      {
+        "dest": "brcmfmac43430-sdio.raspberrypi,model-zero-w.clm_blob",
+        "of": "cyfmac43430-sdio.clm_blob"
+      },
+      {
+        "dest": "brcmfmac43430-sdio.raspberrypi,model-zero-w.txt",
+        "of": "brcmfmac43430-sdio.txt"
+      }
+    ],
+    "notes": "The original Pi Zero W carries a single WiFi/BT combo chip revision, plain BCM43430 (no b0), unlike the Zero 2 W which spans three revisions. In RPi-Distro/firmware-nonfree the brcmfmac driver's board+chip lookup for 'raspberrypi,model-zero-w' resolves via git symlinks to the SAME blob set the Pi 3 Model B uses ('raspberrypi,3-model-b'): brcmfmac43430-sdio.raspberrypi,model-zero-w.{bin,clm_blob} -> ../cypress/cyfmac43430-sdio.{bin,clm_blob} (a Cypress-branded blob living in a sibling 'cypress/' upstream directory, NOT the 'brcm/' directory the pi-zero-2w manifest pulled from), and brcmfmac43430-sdio.raspberrypi,model-zero-w.txt -> brcmfmac43430-sdio.txt (a real file alongside the symlinks in 'brcm/'). This differs from the Zero 2 W's plain-43430 alias, which resolves to brcmfmac43436s-sdio.* (a brcm/-native blob) rather than the cypress/ one -- the two boards' '43430' chip IDs are NOT interchangeable blobs despite the shared naming convention. No 43430b0 alias exists for 'raspberrypi,model-zero-w' in this repo (checked: only .../model-zero-2-w and .../3-model-b/0-compute-module have a b0 variant), confirming the original Zero W shipped a single WiFi module revision throughout production. Since gosd's initramfs can't carry symlinks (per gosd-eu2x), a board profile must materialize all three alias dest names as literal duplicate copies of their 'of' file's bytes, flattened into the SAME destDir ('brcm/') as the base files -- mirroring how gosd-3zrc wired the pi-zero-2w aliases -- even though upstream splits the real bytes across 'brcm/' and 'cypress/' directories."
+  }
+}
