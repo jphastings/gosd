@@ -36,12 +36,15 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.1.0 has not been published yet as of this package landing (that is the
-// one remaining manual step for gosd-wtpa: pushing the artifacts/v0.1.0 git
-// tag) — every code path that reaches GitHub is exercised instead by this
-// package's httptest-backed tests, which point EnsureBoard's internals at a
-// fake server rather than github.com.
-const Version = "v0.1.0"
+// v0.2.0 has not been published yet as of this bump (bean gosd-et0q): it
+// will be the first artifacts release to contain the pi-zero-w and
+// nanopi-zero2 kernels alongside the existing boards, cut with a tag push
+// once this change merges — pushing that tag is a separate, manual step
+// (docs/artifacts.md), not automated by this PR. Every code path that
+// reaches GitHub is exercised instead by this package's httptest-backed
+// tests, which point EnsureBoard's internals at a fake server rather than
+// github.com, so nothing here depends on the release existing yet.
+const Version = "v0.2.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

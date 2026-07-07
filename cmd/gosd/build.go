@@ -13,6 +13,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
+	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/build"
@@ -23,6 +24,7 @@ import (
 
 func init() {
 	boards.Register(pizero2w.New())
+	boards.Register(pizerow.New())
 	boards.Register(radxazero3e.New())
 	// nanopi-zero2 is INTERNAL-ONLY FOR NOW (bean gosd-wskc's scope
 	// amendment): the board profile is fully implemented, but no
