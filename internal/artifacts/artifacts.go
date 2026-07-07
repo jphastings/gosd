@@ -36,12 +36,9 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// NOTE: pi-zero-w artifacts first ship in the artifacts/v0.2.0 release,
-// which does not exist yet — real (non---artifacts-dir) pi-zero-w builds
-// will fail with a clear not-found error until that tag is pushed and this
-// constant is bumped alongside the nanopi-zero2 public flip (per
-// docs/artifacts.md: tag first, bump in a follow-up).
-const Version = "v0.1.0"
+// v0.2.0 is the first release carrying pi-zero-w and nanopi-zero2 (kernel
+// and U-Boot) artifacts, alongside the nanopi-zero2 public flip.
+const Version = "v0.2.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

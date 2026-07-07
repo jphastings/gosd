@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: low
 created_at: 2026-07-05T05:34:03Z
-updated_at: 2026-07-07T14:46:53Z
+updated_at: 2026-07-07T19:37:18Z
 parent: gosd-cwjf
 blocked_by:
     - gosd-vcae
@@ -62,3 +62,16 @@ Implemented, mirroring build/boards/radxa-zero-3e/uboot/:
 Did NOT touch internal/boards or internal/artifacts (owned by the board
 profile / flip-to-public work, gosd-wskc). Hardware serial verification and
 the re-pin-to-final-release checklist item both remain open, as directed.
+
+
+## Note (2026-07-07, from bean/gosd-wskc-nanopi-activation)
+
+This bean's U-Boot artifacts are now published: the `artifacts/v0.2.0`
+GitHub release (built and tagged following this bean's work landing)
+includes `nanopi-zero2.tar.zst` with idbloader.img/u-boot.itb, and
+`internal/artifacts.Version` has been bumped to `v0.2.0` and
+nanopi-zero2 flipped to a public board in that PR. Verified directly: a
+clean-machine `gosd build` (no --board, no --artifacts-dir) downloaded and
+sha256-verified this board's real artifacts and produced a working image.
+The hardware bring-up and re-pin-to-final-v2026.07-release checklist items
+on this bean remain open, unaffected by that PR.

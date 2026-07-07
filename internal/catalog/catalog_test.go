@@ -110,6 +110,22 @@ func TestBuildEntryUsesHumanFriendlyNameForPiZeroW(t *testing.T) {
 	}
 }
 
+func TestBuildEntryUsesHumanFriendlyNameForNanopiZero2(t *testing.T) {
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "hello-nanopi-zero2.img")
+	if err := os.WriteFile(imgPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("writing fixture image: %v", err)
+	}
+
+	entry, err := BuildEntry(Image{AppName: "hello", BoardID: "nanopi-zero2", Path: imgPath}, Options{BaseURL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("BuildEntry: %v", err)
+	}
+	if want := "hello (NanoPi Zero2)"; entry.Name != want {
+		t.Errorf("Name = %q, want %q", entry.Name, want)
+	}
+}
+
 func TestBuildEntryFallsBackToBoardIDForUnknownBoards(t *testing.T) {
 	dir := t.TempDir()
 	imgPath := filepath.Join(dir, "hello-some-future-board.img")
@@ -139,6 +155,7 @@ func TestBuildEntryDevicesUseOfficialImagerTags(t *testing.T) {
 		{"pi-zero-2w", []string{"pi3-64bit"}},
 		{"pi-zero-w", []string{"pi1-32bit"}},
 		{"radxa-zero-3e", []string{"radxa-zero-3e"}},
+		{"nanopi-zero2", []string{"nanopi-zero2"}},
 		{"some-future-board", []string{"some-future-board"}},
 	}
 	for _, c := range cases {
@@ -162,7 +179,7 @@ func TestBuildEntryDevicesUseOfficialImagerTags(t *testing.T) {
 
 // --- golden JSON for a fake build ---
 
-// fakeBuild writes three fake .img files (standing in for a real gosd
+// fakeBuild writes four fake .img files (standing in for a real gosd
 // build's output) into dir and returns the Image values WriteFiles expects.
 func fakeBuild(t *testing.T, dir string) []Image {
 	t.Helper()
@@ -171,6 +188,7 @@ func fakeBuild(t *testing.T, dir string) []Image {
 		"hello-pi-zero-2w.img":    "fake pi-zero-2w image content\n",
 		"hello-pi-zero-w.img":     "fake pi-zero-w image content\n",
 		"hello-radxa-zero-3e.img": "fake radxa-zero-3e image content\n",
+		"hello-nanopi-zero2.img":  "fake nanopi-zero2 image content\n",
 	}
 	images := make([]Image, 0, len(files))
 	for name, content := range files {
@@ -186,6 +204,7 @@ func fakeBuild(t *testing.T, dir string) []Image {
 		Image{AppName: "hello", BoardID: "radxa-zero-3e", Path: filepath.Join(dir, "hello-radxa-zero-3e.img")},
 		Image{AppName: "hello", BoardID: "pi-zero-w", Path: filepath.Join(dir, "hello-pi-zero-w.img")},
 		Image{AppName: "hello", BoardID: "pi-zero-2w", Path: filepath.Join(dir, "hello-pi-zero-2w.img")},
+		Image{AppName: "hello", BoardID: "nanopi-zero2", Path: filepath.Join(dir, "hello-nanopi-zero2.img")},
 	)
 	return images
 }
@@ -203,11 +222,12 @@ func TestWriteFilesMatchesGoldenOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteFiles: %v", err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("WriteFiles returned %d entries, want 3", len(entries))
+	if len(entries) != 4 {
+		t.Fatalf("WriteFiles returned %d entries, want 4", len(entries))
 	}
-	// WriteFiles sorts by BoardID: "pi-zero-2w" < "pi-zero-w" < "radxa-zero-3e".
-	if entries[0].Name != "hello (Raspberry Pi Zero 2 W)" || entries[1].Name != "hello (Raspberry Pi Zero W)" || entries[2].Name != "hello (Radxa Zero 3E)" {
+	// WriteFiles sorts by BoardID: "nanopi-zero2" < "pi-zero-2w" <
+	// "pi-zero-w" < "radxa-zero-3e".
+	if entries[0].Name != "hello (NanoPi Zero2)" || entries[1].Name != "hello (Raspberry Pi Zero 2 W)" || entries[2].Name != "hello (Raspberry Pi Zero W)" || entries[3].Name != "hello (Radxa Zero 3E)" {
 		t.Errorf("WriteFiles entries not sorted by board ID: %+v", entries)
 	}
 
