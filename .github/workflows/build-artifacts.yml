@@ -12,9 +12,12 @@ name: Build artifacts
 # the no-rehosting policy in the repo root CLAUDE.md.
 #
 # Every build/boards/*/build.sh this workflow runs is Dockerized and cross-
-# compiles for arm64 via the aarch64-linux-gnu- toolchain (crossbuild-
-# essential-arm64) — none of them need an arm64 host or QEMU emulation, so
-# they run unchanged on GitHub's amd64 ubuntu-latest runners.
+# compiles — most for arm64 via the aarch64-linux-gnu- toolchain
+# (crossbuild-essential-arm64), pi-zero-w for 32-bit armv6 via the
+# arm-linux-gnueabihf- toolchain (crossbuild-essential-armhf, a true cross
+# compile even on an arm64 host — see build/boards/pi-zero-w/README.md).
+# None of them need an arm64 host or QEMU emulation, so they run unchanged on
+# GitHub's amd64 ubuntu-latest runners.
 on:
   push:
     tags:
@@ -37,6 +40,22 @@ jobs:
           path: |
             build/boards/pi-zero-2w/out/kernel8.img
             build/boards/pi-zero-2w/out/bcm2710-rpi-zero-2-w.dtb
+          if-no-files-found: error
+          retention-days: 1
+
+  pi-zero-w-kernel:
+    name: Build pi-zero-w kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run build.sh
+        run: build/boards/pi-zero-w/build.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pi-zero-w
+          path: |
+            build/boards/pi-zero-w/out/kernel.img
+            build/boards/pi-zero-w/out/bcm2835-rpi-zero-w.dtb
           if-no-files-found: error
           retention-days: 1
 
@@ -118,6 +137,7 @@ jobs:
     needs:
       [
         pi-zero-2w-kernel,
+        pi-zero-w-kernel,
         radxa-zero-3e-kernel,
         radxa-zero-3e-uboot,
         nanopi-zero2-kernel,
@@ -141,6 +161,11 @@ jobs:
         with:
           name: pi-zero-2w
           path: staging/pi-zero-2w
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pi-zero-w
+          path: staging/pi-zero-w
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -170,6 +195,7 @@ jobs:
         # already committed at the paths named below.
         run: |
           pi_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-2w/build.sh)
+          pi_zero_w_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-w/build.sh)
           radxa_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/radxa-zero-3e/kernel/build.sh)
           radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
           nanopi_zero2_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/nanopi-zero2/kernel/build.sh)
@@ -179,6 +205,11 @@ jobs:
             --arg config "build/boards/pi-zero-2w/kernel.config" \
             '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
             >staging/pi-zero-2w/source.json
+
+          jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_zero_w_commit" \
+            --arg config "build/boards/pi-zero-w/kernel.config" \
+            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
+            >staging/pi-zero-w/source.json
 
           jq -n \
             --arg krepo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg kref "$radxa_kernel_tag" \
@@ -214,6 +245,7 @@ jobs:
             docs/artifacts.md for how the CLI consumes this release.
           files: |
             dist/pi-zero-2w.tar.zst
+            dist/pi-zero-w.tar.zst
             dist/radxa-zero-3e.tar.zst
             dist/nanopi-zero2.tar.zst
             dist/qemu-virt.tar.zst
