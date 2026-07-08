@@ -5,7 +5,7 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-02T21:10:20Z
+updated_at: 2026-07-08T03:35:00Z
 parent: gosd-jge2
 blocked_by:
     - gosd-m9dj
@@ -20,3 +20,6 @@ Prove and document the peripherals story.
 
 ## Acceptance
 LED blinks on both physical boards from the same example source; docs reviewed against real device node listings captured in this bean.
+
+## Superseded (2026-07-08)
+Split into per-bus feature beans: I2C = gosd-85pt (done, pending bench), GPIO = gosd-nyad, SPI = gosd-fnza. This umbrella can be closed once those three complete on hardware.
