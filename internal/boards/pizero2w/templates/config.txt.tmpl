@@ -6,6 +6,7 @@ disable_splash=1
 boot_delay=0
 avoid_warnings=1
 dtparam=i2c_arm=on
+dtparam=spi=on
 {{- if .UsbGadget}}
 dtoverlay=dwc2,dr_mode=peripheral
 {{- end}}

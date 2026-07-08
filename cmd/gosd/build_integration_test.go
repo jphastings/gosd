@@ -100,6 +100,9 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 	if !strings.Contains(string(configTxt), "initramfs initramfs.cpio.zst followkernel") {
 		t.Errorf("config.txt = %q, want it to reference initramfs.cpio.zst", configTxt)
 	}
+	if !strings.Contains(string(configTxt), "dtparam=spi=on") {
+		t.Errorf("config.txt = %q, want it to contain dtparam=spi=on (SPI is enabled by default, bean gosd-fnza)", configTxt)
+	}
 
 	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
 	if err != nil {
@@ -409,6 +412,9 @@ func TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(configTxt), "kernel=kernel.img") {
 		t.Errorf("config.txt = %q, want it to reference kernel.img", configTxt)
+	}
+	if !strings.Contains(string(configTxt), "dtparam=spi=on") {
+		t.Errorf("config.txt = %q, want it to contain dtparam=spi=on (SPI is enabled by default, bean gosd-fnza)", configTxt)
 	}
 
 	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
