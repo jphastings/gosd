@@ -30,7 +30,7 @@ see `beans list` for what's in flight.
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] |
-| SPI | 🚧 [^spi] | 🚧 [^spi] | 🚧 [^spi] | 🚧 [^spi][^nanopi-fpc] |
+| SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
@@ -173,12 +173,29 @@ see `beans list` for what's in flight.
     against a real GPIO device on hardware (that bench step, an LED blink on
     each board, is the one item this bean leaves unchecked).
 
-[^spi]: All four boards' kernels already enable SPI drivers in principle, but
-    (unlike GPIO) no per-board device-tree/`config.txt` enablement, worked
-    example, or pin documentation exists yet — tracked by bean `gosd-fnza`,
-    which mirrors the I2C work (`gosd-85pt`) and is blocked on the GPIO work
-    above landing first (shared `COMPATIBILITY.md`/`docs/runtime.md` edits
-    stack more cleanly that way).
+[^spi]: SPI is enabled by default on every board as of bean `gosd-fnza` — no
+    build flag needed, and there's no opt-out today. Mechanism differs by
+    board family, the same shape as I2C (`gosd-85pt`): the Pi boards gained
+    `dtparam=spi=on` in `config.txt` (both chip selects, `/dev/spidev0.0` and
+    `/dev/spidev0.1`); the two Rockchip boards gained a kernel-build-time
+    device-tree patch (`build/boards/radxa-zero-3e/kernel/patches/`,
+    `build/boards/nanopi-zero2/kernel/patches/`) enabling the header-routed
+    `spiN` controller node plus a `spidev` child node per header-routed chip
+    select (compatible `rohm,dh2228fv` — a bare `"spidev"` compatible is
+    refused by the kernel's spidev driver, see `docs/runtime.md`'s SPI
+    section) — same pinned-U-Boot-lacks-`CONFIG_OF_LIBFDT_OVERLAY` reasoning
+    as I2C, so this ✅ carries the same "code-complete, fake-artifact-tested,
+    not hardware-verified" caveat as the rest of this table, plus the same
+    wrinkle: **the Rockchip boards' DTB artifact needs a new artifacts
+    release (`v0.4.0`) before a real, non-`--artifacts-dir` build picks up
+    the change** — that release, and the follow-up `internal/artifacts.
+    Version` bump once it's tagged, are tracked as separate follow-up work,
+    not done in this bean. The Radxa Zero 3E only exposes one chip select
+    (`/dev/spidev3.0`) — its 40-pin header's physical pin 26, where a Pi's
+    CE1 would be, is not connected. Per-board bus and pin numbers are
+    documented in `docs/runtime.md`'s "GPIO, I2C, SPI" section;
+    `examples/spiloopback` is the worked, cross-board example (a
+    jumper-MOSI-to-MISO self-test, since no fixed peripheral is assumed).
 
 [^nanopi-fpc]: The NanoPi Zero2 exposes GPIO on a 30-pin FPC (flex) connector,
     **not** a Raspberry Pi–style 40-pin header — an example written for the

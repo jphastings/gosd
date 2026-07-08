@@ -231,8 +231,8 @@ libraries you'd use on any Linux board:
   (I2C, SPI, and specific sensor/peripheral drivers).
 
 Both are plain Go and work under `CGO_ENABLED=0`, so they cross-compile
-the same way your app does. GPIO and I2C both have worked examples, covered
-below; SPI's is tracked for a future release.
+the same way your app does. GPIO, I2C, and SPI all have worked examples,
+covered below.
 
 ### GPIO is available via /dev/gpiochipN
 
@@ -328,6 +328,45 @@ BME280/BMP280-family sensor's chip-ID response — a common, cheap way to
 sanity-check your wiring before writing real sensor code. For anything past
 that sanity check, reach for `periph.io` rather than hand-rolling ioctls the
 way the example does.
+
+### SPI is on by default
+
+Every board image `gosd build` produces has a `/dev/spidev*` character
+device ready by the time your app starts — no build flag needed, and (as
+with I2C) there's no opt-out flag today. The kernel driver has always been
+built in on every board (`CONFIG_SPI_BCM2835`/`CONFIG_SPI_ROCKCHIP` plus
+`CONFIG_SPI_SPIDEV`); what this adds is the device-tree/`config.txt`
+enablement that was previously missing.
+
+| Board | Device(s) | Physical pins | Notes |
+|---|---|---|---|
+| Raspberry Pi Zero 2 W | `/dev/spidev0.0`, `/dev/spidev0.1` | Header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CE0) / 26 (CE1) | The standard Pi SPI0 position, both chip selects. |
+| Raspberry Pi Zero W | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
+| Radxa Zero 3E | `/dev/spidev3.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, confirmed against Radxa's own schematic and pinout docs — but only one chip select: physical pin 26, where a Pi's CE1 would be, is not connected on this board's header, so there is no `/dev/spidev3.1`. |
+| NanoPi Zero2 | `/dev/spidev1.0`, `/dev/spidev1.1` | 30-pin FPC pins 16 (CLK) / 17 (MOSI) / 18 (MISO) / 19 (CS0) / 20 (CS1) | Confirmed against FriendlyElec's schematic; both chip selects are routed to the FPC connector. |
+
+On the Pi boards, enabling SPI means `config.txt` carries `dtparam=spi=on`
+(Raspberry Pi's own documented mechanism, giving both `spidev0.0` and
+`spidev0.1`); on the two Rockchip boards, it means the shipped kernel's
+device tree enables the relevant `spiN` controller node and adds a
+`spidev` child node for each header-routed chip select — see
+`build/boards/radxa-zero-3e/kernel/patches/` and
+`build/boards/nanopi-zero2/kernel/patches/` if you're curious about the
+mechanism. Note the child node's `compatible` value: the kernel's spidev
+driver (`drivers/spi/spidev.c`) refuses to bind to a bare `compatible =
+"spidev"` node (it logs "spidev listed directly in DT is not supported" and
+fails to probe) — GoSD's patches use `"rohm,dh2228fv"`, spidev's own
+documented generic placeholder compatible (`Documentation/spi/spidev.rst`),
+the same one Raspberry Pi's downstream spidev overlays use.
+
+`examples/spiloopback` is a worked example: it opens every `/dev/spidev*`
+present and performs a full-duplex transfer of a fixed test pattern,
+reporting whether the bytes read back match the bytes sent. This is only a
+meaningful test with **MOSI physically jumpered to MISO** on the bus under
+test — with that jumper in place, a correct loopback confirms the bus works
+end-to-end before you wire up a real device; without it, a mismatch is the
+expected (not erroneous) result. For anything past that self-test, reach for
+`periph.io` rather than hand-rolling ioctls the way the example does.
 
 ## USB gadget mode
 

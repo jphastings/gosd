@@ -1,0 +1,40 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3566-radxa-zero-3e.dts
+@@ -56,6 +56,37 @@
+ 	status = "okay";
+ };
+ 
++&spi3 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's SPI
++	 * bus (physical pins 19 MOSI/21 MISO/23 SCLK/24 CS0, GPIO4_C3/C5/C2/C6
++	 * - the Pi-header-equivalent SPI0 position), confirmed against Radxa's
++	 * own schematic and pinout docs. Mainline's rk356x-base.dtsi enables
++	 * spi3 with its "m0" pin group by default (disabled, no board owner);
++	 * the Zero 3E's header wiring uses the "m1" group instead, so the
++	 * inherited pinctrl-0 is overridden here rather than merely flipping
++	 * status. Only CS0 is header-routed - physical pin 26, where a
++	 * Raspberry Pi's CE1 would be, is NC on this board's 40-pin header, so
++	 * spi3m1_cs1 (GPIO4_D1) is intentionally omitted. See bean gosd-fnza.
++	 */
++	pinctrl-names = "default";
++	pinctrl-0 = <&spi3m1_cs0 &spi3m1_pins>;
++	status = "okay";
++
++	spidev@0 {
++		/*
++		 * "spidev" alone is refused by drivers/spi/spidev.c
++		 * (spidev_of_check) - rohm,dh2228fv is spidev's own
++		 * documented generic placeholder compatible (Documentation/
++		 * spi/spidev.rst, spidev_dt_ids[]), the same one Raspberry
++		 * Pi's own downstream spi-dev overlays use.
++		 */
++		compatible = "rohm,dh2228fv";
++		reg = <0>;
++		spi-max-frequency = <10000000>;
++	};
++};
++
+ &pinctrl {
+ 	gmac1 {
+ 		gmac1_rstn: gmac1-rstn {

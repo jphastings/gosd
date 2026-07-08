@@ -1,0 +1,55 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
+@@ -18,6 +18,7 @@
+ 		mmc0 = &sdhci;
+ 		mmc1 = &sdmmc;
+ 		serial0 = &uart0;
++		spi1 = &spi1;
+ 	};
+ 
+ 	chosen {
+@@ -257,7 +258,44 @@
+ 	 */
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&i2c5m0_xfer>;
++	status = "okay";
++};
++
++&spi1 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 30-pin FPC's SPI bus
++	 * (GPIO1_B6/B7/C0/C1/C2, FPC pins 16 CLK/17 MOSI/18 MISO/19 CS0/20
++	 * CS1 - see the FriendlyElec schematic's GPIO table, cross-checked
++	 * against the i2c5 pin numbers above for a consistent anchor). Same
++	 * reasoning as i2c5: rk3528.dtsi assigns no default pinctrl or alias
++	 * to spi1 and this board doesn't wire up any on-SoM device on it, so
++	 * both the pin group and the "spi1" alias are added here to guarantee
++	 * it enumerates as /dev/spidev1.*. Unlike the Radxa Zero 3E, both chip
++	 * selects are header-routed, so both spidev children are added. See
++	 * bean gosd-fnza.
++	 */
++	pinctrl-names = "default";
++	pinctrl-0 = <&spi1_pins &spi1_csn0 &spi1_csn1>;
+ 	status = "okay";
++
++	spidev@0 {
++		/*
++		 * "spidev" alone is refused by drivers/spi/spidev.c
++		 * (spidev_of_check) - rohm,dh2228fv is spidev's own documented
++		 * generic placeholder compatible (Documentation/spi/spidev.rst,
++		 * spidev_dt_ids[]), the same one Raspberry Pi's own downstream
++		 * spi-dev overlays use.
++		 */
++		compatible = "rohm,dh2228fv";
++		reg = <0>;
++		spi-max-frequency = <10000000>;
++	};
++
++	spidev@1 {
++		compatible = "rohm,dh2228fv";
++		reg = <1>;
++		spi-max-frequency = <10000000>;
++	};
+ };
+ 
+ &mdio1 {
