@@ -29,7 +29,8 @@ see `beans list` for what's in flight.
 | Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
-| GPIO / SPI | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio] | 🚧 [^gpio][^nanopi-fpc] |
+| GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] |
+| SPI | 🚧 [^spi] | 🚧 [^spi] | 🚧 [^spi] | 🚧 [^spi][^nanopi-fpc] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
@@ -156,15 +157,28 @@ see `beans list` for what's in flight.
     needs a new artifacts release (tag bump) before a real, non-
     `--artifacts-dir` build picks up the change. Per-board bus and pin
     numbers are documented in `docs/runtime.md`'s "GPIO, I2C, SPI" section;
-    `examples/i2cscan` is the worked, cross-board example. GPIO and SPI
-    remain unaddressed by this bean — see the row below.
+    `examples/i2cscan` is the worked, cross-board example. GPIO and SPI are
+    tracked by separate beans/rows in this table.
 
 [^gpio]: All four boards' kernels already enable the character-device GPIO
-    API (`CONFIG_GPIO_CDEV`) and SPI drivers, so `/dev/gpiochipN` and
-    `/dev/spidev*` are expected to appear at boot. No GoSD-side wiring
-    exists yet beyond documenting the libraries to use (`docs/runtime.md`)
-    — a worked, board-tested example and per-board pin documentation is
-    tracked by bean `gosd-rsrd`, blocked on hardware bring-up.
+    API (`CONFIG_GPIO_CDEV`), so `/dev/gpiochipN` appears at boot with no
+    per-board enablement work needed (unlike I2C/SPI, which needed
+    device-tree/`config.txt` changes) — bean `gosd-nyad`. `examples/gpioinfo`
+    is the worked, cross-board example: a safe-by-default `gpioinfo`(1)-style
+    enumeration of every chip/line, with an opt-in (env-var-gated) single-line
+    output toggle for confirming wiring. `docs/runtime.md`'s "GPIO, I2C, SPI"
+    section documents per-board `gpiochip` numbering and a header-pin →
+    (chip, line) example for each board. Same caveat as the rest of this
+    table: code-complete and fake-artifact/QEMU-tested, not yet verified
+    against a real GPIO device on hardware (that bench step, an LED blink on
+    each board, is the one item this bean leaves unchecked).
+
+[^spi]: All four boards' kernels already enable SPI drivers in principle, but
+    (unlike GPIO) no per-board device-tree/`config.txt` enablement, worked
+    example, or pin documentation exists yet — tracked by bean `gosd-fnza`,
+    which mirrors the I2C work (`gosd-85pt`) and is blocked on the GPIO work
+    above landing first (shared `COMPATIBILITY.md`/`docs/runtime.md` edits
+    stack more cleanly that way).
 
 [^nanopi-fpc]: The NanoPi Zero2 exposes GPIO on a 30-pin FPC (flex) connector,
     **not** a Raspberry Pi–style 40-pin header — an example written for the
