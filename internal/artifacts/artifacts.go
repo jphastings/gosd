@@ -36,9 +36,11 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.2.0 is the first release carrying pi-zero-w and nanopi-zero2 (kernel
-// and U-Boot) artifacts, alongside the nanopi-zero2 public flip.
-const Version = "v0.2.0"
+// v0.3.0 carries the DTS patch enabling header/FPC I2C on the Rockchip
+// boards (bean gosd-85pt): rk3566-radxa-zero-3e.dtb now has i2c3 enabled,
+// and rk3528-nanopi-zero2.dtb has i2c5 enabled (plus its alias). The Pi
+// boards' I2C is config.txt-only and needed no artifact change.
+const Version = "v0.3.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

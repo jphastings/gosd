@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-07T21:13:35Z
-updated_at: 2026-07-07T22:44:20Z
+updated_at: 2026-07-08T02:46:22Z
 parent: gosd-jge2
 ---
 
@@ -83,3 +83,27 @@ might suggest (that bus is real and enabled, but only serves the onboard
 RTC) — corrected after cross-referencing the FriendlyElec schematic's GPIO
 table, which is the only source that actually states which signals reach
 the 30-pin FPC connector.
+
+
+## Artifacts re-release: discharged (2026-07-08)
+
+`artifacts/v0.3.0` is published and `internal/artifacts.Version` is pinned
+to it (bean `gosd-85pt-artifacts-v030`, branch
+`bean/gosd-85pt-artifacts-v030`) — this closes the "new artifacts release
+required before real builds see it" note above (Summary of Changes,
+"Mechanism for both Rockchip boards"). The bench sensor-read item remains
+unchecked; this bean stays in-progress until that hardware check happens.
+
+Verification performed on the artifacts-pin PR:
+- Fresh-HOME, no `--board`/`--artifacts-dir` `gosd build ./examples/hello`
+  downloaded+verified `artifacts/v0.3.0` and produced all four public
+  images (`pi-zero-2w`, `pi-zero-w`, `radxa-zero-3e`, `nanopi-zero2`, each
+  ~1.27 GiB).
+- A second run with a dead HTTPS_PROXY and a fresh output dir (same HOME)
+  succeeded fully offline from the populated cache.
+- Decompiled `rk3566-radxa-zero-3e.dtb` and `rk3528-nanopi-zero2.dtb` from
+  the downloaded release with `dtc -I dtb -O dts`: `i2c3`
+  (`i2c@fe5c0000`, pinctrl `i2c3m0-xfer`) on radxa-zero-3e and `i2c5`
+  (`i2c@ffa78000`, pinctrl `i2c5m0-xfer`) on nanopi-zero2 both show
+  `status = "okay"` — confirms the released DTBs actually carry the I2C
+  DTS patch, not just that the tarballs downloaded.
