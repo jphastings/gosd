@@ -68,6 +68,21 @@ func TestCrossCompileProducesStaticARMv6Binary(t *testing.T) {
 	}
 }
 
+// TestCrossCompileRecognizesLinuxOnlyMainPackage guards against a real bug
+// found while adding examples/gpioinfo (bean gosd-nyad): its dependency on
+// go-gpiocdev forces a `//go:build linux` tag on the example itself, and
+// requireMainPackage's `go list` used to run under the host's own GOOS, so
+// on a macOS host it saw "no Go files" and rejected a perfectly valid main
+// package. CrossCompile always targets linux (targetGOOS), so its own
+// preflight check must inspect the package as linux too.
+func TestCrossCompileRecognizesLinuxOnlyMainPackage(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "linuxonly")
+
+	if err := CrossCompile("./testdata/linuxonly", out, arm64); err != nil {
+		t.Fatalf("CrossCompile: %v", err)
+	}
+}
+
 func TestCrossCompileRejectsNonMainPackage(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "notmain")
 

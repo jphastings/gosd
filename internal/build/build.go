@@ -56,6 +56,14 @@ func archEnv(arch boards.Arch) []string {
 
 func requireMainPackage(pkgPath string) error {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", pkgPath)
+	// Inspect the package under the same GOOS every gosd build actually
+	// targets (targetGOOS, always "linux"), not the host's own GOOS: a
+	// package gated with a `//go:build linux` tag (as a dependency on a
+	// Linux-only chardev API can force an example to be, e.g.
+	// examples/gpioinfo) is a real main package under the build gosd
+	// performs, even though `go list` would otherwise report it has no Go
+	// files at all when run unmodified on a macOS host.
+	cmd.Env = append(os.Environ(), "GOOS="+targetGOOS)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -231,8 +231,71 @@ libraries you'd use on any Linux board:
   (I2C, SPI, and specific sensor/peripheral drivers).
 
 Both are plain Go and work under `CGO_ENABLED=0`, so they cross-compile
-the same way your app does. GPIO and SPI don't have a worked, board-tested
-example yet (tracked for a future release); I2C does, covered below.
+the same way your app does. GPIO and I2C both have worked examples, covered
+below; SPI's is tracked for a future release.
+
+### GPIO is available via /dev/gpiochipN
+
+`CONFIG_GPIO_CDEV` is already enabled on every board's kernel, so
+`/dev/gpiochipN` character devices for the header/FPC pins exist at boot on
+all four boards with no build flag or device-tree change needed — unlike
+I2C and SPI, GPIO needed no per-board enablement work at all. What differs
+per board is *numbering*: which chip backs which pins, and which line
+offset within that chip a given pin is.
+
+- **Raspberry Pi Zero 2 W / Zero W** (BCM2837/BCM2835): the whole SoC is one
+  chip, `gpiochip0` (54 lines). Its device tree maps lines to BCM GPIO
+  numbers 1:1 (`gpio-ranges = <&gpio 0 0 54>`, an identity mapping), so
+  `gpiochip0`'s line offset is always the same number as the "GPIOn"
+  silkscreened on most Pi pinout diagrams. Physical header pin 3 (the I2C
+  bus's SDA line — see the table below) is BCM GPIO2, i.e. `gpiochip0` line
+  2; pin 5 (SCL, GPIO3) is `gpiochip0` line 3.
+- **Radxa Zero 3E / NanoPi Zero2** (Rockchip RK3566 / RK3528): the GPIO
+  controller is split into up to 5 independently-numbered banks
+  (`gpio0`..`gpio4`), each its own `/dev/gpiochipN` in bank order (bank 0 is
+  `gpiochip0`, bank 1 is `gpiochip1`, and so on — true on both boards
+  because nothing else on either SoC registers a GPIO chardev ahead of
+  them). Rockchip's own signal names spell out the exact line within that
+  chip: `GPIO<bank>_<group><pin>`, where group `A`/`B`/`C`/`D` are 0/1/2/3,
+  giving a line offset of `group*8 + pin` *within that bank's chip* (not a
+  global line number). The I2C bus's `GPIO1_A0`/`GPIO1_A1` signals (Radxa,
+  header pins 3/5) are therefore `gpiochip1` lines 0 and 1; the NanoPi's
+  `GPIO1_B2`/`GPIO1_B3` (FPC pins 12/13) are `gpiochip1` lines 10 and 11.
+
+| Board | Connector | GPIO controller | Worked example: the I2C pins above, as (chip, line) |
+|---|---|---|---|
+| Raspberry Pi Zero 2 W | 40-pin header | One chip, `gpiochip0` (54 lines) | Pin 3 (GPIO2) → `gpiochip0` line 2; pin 5 (GPIO3) → `gpiochip0` line 3 |
+| Raspberry Pi Zero W | 40-pin header | One chip, `gpiochip0` (54 lines) | Same as above |
+| Radxa Zero 3E | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` | Pin 3 (GPIO1_A0) → `gpiochip1` line 0; pin 5 (GPIO1_A1) → `gpiochip1` line 1 |
+| NanoPi Zero2 | 30-pin FPC | 5 banks, `gpiochip0`-`gpiochip4` | FPC pin 12 (GPIO1_B2) → `gpiochip1` line 10; FPC pin 13 (GPIO1_B3) → `gpiochip1` line 11 |
+
+**Caution: a BCM GPIO number, a physical pin number, and a gpiochip line
+offset are three different numbering schemes that happen to coincide on the
+Pi boards and don't anywhere else.** The Pi's `gpiochip0` line == BCM GPIO
+number is a property of *that specific device tree's* identity
+`gpio-ranges`, not a rule the kernel enforces generally — a board that
+recorded its `gpio-ranges` differently (or any non-Pi board) would break the
+coincidence. On the Rockchip boards, the line offset is always local to its
+bank's chip (`group*8 + pin`), never a whole-SoC number, and the *physical*
+pin position on the header/FPC is a third, independent numbering fixed only
+by the board's own wiring — always check a real pinout diagram or schematic
+for your board rather than assuming a pattern carries over from another
+one.
+
+`examples/gpioinfo` is the worked example: by default it opens every
+`/dev/gpiochipN` present and prints a `gpioinfo`(1)-style dump — chip
+name/label/line count, then each line's offset, name, direction, and
+consumer — entirely read-only, so it's safe to run against unknown wiring.
+Setting both `GOSD_GPIO_CHIP` (e.g. `gpiochip1`) and `GOSD_GPIO_LINE` (e.g.
+`0`) opts into a second, destructive step: that one line is requested as an
+output and toggled a few times, logging each transition — useful for
+confirming a chip/line pair against a multimeter or LED before wiring up
+real application code. Neither env var alone does anything; the example
+never drives a pin unless told exactly which one. Under `qemu-virt`, the
+`-M virt` machine has no GPIO controller, so the enumeration step correctly
+reports "no GPIO character devices found" and exits 0 rather than erroring.
+For real applications, reach for `go-gpiocdev` directly (as the example
+does) or `periph.io`'s higher-level line/pin abstractions.
 
 ### I2C is on by default
 
