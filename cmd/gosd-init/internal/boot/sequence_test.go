@@ -153,8 +153,8 @@ func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, error) {
-			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
 		},
 		Sleep: func(d time.Duration) { clock.Sleep(d) },
 		Now:   clock.Now,
@@ -200,7 +200,7 @@ func TestRunFallsBackToConfigJSONWhenGosdTomlFailsToParse(t *testing.T) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
 		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, error) { return gosdtoml.Config{}, errors.New("garbage TOML") },
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) { return gosdtoml.Config{}, nil, errors.New("garbage TOML") },
 		Sleep:        func(d time.Duration) { clock.Sleep(d) },
 		Now:          clock.Now,
 	}
@@ -231,18 +231,20 @@ func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
 	})
 
 	deps := Deps{
-		Mounter:      &fakeMounter{},
-		Hostname:     &fakeHostname{},
-		AppStarter:   appStarter,
-		Reaper:       fakeReaper{},
-		Rebooter:     &fakeRebooter{},
-		OpenConsole:  func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog:  func(string, ...any) {},
-		ReadConfig:   func() (initcfg.Config, error) { return initcfg.Config{}, nil },
-		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, error) { return gosdtoml.Config{Wifi: gosdtoml.Wifi{SSID: "hand-edited"}}, nil },
-		Sleep:        func(d time.Duration) { clock.Sleep(d) },
-		Now:          clock.Now,
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{Wifi: gosdtoml.Wifi{SSID: "hand-edited"}}, nil, nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
 			gosdTomlReceived <- gosdToml
 		},
@@ -337,8 +339,8 @@ func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
 		ReadProvisioning: func(log func(string, ...any)) provision.Result {
 			return provision.Result{Hostname: "cloud-init-name"}
 		},
-		ReadGosdToml: func() (gosdtoml.Config, error) {
-			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
 		},
 		Sleep: func(d time.Duration) { clock.Sleep(d) },
 		Now:   clock.Now,
@@ -749,6 +751,188 @@ func TestRunContinuesWithoutGosdDataWhenPartitionIsMissing(t *testing.T) {
 	if !strings.Contains(console.String(), "no data partition") {
 		t.Errorf("console output missing the no-data-partition log line: %q", console.String())
 	}
+}
+
+// envDeps builds the minimal Deps needed to exercise app-env merging: a
+// baked config.json (with the given Env), and, if gosdToml is non-nil, a
+// gosd.toml with the given Env/warnings. gotEnv is populated with whatever
+// env slice the AppStarter receives.
+func envDeps(bakedEnv map[string]string, gosdToml *gosdtoml.Config, warnings []string, console *bytes.Buffer, gotEnv *[]string) (Deps, chan struct{}) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		*gotEnv = env
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Board: "pi-zero-2w", Hostname: "my-device", Env: bakedEnv}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       func(d time.Duration) { clock.Sleep(d) },
+		Now:         clock.Now,
+	}
+	if gosdToml != nil {
+		deps.ReadGosdToml = func() (gosdtoml.Config, []string, error) { return *gosdToml, warnings, nil }
+	}
+	return deps, stop
+}
+
+func TestRunInjectsBakedEnvWhenNoGosdTomlOverride(t *testing.T) {
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	deps, stop := envDeps(map[string]string{"FOO": "baked-foo"}, nil, nil, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "FOO=baked-foo"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
+	}
+	if !strings.Contains(console.String(), "app env: FOO (baked)") {
+		t.Errorf("console output missing baked env summary line: %q", console.String())
+	}
+}
+
+func TestRunInjectsGosdTomlEnvWhenNoBakedDefaults(t *testing.T) {
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	gosdToml := &gosdtoml.Config{Env: map[string]string{"FOO": "card-foo"}}
+	deps, stop := envDeps(nil, gosdToml, nil, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "FOO=card-foo"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
+	}
+	if !strings.Contains(console.String(), "app env: FOO (gosd.toml)") {
+		t.Errorf("console output missing gosd.toml env summary line: %q", console.String())
+	}
+}
+
+func TestRunGosdTomlEnvOverridesBakedPerKey(t *testing.T) {
+	// FOO only baked, BAR overridden by gosd.toml, BAZ only in gosd.toml:
+	// the merge is per-key, not a whole-map replace.
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	baked := map[string]string{"FOO": "baked-foo", "BAR": "baked-bar"}
+	gosdToml := &gosdtoml.Config{Env: map[string]string{"BAR": "card-bar", "BAZ": "card-baz"}}
+	deps, stop := envDeps(baked, gosdToml, nil, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "BAR=card-bar", "BAZ=card-baz", "FOO=baked-foo"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v (gosd.toml wins per-key over baked)", gotEnv, wantEnv)
+	}
+}
+
+func TestRunRejectsReservedEnvKeysFromGosdToml(t *testing.T) {
+	// A card can't override the GOSD_* namespace gosd-init itself owns,
+	// nor smuggle in an unrelated GOSD_-prefixed var; both are dropped,
+	// and the real GOSD_BOARD/GOSD_HOSTNAME stay exactly as gosd-init set
+	// them.
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	gosdToml := &gosdtoml.Config{Env: map[string]string{
+		"GOSD_BOARD": "attacker-board",
+		"GOSD_X":     "should-be-dropped",
+		"SAFE":       "card-safe",
+	}}
+	deps, stop := envDeps(nil, gosdToml, nil, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "SAFE=card-safe"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v (reserved keys dropped, real GOSD_* intact)", gotEnv, wantEnv)
+	}
+	if !strings.Contains(console.String(), "ignoring reserved env key GOSD_BOARD") {
+		t.Errorf("console output missing GOSD_BOARD rejection log line: %q", console.String())
+	}
+	if !strings.Contains(console.String(), "ignoring reserved env key GOSD_X") {
+		t.Errorf("console output missing GOSD_X rejection log line: %q", console.String())
+	}
+}
+
+func TestRunLogsGosdTomlParseWarnings(t *testing.T) {
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	gosdToml := &gosdtoml.Config{Env: map[string]string{"PORT": "8080"}}
+	warnings := []string{`gosd.toml [env] PORT is a bare number, not a quoted string; using "8080" — add quotes to silence this warning`}
+	deps, stop := envDeps(nil, gosdToml, warnings, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !strings.Contains(console.String(), "PORT is a bare number") {
+		t.Errorf("console output missing the gosd.toml [env] coercion warning: %q", console.String())
+	}
+}
+
+func TestRunAppEnvIsUnchangedWhenNoUserEnvIsSet(t *testing.T) {
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	deps, stop := envDeps(nil, nil, nil, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v (no user env vars set anywhere)", gotEnv, wantEnv)
+	}
+	if strings.Contains(console.String(), "app env:") {
+		t.Errorf("console output has an app env summary line when there's nothing to report: %q", console.String())
+	}
+}
+
+// equalEnv compares two env slices exactly, in order: mergeUserEnv's output
+// is fully deterministic (GOSD_* vars in the fixed order Run builds them,
+// then the merged user env sorted by key), so tests can assert on it
+// positionally rather than just as a set.
+func equalEnv(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func testDepsForFatalPath(mounter Mounter, hostname HostnameSetter, rebooter Rebooter, clock *fakeClock, sleeps *[]time.Duration) Deps {
