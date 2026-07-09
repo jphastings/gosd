@@ -145,6 +145,12 @@ redoing anything:
 This same file is also the fallback if you ever need to change your
 device's name or WiFi details without going through Imager again.
 
+**Extra settings.** Some apps need a bit of extra information to work the
+way you want — the same `gosd.toml` file above may have a section for
+these near the bottom, with its own plain-language instructions. If your
+app's developer told you to set something there, that's the file and the
+section they mean; if not, you can ignore it.
+
 ---
 
 ## For developers: linking your users here

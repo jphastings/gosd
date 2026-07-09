@@ -24,6 +24,7 @@ see `beans list` for what's in flight.
 | Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
 | Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] |
 | `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ |
+| App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ |
 | mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ |
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |

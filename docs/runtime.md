@@ -51,6 +51,60 @@ is known at the time `/app` launches. If your app needs its own address,
 discover it at runtime with `net.InterfaceAddrs()` / `net.Interfaces()`
 rather than expecting it to be handed to you.
 
+## App environment variables (`gosd.toml [env]`)
+
+Beyond the `GOSD_*` vars above, your app can also receive whatever plain
+key/value settings its deployment needs — read them the normal way, with
+`os.Getenv`. There's nothing GoSD-specific about consuming them; the
+GoSD-specific part is where the values come from. `examples/hello` reads
+an optional `GREETING` var this way (see its `main.go`).
+
+There are two sources, and `gosd-init` merges them **per key** (not as a
+whole-map replace) before starting `/app` — see `mergeUserEnv` in
+`cmd/gosd-init/internal/boot/sequence.go`:
+
+1. **`gosd.toml`'s `[env]` table** — the hand-editable fallback on the
+   `GOSD-BOOT` partition (see "Provisioning" below). This wins per key.
+2. **Baked defaults** from `gosd build --env KEY=VALUE` (repeatable),
+   recorded in `config.json`. These are also pre-filled into the card's
+   `gosd.toml [env]` section at build time, so whoever holds the card can
+   see the developer's defaults and override any of them without needing
+   to know the rest.
+
+Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
+`API_URL`, and a baked default set both, your app gets the card's
+`LOG_LEVEL` alongside the baked `API_URL` — not one source or the other in
+its entirety.
+
+Your app's environment is otherwise a clean slate: it gets exactly the
+`GOSD_*` vars above plus this merged user env, not a copy of `gosd-init`'s
+own environment (`os.Environ()`).
+
+**Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace (`GOSD_BOARD`,
+`GOSD_HOSTNAME`, `GOSD_DATA`, and any future `GOSD_*` var) can never be set
+this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
+actionable error, before it ever reaches an image. A `GOSD_*` key
+hand-written into a card's `gosd.toml [env]` is logged and ignored at boot
+instead — your app always gets `gosd-init`'s real value for those, never
+whatever a card tried to override them with.
+
+**Missing or empty is fine.** No `--env` flags at build time and no `[env]`
+table on the card is a normal, unremarkable boot: your app just gets none
+of these vars (plus the `GOSD_*` ones above), and nothing errors either way.
+
+**Quote your values.** Write `gosd.toml [env]` entries as quoted TOML
+strings, e.g. `PORT = "8080"`. A bare scalar (`PORT = 8080`, `DEBUG = true`)
+is coerced to its string form and still applied, but logs a one-line
+warning at boot; an array, inline table, or datetime under `[env]` is
+dropped entirely (also warned, never silently). Quoting up front avoids
+relying on that coercion.
+
+**Security note.** Like the WiFi passphrase stored in the same file,
+`gosd.toml [env]` values sit in plaintext on the `GOSD-BOOT` FAT partition —
+anyone with physical access to the card, or who mounts the image, can read
+them. There's no encryption today; don't put anything there you wouldn't
+want exposed to whoever holds the card.
+
 ## Networking comes up after your app does
 
 `gosd-init` never blocks `/app`'s startup on networking. Network bring-up
