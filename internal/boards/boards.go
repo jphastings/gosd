@@ -61,6 +61,14 @@ type BuildConfig struct {
 	// that don't (Radxa Zero 3E's dwc3 negotiates role automatically)
 	// ignore it.
 	UsbGadget bool
+
+	// Env holds developer-set default app environment variables (gosd
+	// build --env, repeatable KEY=VALUE). The build pipeline bakes these
+	// into both /etc/gosd/config.json (initcfg.Config.Env) and the
+	// rendered gosd.toml [env] section - see gosd-9b5c's locked
+	// precedence (a hand-edited gosd.toml [env] entry overrides the same
+	// key here).
+	Env map[string]string
 }
 
 // Arch is the Go cross-compile target a board's binaries (the user's app and

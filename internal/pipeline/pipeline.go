@@ -103,6 +103,7 @@ func Assemble(ctx context.Context, opts Options) error {
 			SSID:       opts.Config.WifiSSID,
 			Passphrase: opts.Config.WifiPassword,
 		},
+		Env: opts.Config.Env,
 	})
 	if err != nil {
 		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
@@ -136,9 +137,10 @@ func Assemble(ctx context.Context, opts Options) error {
 	// gosd.toml is common to every board (unlike config.txt/extlinux.conf,
 	// which are board-specific), so it's added here rather than inside any
 	// Board.BootFiles implementation: both boards get it at the FAT root.
-	// No baked env is threaded through yet — that's the `gosd build --env`
-	// flag's job (bean gosd-yejj).
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword, nil))
+	// The baked env (opts.Config.Env, from `gosd build --env`) is rendered
+	// here too, so the card shows the developer's defaults for the user to
+	// see and override.
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
 
 	if err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:     bootFiles,

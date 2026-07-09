@@ -126,6 +126,56 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 	}
 }
 
+func TestAssembleBakesEnvIntoConfigJSONAndGosdToml(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	imgPath := filepath.Join(dir, "out.img")
+	err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Config:     boards.BuildConfig{Env: map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}},
+		OutputPath: imgPath,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	records := decodeInitramfs(t, initramfsBytes)
+	config := recordContent(t, records, "etc/gosd/config.json")
+	for _, want := range []string{`"API_URL":"https://example.com"`, `"LOG_LEVEL":"debug"`} {
+		if !strings.Contains(string(config), want) {
+			t.Errorf("config.json = %s, want it to contain %q", config, want)
+		}
+	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	for _, want := range []string{`API_URL = "https://example.com"`, `LOG_LEVEL = "debug"`} {
+		if !strings.Contains(string(gosdToml), want) {
+			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
+		}
+	}
+}
+
 func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")
