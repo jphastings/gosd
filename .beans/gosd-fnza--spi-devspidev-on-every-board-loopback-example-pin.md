@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-08T03:35:00Z
-updated_at: 2026-07-08T09:24:02Z
+updated_at: 2026-07-09T20:05:43Z
 parent: gosd-jge2
 blocked_by:
     - gosd-nyad
@@ -144,3 +144,14 @@ physical pin number; FriendlyElec's schematic diagram doesn't). Flagging
 this so the bench-verification step double-checks these five pins
 specifically against a multimeter/continuity check before trusting them
 for real wiring.
+
+
+
+## v0.4.0 artifact release — live and pinned (bean gosd-fnza-v040)
+
+The tag-first follow-up is done: `artifacts/v0.4.0` is published (all five board tarballs) and `internal/artifacts.Version` is bumped v0.3.0 -> v0.4.0 on branch `bean/gosd-fnza-artifacts-v040`. The SPI half of this bean is now live on real (non-`--artifacts-dir`) builds for both Rockchip boards. Bench loopback (the one unchecked todo) remains the only open item; this bean stays in-progress.
+
+Real-release clean-machine + SPI-DTB verification (recorded in tracking bean gosd-fnza-v040):
+- Clean-machine build (fresh HOME, no --board/--artifacts-dir): downloaded + sha256-verified artifacts/v0.4.0, produced FOUR public images (~1.27 GiB each), ~2m32s.
+- Offline re-run (dead HTTPS_PROXY, fresh output dir, same HOME): succeeded fully from cache in ~18s.
+- SPI-DTB spot-check on the DTBs the build actually pulled: radxa spi3 (spi@fe640000, aliased spi3) status="okay" with spidev@0 compatible="rohm,dh2228fv"; nanopi spi1 (spi@ff9d0000, aliased spi1) status="okay" with spidev@0 and spidev@1 both compatible="rohm,dh2228fv". Pi config.txt carries dtparam=spi=on.
