@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -49,6 +50,7 @@ var (
 	catalogFlag    bool
 	publishBaseURL string
 	usbGadget      bool
+	envFlags       []string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -84,6 +86,8 @@ func newBuildCmd() *cobra.Command {
 		"base URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog")
 	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil,
+		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key")
 
 	return cmd
 }
@@ -93,6 +97,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	if catalogFlag && publishBaseURL == "" {
 		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
+	}
+
+	env, err := parseEnvFlags(envFlags)
+	if err != nil {
+		return err
 	}
 
 	selected, err := resolveBoards(boardIDs)
@@ -152,6 +161,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				WifiSSID:     wifiSSID,
 				WifiPassword: wifiPass,
 				UsbGadget:    usbGadget,
+				Env:          env,
 			},
 			ArtifactsDir:  artifactsDir,
 			CacheDir:      cacheDir,
@@ -206,6 +216,45 @@ func parseDataSize(s string) (int64, error) {
 		return 0, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
 	}
 	return n * multiplier, nil
+}
+
+// envKeyPattern is the shape a --env KEY must match: a POSIX-ish environment
+// variable name, the same rules gosd-init and any shell/exec environment
+// already expect.
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// parseEnvFlags turns the repeated --env KEY=VALUE flag values into the map
+// baked into config.json and rendered into gosd.toml [env] (see
+// boards.BuildConfig.Env). Only the first "=" splits key from value, so
+// VALUE may be empty and may itself contain "=". A KEY given more than once
+// across repeated --env flags is rejected outright, rather than letting the
+// last one silently win — a mistaken duplicate is far more likely than an
+// intentional override, and the intentional case still has a clear fix
+// (remove one of the flags).
+func parseEnvFlags(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+
+	env := make(map[string]string, len(flags))
+	for _, flag := range flags {
+		key, value, ok := strings.Cut(flag, "=")
+		if !ok {
+			return nil, fmt.Errorf("--env needs KEY=VALUE; got %q", flag)
+		}
+
+		if !envKeyPattern.MatchString(key) {
+			return nil, fmt.Errorf("--env key %q is invalid because it doesn't match [A-Za-z_][A-Za-z0-9_]*; try renaming it to use only letters, digits and underscores, and not start with a digit", key)
+		}
+		if strings.HasPrefix(key, "GOSD_") {
+			return nil, fmt.Errorf("--env %s is invalid because GOSD_* names are reserved by gosd; rename %s", key, key)
+		}
+		if _, dup := env[key]; dup {
+			return nil, fmt.Errorf("--env %s was passed more than once; remove the duplicate --env flag or pick a different key for one of them", key)
+		}
+		env[key] = value
+	}
+	return env, nil
 }
 
 // writeCatalog builds and writes the Raspberry Pi Imager custom-repository

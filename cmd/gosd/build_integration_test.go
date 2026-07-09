@@ -802,6 +802,93 @@ func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
 	}
 }
 
+// TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml is the acceptance test for
+// gosd-yejj: repeatable `gosd build --env KEY=VALUE` flags land in both the
+// image's baked /etc/gosd/config.json (the developer default that survives
+// even if the user deletes gosd.toml) and the rendered gosd.toml [env]
+// section on the card (so the user sees the defaults and can override them).
+func TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--env", "API_URL=https://example.com",
+		"--env", "LOG_LEVEL=debug",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --env failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	records := decodeInitramfs(t, initramfsBytes)
+
+	configJSON := recordContent(t, records, "etc/gosd/config.json")
+	for _, want := range []string{`"API_URL":"https://example.com"`, `"LOG_LEVEL":"debug"`} {
+		if !strings.Contains(string(configJSON), want) {
+			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
+		}
+	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	if !strings.Contains(string(gosdToml), "[env]") {
+		t.Errorf("gosd.toml = %s, want it to contain an [env] section", gosdToml)
+	}
+	for _, want := range []string{`API_URL = "https://example.com"`, `LOG_LEVEL = "debug"`} {
+		if !strings.Contains(string(gosdToml), want) {
+			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
+		}
+	}
+}
+
+// TestBuildRejectsReservedEnvKeyActionably confirms `gosd build --env
+// GOSD_FOO=bar` fails fast with an actionable error naming the reserved
+// namespace, rather than silently baking a key gosd-init would ignore.
+func TestBuildRejectsReservedEnvKeyActionably(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--env", "GOSD_FOO=bar",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --env GOSD_FOO=bar succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "GOSD_") {
+		t.Errorf("error = %q, want it to mention the reserved GOSD_ namespace", err.Error())
+	}
+}
+
 // TestBuildCreatesMissingMultiBoardOutputDirectory is the regression test
 // for the bug JP hit: `gosd build -o <dir>` for more than one board used to
 // fail with "no such file or directory" the moment <dir> didn't already
