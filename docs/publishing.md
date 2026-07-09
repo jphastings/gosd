@@ -82,6 +82,16 @@ Sending this URL to non-technical end users? Send them to
 the same steps above with screenshots and no jargon, and includes a
 copy-paste snippet for your own README.
 
+## Baking default app environment variables
+
+If your app reads configuration from the environment, bake per-deployment
+defaults in with repeatable `gosd build --env KEY=VALUE` flags — see
+[`docs/runtime.md`'s "App environment variables"](runtime.md#app-environment-variables-gosdtoml-env)
+section for the full precedence rules. Each baked default also appears
+pre-filled in the card's `gosd.toml [env]` table, so whoever flashes the
+card can see what you've set and override any key by editing that file —
+no rebuild needed on their end.
+
 ## Device filtering: which boards show up for which device selection
 
 Imager's first wizard page asks the user to pick their device, and then

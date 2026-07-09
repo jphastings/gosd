@@ -3,6 +3,12 @@
 // startup line, then serves an HTTP endpoint reporting hostname, uptime,
 // the request's remote address, and — when the image has a GOSD-DATA
 // partition — a boot counter persisted across reboots.
+//
+// It also demonstrates gosd.toml's [env] app environment variables (see
+// docs/runtime.md's "App environment variables" section): an optional
+// GREETING var, read with a plain os.Getenv, is included in the startup
+// log and the HTTP response when set. Leave it unset and hello behaves
+// exactly as it always has.
 package main
 
 import (
@@ -25,11 +31,12 @@ func main() {
 	}
 
 	boots := bumpBootCounter()
+	greeting := greetingSuffix(os.Getenv("GREETING"))
 
-	fmt.Printf("gosd hello, host=%s board=%s boots=%s\n", hostname, os.Getenv("GOSD_BOARD"), boots)
+	fmt.Printf("gosd hello, host=%s board=%s boots=%s%s\n", hostname, os.Getenv("GOSD_BOARD"), boots, greeting)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprintf(w, "host=%s uptime=%s remote=%s boots=%s\n", hostname, time.Since(startTime), r.RemoteAddr, boots)
+		_, _ = fmt.Fprintf(w, "host=%s uptime=%s remote=%s boots=%s%s\n", hostname, time.Since(startTime), r.RemoteAddr, boots, greeting)
 	})
 
 	listener, err := net.Listen("tcp", ":80")
@@ -45,6 +52,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gosd hello: server stopped: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// greetingSuffix turns the optional GREETING env var into a log/response
+// suffix: empty (the var unset, per gosd.toml [env]'s "missing is fine"
+// rule) yields "", so hello's output is byte-for-byte unchanged from
+// before GREETING existed unless someone sets it.
+func greetingSuffix(greeting string) string {
+	if greeting == "" {
+		return ""
+	}
+	return fmt.Sprintf(" greeting=%q", greeting)
 }
 
 // bumpBootCounter demonstrates GoSD's persistent storage: it increments a
