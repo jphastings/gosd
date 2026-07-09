@@ -161,7 +161,11 @@ func readGosdToml() (gosdtoml.Config, error) {
 		}
 		return gosdtoml.Config{}, err
 	}
-	return gosdtoml.Parse(data)
+	// gosdtoml.Parse's warnings (bare-scalar coercions, dropped non-scalar
+	// [env] entries) aren't surfaced here yet — logging them through
+	// boot.Run is bean gosd-r0be's job.
+	cfg, _, err := gosdtoml.Parse(data)
+	return cfg, err
 }
 
 // readProvisioning reads cloud-init's user-data/network-config (and checks

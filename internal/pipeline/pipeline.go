@@ -136,7 +136,9 @@ func Assemble(ctx context.Context, opts Options) error {
 	// gosd.toml is common to every board (unlike config.txt/extlinux.conf,
 	// which are board-specific), so it's added here rather than inside any
 	// Board.BootFiles implementation: both boards get it at the FAT root.
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword))
+	// No baked env is threaded through yet — that's the `gosd build --env`
+	// flag's job (bean gosd-yejj).
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword, nil))
 
 	if err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:     bootFiles,
