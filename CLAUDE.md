@@ -16,6 +16,13 @@ say so in the bean rather than silently diverging.
   (status, checked todos, Summary of Changes) in the same PR as the code.
 - Commit messages: imperative subject, body explains why. No test-result
   summaries in commit messages.
+- `beans update` applies only the LAST `--body-replace-old/--body-replace-new`
+  pair per invocation (the GraphQL path differs). Do one replacement per call,
+  and check off todos one at a time.
+- Stacked work: when a task depends on an as-yet-unmerged PR, branch from that
+  PR's branch (not `main`), say "stacked on #NN" in the body, and rebase onto
+  `main` once it lands. Keep stacks shallow — prefer waiting for a merge over
+  towering unreviewed PRs.
 
 ## Project-wide locked decisions
 
@@ -76,6 +83,33 @@ say so in the bean rather than silently diverging.
 - **Supported CLI hosts:** macOS and Linux (amd64/arm64), enforced by CI.
   Windows is untested best-effort; don't break it gratuitously.
 
+## Board work & artifact releases
+
+- **Artifact releases are tag-first, bump-second.** Any change under
+  `build/boards/*` that alters a compiled artifact (kernel config/fragment,
+  DTS patch, U-Boot) only reaches real (non-`--artifacts-dir`) builds after a
+  new `artifacts/vX.Y.Z` GitHub release. Ship the build change WITHOUT bumping
+  `internal/artifacts.Version` in the same PR — bumping to an unpublished tag
+  turns the qemu boot-to-HTTP CI job red. JP pushes the tag; then a separate
+  follow-up PR bumps `Version` and verifies against the real release. Full
+  procedure in `docs/artifacts.md`.
+- **Verify an artifact bump three ways, recorded in the bean:** clean-machine
+  build (fresh `HOME`, no `--board`/`--artifacts-dir` → all public images from
+  a real download), offline re-run (dead proxy → succeeds entirely from cache),
+  and a content spot-check that the released artifact carries the change
+  (e.g. `dtc -I dtb -O dts` shows the enabled node).
+- **Peripheral enablement is per-SoC.** Pi boards: `dtparam=<x>=on` in the
+  config.txt template (no artifact release needed). Rockchip boards (Radxa,
+  NanoPi): a kernel-build DTS patch under `build/boards/<board>/kernel/patches/`
+  that sets the bus `status="okay"` (plus a `spidev` child node with an
+  accepted compatible for SPI) — NOT a runtime overlay, because our pinned
+  U-Boots lack `OF_LIBFDT_OVERLAY`. Confirm each patch applies against the
+  pinned kernel tag; a Rockchip DTS/config change triggers the release dance
+  above.
+- All boards pin the SAME kernel tag ("the fleet tag") — bump them together,
+  never one board in isolation. Kernel/U-Boot Docker builds take 20-60 min:
+  run them backgrounded and poll the log, never in a foreground shell.
+
 ## Quality gates — run ALL of these before every commit/PR
 
 - `go test ./...`
@@ -86,6 +120,9 @@ say so in the bean rather than silently diverging.
   so darwin-only and linux-only files are each checked. A finding that is a
   cross-GOOS false positive (symbol only used in a `_linux.go` file) gets a
   `//nolint:<linter> // <reason>` comment, not an exclusion rule.
+- If `golangci-lint` reports a finding referencing a path in a worktree that no
+  longer exists, it's a stale-cache false positive from a removed sibling
+  worktree: `golangci-lint cache clean` and re-run before believing it.
 
 ## Code conventions
 
@@ -94,3 +131,13 @@ say so in the bean rather than silently diverging.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
 - Comments only where code can't explain itself; docstrings on exported API.
 - Board or feature status changes must update COMPATIBILITY.md in the same PR.
+- gosd-init runtime code follows one shape: pure logic behind a small interface
+  seam with fake-driven tests that pass on macOS; real syscalls isolated in
+  `platform_linux.go` (`//go:build linux`) with `platform_other.go` stubs. New
+  features (see `netup`, `wifiup`, `timesync`, `mdnsresponder`) mirror it.
+- `gosd build` behaviour gets a fixture-driven integration test that reads the
+  built image back and asserts contents, with a network-tripwire RoundTripper
+  proving no fetch happened (pattern in `cmd/gosd/build_integration_test.go`).
+- Examples stay stdlib-only where practical and must cross-compile for every
+  board arch (arm64 AND `GOARCH=arm GOARM=6`); peripheral examples degrade
+  gracefully when the device/bus is absent (see `examples/i2cscan`).
