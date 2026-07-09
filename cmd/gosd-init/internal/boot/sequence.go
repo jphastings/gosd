@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/internal/gosdtoml"
@@ -50,8 +52,11 @@ type Deps struct {
 	// be called after the GOSD-BOOT partition is mounted (step 5), which
 	// is why Run calls it right after MountBootPartition succeeds — and
 	// why the hostname it may override has to be re-applied there too,
-	// even though step 4 already applied config.json's value.
-	ReadGosdToml func() (gosdtoml.Config, error)
+	// even though step 4 already applied config.json's value. The
+	// warnings return mirrors gosdtoml.Parse's own (bare-scalar [env]
+	// coercions, dropped non-scalar entries): Run logs each one, since
+	// gosd-init has no interactive surface to surface them any other way.
+	ReadGosdToml func() (gosdtoml.Config, []string, error)
 
 	// ReadProvisioning reads cloud-init's user-data/network-config (and
 	// checks for firstrun.sh) on the just-mounted GOSD-BOOT partition —
@@ -184,7 +189,7 @@ func Run(deps Deps, opts Options) error {
 
 	var gosdToml gosdtoml.Config
 	if deps.ReadGosdToml != nil {
-		parsed, err := deps.ReadGosdToml()
+		parsed, warnings, err := deps.ReadGosdToml()
 		if err != nil {
 			log("reading gosd.toml failed, using cloud-init/config.json instead: %v", err)
 		} else {
@@ -193,6 +198,9 @@ func Run(deps Deps, opts Options) error {
 				cfg.Hostname = gosdToml.Hostname
 				log("hostname from gosd.toml")
 			}
+		}
+		for _, warning := range warnings {
+			log("%s", warning)
 		}
 
 		if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
@@ -225,6 +233,7 @@ func Run(deps Deps, opts Options) error {
 	if dataDir := mountDataPartition(deps, opts, log); dataDir != "" {
 		env = append(env, "GOSD_DATA="+dataDir)
 	}
+	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
 
 	if deps.StartNetworking != nil {
 		go deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
@@ -279,6 +288,75 @@ func mountDataPartition(deps Deps, opts Options, log func(format string, args ..
 		}
 	}
 	return opts.DataTarget
+}
+
+// reservedEnvPrefix is the namespace gosd-init itself owns (GOSD_BOARD,
+// GOSD_HOSTNAME, GOSD_DATA, and any future GOSD_* var): per gosd.toml
+// [env]'s locked rules, neither baked config.json env nor a hand-edited
+// gosd.toml [env] may override it.
+const reservedEnvPrefix = "GOSD_"
+
+// mergeUserEnv merges the app's user-set environment variables per
+// gosd.toml [env]'s locked precedence — gosd.toml overrides baked
+// config.json env, per key, not as a whole-map replace — drops any key in
+// gosd-init's reserved GOSD_* namespace (logging each rejection so a
+// hand-edited gosd.toml can't silently fail to override GOSD_BOARD etc.),
+// and returns the survivors as sorted NAME=VALUE strings for deterministic
+// env ordering. Only keys and their source are ever logged, never values:
+// they may be secrets.
+func mergeUserEnv(baked, card map[string]string, log func(format string, args ...any)) []string {
+	source := make(map[string]string, len(baked)+len(card))
+	merged := make(map[string]string, len(baked)+len(card))
+	for key, value := range baked {
+		source[key] = "baked"
+		merged[key] = value
+	}
+	for key, value := range card {
+		source[key] = "gosd.toml"
+		merged[key] = value
+	}
+
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var env []string
+	var fromGosdToml, fromBaked []string
+	for _, key := range keys {
+		if strings.HasPrefix(key, reservedEnvPrefix) {
+			log("ignoring reserved env key %s from %s (gosd-init owns the %s namespace)", key, source[key], reservedEnvPrefix)
+			continue
+		}
+		env = append(env, key+"="+merged[key])
+		if source[key] == "gosd.toml" {
+			fromGosdToml = append(fromGosdToml, key)
+		} else {
+			fromBaked = append(fromBaked, key)
+		}
+	}
+
+	if len(fromGosdToml) > 0 || len(fromBaked) > 0 {
+		log("app env: %s", describeEnvSources(fromGosdToml, fromBaked))
+	}
+
+	return env
+}
+
+// describeEnvSources formats the "app env: ..." summary line, e.g.
+// "app env: API_URL, LOG_LEVEL (gosd.toml); PORT (baked)". Either slice may
+// be empty (but not both, since the caller only invokes this when there's
+// something to report).
+func describeEnvSources(fromGosdToml, fromBaked []string) string {
+	var parts []string
+	if len(fromGosdToml) > 0 {
+		parts = append(parts, strings.Join(fromGosdToml, ", ")+" (gosd.toml)")
+	}
+	if len(fromBaked) > 0 {
+		parts = append(parts, strings.Join(fromBaked, ", ")+" (baked)")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // fatal implements step 8 of the boot sequence: log, sync, sleep 5s, then

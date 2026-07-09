@@ -27,6 +27,13 @@ type Config struct {
 	// schema, not that default, to keep it free of other packages'
 	// constants.
 	NTPServers []string `json:"ntpServers,omitempty"`
+
+	// Env holds developer-set default app environment variables, baked in
+	// at build time (gosd build --env). It's the lowest-precedence layer
+	// in gosd.toml [env]'s locked merge: a hand-edited gosd.toml [env]
+	// entry overrides the same key here. Optional: omitted entirely for
+	// every config.json baked before this field existed.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // Wifi holds the baked-in WPA2-PSK or open network credentials. Both fields

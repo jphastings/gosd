@@ -152,20 +152,18 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 // missing file is not logged as a problem at all, since most users will
 // never touch it — but a present-and-unreadable-as-TOML file (a typo from
 // hand-editing) is surfaced as an error for boot.Run to log as a warning;
-// either way, boot never fails over it.
-func readGosdToml() (gosdtoml.Config, error) {
+// either way, boot never fails over it. gosdtoml.Parse's own warnings
+// (bare-scalar [env] coercions, dropped non-scalar entries) are passed
+// straight through for boot.Run to log.
+func readGosdToml() (gosdtoml.Config, []string, error) {
 	data, err := os.ReadFile(gosdTomlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return gosdtoml.Config{}, nil
+			return gosdtoml.Config{}, nil, nil
 		}
-		return gosdtoml.Config{}, err
+		return gosdtoml.Config{}, nil, err
 	}
-	// gosdtoml.Parse's warnings (bare-scalar coercions, dropped non-scalar
-	// [env] entries) aren't surfaced here yet — logging them through
-	// boot.Run is bean gosd-r0be's job.
-	cfg, _, err := gosdtoml.Parse(data)
-	return cfg, err
+	return gosdtoml.Parse(data)
 }
 
 // readProvisioning reads cloud-init's user-data/network-config (and checks
