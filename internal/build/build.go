@@ -19,16 +19,25 @@ import (
 const targetGOOS = "linux"
 
 // CrossCompile builds the Go main package at pkgPath into a static binary
-// for arch at outputPath, by shelling out to the host Go toolchain. It fails
-// with an actionable error if pkgPath is not a main package, or if the build
-// itself fails; in the latter case the compiler's stderr is included
-// verbatim.
-func CrossCompile(pkgPath, outputPath string, arch boards.Arch) error {
+// for arch at outputPath, by shelling out to the host Go toolchain. tags, if
+// non-empty, is passed to `go build` as `-tags <tags>` - gosd uses this to
+// pass a board's boards.BuildTag so a developer's app can gate board-
+// specific source with `//go:build gosd_<id>`; an empty tags builds with no
+// extra build tags at all. It fails with an actionable error if pkgPath is
+// not a main package, or if the build itself fails; in the latter case the
+// compiler's stderr is included verbatim.
+func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
 	if err := requireMainPackage(pkgPath); err != nil {
 		return err
 	}
 
-	cmd := exec.Command("go", "build", "-o", outputPath, pkgPath)
+	args := []string{"build", "-o", outputPath}
+	if tags != "" {
+		args = append(args, "-tags", tags)
+	}
+	args = append(args, pkgPath)
+
+	cmd := exec.Command("go", args...)
 	cmd.Env = archEnv(arch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

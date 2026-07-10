@@ -13,7 +13,7 @@ var arm64 = boards.Arch{GOARCH: "arm64"}
 func TestCrossCompileProducesStaticARM64Binary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hello")
 
-	if err := CrossCompile("./testdata/hello", out, arm64); err != nil {
+	if err := CrossCompile("./testdata/hello", out, "", arm64); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 
@@ -44,7 +44,7 @@ func TestCrossCompileProducesStaticARM64Binary(t *testing.T) {
 func TestCrossCompileProducesStaticARMv6Binary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hello")
 
-	if err := CrossCompile("./testdata/hello", out, boards.Arch{GOARCH: "arm", GOARM: "6"}); err != nil {
+	if err := CrossCompile("./testdata/hello", out, "", boards.Arch{GOARCH: "arm", GOARM: "6"}); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestCrossCompileProducesStaticARMv6Binary(t *testing.T) {
 func TestCrossCompileRecognizesLinuxOnlyMainPackage(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "linuxonly")
 
-	if err := CrossCompile("./testdata/linuxonly", out, arm64); err != nil {
+	if err := CrossCompile("./testdata/linuxonly", out, "", arm64); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 }
@@ -86,15 +86,33 @@ func TestCrossCompileRecognizesLinuxOnlyMainPackage(t *testing.T) {
 func TestCrossCompileRejectsNonMainPackage(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "notmain")
 
-	err := CrossCompile("./testdata/notmain", out, arm64)
+	err := CrossCompile("./testdata/notmain", out, "", arm64)
 	if err == nil {
 		t.Fatal("CrossCompile succeeded on a non-main package, want an error")
 	}
 }
 
 func TestCrossCompileSurfacesBuildFailure(t *testing.T) {
-	err := CrossCompile("./testdata/doesnotexist", filepath.Join(t.TempDir(), "out"), arm64)
+	err := CrossCompile("./testdata/doesnotexist", filepath.Join(t.TempDir(), "out"), "", arm64)
 	if err == nil {
 		t.Fatal("CrossCompile succeeded on a missing package, want an error")
+	}
+}
+
+// TestCrossCompilePlacesTagsBeforePackagePath is the keystone test for
+// gosd-1937: ./testdata/boardtag's default file only compiles when
+// gosd_pi_zero_2w is absent, and it's written to fail to compile in that
+// case, while the gosd_pi_zero_2w-tagged file is the only one that compiles
+// cleanly. So CrossCompile with tags="gosd_pi_zero_2w" succeeding, and the
+// same call with tags="" failing, together prove `-tags gosd_pi_zero_2w`
+// reached `go build` (ahead of the package path - a `go build <pkg> -tags
+// ...` invocation would silently ignore -tags as a package pattern).
+func TestCrossCompilePlacesTagsBeforePackagePath(t *testing.T) {
+	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), "gosd_pi_zero_2w", arm64); err != nil {
+		t.Errorf("CrossCompile with tags=gosd_pi_zero_2w failed: %v", err)
+	}
+
+	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), "", arm64); err == nil {
+		t.Error("CrossCompile with no tags succeeded, want the untagged fallback file's deliberate compile error to surface")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/jphastings/gosd/internal/image"
 )
@@ -130,6 +131,16 @@ type Board interface {
 	// inside the initramfs, keyed by their path relative to
 	// /lib/firmware. Empty for boards with no runtime-loaded firmware.
 	FirmwareFiles(art Artifacts) map[string]io.Reader
+}
+
+// BuildTag returns the Go build tag gosd passes to the app compile (and only
+// the app compile - gosd-init is never tagged) so a developer can gate
+// board-specific source with `//go:build gosd_<id>`. The `gosd_` prefix
+// keeps the result a valid build-tag identifier even for ids starting with a
+// digit; the id's hyphens (illegal in a build tag) are replaced with
+// underscores, e.g. "pi-zero-2w" becomes "gosd_pi_zero_2w".
+func BuildTag(b Board) string {
+	return "gosd_" + strings.ReplaceAll(b.Name(), "-", "_")
 }
 
 var registry = map[string]Board{}

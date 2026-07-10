@@ -45,7 +45,9 @@ say so in the bean rather than silently diverging.
   each other; `--board` (repeatable) restricts.
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
   FAT partition labels `GOSD-BOOT` / `GOSD-DATA`; boot-partition config file
-  `gosd.toml`.
+  `gosd.toml`; app build tags `gosd_<board-id>` (underscored, e.g.
+  `gosd_pi_zero_2w`), passed to the app compile only (see
+  `boards.BuildTag` and `docs/board-build-tags.md`).
 - **Default hostname:** the sanitized basename of the app's main package,
   overridable via `--hostname` and `gosd.toml`.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget

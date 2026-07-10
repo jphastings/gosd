@@ -273,6 +273,10 @@ reads it.
   (and, later, an update listener). If you need to inspect
   a running device, that has to happen through your own app (an HTTP
   endpoint, for instance, as `examples/hello` does) or the serial console.
+- Each selected board's own Go build tag (`gosd_<board-id>`, e.g.
+  `gosd_pi_zero_2w`) is passed to your app's compile — gosd-init is never
+  tagged. See [`docs/board-build-tags.md`](board-build-tags.md) for how to
+  gate board-specific source with it.
 
 ## GPIO, I2C, SPI
 

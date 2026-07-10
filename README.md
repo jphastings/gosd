@@ -62,6 +62,11 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    reports hostname and uptime, and falls back to `:8080` if `:80` is
    unavailable).
 
+   Need different source per board (different pins, an optional
+   peripheral)? `gosd build` passes each selected board's own Go build tag
+   to your app's compile — see
+   [`docs/board-build-tags.md`](docs/board-build-tags.md).
+
 3. Build an image for your board:
 
    ```sh
