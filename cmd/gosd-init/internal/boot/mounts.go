@@ -127,3 +127,15 @@ func MountDataPartition(m Mounter, target string, devices []string, timeout time
 		sleep(250 * time.Millisecond)
 	}
 }
+
+// MountDataReadOnlyFallback mounts an empty read-only tmpfs over target, used
+// when no writable GOSD-DATA partition is available (absent or unmountable).
+// It exists so that a write to /data fails loudly instead of silently: /app
+// runs as root, whose CAP_DAC_OVERRIDE bypasses directory permission bits, so
+// a mode-restricted mountpoint wouldn't stop it — but a read-only superblock
+// returns EROFS at the VFS layer, which no capability overrides. Without this,
+// /data would be a plain writable directory on the RAM-backed rootfs and any
+// write would appear to succeed yet vanish on the next reboot.
+func MountDataReadOnlyFallback(m Mounter, target string) error {
+	return m.Mount("tmpfs", target, "tmpfs", msRdOnly|msNoSuid|msNoDev, "")
+}

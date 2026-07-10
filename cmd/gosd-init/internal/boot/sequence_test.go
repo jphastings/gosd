@@ -640,7 +640,7 @@ func testDataOptions() Options {
 	return opts
 }
 
-func TestRunMountsDataPartitionAndExportsGosdData(t *testing.T) {
+func TestRunMountsDataPartitionReadWrite(t *testing.T) {
 	mounter := &fakeMounter{}
 	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
@@ -679,14 +679,10 @@ func TestRunMountsDataPartitionAndExportsGosdData(t *testing.T) {
 	if mounter.callsFor("/data") == 0 {
 		t.Error("data partition was never mounted")
 	}
-	found := false
 	for _, e := range gotEnv {
-		if e == "GOSD_DATA=/data" {
-			found = true
+		if strings.HasPrefix(e, "GOSD_DATA=") {
+			t.Errorf("app env contains %q; GOSD_DATA is no longer exported", e)
 		}
-	}
-	if !found {
-		t.Errorf("app env = %v, want it to contain GOSD_DATA=/data", gotEnv)
 	}
 	if !markerCreated {
 		t.Error("the .gosd-data marker was never created after a successful data mount")
@@ -696,12 +692,14 @@ func TestRunMountsDataPartitionAndExportsGosdData(t *testing.T) {
 	}
 }
 
-func TestRunContinuesWithoutGosdDataWhenPartitionIsMissing(t *testing.T) {
+func TestRunMountsReadOnlyDataWhenPartitionIsMissing(t *testing.T) {
 	// An image built with --data-size=0 (or from before GOSD-DATA existed)
-	// has no partition 2: boot must proceed normally, the app must start,
-	// and it simply gets no GOSD_DATA.
+	// has no partition 2: boot must proceed normally and the app must start,
+	// but /data is mounted read-only so a write there fails with EROFS
+	// instead of silently landing in RAM. The GOSD-DATA vfat mount (which
+	// reports the device node missing) fails; the tmpfs fallback succeeds.
 	mounter := &fakeMounter{fn: func(c mountCall) error {
-		if c.target == "/data" {
+		if c.target == "/data" && c.fstype == "vfat" {
 			return fs.ErrNotExist
 		}
 		return nil
@@ -745,11 +743,20 @@ func TestRunContinuesWithoutGosdDataWhenPartitionIsMissing(t *testing.T) {
 	}
 	for _, e := range gotEnv {
 		if strings.HasPrefix(e, "GOSD_DATA=") {
-			t.Errorf("app env contains %q; want no GOSD_DATA when the partition is missing", e)
+			t.Errorf("app env contains %q; GOSD_DATA is no longer exported", e)
 		}
 	}
-	if !strings.Contains(console.String(), "no data partition") {
-		t.Errorf("console output missing the no-data-partition log line: %q", console.String())
+	var readOnlyFallback bool
+	for _, c := range mounter.recordedCalls("/data") {
+		if c.fstype == "tmpfs" && c.flags&msRdOnly != 0 {
+			readOnlyFallback = true
+		}
+	}
+	if !readOnlyFallback {
+		t.Errorf("want a read-only tmpfs mounted at /data when the partition is missing; calls: %+v", mounter.recordedCalls("/data"))
+	}
+	if !strings.Contains(console.String(), "no data partition on this image; mounting /data read-only") {
+		t.Errorf("console output missing the read-only fallback log line: %q", console.String())
 	}
 }
 

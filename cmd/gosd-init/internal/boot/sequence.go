@@ -109,8 +109,9 @@ type Options struct {
 
 	// DataTarget is where the GOSD-DATA partition is mounted read-write;
 	// empty skips the data mount entirely (tests that don't care about
-	// it). A missing or unmountable data partition is never fatal — the
-	// app just doesn't get GOSD_DATA.
+	// it). A missing or unmountable data partition is never fatal — an
+	// empty read-only tmpfs is mounted there instead, so app writes fail
+	// with EROFS rather than silently vanishing from the RAM rootfs.
 	DataTarget  string
 	DataDevices []string
 	DataTimeout time.Duration
@@ -230,9 +231,7 @@ func Run(deps Deps, opts Options) error {
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
 	}
-	if dataDir := mountDataPartition(deps, opts, log); dataDir != "" {
-		env = append(env, "GOSD_DATA="+dataDir)
-	}
+	mountData(deps, opts, log)
 	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
 
 	if deps.StartNetworking != nil {
@@ -253,45 +252,51 @@ func Run(deps Deps, opts Options) error {
 	return nil
 }
 
-// mountDataPartition performs the optional GOSD-DATA mount and returns the
-// mounted directory, or "" when the app should get no GOSD_DATA. Nothing in
-// here is ever fatal: a missing partition (an image built with
-// --data-size=0, or from before the partition existed) or a failing mount
-// just means no persistent storage this boot.
-func mountDataPartition(deps Deps, opts Options, log func(format string, args ...any)) string {
+// mountData mounts the GOSD-DATA partition read-write at opts.DataTarget when
+// it exists, and otherwise mounts an empty read-only tmpfs there so that app
+// writes fail loudly with EROFS instead of silently landing in the RAM-backed
+// rootfs and vanishing on reboot (see MountDataReadOnlyFallback). Nothing here
+// is ever fatal: a missing partition (an image built with --data-size=0, or
+// from before the partition existed) or a failing mount just means no
+// persistent storage this boot.
+func mountData(deps Deps, opts Options, log func(format string, args ...any)) {
 	if opts.DataTarget == "" {
-		return ""
+		return
 	}
 
 	if deps.EnsureDataMountpoint != nil {
 		if err := deps.EnsureDataMountpoint(); err != nil {
+			// Without the mountpoint we can neither mount the partition nor
+			// the read-only fallback; nothing left to do but report it.
 			log("creating %s failed, continuing without persistent storage: %v", opts.DataTarget, err)
-			return ""
+			return
 		}
 	}
 
 	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, deps.Sleep, deps.Now); err != nil {
 		if errors.Is(err, ErrDataPartitionMissing) {
-			log("no data partition on this image, continuing without persistent storage")
+			log("no data partition on this image; mounting %s read-only", opts.DataTarget)
 		} else {
-			log("mounting data partition failed, continuing without persistent storage: %v", err)
+			log("mounting data partition failed; mounting %s read-only: %v", opts.DataTarget, err)
 		}
-		return ""
+		if err := MountDataReadOnlyFallback(deps.Mounter, opts.DataTarget); err != nil {
+			log("mounting the read-only %s placeholder failed; writes there will be lost on reboot: %v", opts.DataTarget, err)
+		}
+		return
 	}
 	log("data partition mounted read-write at %s", opts.DataTarget)
 
 	if deps.EnsureDataMarker != nil {
 		if err := deps.EnsureDataMarker(); err != nil {
 			// Worth surfacing (first sign of a bad card), but the mount
-			// itself succeeded, so the app still gets GOSD_DATA.
+			// itself succeeded, so persistence is available.
 			log("creating the data partition marker file failed: %v", err)
 		}
 	}
-	return opts.DataTarget
 }
 
 // reservedEnvPrefix is the namespace gosd-init itself owns (GOSD_BOARD,
-// GOSD_HOSTNAME, GOSD_DATA, and any future GOSD_* var): per gosd.toml
+// GOSD_HOSTNAME, and any future GOSD_* var): per gosd.toml
 // [env]'s locked rules, neither baked config.json env nor a hand-edited
 // gosd.toml [env] may override it.
 const reservedEnvPrefix = "GOSD_"

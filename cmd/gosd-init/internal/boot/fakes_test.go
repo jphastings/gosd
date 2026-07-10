@@ -48,6 +48,19 @@ func (m *fakeMounter) callsFor(target string) int {
 	return n
 }
 
+// recordedCalls returns every mount call attempted against target, in order.
+func (m *fakeMounter) recordedCalls(target string) []mountCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []mountCall
+	for _, c := range m.calls {
+		if c.target == target {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // fakeClock provides a manually-advanced Now/Sleep pair, so tests
 // involving retry timeouts run instantly and deterministically.
 type fakeClock struct {
