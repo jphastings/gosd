@@ -12,6 +12,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -65,18 +67,19 @@ func greetingSuffix(greeting string) string {
 	return fmt.Sprintf(" greeting=%q", greeting)
 }
 
+// dataDir is where gosd-init mounts the writable GOSD-DATA partition. When the
+// image was built without one (gosd build --data-size=0), gosd-init mounts an
+// empty read-only filesystem here instead, so a write fails with EROFS rather
+// than silently vanishing from the RAM-backed rootfs — see docs/runtime.md.
+const dataDir = "/data"
+
 // bumpBootCounter demonstrates GoSD's persistent storage: it increments a
 // counter file on the GOSD-DATA partition every boot, using the
 // write-to-temp + fsync + rename pattern docs/runtime.md recommends for
-// FAT32's weak crash-safety. When GOSD_DATA is unset (the image was built
-// with --data-size=0, or by an older gosd) there is no persistence, and the
-// counter reports that instead of failing.
+// FAT32's weak crash-safety. When the image has no data partition, /data is
+// read-only and the write fails with EROFS; hello reports that instead of
+// treating it as an error.
 func bumpBootCounter() string {
-	dataDir := os.Getenv("GOSD_DATA")
-	if dataDir == "" {
-		return "no-data-partition"
-	}
-
 	counterPath := filepath.Join(dataDir, "hello-boots")
 
 	count := 0
@@ -86,6 +89,9 @@ func bumpBootCounter() string {
 	count++
 
 	if err := writeFileDurably(counterPath, []byte(strconv.Itoa(count)+"\n")); err != nil {
+		if errors.Is(err, syscall.EROFS) {
+			return "no-data-partition"
+		}
 		fmt.Fprintf(os.Stderr, "gosd hello: persisting the boot counter failed: %v\n", err)
 		return "write-failed"
 	}

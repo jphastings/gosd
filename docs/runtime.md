@@ -39,13 +39,10 @@ manager, no SSH. Whatever your Go binary does is the whole system.
   as recorded in `config.json` (and overridable at boot via the `gosd.board=`
   kernel command-line parameter).
 - `GOSD_HOSTNAME` — the hostname `gosd-init` just applied via `sethostname(2)`.
-- `GOSD_DATA` — the mount point of the writable `GOSD-DATA` partition
-  (`/data`), **only set when that partition exists and mounted**. Images
-  built with `--data-size=0`, or with a gosd from before the data partition
-  existed, boot normally with `GOSD_DATA` unset — check for it rather than
-  assuming it. See "Persistent storage" below.
 
-There is deliberately no `GOSD_IP` or similar. Networking comes up
+There's deliberately no `GOSD_DATA`: persistent storage always lives at the
+fixed path `/data` (see "Persistent storage" below), so there's nothing to
+communicate — write there directly. There is likewise no `GOSD_IP` or similar. Networking comes up
 asynchronously after `/app` has already started (see below), so no address
 is known at the time `/app` launches. If your app needs its own address,
 discover it at runtime with `net.InterfaceAddrs()` / `net.Interfaces()`
@@ -81,7 +78,7 @@ Your app's environment is otherwise a clean slate: it gets exactly the
 own environment (`os.Environ()`).
 
 **Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace (`GOSD_BOARD`,
-`GOSD_HOSTNAME`, `GOSD_DATA`, and any future `GOSD_*` var) can never be set
+`GOSD_HOSTNAME`, and any future `GOSD_*` var) can never be set
 this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
 actionable error, before it ever reaches an image. A `GOSD_*` key
 hand-written into a card's `gosd.toml [env]` is logged and ignored at boot
@@ -201,7 +198,7 @@ so:
 
 - Anything your app writes outside `/data` and `/boot` is writable at
   runtime, but **lives in RAM and is gone on reboot or power loss.** For
-  durable writes, use the `GOSD_DATA` partition (below).
+  durable writes, use the `/data` partition (below).
 - `/boot` — the `GOSD-BOOT` FAT partition containing the kernel, initramfs,
   and boot configuration — is mounted **read-only**. Don't expect to write
   to it from your app.
@@ -213,17 +210,21 @@ so:
 
 Images are built with a second FAT32 partition, labelled `GOSD-DATA`, sized
 by `gosd build --data-size` (1GiB unless you say otherwise; `--data-size=0`
-omits it). `gosd-init` mounts it read-write at `/data` and sets
-`GOSD_DATA=/data` in your app's environment. Data written there survives
-reboots and power cycles.
+omits it). `gosd-init` mounts it read-write at the fixed path `/data`. Data
+written there survives reboots and power cycles. There's no environment
+variable to consult — `/data` is always the path; just write to it.
 
 Rules of engagement:
 
-- **Gate on `GOSD_DATA` being set.** If the image was built with
-  `--data-size=0` (or by an older gosd), the partition doesn't exist,
-  `GOSD_DATA` is unset, and `/data` isn't mounted — boot still proceeds
-  normally. A well-behaved app treats "no `GOSD_DATA`" as "no persistence
-  available" rather than failing.
+- **When there's no partition, `/data` is read-only.** If the image was built
+  with `--data-size=0`, or the card's data partition can't be mounted (a bad
+  card, say), `gosd-init` mounts an empty **read-only** filesystem at `/data`
+  instead — boot still proceeds normally. A write then fails immediately with
+  `EROFS` rather than silently landing in RAM and vanishing on the next
+  reboot. This is deliberate: it turns "I thought I had persistence" into a
+  loud error at the write, not silent data loss. A well-behaved app treats an
+  `EROFS` write to `/data` as "no persistence available this boot" rather than
+  a fatal error.
 - **It's FAT32, with FAT32's limits.** No unix permissions, no ownership,
   no symlinks or hard links, 4GiB max file size, coarse (2s) mtime
   granularity. Don't design around any of those existing.
@@ -246,7 +247,8 @@ Rules of engagement:
   full reflash, that wipes it.
 
 For a worked example, `examples/hello` persists a boot counter to
-`GOSD_DATA` using exactly the write-rename-fsync pattern above.
+`/data` using exactly the write-rename-fsync pattern above, and reports
+"no-data-partition" when the write comes back `EROFS`.
 
 ## Logging
 

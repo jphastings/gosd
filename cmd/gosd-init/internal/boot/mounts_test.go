@@ -124,6 +124,25 @@ func TestMountDataPartitionMountsReadWriteWithFlush(t *testing.T) {
 	}
 }
 
+func TestMountDataReadOnlyFallbackMountsReadOnlyTmpfs(t *testing.T) {
+	m := &fakeMounter{}
+
+	if err := MountDataReadOnlyFallback(m, "/data"); err != nil {
+		t.Fatalf("MountDataReadOnlyFallback() = %v, want nil", err)
+	}
+
+	call := m.calls[0]
+	if call.fstype != "tmpfs" {
+		t.Errorf("fallback fstype = %q, want tmpfs", call.fstype)
+	}
+	if call.flags&msRdOnly == 0 {
+		t.Error("fallback was not mounted read-only; a writable /data would silently swallow app writes")
+	}
+	if call.target != "/data" {
+		t.Errorf("fallback target = %q, want /data", call.target)
+	}
+}
+
 func TestMountDataPartitionRetriesTransientFailures(t *testing.T) {
 	attempt := 0
 	m := &fakeMounter{fn: func(mountCall) error {
