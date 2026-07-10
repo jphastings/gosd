@@ -5,10 +5,11 @@ status: draft
 type: task
 priority: normal
 created_at: 2026-07-10T06:16:35Z
-updated_at: 2026-07-10T07:08:07Z
+updated_at: 2026-07-10T07:55:56Z
 parent: gosd-jge2
 blocked_by:
     - gosd-899s
+    - gosd-0s0m
 ---
 
 App-facing helper to mount the board's onboard eMMC at a caller-chosen path,
