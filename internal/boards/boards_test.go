@@ -101,6 +101,20 @@ func TestRegisterInternalIsFindableButExcludedFromAllAndIDs(t *testing.T) {
 	}
 }
 
+func TestBuildTag(t *testing.T) {
+	cases := map[string]string{
+		"pi-zero-2w":    "gosd_pi_zero_2w",
+		"nanopi-zero2":  "gosd_nanopi_zero2",
+		"radxa-zero-3e": "gosd_radxa_zero_3e",
+	}
+
+	for name, want := range cases {
+		if got := boards.BuildTag(fakeBoard{name: name}); got != want {
+			t.Errorf("BuildTag(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestRegisterAndRegisterInternalShareOneNamespace(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-shared-namespace"})
 

@@ -134,12 +134,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating a temp build directory failed: %w", err)
 	}
 
-	archs := make([]boards.Arch, len(selected))
-	for i, b := range selected {
-		archs[i] = b.Arch()
-	}
-
-	binaries, err := compileForArchs(archs, tempDir, pkgPath, gosdInitSrc, build.CrossCompile, build.CrossCompileGosdInit)
+	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, build.CrossCompile, build.CrossCompileGosdInit)
 	if err != nil {
 		return err
 	}
@@ -151,7 +146,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, b := range selected {
-		bin := binaries[b.Arch().Key()]
+		bin := binaries[b.Name()]
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
