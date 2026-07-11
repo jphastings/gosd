@@ -18,6 +18,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newBuildCmd())
 	cmd.AddCommand(newRunCmd())
+	cmd.AddCommand(newBuildKernelCmd())
 	return cmd
 }
 
