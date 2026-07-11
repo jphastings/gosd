@@ -58,6 +58,20 @@ func TestValidateBuilderPref(t *testing.T) {
 	}
 }
 
+func TestEffectiveBuilderPrefFlagWinsOverConfig(t *testing.T) {
+	cfg := kernelconfig.Config{Builder: container.RuntimePodman}
+
+	if got := effectiveBuilderPref(container.RuntimeDocker, cfg); got != container.RuntimeDocker {
+		t.Errorf("effectiveBuilderPref(docker, {Builder: podman}) = %q, want %q (--builder wins)", got, container.RuntimeDocker)
+	}
+	if got := effectiveBuilderPref("", cfg); got != container.RuntimePodman {
+		t.Errorf("effectiveBuilderPref(\"\", {Builder: podman}) = %q, want %q (falls back to config)", got, container.RuntimePodman)
+	}
+	if got := effectiveBuilderPref("", kernelconfig.Config{}); got != "" {
+		t.Errorf("effectiveBuilderPref(\"\", {}) = %q, want empty (auto-detect)", got)
+	}
+}
+
 func TestLoadKernelConfigDefaultsToNoOverlayWhenFileAbsent(t *testing.T) {
 	t.Chdir(t.TempDir())
 

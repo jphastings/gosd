@@ -61,7 +61,7 @@ This command requires Docker or Podman to be installed and running.`,
 	cmd.Flags().StringVar(&kernelConfigPath, "config", "",
 		fmt.Sprintf("developer overlay config (default: %s in the working directory, if present)", defaultKernelConfigFile))
 	cmd.Flags().StringVar(&kernelBuilderPref, "builder", "",
-		fmt.Sprintf("container runtime to use: %s or %s (default: auto-detect)", container.RuntimeDocker, container.RuntimePodman))
+		fmt.Sprintf("container runtime to use: %s or %s (default: gosd-kernel.toml's [kernel].builder, or auto-detect if that's unset too)", container.RuntimeDocker, container.RuntimePodman))
 	cmd.Flags().StringVar(&kernelStagingDir, "staging", "",
 		"also emit the staging/<board>/ layout build/artifacts/package.sh consumes (CI use)")
 
@@ -84,7 +84,7 @@ func runBuildKernel(cmd *cobra.Command, _ []string) error {
 	}
 
 	ctx := cmd.Context()
-	rt, err := container.Detect(ctx, kernelBuilderPref)
+	rt, err := container.Detect(ctx, effectiveBuilderPref(kernelBuilderPref, cfg))
 	if err != nil {
 		return err
 	}
@@ -97,6 +97,18 @@ func runBuildKernel(cmd *cobra.Command, _ []string) error {
 
 	printKernelBuildSummary(cmd, outcomes, kernelOutput)
 	return nil
+}
+
+// effectiveBuilderPref resolves the container runtime preference passed to
+// container.Detect: the --builder flag wins whenever it's set; otherwise
+// gosd-kernel.toml's [kernel].builder (already validated by
+// kernelconfig.Parse) is used; an empty result from both falls through to
+// container.Detect's own auto-detection.
+func effectiveBuilderPref(flag string, cfg kernelconfig.Config) string {
+	if flag != "" {
+		return flag
+	}
+	return cfg.Builder
 }
 
 func validateBuilderPref(pref string) error {

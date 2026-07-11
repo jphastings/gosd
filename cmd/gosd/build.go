@@ -51,6 +51,7 @@ var (
 	publishBaseURL string
 	usbGadget      bool
 	envFlags       []string
+	kernelCfgPath  string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -88,6 +89,8 @@ func newBuildCmd() *cobra.Command {
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil,
 		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key")
+	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
+		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
 
 	return cmd
 }
@@ -145,8 +148,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	firmwarePaths, err := loadKernelConfigFirmware(ctx, kernelCfgPath)
+	if err != nil {
+		return err
+	}
+
 	for _, b := range selected {
 		bin := binaries[b.Name()]
+
+		extraFirmware, err := openKernelFirmware(firmwarePaths)
+		if err != nil {
+			return err
+		}
+
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
@@ -162,6 +176,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			CacheDir:      cacheDir,
 			OutputPath:    outputs[b.Name()],
 			DataSizeBytes: dataSizeBytes,
+			ExtraFirmware: extraFirmware,
 		}
 		if err := pipeline.Assemble(ctx, opts); err != nil {
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
