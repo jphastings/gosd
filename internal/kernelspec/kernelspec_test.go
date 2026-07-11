@@ -1,9 +1,7 @@
 package kernelspec_test
 
 import (
-	"bytes"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -84,9 +82,9 @@ func TestGetUnknownBoardReturnsNotFound(t *testing.T) {
 // dtbExemptFromArtifacts documents boards whose KernelSpec.DTB.Filename is
 // not (yet) tracked by the board's internal/boards.Board.Artifacts(): a
 // pre-existing gap discovered while writing this drift test, recorded in
-// bean gosd-di6v rather than silently worked around. pi-zero-2w's build.sh
-// produces bcm2710-rpi-zero-2-w.dtb, but internal/boards/pizero2w never
-// asks for a DTB artifact (unlike pi-zero-w) - the GPU firmware's own
+// bean gosd-di6v rather than silently worked around. pi-zero-2w's kernel
+// build produces bcm2710-rpi-zero-2-w.dtb, but internal/boards/pizero2w
+// never asks for a DTB artifact (unlike pi-zero-w) - the GPU firmware's own
 // fallback device tree is used instead. Fixing that wiring is out of scope
 // for this bean; see the bean body for the follow-up note.
 var dtbExemptFromArtifacts = map[string]bool{
@@ -213,74 +211,6 @@ func TestPiRequiredYIsDerivedFromFragment(t *testing.T) {
 			want := requiredYFromFragmentFile(t, fragmentPath)
 			if !equalStrings(spec.RequiredY, want) {
 				t.Errorf("RequiredY = %v, want %v (derived from %s)", spec.RequiredY, want, fragmentPath)
-			}
-		})
-	}
-}
-
-// parseBashArray extracts a bash array literal's elements, e.g.
-// `required_y=(\n  CONFIG_FOO\n  CONFIG_BAR\n)`. It's a narrow parser: it
-// assumes (true of every docker-build.sh this reads) the array body
-// contains no nested parentheses and one bare identifier per line.
-func parseBashArray(src []byte, name string) []string {
-	marker := []byte(name + "=(")
-	idx := bytes.Index(src, marker)
-	if idx == -1 {
-		return nil
-	}
-	rest := src[idx+len(marker):]
-	end := bytes.IndexByte(rest, ')')
-	if end == -1 {
-		return nil
-	}
-	var items []string
-	for _, line := range strings.Split(string(rest[:end]), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		items = append(items, line)
-	}
-	return items
-}
-
-// TestRockchipRequiredYMatchesScript compares each Rockchip-family board's
-// KernelSpec.RequiredY (and, for qemu-virt, ForbiddenY) against the literal
-// required_y/forbidden_y bash arrays in that board's docker-build.sh, so the
-// duplication this bean's design doc calls out (see kernelspec.go's package
-// doc comment) can't silently drift before gosd-07fl removes it.
-func TestRockchipRequiredYMatchesScript(t *testing.T) {
-	cases := []struct {
-		boardID string
-		script  string
-	}{
-		{"radxa-zero-3e", "../../build/boards/radxa-zero-3e/kernel/docker-build.sh"},
-		{"nanopi-zero2", "../../build/boards/nanopi-zero2/kernel/docker-build.sh"},
-		{"qemu-virt", "../../build/boards/qemu-virt/kernel/docker-build.sh"},
-	}
-
-	for _, c := range cases {
-		t.Run(c.boardID, func(t *testing.T) {
-			spec, ok := kernelspec.Get(c.boardID)
-			if !ok {
-				t.Fatalf("Get(%q) not found", c.boardID)
-			}
-			src, err := os.ReadFile(filepath.FromSlash(c.script))
-			if err != nil {
-				t.Fatalf("reading %s: %v", c.script, err)
-			}
-
-			wantRequired := parseBashArray(src, "required_y")
-			if len(wantRequired) == 0 {
-				t.Fatalf("parsed no required_y entries from %s; parser or script likely changed shape", c.script)
-			}
-			if !equalStrings(spec.RequiredY, wantRequired) {
-				t.Errorf("RequiredY = %v, want %v (parsed from %s)", spec.RequiredY, wantRequired, c.script)
-			}
-
-			wantForbidden := parseBashArray(src, "forbidden_y")
-			if !equalStrings(spec.ForbiddenY, wantForbidden) {
-				t.Errorf("ForbiddenY = %v, want %v (parsed from %s)", spec.ForbiddenY, wantForbidden, c.script)
 			}
 		})
 	}

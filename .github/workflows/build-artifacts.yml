@@ -1,7 +1,9 @@
 name: Build artifacts
 
 # Triggered by pushing a git tag matching artifacts/v*, e.g. artifacts/v0.1.0
-# (see bean gosd-wtpa and docs/artifacts.md for the full release process).
+# (see bean gosd-wtpa and docs/artifacts.md for the full release process), or
+# manually via workflow_dispatch for testing on a branch (bean gosd-07fl) —
+# a dispatch run skips the final publish step, see package-and-release below.
 # Builds the kernel/DTB/bootloader files GoSD compiles itself for both
 # end-user boards plus the internal-only qemu-virt board (CI/local boot
 # testing, bean gosd-5wm0 — never shown in end-user docs or the default
@@ -11,17 +13,24 @@ name: Build artifacts
 # here — they stay upstream-fetched by the CLI at pinned URL+sha256, per
 # the no-rehosting policy in the repo root CLAUDE.md.
 #
-# Every build/boards/*/build.sh this workflow runs is Dockerized and cross-
-# compiles — most for arm64 via the aarch64-linux-gnu- toolchain
-# (crossbuild-essential-arm64), pi-zero-w for 32-bit armv6 via the
-# arm-linux-gnueabihf- toolchain (crossbuild-essential-armhf, a true cross
-# compile even on an arm64 host — see build/boards/pi-zero-w/README.md).
-# None of them need an arm64 host or QEMU emulation, so they run unchanged on
-# GitHub's amd64 ubuntu-latest runners.
+# The five kernel jobs run `gosd build-kernel` (bean gosd-07fl/epic
+# gosd-47rm): it drives the same Dockerized, cross-compiling build the old
+# per-board build.sh/docker-build.sh scripts used to run directly (retired
+# by this same bean) from the Go-native internal/kernelspec source of truth,
+# so the developer path (`gosd build-kernel` on a laptop) and the release
+# path are the same code. Most builds are arm64 via the
+# aarch64-linux-gnu- toolchain; pi-zero-w cross-compiles 32-bit armv6 via
+# arm-linux-gnueabihf- (a true cross compile even on an arm64 host — see
+# build/boards/pi-zero-w/README.md). None of them need an arm64 host or QEMU
+# emulation, so they run unchanged on GitHub's amd64 ubuntu-latest runners,
+# which have Docker preinstalled. The two U-Boot jobs are unchanged: they
+# still run their own build.sh/Dockerfile directly (U-Boot orchestration is
+# out of scope for gosd-47rm).
 on:
   push:
     tags:
       - "artifacts/v*"
+  workflow_dispatch: {}
 
 permissions:
   contents: write # required to publish a GitHub Release
@@ -32,14 +41,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Run build.sh
-        run: build/boards/pi-zero-2w/build.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board pi-zero-2w --staging staging/ -o out/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pi-zero-2w
-          path: |
-            build/boards/pi-zero-2w/out/kernel8.img
-            build/boards/pi-zero-2w/out/bcm2710-rpi-zero-2-w.dtb
+          path: staging/pi-zero-2w
           if-no-files-found: error
           retention-days: 1
 
@@ -48,14 +59,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Run build.sh
-        run: build/boards/pi-zero-w/build.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board pi-zero-w --staging staging/ -o out/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pi-zero-w
-          path: |
-            build/boards/pi-zero-w/out/kernel.img
-            build/boards/pi-zero-w/out/bcm2835-rpi-zero-w.dtb
+          path: staging/pi-zero-w
           if-no-files-found: error
           retention-days: 1
 
@@ -64,14 +77,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Run build.sh
-        run: build/boards/radxa-zero-3e/kernel/build.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board radxa-zero-3e --staging staging/ -o out/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: radxa-zero-3e-kernel
-          path: |
-            build/boards/radxa-zero-3e/kernel/out/Image
-            build/boards/radxa-zero-3e/kernel/out/rk3566-radxa-zero-3e.dtb
+          path: staging/radxa-zero-3e
           if-no-files-found: error
           retention-days: 1
 
@@ -96,14 +111,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Run build.sh
-        run: build/boards/nanopi-zero2/kernel/build.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board nanopi-zero2 --staging staging/ -o out/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nanopi-zero2-kernel
-          path: |
-            build/boards/nanopi-zero2/kernel/out/Image
-            build/boards/nanopi-zero2/kernel/out/rk3528-nanopi-zero2.dtb
+          path: staging/nanopi-zero2
           if-no-files-found: error
           retention-days: 1
 
@@ -137,13 +154,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Run build.sh
-        run: build/boards/qemu-virt/kernel/build.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board qemu-virt --staging staging/ -o out/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qemu-virt-kernel
-          path: |
-            build/boards/qemu-virt/kernel/out/Image
+          path: staging/qemu-virt
           if-no-files-found: error
           retention-days: 1
 
@@ -166,12 +186,15 @@ jobs:
       - name: Determine version from tag
         id: version
         run: |
-          tag="${GITHUB_REF#refs/tags/artifacts/}"
-          if [ "$tag" = "$GITHUB_REF" ]; then
-            echo "error: unexpected ref $GITHUB_REF, expected refs/tags/artifacts/vX.Y.Z" >&2
-            exit 1
+          if [[ "$GITHUB_REF" == refs/tags/artifacts/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/artifacts/}" >>"$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch (or any non-tag trigger): there's no real
+            # artifacts/vX.Y.Z version, so use a dev-only label. The publish
+            # step below only runs for a real artifacts/v* tag push, so this
+            # value never becomes a real release name.
+            echo "version=dev-${GITHUB_SHA:0:12}" >>"$GITHUB_OUTPUT"
           fi
-          echo "version=$tag" >>"$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -208,56 +231,39 @@ jobs:
           name: qemu-virt-kernel
           path: staging/qemu-virt
 
-      - name: Record source provenance
-        # Pulls the pinned repo/commit/tag each build.sh already hardcodes
-        # (single source of truth) into a small source.json per board, which
-        # package.sh copies verbatim into manifest.json's boards.<board>.
-        # source — GPL compliance requires this alongside the config files
-        # already committed at the paths named below.
+      - name: Record U-Boot source provenance
+        # gosd build-kernel already wrote each board's kernel source.json
+        # entry (staging/<board>/source.json, downloaded above) — see
+        # internal/kernelbuild/output.go. The two Rockchip-family boards
+        # additionally build U-Boot via the unchanged uboot/build.sh script,
+        # which has no source.json of its own, so merge its pinned
+        # repo/tag/config into the existing per-board source.json here. This
+        # is the only provenance step build-kernel doesn't already cover;
+        # the old grep-every-build.sh step it replaces is gone entirely.
         run: |
-          pi_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-2w/build.sh)
-          pi_zero_w_commit=$(grep -oP '^PINNED_COMMIT="\K[^"]+' build/boards/pi-zero-w/build.sh)
-          radxa_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/radxa-zero-3e/kernel/build.sh)
           radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
-          nanopi_zero2_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/nanopi-zero2/kernel/build.sh)
           nanopi_zero2_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/nanopi-zero2/uboot/build.sh)
-          qemu_virt_kernel_tag=$(grep -oP '^KERNEL_TAG="\K[^"]+' build/boards/qemu-virt/kernel/build.sh)
 
-          jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_commit" \
-            --arg config "build/boards/pi-zero-2w/kernel.config" \
-            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
-            >staging/pi-zero-2w/source.json
+          jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$radxa_uboot_tag" \
+            --arg config "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
+            '.uboot = {repo: $repo, ref: $ref, config: $config}' \
+            staging/radxa-zero-3e/source.json >staging/radxa-zero-3e/source.json.tmp
+          mv staging/radxa-zero-3e/source.json.tmp staging/radxa-zero-3e/source.json
 
-          jq -n --arg repo "https://github.com/raspberrypi/linux" --arg ref "$pi_zero_w_commit" \
-            --arg config "build/boards/pi-zero-w/kernel.config" \
-            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
-            >staging/pi-zero-w/source.json
-
-          jq -n \
-            --arg krepo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg kref "$radxa_kernel_tag" \
-            --arg kconfig "build/boards/radxa-zero-3e/kernel/kernel.config" \
-            --arg urepo "https://github.com/u-boot/u-boot.git" --arg uref "$radxa_uboot_tag" \
-            --arg uconfig "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
-            '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
-            >staging/radxa-zero-3e/source.json
-
-          jq -n \
-            --arg krepo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg kref "$nanopi_zero2_kernel_tag" \
-            --arg kconfig "build/boards/nanopi-zero2/kernel/kernel.config" \
-            --arg urepo "https://github.com/u-boot/u-boot.git" --arg uref "$nanopi_zero2_uboot_tag" \
-            --arg uconfig "build/boards/nanopi-zero2/uboot/bootdelay0.config" \
-            '{kernel: {repo: $krepo, ref: $kref, config: $kconfig}, uboot: {repo: $urepo, ref: $uref, config: $uconfig}}' \
-            >staging/nanopi-zero2/source.json
-
-          jq -n --arg repo "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" --arg ref "$qemu_virt_kernel_tag" \
-            --arg config "build/boards/qemu-virt/kernel/kernel.config" \
-            '{kernel: {repo: $repo, ref: $ref, config: $config}}' \
-            >staging/qemu-virt/source.json
+          jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$nanopi_zero2_uboot_tag" \
+            --arg config "build/boards/nanopi-zero2/uboot/bootdelay0.config" \
+            '.uboot = {repo: $repo, ref: $ref, config: $config}' \
+            staging/nanopi-zero2/source.json >staging/nanopi-zero2/source.json.tmp
+          mv staging/nanopi-zero2/source.json.tmp staging/nanopi-zero2/source.json
 
       - name: Package tarballs and manifest.json
         run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
 
       - name: Publish GitHub Release
+        # Only a real artifacts/v* tag push publishes a release. A
+        # workflow_dispatch run (bean gosd-07fl's verification gate) exercises
+        # every build/package step above without cutting a release.
+        if: startsWith(github.ref, 'refs/tags/artifacts/')
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ github.ref_name }}
@@ -276,3 +282,15 @@ jobs:
             dist/qemu-virt.tar.zst
             dist/manifest.json
           fail_on_unmatched_files: true
+
+      - name: Upload dist/ for workflow_dispatch inspection
+        # Not needed for a real tag-triggered release (the GitHub Release
+        # above already has these), but a dispatch run has nowhere else to
+        # surface the packaged output for the equivalence checks in
+        # bean gosd-07fl.
+        if: ${{ !startsWith(github.ref, 'refs/tags/artifacts/') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7

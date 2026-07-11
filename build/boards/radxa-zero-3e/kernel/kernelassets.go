@@ -3,9 +3,10 @@
 // gosd-di6v) can be the single source of truth for kernel build inputs. The
 // embed directive can only reach files inside its own package directory,
 // which is why this package lives alongside kernel-fragment.config and
-// patches/ rather than under internal/kernelspec itself; docker-build.sh
-// keeps reading those same files directly from disk, unchanged, until bean
-// gosd-07fl retires it.
+// patches/ rather than under internal/kernelspec itself. The board's
+// docker-build.sh used to read those same files directly from disk too,
+// until bean gosd-07fl retired it in favor of gosd build-kernel reading
+// internal/kernelspec directly.
 package kernelassets
 
 import "embed"
@@ -14,8 +15,9 @@ import "embed"
 var ConfigFragment []byte
 
 // PatchesFS embeds every device-tree patch applied (in filename order,
-// `patch -p1`) before the config step. See docker-build.sh's "Applying
-// GoSD device-tree patches" loop.
+// `patch -p1`) before the config step - see internal/kernelbuild's
+// DTS-patch application step (formerly docker-build.sh's "Applying GoSD
+// device-tree patches" loop, retired by bean gosd-07fl).
 //
 //go:embed patches
 var PatchesFS embed.FS

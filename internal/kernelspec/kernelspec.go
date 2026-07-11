@@ -3,15 +3,18 @@
 // fragment, device-tree patches, toolchain, build outputs, and the
 // post-olddefconfig assertions the build must satisfy.
 //
-// It replaces values that today live scattered across
+// It originally replaced values that lived scattered across
 // build/boards/<board>/**/build.sh and docker-build.sh (bean gosd-di6v, epic
-// gosd-47rm). Those shell scripts are still the only thing that actually
-// builds a kernel as of this package landing, and they keep working
-// unchanged — a later bean (gosd-07fl) retires them once a Go builder reads
-// KernelSpec directly. Until then, this package and the shell scripts must
-// be kept in sync by hand; TestRockchipRequiredYMatchesScript and
-// TestPiRequiredYIsDerivedFromFragment guard the parts of that sync most
-// likely to silently drift.
+// gosd-47rm); those per-board shell scripts built kernels directly until
+// internal/kernelbuild's Go builder started reading KernelSpec instead and
+// bean gosd-07fl deleted them. This package is now the only source of truth
+// for kernel build inputs — TestPiRequiredYIsDerivedFromFragment still
+// guards the Pi boards' RequiredY against their kernel.fragment, the one
+// remaining on-disk file with independent content; the Rockchip-family
+// boards' RequiredY/ForbiddenY here have no second copy to drift against
+// anymore (they used to be compared against docker-build.sh's required_y/
+// forbidden_y arrays via TestRockchipRequiredYMatchesScript, removed along
+// with those scripts).
 package kernelspec
 
 import (
@@ -73,8 +76,8 @@ type Toolchain struct {
 // leave KernelSpec.DTB nil.
 type DTB struct {
 	// MakeTarget is the `make` target that produces this DTB: either
-	// "dtbs" (build every DTB in the tree - the Pi boards' build.sh does
-	// this, then picks SourcePath out of the result) or a single relative
+	// "dtbs" (build every DTB in the tree - the Pi boards' kernel build
+	// does this, then picks SourcePath out of the result) or a single relative
 	// target such as "rockchip/rk3566-radxa-zero-3e.dtb" (the
 	// Rockchip-family boards, whose ARCH=arm64 dtb targets resolve
 	// relative to arch/arm64/boot/dts/).
@@ -100,13 +103,12 @@ type Patch struct {
 // kernel build byte-identical across runs (tied to the pinned source rather
 // than wall-clock time or the build host's identity).
 type Reproducibility struct {
-	// Empty fields mean the board's build script doesn't currently set
-	// this pin. As of gosd-di6v, every Rockchip-family board's
-	// docker-build.sh (radxa-zero-3e, nanopi-zero2, qemu-virt) sets none
-	// of these - only the two Pi boards' build.sh do. This is a real gap
-	// for gosd-47rm's byte-identity CI gate, left for the builder bean to
-	// close rather than fixed here (this bean only makes today's script
-	// behavior declarative, not better).
+	// Empty fields mean this board's build doesn't currently set this pin.
+	// As of gosd-di6v, none of the Rockchip-family boards (radxa-zero-3e,
+	// nanopi-zero2, qemu-virt) set these - only the two Pi boards do. This
+	// is a real gap for gosd-47rm's byte-identity CI gate, left open
+	// rather than fixed here (that bean's design doc only made the
+	// original shell scripts' behavior declarative, not better).
 	KBUILDBuildTimestamp string
 	KBUILDBuildUser      string
 	KBUILDBuildHost      string
@@ -147,10 +149,9 @@ type KernelSpec struct {
 	// RequiredY lists every CONFIG_*=y option that must survive `make
 	// olddefconfig`. For the Pi boards this is mechanically derived from
 	// ConfigFragment (every literal CONFIG_*=y line in it - see
-	// requiredYFromFragment); for the Rockchip-family boards it's copied
-	// from that board's docker-build.sh required_y array, guarded by
-	// TestRockchipRequiredYMatchesScript so the two can't silently drift
-	// apart before gosd-07fl removes the duplication.
+	// requiredYFromFragment); for the Rockchip-family boards it's a
+	// hand-maintained literal list (originally copied from each board's
+	// now-deleted docker-build.sh required_y array - see bean gosd-07fl).
 	RequiredY []string
 
 	// ForbiddenY lists CONFIG_*=y/=m options that must NOT survive `make
@@ -166,8 +167,8 @@ type KernelSpec struct {
 }
 
 // requiredYFromFragment extracts every literal "CONFIG_FOO=y" line from a
-// Kconfig fragment, in file order. This is how the Pi boards' RequiredY is
-// derived - see build.sh, which applies the fragment as-is and relies on
+// Kconfig fragment, in file order. This mirrors what the Pi boards' kernel
+// build actually does: apply the fragment as-is and rely on
 // merge_config.sh + olddefconfig to keep every explicit "=y" line set.
 var configYLine = regexp.MustCompile(`^CONFIG_[A-Z0-9_]+=y$`)
 
@@ -230,8 +231,8 @@ func loadPatches(fsys embed.FS, dir string) []Patch {
 
 // piZeroCommitRef and piZeroCommitDate are pinned identically for both Pi
 // boards, for fleet consistency across the two Broadcom boards - see
-// build/boards/pi-zero-2w/build.sh's header comment for why this particular
-// commit on rpi-6.18.y was chosen.
+// build/boards/pi-zero-2w/README.md for why this particular commit on
+// rpi-6.18.y was chosen.
 const (
 	piZeroCommitRef  = "63598c83153e19b1f99067ab6df7409de2c111f8"
 	piZeroCommitDate = "2026-07-01T10:23:21Z"
@@ -240,7 +241,7 @@ const (
 
 // fleetKernelTag and fleetKernelRepo pin the same mainline stable LTS tag
 // across every Rockchip-family board (radxa-zero-3e, nanopi-zero2,
-// qemu-virt) - see build/boards/radxa-zero-3e/kernel/build.sh.
+// qemu-virt) - see build/boards/radxa-zero-3e/kernel/README.md.
 const (
 	fleetKernelTag  = "v6.18.37"
 	fleetKernelRepo = "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
@@ -260,14 +261,14 @@ var specs = map[string]KernelSpec{
 
 		ConfigFragment: pizero2wmanifest.KernelFragment,
 
-		// pi-zero-2w's build.sh builds every DTB ("make ... Image dtbs")
+		// pi-zero-2w's kernel build builds every DTB ("make ... Image dtbs")
 		// and copies out bcm2710-rpi-zero-2-w.dtb, but
 		// internal/boards/pizero2w.Artifacts() does not currently list a
 		// DTB artifact - unlike pi-zero-w, this board's BootFiles never
 		// asks for one. This predates gosd-di6v; recorded as a discovered
 		// gap in the bean rather than silently worked around. DTB is kept
 		// non-nil here because it's a true, faithful description of what
-		// build.sh produces; TestKernelSpecOutputsMatchBoardArtifacts
+		// the build produces; TestKernelSpecOutputsMatchBoardArtifacts
 		// documents the pi-zero-2w DTB exemption explicitly.
 		DTB: &DTB{
 			MakeTarget: "dtbs",
@@ -345,10 +346,10 @@ var specs = map[string]KernelSpec{
 		KernelSourcePath: "arch/arm64/boot/Image",
 		KernelFilename:   "Image",
 
-		// Copied from docker-build.sh's required_y array; see that
-		// file's "Asserting required options survived olddefconfig"
-		// step. TestRockchipRequiredYMatchesScript parses the script and
-		// fails if this list drifts from it.
+		// Asserts these survived olddefconfig, mirroring the "Asserting
+		// required options survived olddefconfig" step the board's
+		// now-deleted docker-build.sh used to run (bean gosd-07fl) - this
+		// hand-maintained list is now the only copy.
 		RequiredY: []string{
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_DW",
@@ -368,8 +369,8 @@ var specs = map[string]KernelSpec{
 			"CONFIG_SERIAL_8250_DW",
 		},
 		ModulesDisabled: true,
-		// Reproducibility left zero: docker-build.sh sets none of the
-		// KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
+		// Reproducibility left zero: this board's build doesn't set any of
+		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
 	},
 
 	"nanopi-zero2": {
@@ -395,8 +396,8 @@ var specs = map[string]KernelSpec{
 		KernelSourcePath: "arch/arm64/boot/Image",
 		KernelFilename:   "Image",
 
-		// Copied from docker-build.sh's required_y array; see
-		// TestRockchipRequiredYMatchesScript.
+		// See the radxa-zero-3e RequiredY comment above - same origin,
+		// now a hand-maintained literal list.
 		RequiredY: []string{
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_DW",

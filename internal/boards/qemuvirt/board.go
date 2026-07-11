@@ -34,9 +34,10 @@ const (
 	// kernelArtifactName is the artifact the pipeline must resolve for the
 	// kernel image this board's BootFiles writes to the boot partition. It
 	// has no per-file pinned URL (ArtifactRef.URL is empty): it's compiled
-	// by build/boards/qemu-virt/kernel/build.sh and resolved from
-	// --artifacts-dir or, falling back, the CI-built artifact release -
-	// same pattern as pi-zero-2w's kernel8.img and radxa-zero-3e's Image.
+	// by `gosd build-kernel --board qemu-virt` (bean gosd-07fl) and
+	// resolved from --artifacts-dir or, falling back, the CI-built
+	// artifact release - same pattern as pi-zero-2w's kernel8.img and
+	// radxa-zero-3e's Image.
 	kernelArtifactName = "Image"
 
 	// initramfsName is the file name the initramfs is written under in

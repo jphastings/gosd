@@ -13,30 +13,34 @@ own DTB at boot time, so none is built or shipped here.
 ## Building
 
 ```sh
-./build.sh
+go run ./cmd/gosd build-kernel --board qemu-virt -o out/
 ```
 
-Requires only Docker. The script runs everything — cross toolchain install,
-kernel source clone, config merge, and compile — inside a
+Requires only Docker. `gosd build-kernel` (bean gosd-07fl) drives everything
+— cross toolchain install, kernel source clone, config merge, and compile —
+from `internal/kernelspec`'s declarative spec, inside a
 `docker.io/library/debian:bookworm` container using the
 `aarch64-linux-gnu-` cross prefix, so it produces identical output on an
 arm64 host (e.g. Apple Silicon, native container) or an amd64 CI runner
 (true cross-compilation). No local kernel source checkout or toolchain
-install is needed on the host.
+install is needed on the host; there is no board-specific shell script
+anymore — `.github/workflows/build-artifacts.yml`'s `qemu-virt-kernel` job
+runs the exact same command CI-side.
 
 Outputs land in `out/` (gitignored):
 
 - `out/Image` — the kernel image
 - `out/kernel.config` — the full `.config` actually used for that build, for
   comparison against the committed `kernel.config`
+- `out/source.json` — upstream repo/commit and config path, for GPL
+  provenance
 
 ## Source and configuration
 
 - Kernel source: mainline stable (`git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git`),
-  pinned to the same "longterm" (LTS) tag as
-  `build/boards/radxa-zero-3e/kernel/build.sh` (see `KERNEL_TAG` at the top
-  of `build.sh`), so the two boards' fragments stay diff-able against one
-  kernel source tree.
+  pinned to the same "longterm" (LTS) tag as radxa-zero-3e's kernel (see
+  `fleetKernelTag` in `internal/kernelspec.go`), so the two boards' fragments
+  stay diff-able against one kernel source tree.
 - `kernel-fragment.config` — the hand-maintained fragment of required
   options: the standard GoSD baseline (initramfs RD_ZSTD, VFAT_FS+NLS,
   devtmpfs, IPv4/6, AF_PACKET), virtio blk/net over both PCI and MMIO
@@ -47,22 +51,24 @@ Outputs land in `out/` (gitignored):
 - `kernel.config` — the full generated `.config` from the last known-good
   build (header records the source tag/repo/generation method). This is
   what ships in artifact manifests for GPL compliance; it is not itself fed
-  back into the build — `build.sh` always regenerates from `defconfig` +
-  the fragment so the build stays reproducible from source.
+  back into the build — `gosd build-kernel` always regenerates from
+  `defconfig` + the fragment so the build stays reproducible from source.
 
-`docker-build.sh` asserts that every required `CONFIG_*` option is still set
-after `make olddefconfig` resolves dependencies, and separately asserts the
-cut real-hardware options stayed off — both fail loudly if trimming or a
-kernel version bump silently changed either list.
+`internal/kernelspec.go`'s `RequiredY`/`ForbiddenY` lists assert that every
+required `CONFIG_*` option is still set after `make olddefconfig` resolves
+dependencies, and separately assert the cut real-hardware options stayed off
+— both fail loudly if trimming or a kernel version bump silently changed
+either list (formerly `docker-build.sh`'s job, before bean gosd-07fl retired
+that script).
 
 ## Updating the pinned kernel version
 
-Bump `KERNEL_TAG` in `build.sh` — normally in lockstep with
-`build/boards/radxa-zero-3e/kernel/build.sh`'s own `KERNEL_TAG`, since both
-pin the same mainline "longterm" tag (see
-<https://www.kernel.org/releases.json>, look for `"moniker": "longterm"`) —
-rerun `./build.sh`, then copy `out/kernel.config` over the committed
-`kernel.config` and commit both alongside the version bump.
+Bump `fleetKernelTag` in `internal/kernelspec.go` — normally in lockstep
+with radxa-zero-3e's and nanopi-zero2's, since all three pin the same
+mainline "longterm" tag (see <https://www.kernel.org/releases.json>, look
+for `"moniker": "longterm"`) — rerun the build command above, then copy
+`out/kernel.config` over the committed `kernel.config` and commit both
+alongside the version bump.
 
 ## Boot validation
 
