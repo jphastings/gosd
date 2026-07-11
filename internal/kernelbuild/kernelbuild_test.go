@@ -146,6 +146,29 @@ func TestBuild_RunsContainerAndCollectsFlatOutput(t *testing.T) {
 	}
 }
 
+// The /work bind mount must come from under the cache dir, never os.TempDir():
+// macOS's default temp dir (/var/folders/…) isn't shared with Docker Desktop's
+// VM, so a mount from there is silently empty in the container (gosd-0p21).
+func TestBuild_WorkDirLivesUnderCacheDir(t *testing.T) {
+	spec := testSpec()
+	rt := newSucceedingRunner(spec)
+	cacheDir := t.TempDir()
+
+	if _, err := kernelbuild.Build(context.Background(), spec, testOverlay(), kernelbuild.Options{
+		Runtime: rt, CacheDir: cacheDir,
+	}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	workHost := mountHostPath(rt.calls[0], "/work")
+	if workHost == "" {
+		t.Fatal("no /work mount in the container RunSpec")
+	}
+	if rel, err := filepath.Rel(cacheDir, workHost); err != nil || strings.HasPrefix(rel, "..") {
+		t.Errorf("/work mounted from %s, want a directory under the cache dir %s", workHost, cacheDir)
+	}
+}
+
 func TestBuild_CacheHitSkipsContainer(t *testing.T) {
 	spec := testSpec()
 	rt := newSucceedingRunner(spec)
