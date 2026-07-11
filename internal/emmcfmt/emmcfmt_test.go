@@ -76,6 +76,60 @@ func TestFormatFAT32ProducesUsableFilesystem(t *testing.T) {
 	}
 }
 
+func TestInspectBlankDevice(t *testing.T) {
+	got, err := Inspect(backingFile(t, 8*1024*1024))
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.IsFAT || !got.Blank {
+		t.Errorf("Inspect of a zeroed device = %+v, want {IsFAT:false Blank:true}", got)
+	}
+}
+
+func TestInspectForeignContentIsNotBlank(t *testing.T) {
+	path := backingFile(t, 8*1024*1024)
+	// A stray non-zero byte in the leading region stands in for a foreign
+	// partition table or filesystem: readable as neither our FAT nor blank.
+	scribble(t, path, 0, []byte{0xEB, 0x00, 0x55, 0xAA})
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.IsFAT || got.Blank {
+		t.Errorf("Inspect of foreign content = %+v, want {IsFAT:false Blank:false}", got)
+	}
+}
+
+func TestInspectReportsFATLabel(t *testing.T) {
+	path := backingFile(t, 64*1024*1024)
+	if err := FormatFAT32(path, "APPDATA"); err != nil {
+		t.Fatalf("FormatFAT32: %v", err)
+	}
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if !got.IsFAT || got.Label != "APPDATA" {
+		t.Errorf("Inspect of formatted device = %+v, want {IsFAT:true Label:APPDATA}", got)
+	}
+}
+
+// scribble writes raw bytes at offset into the file at path, without disturbing
+// the rest of it.
+func scribble(t *testing.T, path string, offset int64, data []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("opening to scribble: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteAt(data, offset); err != nil {
+		t.Fatalf("scribbling: %v", err)
+	}
+}
+
 // writeThenClose opens the just-formatted filesystem fresh, writes content to
 // name, and fully closes everything — so the read-back in the test proves the
 // bytes reached the filesystem, not a still-open buffer.
@@ -99,13 +153,4 @@ func writeThenClose(t *testing.T, devicePath, name string, content []byte) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("closing device after write (flush) failed: %v", err)
 	}
-}
-
-// trimLabel drops the trailing padding FAT stores volume labels with, so the
-// comparison is against the meaningful characters only.
-func trimLabel(label string) string {
-	for len(label) > 0 && (label[len(label)-1] == ' ' || label[len(label)-1] == 0) {
-		label = label[:len(label)-1]
-	}
-	return label
 }
