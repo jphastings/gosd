@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-11T07:41:32Z
-updated_at: 2026-07-11T16:35:38Z
+updated_at: 2026-07-11T16:50:23Z
 parent: gosd-47rm
 blocked_by:
     - gosd-abya
@@ -51,4 +51,4 @@ deleted.
 - [ ] Byte-identity comparison recorded here (or documented fallback)
 - [ ] Full workflow green on a non-release ref
 - [x] `docs/artifacts.md` release procedure updated to match
-- [ ] Quality gates green
+- [x] Quality gates green
