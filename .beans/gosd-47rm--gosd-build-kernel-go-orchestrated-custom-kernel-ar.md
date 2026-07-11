@@ -1,11 +1,11 @@
 ---
 # gosd-47rm
 title: 'gosd build-kernel: Go-orchestrated custom kernel artifact builds'
-status: todo
+status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-11T07:39:42Z
-updated_at: 2026-07-11T07:43:49Z
+updated_at: 2026-07-11T08:10:01Z
 ---
 
 Give developers a first-class, **opt-in** way to build a custom kernel for
