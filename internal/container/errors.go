@@ -22,13 +22,13 @@ func (e *NotInstalledError) Error() string {
 			e.Preferred, installHint(e.Preferred),
 		)
 	}
-	return "gosd build-kernel needs Docker or Podman; install Docker Desktop (https://docs.docker.com/desktop/) or podman (https://podman.io/docs/installation), then re-run"
+	return "gosd build-kernel needs Docker or Podman; install Docker Desktop (https://docs.docker.com/desktop/), colima (https://colima.run/) or podman (https://podman.io/docs/installation), then re-run"
 }
 
 func installHint(runtime string) string {
 	switch runtime {
 	case RuntimeDocker:
-		return "Docker Desktop (https://docs.docker.com/desktop/)"
+		return "Docker Desktop (https://docs.docker.com/desktop/) or colima (https://colima.run/)"
 	case RuntimePodman:
 		return "podman (https://podman.io/docs/installation)"
 	default:

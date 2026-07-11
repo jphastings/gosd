@@ -127,9 +127,11 @@ func resolveCacheRoot(override string) (string, error) {
 // (same pattern as internal/artifacts.ensureBoard).
 func runBuild(ctx context.Context, spec kernelspec.KernelSpec, overlay Overlay, image, cacheRoot, entryDir string, opts Options) error {
 	// The work dir must live under cacheRoot, not os.TempDir(): on macOS the
-	// default temp dir is /var/folders/…, which Docker Desktop's VM does not
-	// share by default, so a bind mount from there appears empty inside the
-	// container. cacheRoot sits under the user's home, which is shared.
+	// default temp dir is /var/folders/…, which the container VMs (colima
+	// mounts $HOME and /tmp/colima; Docker Desktop shares a configured list)
+	// don't reliably share, so a bind mount from there appears empty inside
+	// the container. cacheRoot sits under the user's home, which every
+	// provider shares.
 	workDir, err := os.MkdirTemp(cacheRoot, "work-*")
 	if err != nil {
 		return fmt.Errorf("kernelbuild: creating work dir: %w", err)
