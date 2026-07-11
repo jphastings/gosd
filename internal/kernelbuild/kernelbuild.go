@@ -4,8 +4,8 @@
 // build/artifacts/package.sh consumes - output that drops straight into
 // `gosd build --artifacts-dir`. See bean gosd-x488 and epic gosd-47rm.
 //
-// Builds are content-addressed and cached under
-// os.UserCacheDir()/gosd/kernel-build/<key>/ (key = hash of the kernel ref,
+// Builds are content-addressed and cached under a per-OS durable state
+// directory (see defaultBuildRoot) as <root>/<key>/ (key = hash of the kernel ref,
 // container image digest, GoSD fragment/patches, developer overlay, and
 // output filenames - see cacheKey): a call whose key already has every
 // expected output present skips the container run entirely and reports
@@ -39,9 +39,10 @@ type Options struct {
 	// Image overrides the container image the build runs inside. Empty
 	// uses container.KernelBuildImage.
 	Image string
-	// CacheDir overrides the cache root (normally
-	// os.UserCacheDir()/gosd/kernel-build). Tests supply a temp dir here;
-	// production callers normally leave it empty.
+	// CacheDir overrides the cache root (normally the per-OS durable state
+	// dir from defaultBuildRoot - deliberately not os.UserCacheDir, which
+	// macOS may purge mid-build). Tests supply a temp dir here; production
+	// callers normally leave it empty.
 	CacheDir string
 	// Outputs selects where a successful (or cache-hit) build's artifacts
 	// are written.
@@ -112,11 +113,11 @@ func resolveCacheRoot(override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	base, err := os.UserCacheDir()
+	root, err := defaultBuildRoot()
 	if err != nil {
-		return "", fmt.Errorf("kernelbuild: resolving user cache dir: %w", err)
+		return "", fmt.Errorf("kernelbuild: resolving build root: %w", err)
 	}
-	return filepath.Join(base, "gosd", "kernel-build"), nil
+	return root, nil
 }
 
 // runBuild runs one container build and, on success, moves its outputs into
@@ -157,7 +158,13 @@ func runBuild(ctx context.Context, spec kernelspec.KernelSpec, overlay Overlay, 
 		Stderr: opts.Stderr,
 	}
 	if err := opts.Runtime.Run(ctx, runSpec); err != nil {
+		if _, statErr := os.Stat(tmpOut); os.IsNotExist(statErr) {
+			return vanishedStagingError(tmpOut, err)
+		}
 		return fmt.Errorf("kernel build for %s failed: %w", spec.BoardID, err)
+	}
+	if _, err := os.Stat(tmpOut); os.IsNotExist(err) {
+		return vanishedStagingError(tmpOut, nil)
 	}
 
 	if err := verifyBuildOutputs(tmpOut, spec); err != nil {
