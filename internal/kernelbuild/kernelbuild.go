@@ -125,7 +125,11 @@ func resolveCacheRoot(override string) (string, error) {
 // an interrupted or failed build never leaves a half-written cache entry
 // (same pattern as internal/artifacts.ensureBoard).
 func runBuild(ctx context.Context, spec kernelspec.KernelSpec, overlay Overlay, image, cacheRoot, entryDir string, opts Options) error {
-	workDir, err := os.MkdirTemp("", "gosd-kernelbuild-work-*")
+	// The work dir must live under cacheRoot, not os.TempDir(): on macOS the
+	// default temp dir is /var/folders/…, which Docker Desktop's VM does not
+	// share by default, so a bind mount from there appears empty inside the
+	// container. cacheRoot sits under the user's home, which is shared.
+	workDir, err := os.MkdirTemp(cacheRoot, "work-*")
 	if err != nil {
 		return fmt.Errorf("kernelbuild: creating work dir: %w", err)
 	}
