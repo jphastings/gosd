@@ -1,11 +1,11 @@
 ---
 # gosd-47rm
 title: 'gosd build-kernel: Go-orchestrated custom kernel artifact builds'
-status: in-progress
+status: completed
 type: epic
 priority: normal
 created_at: 2026-07-11T07:39:42Z
-updated_at: 2026-07-11T08:10:01Z
+updated_at: 2026-07-11T19:47:09Z
 ---
 
 Give developers a first-class, **opt-in** way to build a custom kernel for
@@ -58,6 +58,34 @@ must be hand-copied into `--artifacts-dir`. The artifact plumbing
 (`ResolveArtifacts`' flat-dir filename contract, `package.sh`, the manifest
 schema) already supports everything this epic needs; only the orchestration is
 missing.
+
+## Summary of Changes (epic complete, 2026-07-11)
+
+All seven children shipped, in dependency order across PRs #64–#67, #69, #71,
+#72: [[gosd-fe9w]] (internal/container: docker/podman detection, digest-pinned
+build image, streaming runs, typed errors), [[gosd-di6v]] (internal/kernelspec:
+declarative per-board specs, fragments/patches embedded in place, drift tests),
+[[gosd-x488]] (internal/kernelbuild: generated in-container builds, overlay
+semantics, content-addressed cache, source.json provenance), [[gosd-abya]]
+(the build-kernel subcommand), [[gosd-hkp7]] (gosd-kernel.toml: strict schema,
+firmware flow into the initramfs via gosd build), [[gosd-07fl]] (CI dogfood:
+the five kernel release jobs now run gosd build-kernel; shell scripts retired;
+proven by a green workflow_dispatch run), [[gosd-1pv0]] (docs/custom-kernels.md
+with a PROVEN pi-zero-2w DVB-T worked example, CLAUDE.md carve-out,
+COMPATIBILITY row).
+
+Real-world verification did its job: building an actual qemu-virt kernel via
+local Docker and booting it to HTTP (~5s) surfaced two field bugs no fake
+could catch — [[gosd-0p21]] (/work mount empty: macOS $TMPDIR isn't shared
+with Docker Desktop's VM; PR #68) and [[gosd-l4y9]] (macOS storage-pressure
+eviction deleted ~/Library/Caches/gosd mid-build; kernel-build state moved to
+a durable dir; PR #70). The rp1-cfe media collision was root-caused
+(CONFIG_EXPERT defaults MEDIA_PLATFORM_SUPPORT=y → both CSI drivers promoted
+to =y under CONFIG_MODULES=n) with the two-line fragment fix documented.
+
+Still open, by design: the [[gosd-2k9p]] loadable-modules decision (not a
+child; monolithic-with-compiled-in-drivers is the shipped answer until JP
+decides otherwise).
 
 ## Child beans
 
