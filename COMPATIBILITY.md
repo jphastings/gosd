@@ -28,6 +28,7 @@ see `beans list` for what's in flight.
 | mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ |
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |
+| Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] |
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] |
@@ -120,6 +121,20 @@ see `beans list` for what's in flight.
     correctly generated and schema-valid, but only become visible to an end
     user when they pick **No filtering** on Imager's device-selection page.
     See "Device filtering" in `docs/publishing.md`.
+
+[^no-emmc]: Neither Raspberry Pi board has onboard eMMC — this is a hardware
+    limitation of both boards, not a GoSD gap. The `emmc` package's
+    `FormatAndMount` returns `ErrNoEMMC` on these boards.
+
+[^emmc]: The `emmc` package (public API, see `docs/runtime.md`'s "Onboard
+    eMMC" section) auto-discovers the board's onboard eMMC — distinguishing
+    it from the booted microSD card, which is never a format target — and
+    formats it with a whole-device FAT filesystem the first time it's seen
+    blank, mounting-only on every run after that. It carries the same
+    FAT-only caveats as the `/data` partition (no unix permissions/symlinks,
+    not power-loss-robust; write with the temp-file+fsync+rename pattern).
+    Same caveat as the rest of this table: code-complete and unit-tested, not
+    yet hardware-verified. `examples/emmcstorage` is the worked example.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
     boards, DWC3 on the Radxa; `CONFIG_USB_GADGET`, configfs, ACM/ECM/RNDIS

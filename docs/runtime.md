@@ -250,6 +250,55 @@ For a worked example, `examples/hello` persists a boot counter to
 `/data` using exactly the write-rename-fsync pattern above, and reports
 "no-data-partition" when the write comes back `EROFS`.
 
+## Onboard eMMC storage (Rockchip boards)
+
+The two Rockchip boards, the Radxa Zero 3E and the NanoPi Zero2, also have a
+soldered-on eMMC in addition to the microSD card they boot from — the Pi
+boards have no such thing. The public `emmc` package lets your app format
+and mount it:
+
+```go
+if err := <-emmc.FormatAndMount("APPDATA", "/storage", false); err != nil {
+	log.Printf("no persistent storage: %v", err)
+}
+```
+
+`FormatAndMount` returns immediately; the formatting/mounting work runs in
+the background, and the returned channel receives exactly one value — `nil`
+once the mountpoint is ready, or an error — before closing. Block on it only
+once your app actually needs the storage.
+
+- **The eMMC is discovered automatically**, distinguishing it from the
+  microSD card the board is currently running from — the boot device is
+  never a format target, so there's no risk of an app wiping the card it's
+  running on.
+- **Formatting is idempotent, keyed on the label you pass.** An eMMC already
+  carrying a FAT filesystem labelled `label` is only mounted, never
+  reformatted — this is how a second run (or every run after the first)
+  avoids wiping its own data. A blank eMMC (no filesystem at all) is always
+  formatted, even with `destructive` set to `false`.
+- **`destructive` guards everything else.** If the eMMC holds *other* data —
+  a FAT volume under a different label, or non-FAT content — `false` makes
+  `FormatAndMount` refuse and return an error rather than touch it; `true`
+  wipes and reformats it. `label` is limited to 11 ASCII characters (FAT's
+  own volume-label limit) and is stored upper-cased.
+- **It's a whole-device FAT filesystem** — the mount source is the raw
+  `/dev/mmcblkN` device, not a partition on it — with the same limits as
+  `/data`: no unix permissions, ownership, symlinks, or hard links, and it is
+  not power-loss-robust. Write durable state with the same temp-file,
+  `fsync`, then `rename` pattern described under "Persistent storage: `/data`"
+  above.
+- **On a board with no onboard eMMC** (the Pi boards, or a Rockchip board
+  whose only eMMC turns out to be the boot device), `FormatAndMount`'s
+  channel yields `emmc.ErrNoEMMC` — check for it with `errors.Is` and treat
+  it as "no eMMC here" rather than a fatal error, the way `examples/emmcstorage`
+  does.
+
+`examples/emmcstorage` is the worked example: it formats and mounts the eMMC at
+`/storage`, degrades gracefully (logs and exits cleanly) when `ErrNoEMMC`
+comes back, and otherwise writes a small file and reads it back to
+demonstrate persistence.
+
 ## Logging
 
 There is no syslog, no log file, and no remote log shipping. `/app`'s

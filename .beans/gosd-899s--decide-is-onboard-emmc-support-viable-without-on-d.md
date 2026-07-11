@@ -1,11 +1,11 @@
 ---
 # gosd-899s
 title: 'Decide: is onboard eMMC support viable without on-device formatting?'
-status: draft
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-10T06:15:38Z
-updated_at: 2026-07-10T07:17:54Z
+updated_at: 2026-07-10T07:53:42Z
 parent: gosd-jge2
 ---
 
@@ -74,3 +74,11 @@ pick **D** and park the mount-library bean indefinitely.
 JP to choose A / B / C / D. Record the choice and rationale here, then either
 (A) create the pure-Go mkfs spike/impl bean and re-scope the mount library to
 format-or-mount, or (D) scrap the mount-library bean.
+
+## Decision (2026-07-10, JP)
+
+Chosen: **option A** — invest in a pure-Go on-device `mkfs.vfat` so a blank
+soldered eMMC can be formatted on the device itself, then mounted. Viability of
+A hinges on go-diskfs being able to format a real block device, which is now
+spiked in [[gosd-0s0m]]. Once that lands, re-scope [[gosd-tdcc]] from mount-only
+to format-or-mount.
