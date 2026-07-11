@@ -29,7 +29,10 @@ say so in the bean rather than silently diverging.
 - **Module path:** `github.com/jphastings/gosd`. **License:** MIT (LICENSE file).
 - **Language:** pure Go everywhere; `CGO_ENABLED=0`. No build step may require
   root, Docker, or Linux — `go test ./...` must pass on macOS and Linux.
-  Linux-only runtime code goes behind build tags.
+  Linux-only runtime code goes behind build tags. **Carve-out:** `gosd build`
+  itself never requires Docker; `gosd build-kernel` (opt-in custom kernel
+  compiles, see `docs/custom-kernels.md`) requires Docker or Podman, by
+  design, and says so in its own `--help` text and errors.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
   pi-zero-2w / radxa-zero-3e / nanopi-zero2 / qemu-virt, and `GOARCH=arm
   GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline
@@ -64,6 +67,9 @@ say so in the bean rather than silently diverging.
   releases (`artifacts/vX.Y.Z` tags) contain only what we compile — kernels and
   U-Boot — with source repo, commit, and config recorded in the manifest (GPL
   compliance). CLI releases are plain `vX.Y.Z` tags and pin an artifact version.
+  Developers never *have to* compile a kernel themselves — `gosd build-kernel`
+  (epic gosd-47rm) is an opt-in path for compiling in a driver GoSD's stock,
+  trimmed kernels cut; see `docs/custom-kernels.md`.
 - **End-user flashing path (decided 2026-07-05):** the flagship flow is a
   Raspberry Pi Imager custom-repository catalog entry — `gosd build` can emit
   an `os_list.json` entry declaring `init_format: "cloudinit"`, the developer
@@ -87,6 +93,10 @@ say so in the bean rather than silently diverging.
 
 ## Board work & artifact releases
 
+- **Kernel-build source of truth is `internal/kernelspec`** (a declarative
+  Go `KernelSpec` per board), not shell scripts — `gosd build-kernel`
+  (`internal/kernelbuild`) reads it directly. Change a board's kernel build
+  there, not by hand-editing a retired `build.sh`/`docker-build.sh`.
 - **Artifact releases are tag-first, bump-second.** Any change under
   `build/boards/*` that alters a compiled artifact (kernel config/fragment,
   DTS patch, U-Boot) only reaches real (non-`--artifacts-dir`) builds after a

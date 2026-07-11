@@ -105,3 +105,9 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
 For the runtime contract your app runs under once it's booted — supervision,
 environment variables, networking timing, storage, logging — see
 [`docs/runtime.md`](docs/runtime.md).
+
+Need a driver GoSD's stock, trimmed kernels cut (a USB DVB-T tuner, a niche
+sensor)? `gosd build-kernel` is an opt-in, Docker/Podman-driven command that
+compiles a custom kernel from a `gosd-kernel.toml` you declare in your
+project, without slowing down the default zero-Docker path for everyone
+else — see [`docs/custom-kernels.md`](docs/custom-kernels.md).
