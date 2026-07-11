@@ -146,6 +146,29 @@ func TestBuild_RunsContainerAndCollectsFlatOutput(t *testing.T) {
 	}
 }
 
+// If the staging dir is deleted on the host mid-build (cache cleaner, macOS
+// storage-pressure eviction - gosd-l4y9), the error must say that plainly
+// instead of surfacing the container's confusing ENOENT.
+func TestBuild_StagingDirVanishingMidBuildIsExplained(t *testing.T) {
+	spec := testSpec()
+	for name, runErr := range map[string]error{"run reports failure": errors.New("exit 1"), "run reports success": nil} {
+		t.Run(name, func(t *testing.T) {
+			rt := &fakeRunner{runFn: func(runSpec container.RunSpec) error {
+				if err := os.RemoveAll(mountHostPath(runSpec, "/out")); err != nil {
+					t.Fatal(err)
+				}
+				return runErr
+			}}
+			_, err := kernelbuild.Build(context.Background(), spec, testOverlay(), kernelbuild.Options{
+				Runtime: rt, CacheDir: t.TempDir(),
+			})
+			if err == nil || !strings.Contains(err.Error(), "disappeared while the build was running") {
+				t.Errorf("error = %v, want the vanished-staging explanation", err)
+			}
+		})
+	}
+}
+
 // The /work bind mount must come from under the cache dir, never os.TempDir():
 // macOS's default temp dir (/var/folders/…) isn't shared with Docker Desktop's
 // VM, so a mount from there is silently empty in the container (gosd-0p21).
