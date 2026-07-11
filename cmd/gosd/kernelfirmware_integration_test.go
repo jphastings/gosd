@@ -7,12 +7,39 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	diskfs "github.com/diskfs/go-diskfs"
 )
+
+// isolateUserCacheDir redirects os.UserCacheDir() (HOME on macOS,
+// XDG_CACHE_HOME/HOME on Linux) into a throwaway directory, so a test
+// exercising kernelFirmwareCacheDir() never touches - or depends on the
+// contents of - the real user cache. gosd build also shells out to `go
+// build` to cross-compile the app and gosd-init (internal/build.archEnv
+// passes the test process's own os.Environ() straight through), so GOPATH/
+// GOMODCACHE/GOCACHE are captured from the real environment first and
+// re-exported explicitly - otherwise that subprocess would re-derive them
+// from the fake HOME and re-populate a module cache under a t.TempDir(),
+// which then fails to clean up (the module cache's files are read-only).
+func isolateUserCacheDir(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{"GOPATH", "GOMODCACHE", "GOCACHE"} {
+		out, err := exec.Command("go", "env", key).Output()
+		if err != nil {
+			t.Fatalf("go env %s: %v", key, err)
+		}
+		t.Setenv(key, strings.TrimSpace(string(out)))
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
+}
 
 // TestBuildPlacesGosdKernelTomlFirmwareUnderLibFirmware is the worked-example
 // fixture test for gosd-hkp7's [[firmware]] flow: a gosd-kernel.toml with one
@@ -21,12 +48,7 @@ import (
 // real network is touched) and embedded in the built image's initramfs at
 // /lib/firmware/<dest>, alongside the board's own firmware.
 func TestBuildPlacesGosdKernelTomlFirmwareUnderLibFirmware(t *testing.T) {
-	// kernelFirmwareCacheDir resolves from os.UserCacheDir(); redirect it
-	// into a throwaway directory so this test never touches (or depends
-	// on the contents of) the real user cache.
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
+	isolateUserCacheDir(t)
 
 	firmwareContent := []byte("fake-usb-dvb-firmware-blob\n")
 	sum := sha256.Sum256(firmwareContent)
