@@ -7,26 +7,31 @@ at the same pinned commit as `build/boards/pi-zero-2w` (bean `gosd-s7fk`, epic
 
 ## What's here
 
-- `build.sh` — builds the kernel and device tree blob inside a
-  `docker.io/library/debian:bookworm` container, using
-  `crossbuild-essential-armhf` (`arm-linux-gnueabihf-gcc`). Unlike
-  `pi-zero-2w`/`radxa-zero-3e`, this is a genuine cross-compile even on an
-  arm64 host: the target is 32-bit armv6, not the host's native
-  architecture.
 - `kernel.fragment` — the config fragment carrying every option the bean
   requires, applied on top of `bcmrpi_defconfig` via
   `scripts/kconfig/merge_config.sh`. Mirrors `pi-zero-2w`'s fragment
-  one-for-one.
+  one-for-one. Embedded (via `kernelfragment.go`) into
+  `internal/kernelspec.KernelSpec`, the Go-native source of truth for how
+  this board's kernel is built.
 - `kernel.config` — the full `.config` this produces, committed for
   reference and diffing across future rebuilds.
-- `out/` — build.sh's output directory (gitignored, never committed).
+
+The kernel and device tree blob are built by
+`gosd build-kernel --board pi-zero-w` (bean gosd-07fl), which drives a
+`docker.io/library/debian:bookworm` container using
+`crossbuild-essential-armhf` (`arm-linux-gnueabihf-gcc`) from
+`internal/kernelspec`'s declarative spec — there is no board-specific shell
+script anymore. Unlike `pi-zero-2w`/`radxa-zero-3e`, this is a genuine
+cross-compile even on an arm64 host: the target is 32-bit armv6, not the
+host's native architecture. `.github/workflows/build-artifacts.yml`'s
+`pi-zero-w-kernel` job runs the exact same command CI-side.
 
 ## Building locally
 
-Requires only Docker:
+Requires only Docker (`gosd build-kernel` drives it, not the host toolchain):
 
 ```sh
-./build.sh
+go run ./cmd/gosd build-kernel --board pi-zero-w -o out/
 ```
 
 Outputs land in `out/`:
@@ -34,14 +39,16 @@ Outputs land in `out/`:
 - `kernel.img` — the kernel `zImage`, renamed as the Pi boot firmware expects
   for a 32-bit board (no `arm_64bit=1` in `config.txt`)
 - `bcm2835-rpi-zero-w.dtb` — the device tree blob for this board
-- `generated-kernel.config` — the `.config` this run actually used (should
-  match the committed `kernel.config`; a mismatch means either upstream
-  Kconfig has moved or `kernel.fragment` was edited without regenerating
-  `kernel.config`)
+- `kernel.config` — the `.config` this run actually used (should match the
+  committed `kernel.config`; a mismatch means either upstream Kconfig has
+  moved or `kernel.fragment` was edited without regenerating the committed
+  copy)
+- `source.json` — upstream repo/commit and config path, for GPL provenance
 
 Build time is roughly 20-60 minutes depending on host CPU; there's no
-incremental cache between runs (each run clones a fresh shallow copy of the
-pinned commit).
+incremental cache between runs on CI, but `gosd build-kernel` content-
+addresses local builds under `os.UserCacheDir()/gosd/kernel-build/` and
+skips the container entirely on a cache hit (see `internal/kernelbuild`).
 
 ## Toolchain note: `arm-linux-gnueabihf-` targeting armv6
 

@@ -29,9 +29,10 @@ const (
 	// pipeline must resolve for the kernel image and device tree blob
 	// config.txt names ("kernel=kernel.img") and the GPU ROM loads.
 	// Neither has a per-file pinned URL (ArtifactRef.URL is empty):
-	// they're compiled by build/boards/pi-zero-w/build.sh and resolved
-	// either from --artifacts-dir or, falling back, from the CI-built
-	// artifact release (see bean gosd-wtpa and internal/artifacts).
+	// they're compiled by `gosd build-kernel --board pi-zero-w` (bean
+	// gosd-07fl) and resolved either from --artifacts-dir or, falling
+	// back, from the CI-built artifact release (see bean gosd-wtpa and
+	// internal/artifacts).
 	kernelArtifactName = "kernel.img"
 	dtbArtifactName    = "bcm2835-rpi-zero-w.dtb"
 

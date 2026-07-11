@@ -5,38 +5,47 @@ A trimmed, module-free arm64 kernel for the Raspberry Pi Zero 2 W, built from
 
 ## What's here
 
-- `build.sh` — builds the kernel and device tree blob inside a
-  `docker.io/library/debian:bookworm` container, using
-  `crossbuild-essential-arm64` (`aarch64-linux-gnu-gcc`). This works the same
-  whether the host is arm64 (the "cross" toolchain is effectively native) or
-  amd64 (a real cross toolchain, e.g. CI runners).
 - `kernel.fragment` — the config fragment carrying every option the bean
   requires, applied on top of `bcm2711_defconfig` via
-  `scripts/kconfig/merge_config.sh`.
+  `scripts/kconfig/merge_config.sh`. Embedded (via `kernelfragment.go`) into
+  `internal/kernelspec.KernelSpec`, the Go-native source of truth for how
+  this board's kernel is built.
 - `kernel.config` — the full `.config` this produces, committed for
   reference and diffing across future rebuilds.
-- `out/` — build.sh's output directory (gitignored, never committed).
+
+The kernel and device tree blob are built by
+`gosd build-kernel --board pi-zero-2w` (bean gosd-07fl), which drives a
+`docker.io/library/debian:bookworm` container using
+`crossbuild-essential-arm64` (`aarch64-linux-gnu-gcc`) from
+`internal/kernelspec`'s declarative spec — there is no board-specific shell
+script anymore. This works the same whether the host is arm64 (the "cross"
+toolchain is effectively native) or amd64 (a real cross toolchain, e.g. CI
+runners); `.github/workflows/build-artifacts.yml`'s `pi-zero-2w-kernel` job
+runs the exact same command CI-side, so the release and local dev paths are
+the same code.
 
 ## Building locally
 
-Requires only Docker:
+Requires only Docker (`gosd build-kernel` drives it, not the host toolchain):
 
 ```sh
-./build.sh
+go run ./cmd/gosd build-kernel --board pi-zero-2w -o out/
 ```
 
 Outputs land in `out/`:
 
 - `kernel8.img` — the kernel `Image`, renamed as the Pi boot firmware expects
 - `bcm2710-rpi-zero-2-w.dtb` — the device tree blob for this board
-- `generated-kernel.config` — the `.config` this run actually used (should
-  match the committed `kernel.config`; a mismatch means either upstream
-  Kconfig has moved or `kernel.fragment` was edited without regenerating
-  `kernel.config`)
+- `kernel.config` — the `.config` this run actually used (should match the
+  committed `kernel.config`; a mismatch means either upstream Kconfig has
+  moved or `kernel.fragment` was edited without regenerating the committed
+  copy)
+- `source.json` — upstream repo/commit and config path, for GPL provenance
 
 Build time is roughly 20-60 minutes depending on host CPU; there's no
-incremental cache between runs (each run clones a fresh shallow copy of the
-pinned commit).
+incremental cache between runs on CI, but `gosd build-kernel` content-
+addresses local builds under `os.UserCacheDir()/gosd/kernel-build/` and
+skips the container entirely on a cache hit (see `internal/kernelbuild`).
 
 ## Deviation from the bean: `bcmrpi3_defconfig` no longer exists
 
@@ -53,8 +62,8 @@ raspberrypi/linux currently maintains for all Broadcom arm64 boards
 (BCM2710/2711/2712 — Zero 2 W, 3, 4, 400, CM4, ...) via
 `CONFIG_ARCH_BCM2835=y`, which is what actually gates whether
 `bcm2710-rpi-zero-2-w.dtb` gets built (see
-`arch/arm64/boot/dts/broadcom/Makefile`). `build.sh` and `kernel.fragment`
-use `bcm2711_defconfig` instead; see the header comments in both files.
+`arch/arm64/boot/dts/broadcom/Makefile`). `internal/kernelspec.go` and
+`kernel.fragment` use `bcm2711_defconfig` instead; see their header comments.
 
 ## Config verification
 

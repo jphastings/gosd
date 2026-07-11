@@ -7,16 +7,19 @@ Trimmed, module-free mainline arm64 kernel for the FriendlyElec NanoPi Zero2
 ## Building
 
 ```sh
-./build.sh
+go run ./cmd/gosd build-kernel --board nanopi-zero2 -o out/
 ```
 
-Requires only Docker. The script runs everything — cross toolchain install,
-kernel source clone, config merge, and compile — inside a
+Requires only Docker. `gosd build-kernel` (bean gosd-07fl) drives everything
+— cross toolchain install, kernel source clone, config merge, and compile —
+from `internal/kernelspec`'s declarative spec, inside a
 `docker.io/library/debian:bookworm` container using the
 `aarch64-linux-gnu-` cross prefix, so it produces identical output on an
 arm64 host (e.g. Apple Silicon, native container) or an amd64 CI runner
 (true cross-compilation). No local kernel source checkout or toolchain
-install is needed on the host.
+install is needed on the host; there is no board-specific shell script
+anymore — `.github/workflows/build-artifacts.yml`'s `nanopi-zero2-kernel`
+job runs the exact same command CI-side.
 
 Outputs land in `out/` (gitignored):
 
@@ -24,24 +27,29 @@ Outputs land in `out/` (gitignored):
 - `out/rk3528-nanopi-zero2.dtb` — the device tree blob
 - `out/kernel.config` — the full `.config` actually used for that build, for
   comparison against the committed `kernel.config`
+- `out/source.json` — upstream repo/commit and config path, for GPL
+  provenance
 
 ## Source and configuration
 
 - Kernel source: mainline stable (`git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git`),
   pinned to the same tag as every other board's kernel pipeline (see
-  `KERNEL_TAG` in `build.sh`) — one shared kernel version across the fleet.
+  `fleetKernelTag` in `internal/kernelspec.go`) — one shared kernel version
+  across the fleet.
 - `kernel-fragment.config` — the hand-maintained fragment of required options
   (SoC, storage, Ethernet, peripherals, and cuts), merged onto
   `make ARCH=arm64 defconfig` via `scripts/kconfig/merge_config.sh`.
 - `kernel.config` — the full generated `.config` from the last known-good
   build (header records the source tag/repo/generation method). This is what
   ships in release manifests for GPL compliance; it is not itself fed back
-  into the build — `build.sh` always regenerates from `defconfig` + the
-  fragment so the build stays reproducible from source.
+  into the build — `gosd build-kernel` always regenerates from `defconfig` +
+  the fragment so the build stays reproducible from source.
 
-`docker-build.sh` asserts that the bean's required `CONFIG_*` options are
-still set after `make olddefconfig` resolves dependencies, and fails loudly
-if trimming or a kernel version bump silently dropped one.
+`internal/kernelspec.go`'s `RequiredY` list asserts that the bean's required
+`CONFIG_*` options are still set after `make olddefconfig` resolves
+dependencies, and fails loudly if trimming or a kernel version bump silently
+dropped one (formerly `docker-build.sh`'s job, before bean gosd-07fl retired
+that script).
 
 ## Device-tree patches
 
@@ -86,7 +94,7 @@ than assuming the RK3566 config carries over unchanged.
 | `CONFIG_STMMAC_ETH`, `CONFIG_STMMAC_PLATFORM`, `CONFIG_DWMAC_ROCKCHIP` | yes | yes | Both boards use the Synopsys DWMAC core via the Rockchip glue driver; `dwmac-rk.c` has an explicit `rockchip,rk3528-gmac` entry. |
 | `CONFIG_REALTEK_PHY` | yes | yes | Both boards' GbE PHY is an RTL8211F (per board vendor spec sheets; the DT itself uses a generic PHY compatible on both boards, so the driver binds by probed chip ID). |
 | `CONFIG_MOTORCOMM_PHY` | yes | **no** | Radxa carries this for a board-revision variant with a YT8531 PHY. The NanoPi Zero2 has no such variant — cut to keep the trim tight. |
-| `CONFIG_USB_DWC3`, `CONFIG_USB_DWC3_DUAL_ROLE`, `CONFIG_PHY_ROCKCHIP_INNO_USB2`, `CONFIG_PHY_ROCKCHIP_NANENG_COMBO_PHY`, `CONFIG_USB_GADGET`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS*` | yes (required + asserted) | **not required, not asserted** | Bean gosd-vcae's research (completed as part of this task) found mainline has **no RK3528 USB host/OTG controller DT node at all** as of the pinned tag — checked `rk3528.dtsi` and every RK3528 board file in the same kernel tree, plus `phy-rockchip-inno-usb2.c`'s of_device_id table (no rk3528 entry either). These symbols still end up `=y` in the generated config because the shared `arm64 defconfig` baseline enables them anyway (it does on Radxa too — that fragment's USB block mostly restates defconfig), but on this board they bind to nothing at runtime, so this fragment neither requires them nor asserts them in `docker-build.sh`. Recheck at a future kernel tag. |
+| `CONFIG_USB_DWC3`, `CONFIG_USB_DWC3_DUAL_ROLE`, `CONFIG_PHY_ROCKCHIP_INNO_USB2`, `CONFIG_PHY_ROCKCHIP_NANENG_COMBO_PHY`, `CONFIG_USB_GADGET`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS*` | yes (required + asserted) | **not required, not asserted** | Bean gosd-vcae's research (completed as part of this task) found mainline has **no RK3528 USB host/OTG controller DT node at all** as of the pinned tag — checked `rk3528.dtsi` and every RK3528 board file in the same kernel tree, plus `phy-rockchip-inno-usb2.c`'s of_device_id table (no rk3528 entry either). These symbols still end up `=y` in the generated config because the shared `arm64 defconfig` baseline enables them anyway (it does on Radxa too — that fragment's USB block mostly restates defconfig), but on this board they bind to nothing at runtime, so this fragment neither requires them nor asserts them in `internal/kernelspec.go`'s `RequiredY`. Recheck at a future kernel tag. |
 | `CONFIG_GPIO_ROCKCHIP`, `CONFIG_I2C_RK3X`, `CONFIG_SPI_ROCKCHIP`, `CONFIG_SERIAL_8250_DW` | yes | yes | Same driver families; rk3528's i2c/spi/gpio/uart nodes use fallback compatibles (`rockchip,rk3399-i2c`, `rockchip,rk3066-spi`, `rockchip,gpio-bank`, `snps,dw-apb-uart`) that these same drivers already match. |
 
 Effective-config check: diffing this board's generated `kernel.config`
@@ -113,7 +121,8 @@ on this board until then.
 
 ## Updating the pinned kernel version
 
-Bump `KERNEL_TAG` in `build.sh` to match the other boards' pipelines (keep
-all boards on the same tag), rerun `./build.sh`, then copy `out/kernel.config`
-over the committed `kernel.config` and commit both alongside the version
-bump. Re-check the USB gap above against the new tag while you're at it.
+Bump `fleetKernelTag` in `internal/kernelspec.go` to match the other boards'
+pipelines (keep all boards on the same tag), rerun the build command above,
+then copy `out/kernel.config` over the committed `kernel.config` and commit
+both alongside the version bump. Re-check the USB gap above against the new
+tag while you're at it.

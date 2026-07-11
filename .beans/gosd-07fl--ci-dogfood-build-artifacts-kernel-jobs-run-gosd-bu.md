@@ -1,10 +1,11 @@
 ---
 # gosd-07fl
 title: 'CI dogfood: build-artifacts kernel jobs run gosd build-kernel; retire scripts'
-status: todo
+status: in-progress
 type: task
+priority: normal
 created_at: 2026-07-11T07:41:32Z
-updated_at: 2026-07-11T07:41:32Z
+updated_at: 2026-07-11T15:30:36Z
 parent: gosd-47rm
 blocked_by:
     - gosd-abya

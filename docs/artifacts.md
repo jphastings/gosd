@@ -18,23 +18,40 @@ release contains only what GoSD compiles: kernels and U-Boot.
 Pushing a git tag `artifacts/vX.Y.Z` runs
 `.github/workflows/build-artifacts.yml`, which:
 
-1. Runs `build/boards/pi-zero-2w/build.sh`, `build/boards/pi-zero-w/build.sh`,
-   `build/boards/radxa-zero-3e/kernel/build.sh`,
-   `build/boards/radxa-zero-3e/uboot/build.sh`,
-   `build/boards/nanopi-zero2/kernel/build.sh`,
-   `build/boards/nanopi-zero2/uboot/build.sh`, and
-   `build/boards/qemu-virt/kernel/build.sh` — each Dockerized, each
-   cross-compiling for arm64 (or, for pi-zero-w, armv6) via a `-linux-gnu-`
-   cross toolchain, so they run unchanged on GitHub's amd64 `ubuntu-latest`
-   runners (no QEMU, no arm64 runner needed).
+1. Runs `gosd build-kernel --board <id> --staging staging/` (bean gosd-07fl)
+   for each of `pi-zero-2w`, `pi-zero-w`, `radxa-zero-3e`, `nanopi-zero2`,
+   and `qemu-virt` — one job per board, each driving Docker from
+   `internal/kernelspec`'s declarative per-board spec, cross-compiling for
+   arm64 (or, for pi-zero-w, armv6) via a `-linux-gnu-` cross toolchain, so
+   they run unchanged on GitHub's amd64 `ubuntu-latest` runners (no QEMU, no
+   arm64 runner needed). This is the same command a developer runs locally
+   with `gosd build-kernel` — CI dogfoods the real CLI path rather than a
+   separate release-only script. `gosd build-kernel --staging` also writes
+   each board's `source.json` directly, so the release path and the local
+   dev path produce identical provenance data. The two U-Boot boards
+   (radxa-zero-3e, nanopi-zero2) additionally run their own
+   `build/boards/<board>/uboot/build.sh` — U-Boot orchestration is out of
+   scope for `gosd build-kernel` (epic gosd-47rm) and stays a plain script; a
+   small workflow step merges its pinned repo/tag into the board's
+   already-written `source.json`, since the U-Boot script has no `source.json`
+   of its own.
 2. Packages the outputs into per-board tarballs — `pi-zero-2w.tar.zst`,
    `pi-zero-w.tar.zst`, `radxa-zero-3e.tar.zst`, `nanopi-zero2.tar.zst`, and
    `qemu-virt.tar.zst` — using `build/artifacts/package.sh`, which also
    writes a `manifest.json` describing every file's name, sha256, and size,
    plus each compiled component's source repo/commit-or-tag/config path (GPL
-   provenance).
+   provenance). Because `gosd build-kernel --staging` also emits the
+   generated `kernel.config` alongside the kernel image and DTB, that file is
+   now packaged into the tarball too (previously only referenced by path from
+   a committed copy) — a small, deliberate content change, not a regression.
 3. Publishes a GitHub Release for the pushed tag with the tarballs and
    `manifest.json` attached.
+
+The workflow also has a `workflow_dispatch` trigger for testing the full
+kernel-build → package pipeline on a branch without cutting a real release:
+a dispatch run skips the final "Publish GitHub Release" step (tag-conditional
+on `refs/tags/artifacts/*`) and instead uploads `dist/` as a workflow
+artifact for inspection.
 
 `qemu-virt` is an **internal-only board**: it's a CI/local-dev boot-testing
 profile (bean gosd-5wm0, epic gosd-c54j), never advertised in end-user docs
@@ -53,36 +70,45 @@ staging/
   pi-zero-2w/
     kernel8.img
     bcm2710-rpi-zero-2-w.dtb
+    kernel.config
     source.json        # optional; copied into manifest.json verbatim
   pi-zero-w/
     kernel.img
     bcm2835-rpi-zero-w.dtb
+    kernel.config
     source.json
   radxa-zero-3e/
     Image
     rk3566-radxa-zero-3e.dtb
+    kernel.config
     idbloader.img
     u-boot.itb
     source.json
   nanopi-zero2/
     Image
     rk3528-nanopi-zero2.dtb
+    kernel.config
     idbloader.img
     u-boot.itb
     source.json
   qemu-virt/
     Image
+    kernel.config
     source.json
 ```
+
+(`gosd build-kernel --staging staging/` produces exactly this per-board
+layout, `kernel.config`/`source.json` included — see
+`internal/kernelbuild/output.go`.)
 
 and run `build/artifacts/package.sh <version> staging <output-dir>` to get
 the same tarballs + manifest.json the workflow publishes.
 
 ## Cutting a new release
 
-1. Land whatever kernel/U-Boot changes are needed on `main` (a `build.sh` or
-   `kernel.config`/config-fragment change, reviewed and merged like any
-   other PR).
+1. Land whatever kernel/U-Boot changes are needed on `main` (an
+   `internal/kernelspec.go`, config-fragment, or U-Boot `build.sh` change,
+   reviewed and merged like any other PR).
 2. Decide the new version number (`vX.Y.Z`, independent of the CLI's own
    version — bump the artifact version when kernels/U-Boot change, not when
    unrelated CLI code changes).
@@ -141,8 +167,8 @@ Failure modes are reported actionably rather than as a bare error chain:
 
 `--artifacts-dir <dir>` (see `internal/boards.ResolveArtifacts`) is checked
 before any of the above, for every artifact a board needs — pass it a
-directory containing your own `kernel8.img`/`Image`/etc. (e.g. output from
-running a `build/boards/*/build.sh` locally) to iterate on a kernel change
+directory containing your own `kernel8.img`/`Image`/etc. (e.g. the `-o`
+output of `gosd build-kernel` run locally) to iterate on a kernel change
 without cutting a release. `cmd/gosd/testdata/fake-artifacts/` is the
 placeholder set gosd's own test suite uses; it's wired in only via explicit
 `--artifacts-dir` flags in tests, never as a default fallback in production
