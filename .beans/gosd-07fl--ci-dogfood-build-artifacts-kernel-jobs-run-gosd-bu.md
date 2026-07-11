@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-11T07:41:32Z
-updated_at: 2026-07-11T15:30:36Z
+updated_at: 2026-07-11T16:35:38Z
 parent: gosd-47rm
 blocked_by:
     - gosd-abya
@@ -46,9 +46,9 @@ deleted.
 
 ## Todos
 
-- [ ] Workflow kernel jobs → `gosd build-kernel`; drop grep-provenance step
-- [ ] Delete retired kernel shell scripts; update `build/boards/*` READMEs
+- [x] Workflow kernel jobs → `gosd build-kernel`; drop grep-provenance step
+- [x] Delete retired kernel shell scripts; update `build/boards/*` READMEs
 - [ ] Byte-identity comparison recorded here (or documented fallback)
 - [ ] Full workflow green on a non-release ref
-- [ ] `docs/artifacts.md` release procedure updated to match
+- [x] `docs/artifacts.md` release procedure updated to match
 - [ ] Quality gates green
