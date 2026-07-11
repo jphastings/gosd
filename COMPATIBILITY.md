@@ -19,6 +19,7 @@ see `beans list` for what's in flight.
 |---|---|---|---|---|
 | Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ |
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] |
+| Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
 | Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | ✅ |
 | WiFi (WPA2-PSK / open) | ✅ | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
 | Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
@@ -39,6 +40,22 @@ see `beans list` for what's in flight.
 (no matching hardware) · ❌ not supported (with a reason below).
 
 ## Footnotes
+
+[^custom-kernel]: `gosd build-kernel` (see `docs/custom-kernels.md`) is
+    code-complete: it drives a local Docker/Podman daemon to cross-compile a
+    board's kernel from `internal/kernelspec`'s declarative build inputs
+    plus a developer's `gosd-kernel.toml` overlay, emitting artifacts that
+    drop straight into `gosd build --artifacts-dir`. The command's pipeline
+    was verified end-to-end on the internal `qemu-virt` profile: a real
+    Docker build fed straight into a qemu boot-to-HTTP run. Per-board custom
+    kernels (this row) are fake-artifact/CI-tested for all four public
+    boards; the flagship worked example — compiling in USB DVB-T support on
+    the Pi Zero 2W, including the documented rp1-cfe collision workaround —
+    was additionally proven with a real Docker build producing a
+    `kernel.config` with every expected symbol `=y`. Like every other row in
+    this table, no custom kernel has been run on physical hardware yet
+    (hardware bring-up beans for the underlying boards are still open, see
+    the note above this table).
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
     published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,
