@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-07-11T12:29:45Z
-updated_at: 2026-07-11T12:41:22Z
+updated_at: 2026-07-11T20:07:29Z
 ---
 
 Found 2026-07-11 during the epic's first real end-to-end run (`gosd build-kernel --board=qemu-virt` against local Docker Desktop): the container exits 127 with `bash: /work/build.sh: No such file or directory`.
@@ -19,6 +19,14 @@ Part of epic [[gosd-47rm]]; bug in [[gosd-x488]]'s merged implementation. The fa
 ## Fix
 
 Create the work dir under the (already-created) cache root alongside the temp output dir, so both bind mounts live in a Docker-Desktop-shared location. Regression test asserts the /work mount's HostPath is under the cache root, with a comment explaining the sharing constraint.
+
+## Addendum (2026-07-11, [[gosd-g4kf]])
+
+The VM in question was actually **colima**, not Docker Desktop — this machine's
+`docker context show` is `colima` (discovered while adding explicit colima
+support). Colima shares $HOME and /tmp/colima with its VM, not /var/folders,
+so the diagnosis mechanism and the fix are unchanged; only the provider naming
+in the original report was wrong.
 
 ## Summary of Changes
 

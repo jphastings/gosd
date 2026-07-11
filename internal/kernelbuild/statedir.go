@@ -14,7 +14,8 @@ import (
 // (and evicts entries that cost that long to rebuild). See bean gosd-l4y9.
 //
 // The chosen locations are durable state dirs that still live under the
-// user's home, which Docker Desktop and podman machine share with their VMs:
+// user's home, which Docker Desktop, colima and podman machine all share
+// with their VMs:
 //   - darwin:  ~/Library/Application Support/gosd/kernel-build
 //   - windows: os.UserConfigDir()/gosd/kernel-build
 //   - other:   $XDG_STATE_HOME/gosd/kernel-build, or

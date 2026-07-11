@@ -42,7 +42,9 @@ gosd build-kernel --board=pi-zero-2w -o ./gosd-artifacts
 gosd build . --board pi-zero-2w --artifacts-dir ./gosd-artifacts -o hello.img
 ```
 
-`gosd build-kernel` requires a local Docker or Podman daemon running; it
+`gosd build-kernel` requires a local Docker or Podman daemon running
+(Docker Desktop, [colima](https://colima.run/) in its default docker-runtime
+mode, or podman); it
 drives it directly (`internal/container`), auto-detecting whichever one it
 finds unless `--builder` or `gosd-kernel.toml`'s `[kernel].builder` says
 otherwise. A kernel build takes 20–120 minutes depending on the board and
@@ -221,6 +223,9 @@ alongside anything you ship.
 ## Supported hosts
 
 `gosd build-kernel` runs on the same hosts the rest of the CLI supports —
-macOS and Linux (amd64/arm64) — with either Docker Desktop or Podman
-installed and its daemon/machine running. Windows is untested, matching the
+macOS and Linux (amd64/arm64) — with Docker Desktop, colima (docker-runtime
+mode; its containerd/nerdctl mode has no docker socket and is not supported),
+or Podman installed and its daemon/machine running. All three share the
+user's home directory with their VMs, which the build relies on for its bind
+mounts. Windows is untested, matching the
 rest of the CLI's "best-effort, don't break gratuitously" stance.
