@@ -1,10 +1,11 @@
 ---
 # gosd-x488
 title: 'kernelbuild: Go kernel builder with overlay, cache and provenance'
-status: todo
+status: completed
 type: task
+priority: normal
 created_at: 2026-07-11T07:41:32Z
-updated_at: 2026-07-11T07:41:32Z
+updated_at: 2026-07-11T11:04:31Z
 parent: gosd-47rm
 blocked_by:
     - gosd-di6v
@@ -49,9 +50,48 @@ container ([[gosd-fe9w]]) and emit artifacts.
 
 ## Todos
 
-- [ ] Build-script generation from KernelSpec (+ overlay semantics)
-- [ ] Run via container runtime; stream logs
-- [ ] Flat-output + staging-output collection, `source.json`
-- [ ] Content-addressed cache with atomic rename
-- [ ] Fake-runtime behavioral tests
-- [ ] Quality gates green
+- [x] Build-script generation from KernelSpec (+ overlay semantics)
+- [x] Run via container runtime; stream logs
+- [x] Flat-output + staging-output collection, `source.json`
+- [x] Content-addressed cache with atomic rename
+- [x] Fake-runtime behavioral tests
+- [x] Quality gates green
+
+
+
+## Summary of Changes
+
+Added `internal/kernelbuild`, the Go-native kernel build orchestrator:
+
+- `Build(ctx, spec, overlay, opts)` generates a bash script from a
+  `kernelspec.KernelSpec` (+ optional developer `Overlay`), mirroring the
+  retired `build/boards/*/build.sh`/`docker-build.sh` steps: shallow clone
+  (commit-ref via init/fetch/checkout, tag-ref via `git clone --branch`),
+  apply GoSD DTS patches, `make <defconfig>`, merge the GoSD fragment,
+  apply the developer overlay (patches then fragment, both after GoSD's),
+  `make olddefconfig`, assert `RequiredY`/`ForbiddenY` (normalizing both the
+  Pi boards' `CONFIG_FOO=y`-shaped entries and the Rockchip-family boards'
+  bare-symbol entries to one check), build the kernel image + DTB, copy
+  outputs and the generated `.config` to `/out`. Runs via a small local
+  `runner` interface satisfied by `*container.Runtime`, so tests inject a
+  fake without changing `internal/container`.
+- Content-addressed cache under `os.UserCacheDir()/gosd/kernel-build/<key>/`
+  (key = hash of repo, ref, image, GoSD fragment/patches, overlay,
+  output filenames); builds into a temp dir and `os.Rename`s into place only
+  once every expected output is present, so an interrupted build leaves no
+  cache entry. A cache hit skips the container run and reports
+  `Result.Skipped`.
+- `Outputs{FlatDir, StagingDir}` writes the board's artifact files (matching
+  `ArtifactRef.Name`s) plus `kernel.config` and `source.json`
+  (`internal/artifacts.ComponentSource` shape) flat and/or under
+  `StagingDir/<BoardID>/`, matching what `build/artifacts/package.sh`
+  expects.
+- Tests are behavioral, using a fake `runner`: script step order and
+  overlay-after-GoSD semantics, KBUILD env pins, cache hit/miss on every
+  input (ref, fragment, overlay, image), no cache entry after an
+  interrupted build, flat/staging output contents, `source.json` contents,
+  and a `RequiredY` failure surfacing the missing symbol name in the
+  returned error.
+
+No real kernel compile is exercised anywhere (per the bean's boundary); no
+real-container smoke test was added since it was optional in scope.
