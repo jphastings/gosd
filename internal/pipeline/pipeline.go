@@ -53,6 +53,18 @@ type Options struct {
 	// board's BootFiles.
 	Config boards.BuildConfig
 
+	// ExtraFirmware holds additional runtime firmware files to land under
+	// /lib/firmware in the initramfs, alongside the board's own
+	// FirmwareFiles() - keyed the same way, by path relative to
+	// /lib/firmware. This is how gosd-kernel.toml's [[firmware]] entries
+	// (bean gosd-hkp7) reach the image: cmd/gosd fetches and opens them
+	// before calling Assemble, so this package stays free of any
+	// developer-config or network-fetch concerns. A key also present in
+	// the board's own firmware is overridden by the entry here. Assemble
+	// closes every reader once it's done with it, exactly like the
+	// board's own firmware readers.
+	ExtraFirmware map[string]io.Reader
+
 	// ArtifactsDir is checked for each of Board.Artifacts() by name
 	// before falling back to a pinned-URL fetch into CacheDir. Pointing
 	// it at a directory that already contains every artifact a board
@@ -82,6 +94,9 @@ func Assemble(ctx context.Context, opts Options) error {
 	}
 
 	firmware := opts.Board.FirmwareFiles(resolved)
+	for name, r := range opts.ExtraFirmware {
+		firmware[name] = r
+	}
 	defer closeReaders(firmware)
 
 	initBin, err := os.Open(opts.InitBinaryPath)
