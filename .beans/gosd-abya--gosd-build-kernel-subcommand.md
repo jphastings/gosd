@@ -1,10 +1,11 @@
 ---
 # gosd-abya
 title: gosd build-kernel subcommand
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-07-11T07:41:32Z
-updated_at: 2026-07-11T07:41:32Z
+updated_at: 2026-07-11T11:53:45Z
 parent: gosd-47rm
 blocked_by:
     - gosd-x488
@@ -44,8 +45,48 @@ Part of [[gosd-47rm]]. The user-facing subcommand wiring KernelSpec
 
 ## Todos
 
-- [ ] Subcommand + flags + registration
-- [ ] Thread config/overlay + builder choice into kernelbuild
-- [ ] Success output points at `--artifacts-dir` usage
-- [ ] Behavioral tests with fake builder
-- [ ] Quality gates green
+- [x] Subcommand + flags + registration
+- [x] Thread config/overlay + builder choice into kernelbuild
+- [x] Success output points at `--artifacts-dir` usage
+- [x] Behavioral tests with fake builder
+- [x] Quality gates green
+
+
+
+## Summary of Changes
+
+- Added `cmd/gosd/buildkernel.go`: `gosd build-kernel` (`newBuildKernelCmd`),
+  registered in `newRootCmd`. Flags: `--board` (repeatable, reuses `build.go`'s
+  `resolveBoards` so default/unknown-board/qemu-virt behavior matches
+  `gosd build` exactly), `-o/--output` (default `./gosd-artifacts/`),
+  `--config` (defaults to `gosd-kernel.toml` in the working directory if
+  present), `--builder` (`docker`/`podman`, validated, default auto-detect),
+  `--staging`.
+- Added `internal/kernelconfig`: the minimal v1 gosd-kernel.toml parser —
+  `Parse` decodes `[kernel.<board-id>]` `fragment`/`patches` (BurntSushi TOML,
+  same idiom as `internal/gosdtoml`), and `Config.Overlay(boardID, baseDir)`
+  resolves those paths (relative to the config file's directory) into a
+  `kernelbuild.Overlay`, reading the fragment file and glob-expanding+reading
+  each patches entry. Bean gosd-hkp7 grows this package in place for the full
+  schema (strict unknown-key rejection, `[kernel]` based-on/builder,
+  `[[firmware]]`).
+- `runBuildKernel` validates `--builder`, resolves boards, loads the overlay
+  config, calls `container.Detect` once, then builds each board sequentially
+  via `buildKernelsForBoards`, which aborts on the first failure (naming the
+  board) and never touches boards after it. On success it prints a per-board
+  fresh/cache-hit line and the `gosd build --artifacts-dir <dir> ...`
+  follow-up.
+- Testability: `buildKernelsForBoards` takes the container runtime and the
+  `kernelbuild.Build`-shaped builder function as explicit parameters (same
+  function-value-injection pattern as `compileForBoards` in `archbuild.go`),
+  and a small locally-defined `containerRuntime` interface (mirroring
+  `internal/kernelbuild`'s own unexported `runner` interface) lets tests
+  supply a fake runtime — so `cmd/gosd/buildkernel_test.go` exercises flag
+  defaults, builder validation, config loading/defaulting/error paths, output/
+  staging/overlay threading, cache-hit reporting, sequential abort-on-failure,
+  default-vs-explicit-qemu-virt board resolution, and the success summary
+  text, all without Docker/Podman.
+- `go test ./...`, `go vet ./...`, `gofmt -l .`, and `golangci-lint run ./...`
+  (both native and `GOOS=linux`) are all clean. No changes to `build.go`/
+  `run.go` beyond the one `AddCommand` line in `main.go`; COMPATIBILITY.md is
+  unaffected (no board/feature status changed).
