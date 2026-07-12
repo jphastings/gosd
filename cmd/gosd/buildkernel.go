@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -197,6 +198,7 @@ func buildKernelsForBoards(
 		if err != nil {
 			return nil, err
 		}
+		spec = applyOverlayAssertions(spec, overlay)
 
 		result, err := build(ctx, spec, overlay, kernelbuild.Options{
 			Runtime: rt,
@@ -212,6 +214,58 @@ func buildKernelsForBoards(
 	}
 
 	return outcomes, nil
+}
+
+// overlayConfigYLine matches an exact "CONFIG_FOO=y" fragment line, the same
+// shape internal/kernelspec derives the Pi boards' RequiredY from.
+var overlayConfigYLine = regexp.MustCompile(`^CONFIG_[A-Za-z0-9_]+=y$`)
+
+// applyOverlayAssertions reconciles GoSD's own post-olddefconfig assertions
+// with the developer's overlay fragment, honoring docs/custom-kernels.md's
+// contract that "a line in your fragment always wins if it conflicts with
+// GoSD's": every CONFIG_FOO=y line in the overlay is removed from the
+// board's ForbiddenY (a developer re-enabling a subsystem GoSD's trim
+// forbids — DRM, sound — is the whole point of a custom kernel) and added
+// to RequiredY, so a developer symbol silently dropped by `make
+// olddefconfig` (an unmet dependency, say) fails the build loudly instead
+// of shipping a kernel without the driver they asked for.
+func applyOverlayAssertions(spec kernelspec.KernelSpec, overlay kernelbuild.Overlay) kernelspec.KernelSpec {
+	var overlayY []string
+	for line := range strings.Lines(string(overlay.ConfigFragment)) {
+		line = strings.TrimRight(line, "\r\n")
+		if overlayConfigYLine.MatchString(line) {
+			overlayY = append(overlayY, line)
+		}
+	}
+	if len(overlayY) == 0 {
+		return spec
+	}
+
+	symbol := func(line string) string { return strings.TrimSuffix(line, "=y") }
+
+	overlaySet := make(map[string]bool, len(overlayY))
+	for _, line := range overlayY {
+		overlaySet[symbol(line)] = true
+	}
+
+	var forbidden []string
+	for _, opt := range spec.ForbiddenY {
+		if !overlaySet[strings.TrimSuffix(opt, "=y")] {
+			forbidden = append(forbidden, opt)
+		}
+	}
+	spec.ForbiddenY = forbidden
+
+	required := make(map[string]bool, len(spec.RequiredY))
+	for _, opt := range spec.RequiredY {
+		required[symbol(opt)] = true
+	}
+	for _, line := range overlayY {
+		if !required[symbol(line)] {
+			spec.RequiredY = append(spec.RequiredY, line)
+		}
+	}
+	return spec
 }
 
 func printKernelBuildSummary(cmd *cobra.Command, outcomes []kernelBuildOutcome, outputDir string) {
