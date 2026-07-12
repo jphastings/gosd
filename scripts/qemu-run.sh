@@ -6,6 +6,10 @@
 #
 # Usage: scripts/qemu-run.sh <path-to-image.img>
 #
+# QEMU_DISPLAY=1 opens qemu's default host display window (Cocoa/GTK)
+# showing the guest's virtio-gpu output - for display apps like
+# examples/sattrack. Unset (the default, and what CI uses) stays headless.
+#
 # Requires qemu-system-aarch64 on PATH:
 #   macOS:  brew install qemu
 #   Debian/Ubuntu: apt-get install qemu-system-arm

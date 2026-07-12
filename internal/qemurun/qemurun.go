@@ -52,6 +52,11 @@ type Options struct {
 	// MemoryMiB is the guest's RAM size in MiB. Zero means
 	// DefaultMemoryMiB.
 	MemoryMiB int
+	// Display opens qemu's default host display window (Cocoa on macOS,
+	// GTK on Linux) so the guest's virtio-gpu output is visible, keeping
+	// the serial console (with qemu's monitor muxed onto it, Ctrl-A c) on
+	// stdio. False keeps today's fully headless -nographic behavior.
+	Display bool
 	// ExtraArgs are appended verbatim after every other
 	// qemu-system-aarch64 argument - an escape hatch for options this
 	// package doesn't expose directly.
@@ -137,8 +142,10 @@ func extractFile(bootFS fs.ReadFileFS, entry fs.DirEntry, destDir string) error 
 // kernel and initramfs already extracted into workDir, with imgPath
 // attached as the virtio-blk disk: -M virt -cpu cortex-a53, virtio-blk and
 // virtio-net over PCI with romfile= (avoids qemu refusing to start when
-// PXE option ROMs aren't shipped), serial on stdio, hostfwd for the
-// guest's HTTP port. This is the exact invocation validated by gosd-5wm0.
+// PXE option ROMs aren't shipped), a virtio GPU, serial on stdio, hostfwd
+// for the guest's HTTP port. This is the invocation validated by
+// gosd-5wm0, plus the always-attached virtio-gpu-pci and the optional
+// Options.Display window added for display apps (gosd-e9fy).
 func Args(workDir, imgPath string, opts Options) []string {
 	port := opts.Port
 	if port == 0 {
@@ -151,15 +158,29 @@ func Args(workDir, imgPath string, opts Options) []string {
 
 	args := []string{
 		"-M", "virt", "-cpu", "cortex-a53", "-m", strconv.Itoa(mem),
-		"-nographic",
+	}
+	if opts.Display {
+		// No -display flag: qemu picks the host's default backend
+		// (Cocoa/GTK). -serial mon:stdio keeps the serial console and
+		// muxed monitor on stdio exactly as -nographic would.
+		args = append(args, "-serial", "mon:stdio")
+	} else {
+		args = append(args, "-nographic")
+	}
+	args = append(args,
 		"-kernel", filepath.Join(workDir, "Image"),
 		"-initrd", filepath.Join(workDir, "initramfs.cpio.zst"),
 		"-append", "console=ttyAMA0 gosd.board=qemu-virt",
-		"-drive", "if=none,file=" + imgPath + ",format=raw,id=hd0",
+		"-drive", "if=none,file="+imgPath+",format=raw,id=hd0",
 		"-device", "virtio-blk-pci,drive=hd0,romfile=",
 		"-netdev", fmt.Sprintf("user,id=n0,hostfwd=tcp::%d-:80", port),
 		"-device", "virtio-net-pci,netdev=n0,romfile=",
-	}
+		// A virtio GPU is always attached, headless or not: gosd-init and
+		// most apps never open /dev/dri, display apps (examples/sattrack)
+		// get a KMS device to drive, and stock kernels without
+		// CONFIG_DRM_VIRTIO_GPU simply ignore it.
+		"-device", "virtio-gpu-pci,romfile=",
+	)
 	return append(args, opts.ExtraArgs...)
 }
 
