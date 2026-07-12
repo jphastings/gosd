@@ -1,0 +1,10 @@
+# Custom-kernel recipe for examples/sattrack (see docs/custom-kernels.md):
+# the stock GoSD kernels cut all of DRM, so this example needs
+# `gosd build-kernel` once per board, then `gosd build --artifacts-dir`.
+
+[kernel.pi-zero-w]
+fragment = "pi-zero-w.fragment"
+patches = ["patches/0001-enable-vc4-hdmi.patch"]
+
+[kernel.qemu-virt]
+fragment = "qemu-virt.fragment"

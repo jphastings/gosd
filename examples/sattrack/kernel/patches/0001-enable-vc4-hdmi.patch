@@ -1,0 +1,54 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
+@@ -137,3 +137,51 @@
+ &wifi_pwrseq {
+ 	reset-gpios = <&gpio 41 GPIO_ACTIVE_LOW>;
+ };
++
++/*
++ * GoSD examples/sattrack: pin the whole vc4/KMS display pipeline to
++ * status = "okay" - the effect of raspberrypi/linux's vc4-kms-v3d
++ * overlay (arch/arm/boot/dts/overlays/vc4-kms-v3d-overlay.dts), ported
++ * onto this upstream-style DTS because GoSD's pinned U-Boot-less Pi
++ * boot path applies no runtime overlays.
++ *
++ * On this tree most of these nodes carry no status property (enabled
++ * by default) and &hdmi is already "okay" above; the explicit pin is
++ * defensive and self-documenting rather than strictly load-bearing.
++ * &hvs and the three pixelvalves have no labels in the upstream-style
++ * dtsi files, hence the full-path references. &vec stays disabled and
++ * the overlay's &fb / CMA fragments have no equivalent here (no fb
++ * node; CMA is sized by CONFIG_CMA_SIZE_MBYTES in the sattrack kernel
++ * fragment instead).
++ */
++&vc4 {
++	status = "okay";
++};
++
++&hdmi {
++	status = "okay";
++};
++
++&v3d {
++	status = "okay";
++};
++
++&txp {
++	status = "okay";
++};
++
++&{/soc/hvs@7e400000} {
++	status = "okay";
++};
++
++&{/soc/pixelvalve@7e206000} {
++	status = "okay";
++};
++
++&{/soc/pixelvalve@7e207000} {
++	status = "okay";
++};
++
++&{/soc/pixelvalve@7e807000} {
++	status = "okay";
++};

@@ -1,0 +1,28 @@
+# examples/sattrack overlay fragment for pi-zero-w: bring back the DRM
+# subsystem GoSD's stock kernel cuts, with the vc4 KMS driver compiled in,
+# merged after build/boards/pi-zero-w/kernel.fragment (overlay wins).
+#
+# CMA sizing is baked in here (no cmdline surface needed): the stock config
+# ends up with a 5MB default, far too small for vc4's dumb-buffer scanout.
+CONFIG_DRM=y
+CONFIG_DRM_VC4=y
+CONFIG_CMA=y
+CONFIG_DMA_CMA=y
+CONFIG_CMA_SIZE_MBYTES=64
+
+# DRM_VC4 hard-depends on SND && SND_SOC at this tree's pinned commit
+# (drivers/gpu/drm/vc4/Kconfig: "depends on SND && SND_SOC" - HDMI audio
+# support is not severable), so the stock "no sound" cut must be partially
+# reverted or `make olddefconfig` silently drops DRM_VC4. This is the
+# minimum sound surface that satisfies the dependency; no codec, machine,
+# or USB audio drivers come with it.
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_SOC=y
+
+# Appliance display: the app owns the screen. No fbdev shim, no text
+# console splashing kernel messages over the map, no boot logo, no CEC.
+# CONFIG_DRM_FBDEV_EMULATION is not set
+# CONFIG_FRAMEBUFFER_CONSOLE is not set
+# CONFIG_LOGO is not set
+# CONFIG_DRM_VC4_HDMI_CEC is not set
