@@ -2,9 +2,12 @@
 
 A GoSD example that turns a Raspberry Pi Zero W with a mini-HDMI cable into
 a live satellite tracker: a fullscreen NASA Blue Marble world map with the
-satellite's current position (red circle), its ground track over the past
-hour (solid red line, fading out at its oldest tip), the coming hour
-(dashed red line), and the satellite's name, updating once per second.
+satellite's current position (red circle with a thin black stroke), its
+ground track over the past 30 minutes (solid red line, fading out over its
+oldest ~5 minutes), the coming 30 minutes (dashed red line — 16px dashes
+measured along the track, phase-anchored so painted dashes never crawl),
+and the satellite's name (black text, white stroke) fixed to the right of
+the circle, updating once per second.
 
 Beyond the pretty picture, this example demonstrates two things:
 
