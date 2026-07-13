@@ -1,7 +1,8 @@
 # GoSD — guide for implementing agents
 
 GoSD turns a Go main package into flashable SD-card images for small ARM boards
-(Raspberry Pi Zero 2W, Radxa Zero 3E). See README.md for the pitch. All work is
+(see COMPATIBILITY.md for the board × feature matrix). See README.md for the
+pitch. All work is
 planned and tracked in **beans** — run `beans prime` at the start of a session,
 and pick up work with `beans list --ready`. Bean bodies contain locked
 per-task decisions: follow them; do not relitigate them in code review or
@@ -19,6 +20,9 @@ say so in the bean rather than silently diverging.
 - `beans update` applies only the LAST `--body-replace-old/--body-replace-new`
   pair per invocation (the GraphQL path differs). Do one replacement per call,
   and check off todos one at a time.
+- `beans create --json` returns the new id at `.bean.id`, NOT `.id` —
+  `jq -r .id` silently yields `null`, which then cascades into confusing
+  "parent bean not found: null" errors.
 - Stacked work: when a task depends on an as-yet-unmerged PR, branch from that
   PR's branch (not `main`), say "stacked on #NN" in the body, and rebase onto
   `main` once it lands. Keep stacks shallow — prefer waiting for a merge over
@@ -38,8 +42,8 @@ say so in the bean rather than silently diverging.
   GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline
   compiles the app and gosd-init once per architecture needed by the selected
   boards (decided 2026-07-06; was arm64-only).
-- **Board IDs:** `pi-zero-2w`, `pi-zero-w` (in progress — epic gosd-ajpz),
-  `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec, RK3528A — epic gosd-cwjf);
+- **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
+  `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf);
   also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
@@ -97,6 +101,16 @@ say so in the bean rather than silently diverging.
   Go `KernelSpec` per board), not shell scripts — `gosd build-kernel`
   (`internal/kernelbuild`) reads it directly. Change a board's kernel build
   there, not by hand-editing a retired `build.sh`/`docker-build.sh`.
+- **`gosd build-kernel` builds are content-addressed and cached** (kernel ref
+  + image digest + fragment/patches + overlay) in a durable per-OS state dir
+  (`internal/kernelbuild`'s `defaultBuildRoot`): identical re-runs are instant
+  cache hits, so never re-run a long build just to re-emit its artifacts.
+  Container bind mounts must stage under the user's home — macOS's temp dir
+  (`/var/folders`) isn't shared with the Docker/colima VM and
+  `~/Library/Caches` is storage-pressure-evictable; each silently killed a
+  real 75-minute build (beans gosd-0p21, gosd-l4y9). colima in its default
+  docker-runtime mode is a fully supported daemon (it presents as a normal
+  docker context).
 - **Artifact releases are tag-first, bump-second.** Any change under
   `build/boards/*` that alters a compiled artifact (kernel config/fragment,
   DTS patch, U-Boot) only reaches real (non-`--artifacts-dir`) builds after a
@@ -153,3 +167,6 @@ say so in the bean rather than silently diverging.
 - Examples stay stdlib-only where practical and must cross-compile for every
   board arch (arm64 AND `GOARCH=arm GOARM=6`); peripheral examples degrade
   gracefully when the device/bus is absent (see `examples/i2cscan`).
+  `examples/sattrack` is the reference for a bigger example: third-party deps
+  when its bean justifies them, an in-tree `gosd build-kernel` recipe
+  (`examples/sattrack/kernel/`), and graceful no-display degradation.
