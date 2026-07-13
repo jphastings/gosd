@@ -21,13 +21,12 @@ type trackPoint struct {
 
 // frame is everything the renderer needs for one tick.
 type frame struct {
-	sat       trackPoint   // subpoint right now
-	lookahead trackPoint   // subpoint 10s ahead: direction of travel on screen
-	past      []trackPoint // oldest -> now, exact tips + 10s grid between
-	future    []trackPoint // now -> +1h, exact tips + 10s grid between
+	sat    trackPoint   // subpoint right now
+	past   []trackPoint // oldest -> now, exact tips + 10s grid between
+	future []trackPoint // now -> +30min, exact tips + 10s grid between
 }
 
-// computeFrame propagates the satellite across the +-1h window around now.
+// computeFrame propagates the satellite across the +-30min window around now.
 // go-satellite panics on garbage TLE element combinations rather than
 // returning errors, so the propagation of a whole frame is fenced with one
 // recover and surfaced as an error (the caller refetches the TLE).
@@ -39,7 +38,6 @@ func computeFrame(sat satellite.Satellite, now time.Time) (f frame, err error) {
 	}()
 
 	f.sat = subpoint(sat, now)
-	f.lookahead = subpoint(sat, now.Add(sampleStepSec*time.Second))
 	f.past = windowPoints(sat, now.Add(-trackWindowSec*time.Second), now)
 	f.future = windowPoints(sat, now, now.Add(trackWindowSec*time.Second))
 	return f, nil
