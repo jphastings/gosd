@@ -65,17 +65,29 @@ func unescapeMount(field string) string {
 	return replacer.Replace(field)
 }
 
-func mountedAt(mountpoint string) (bool, error) {
+func mountedAt(mountpoint string) (string, bool, error) {
 	entries, err := parseMounts()
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	for _, e := range entries {
 		if e.target == mountpoint {
-			return true, nil
+			return e.source, true, nil
 		}
 	}
-	return false, nil
+	return "", false, nil
+}
+
+// Unmount unmounts a filesystem FormatAndMount mounted, releasing its block
+// device so another owner can take it exclusively — e.g. handing BlockDevice to
+// gadget.MassStorage, which needs the raw device to itself (expose or mount,
+// never both). Unmounting an already-unmounted mountpoint reports EINVAL, which
+// callers switching modes can treat as already-released.
+func Unmount(mountpoint string) error {
+	if err := unix.Unmount(mountpoint, 0); err != nil {
+		return fmt.Errorf("unmounting %s failed: %w", mountpoint, err)
+	}
+	return nil
 }
 
 func discoverEMMC() (string, error) {

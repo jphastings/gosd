@@ -16,10 +16,13 @@ var errUnsupportedPlatform = errors.New("emmc: onboard eMMC is only supported on
 
 func newPlatformDeps() deps {
 	return deps{
-		mountedAt: func(string) (bool, error) { return false, errUnsupportedPlatform },
+		mountedAt: func(string) (string, bool, error) { return "", false, errUnsupportedPlatform },
 		discover:  func() (string, error) { return "", errUnsupportedPlatform },
 		inspect:   emmcfmt.Inspect,
 		format:    emmcfmt.FormatFAT32,
 		mount:     func(string, string) error { return errUnsupportedPlatform },
 	}
 }
+
+// Unmount is the off-Linux stub for the real unmount in platform_linux.go.
+func Unmount(string) error { return errUnsupportedPlatform }
