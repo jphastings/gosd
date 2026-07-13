@@ -26,7 +26,12 @@ type fakeDeps struct {
 
 func (f *fakeDeps) deps() deps {
 	return deps{
-		mountedAt: func(string) (bool, error) { return f.mounted, nil },
+		mountedAt: func(string) (string, bool, error) {
+			if f.mounted {
+				return "/dev/mmcblk0", true, nil
+			}
+			return "", false, nil
+		},
 		discover: func() (string, error) {
 			if f.discErr != nil {
 				return "", f.discErr
@@ -50,8 +55,12 @@ func TestRunMountsOnlyWhenLabelAlreadyMatches(t *testing.T) {
 	// must mount it without reformatting (which would wipe the data).
 	f := &fakeDeps{contents: emmcfmt.Contents{IsFAT: true, Label: "APPDATA"}}
 
-	if err := run(f.deps(), "appdata", "/storage", false); err != nil {
+	device, err := run(f.deps(), "appdata", "/storage", false)
+	if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if device != "/dev/mmcblk0" {
+		t.Errorf("run device = %q, want /dev/mmcblk0", device)
 	}
 	if f.formatted {
 		t.Error("reformatted an eMMC that already had the app's label")
@@ -64,7 +73,7 @@ func TestRunMountsOnlyWhenLabelAlreadyMatches(t *testing.T) {
 func TestRunFormatsBlankWithoutDestructive(t *testing.T) {
 	f := &fakeDeps{contents: emmcfmt.Contents{Blank: true}}
 
-	if err := run(f.deps(), "APPDATA", "/storage", false); err != nil {
+	if _, err := run(f.deps(), "APPDATA", "/storage", false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !f.formatted || f.formatLabel != "APPDATA" {
@@ -78,7 +87,7 @@ func TestRunFormatsBlankWithoutDestructive(t *testing.T) {
 func TestRunRefusesForeignContentWithoutDestructive(t *testing.T) {
 	f := &fakeDeps{contents: emmcfmt.Contents{IsFAT: true, Label: "OTHERAPP"}}
 
-	err := run(f.deps(), "APPDATA", "/storage", false)
+	_, err := run(f.deps(), "APPDATA", "/storage", false)
 	if err == nil {
 		t.Fatal("run succeeded on foreign content without destructive=true")
 	}
@@ -90,7 +99,7 @@ func TestRunRefusesForeignContentWithoutDestructive(t *testing.T) {
 func TestRunReformatsForeignContentWhenDestructive(t *testing.T) {
 	f := &fakeDeps{contents: emmcfmt.Contents{Blank: false}} // non-FAT foreign content
 
-	if err := run(f.deps(), "APPDATA", "/storage", true); err != nil {
+	if _, err := run(f.deps(), "APPDATA", "/storage", true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !f.formatted || !f.didMount {
@@ -101,8 +110,12 @@ func TestRunReformatsForeignContentWhenDestructive(t *testing.T) {
 func TestRunIsIdempotentWhenAlreadyMounted(t *testing.T) {
 	f := &fakeDeps{mounted: true, contents: emmcfmt.Contents{Blank: true}}
 
-	if err := run(f.deps(), "APPDATA", "/storage", false); err != nil {
+	device, err := run(f.deps(), "APPDATA", "/storage", false)
+	if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if device != "/dev/mmcblk0" {
+		t.Errorf("run device = %q, want the already-mounted device reported back", device)
 	}
 	if f.formatted || f.didMount {
 		t.Error("did work despite the storage already being mounted")
@@ -112,7 +125,7 @@ func TestRunIsIdempotentWhenAlreadyMounted(t *testing.T) {
 func TestRunSurfacesNoEMMC(t *testing.T) {
 	f := &fakeDeps{discErr: ErrNoEMMC}
 
-	err := run(f.deps(), "APPDATA", "/storage", false)
+	_, err := run(f.deps(), "APPDATA", "/storage", false)
 	if !errors.Is(err, ErrNoEMMC) {
 		t.Fatalf("run error = %v, want ErrNoEMMC", err)
 	}
@@ -121,7 +134,7 @@ func TestRunSurfacesNoEMMC(t *testing.T) {
 func TestRunRejectsBadLabelBeforeTouchingDevice(t *testing.T) {
 	f := &fakeDeps{}
 
-	if err := run(f.deps(), "waytoolongforfat", "/storage", true); err == nil {
+	if _, err := run(f.deps(), "waytoolongforfat", "/storage", true); err == nil {
 		t.Fatal("run accepted a 16-character label")
 	}
 	if f.formatted || f.didMount {

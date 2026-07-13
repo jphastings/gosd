@@ -508,9 +508,9 @@ expected (not erroneous) result. For anything past that self-test, reach for
 
 Your app can present the board as a USB peripheral instead of (or alongside)
 its normal role, using the pure-Go `gadget` package — no cgo, no exec, just
-configfs file writes. Today that means CDC-ACM serial; a USB Ethernet
-gadget (device-as-network-interface, no WiFi/cable needed at all) is
-planned for later.
+configfs file writes. Today that means CDC-ACM serial and USB mass storage;
+a USB Ethernet gadget (device-as-network-interface, no WiFi/cable needed at
+all) is planned for later.
 
 - Build with `gosd build --usb-gadget` so the board's USB controller boots
   in peripheral mode. On the Pi Zero 2W this repurposes its only USB port
@@ -527,6 +527,18 @@ planned for later.
   on macOS).
 - See `examples/usbserial` for a complete worked example: it applies the
   gadget and echoes back every line it reads over `/dev/ttyGS0`.
+- A `gadget.MassStorage` function exposes a block device or disk-image file
+  on the board as a removable-drive-style disk on the host (one LUN, with
+  read-only and removable flags). While it's applied the *host* owns that
+  storage outright — never mount or write the backing path from the app at
+  the same time; expose or mount, not both. It needs
+  `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
+  COMPATIBILITY.md's USB gadget footnote for per-board status.
+- See `examples/usbwebsite` for a worked example that combines it with the
+  `emmc` package: it serves the onboard eMMC as a static website, but presents
+  that same eMMC as a USB drive when plugged into a computer so the site can be
+  edited. `emmc.FormatAndMount` returns the device backing the mount, and
+  `emmc.Unmount` releases it so `gadget.MassStorage` can take it exclusively.
 
 ## Testing your app under qemu (no hardware needed)
 
