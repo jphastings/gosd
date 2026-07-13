@@ -30,7 +30,7 @@ see `beans list` for what's in flight.
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] |
-| USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
+| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] |
 | SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] |
@@ -168,7 +168,18 @@ see `beans list` for what's in flight.
     serial gadget mode working end to end (`gosd build --usb-gadget`, see
     `examples/usbserial` and `docs/runtime.md`'s "USB gadget mode" section)
     — bean `gosd-uo9f`. USB Ethernet (ECM/RNDIS) isn't built yet (bean
-    `gosd-30jz`). Like every other ✅ in this table, this means code-complete
+    `gosd-30jz`). USB mass storage (`gadget.MassStorage`, configfs
+    `f_mass_storage`: one LUN backed by a block device or disk-image file,
+    with read-only and removable flags) is implemented and unit-tested the
+    same way (bean `gosd-k2fs`). Mass storage additionally needs
+    `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel: every current
+    board's recorded published `kernel.config` already carries it, but only
+    incidentally — inherited from the defconfig baseline, asserted by no
+    kernel fragment or `internal/kernelspec` `RequiredY` list — so the
+    *guaranteed* enablement lands when the fragments gain it explicitly at
+    the next fleet kernel tag bump (never a single-board bump). The Radxa
+    ROCK 4SE (epic `gosd-cuym`, in flight) asserts it in its initial stock
+    kernel. Like every other ✅ in this table, this means code-complete
     and unit-tested, not hardware-verified: no on-device USB enumeration has
     been tried on any board yet, blocked on hardware bring-up (`gosd-m9dj`,
     `gosd-nlzf`), which are themselves blocked on acquiring a bring-up kit

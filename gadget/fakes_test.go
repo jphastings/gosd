@@ -23,19 +23,25 @@ type fakeOp struct {
 // Remove on a directory succeeds and cascade-deletes any plain files it
 // directly contains, but fails if a child directory or symlink is still
 // present: that's a genuine ordering bug, not something configfs papers
-// over.
+// over. The one child-directory exception is configfs "default groups",
+// which the kernel creates and removes alongside their parent
+// (f_mass_storage's lun.0 is the only one modeled here): those are created
+// by MkdirAll on the function directory, refused by a direct Remove, and
+// cascade-removed with their parent.
 type fakeFS struct {
-	dirs  map[string]bool
-	files map[string][]byte
-	links map[string]string
-	calls []fakeOp
+	dirs          map[string]bool
+	files         map[string][]byte
+	links         map[string]string
+	defaultGroups map[string]bool
+	calls         []fakeOp
 }
 
 func newFakeFS() *fakeFS {
 	return &fakeFS{
-		dirs:  map[string]bool{},
-		files: map[string][]byte{},
-		links: map[string]string{},
+		dirs:          map[string]bool{},
+		files:         map[string][]byte{},
+		links:         map[string]string{},
+		defaultGroups: map[string]bool{},
 	}
 }
 
@@ -43,6 +49,11 @@ func (f *fakeFS) MkdirAll(path string, _ fs.FileMode) error {
 	f.calls = append(f.calls, fakeOp{"mkdir", path})
 	for p := path; p != "" && p != "/"; p = parentOf(p) {
 		f.dirs[p] = true
+	}
+	if strings.HasPrefix(baseOf(path), "mass_storage.") && baseOf(parentOf(path)) == "functions" {
+		lun := path + "/lun.0"
+		f.dirs[lun] = true
+		f.defaultGroups[lun] = true
 	}
 	return nil
 }
@@ -70,6 +81,9 @@ func (f *fakeFS) Symlink(oldname, newname string) error {
 func (f *fakeFS) Remove(path string) error {
 	f.calls = append(f.calls, fakeOp{"remove", path})
 
+	if f.defaultGroups[path] {
+		return fmt.Errorf("fakeFS: Remove %s: %w: configfs default groups are removed with their parent, never directly", path, fs.ErrPermission)
+	}
 	if _, ok := f.links[path]; ok {
 		delete(f.links, path)
 		return nil
@@ -84,7 +98,7 @@ func (f *fakeFS) Remove(path string) error {
 
 	prefix := path + "/"
 	for d := range f.dirs {
-		if strings.HasPrefix(d, prefix) {
+		if strings.HasPrefix(d, prefix) && !f.defaultGroups[d] {
 			return fmt.Errorf("fakeFS: Remove %s: directory not empty (subdirectory %s)", path, d)
 		}
 	}
@@ -96,6 +110,12 @@ func (f *fakeFS) Remove(path string) error {
 	for p := range f.files {
 		if strings.HasPrefix(p, prefix) {
 			delete(f.files, p)
+		}
+	}
+	for d := range f.dirs {
+		if strings.HasPrefix(d, prefix) {
+			delete(f.dirs, d)
+			delete(f.defaultGroups, d)
 		}
 	}
 	delete(f.dirs, path)
@@ -156,6 +176,10 @@ func parentOf(path string) string {
 		return "/"
 	}
 	return path[:i]
+}
+
+func baseOf(path string) string {
+	return path[strings.LastIndex(path, "/")+1:]
 }
 
 // callsOfKind returns the paths of every recorded call of the given kind,
