@@ -27,14 +27,15 @@ const (
 	dashPeriodPx = 28
 )
 
-// fadeWindow is the portion of the past half hour, measured back from its
-// oldest tip, whose alpha ramps 255->0 toward the tip. Everything younger
-// renders at full opacity, which keeps the long middle of the past line
-// byte-identical between ticks (only the head, this window, and the dropped
-// tail repaint).
+// fadeWindow is the portion of the past track window, measured back from
+// its oldest tip, whose alpha ramps 255->0 toward the tip. Everything
+// younger renders at full opacity, which keeps the long middle of the past
+// line byte-identical between ticks (only the head, this window, and the
+// dropped tail repaint).
 //
-// fadeWindowSec is deliberately a standalone knob: JP asked for "the oldest
-// ~5 minutes" of the 30-minute window; flip it to 600 for a 10-minute ramp.
+// Both constants are JP's live-tuned values (2026-07-13): a 45-minute
+// window each way with a 10-minute fade, up from the 30min/5min that
+// gosd-r775 shipped.
 const (
 	trackWindowSec = 2700
 	fadeWindowSec  = 600
@@ -232,15 +233,21 @@ func fadeAlpha(ageSec float64) uint8 {
 	return uint8(255 * (trackWindowSec - ageSec) / fadeWindowSec)
 }
 
-// labelOutlineAlpha is the opacity of the label's 1px white outline.
-const labelOutlineAlpha = 128
+// The label's 1px outline: solid black, like the circle's ring (JP's live
+// amendments 2026-07-13 - red glyphs superseding gosd-r775's black, then
+// a black outline superseding the white 50% stroke). labelOutlineColor
+// and labelOutlineAlpha stay independent knobs: {255,255,255} and 128
+// restore the earlier half-opaque white look in one edit.
+var labelOutlineColor = color.RGBA{A: 0xff}
+
+const labelOutlineAlpha = 255
 
 // setName re-renders the label image: the satellite name at ~height/34 px,
-// black glyphs with a 1px white outline at 50% opacity so the name reads
-// on ocean, land, ice, and the red track alike. The outline is built as a
-// single mask - the glyph coverage dilated by 1px minus the glyphs - and
-// composited exactly once; stamping offset 50%-white copies instead would
-// stack past 50% wherever they overlap.
+// glyphs in the same red as the track (trackRed) with a 1px outline in
+// labelOutlineColor so the name reads on ocean, land, and ice alike. The
+// outline is built as a single mask - the glyph coverage dilated by 1px
+// minus the glyphs - and composited exactly once, so overlapping
+// neighborhoods can't stack past labelOutlineAlpha.
 func (r *renderer) setName(name string) {
 	if name == r.name && r.label != nil {
 		return
@@ -264,10 +271,14 @@ func (r *renderer) setName(name string) {
 		for x := 0; x < w; x++ {
 			g := uint32(glyphs.AlphaAt(x, y).A)
 			o := uint32(dilatedAlpha(glyphs, x, y)-uint8(g)) * labelOutlineAlpha / 255
-			// White outline under black glyphs (premultiplied alpha).
-			c := uint8(o * (255 - g) / 255)
-			a := uint8(g + o*(255-g)/255)
-			img.SetRGBA(x, y, color.RGBA{R: c, G: c, B: c, A: a})
+			// Track-red glyphs over the outline (premultiplied alpha).
+			ov := o * (255 - g) / 255
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(uint32(trackRed.R)*g/255 + uint32(labelOutlineColor.R)*ov/255),
+				G: uint8(uint32(trackRed.G)*g/255 + uint32(labelOutlineColor.G)*ov/255),
+				B: uint8(uint32(trackRed.B)*g/255 + uint32(labelOutlineColor.B)*ov/255),
+				A: uint8(g + ov),
+			})
 		}
 	}
 	r.label = img

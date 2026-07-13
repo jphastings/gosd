@@ -23,10 +23,11 @@ type trackPoint struct {
 type frame struct {
 	sat    trackPoint   // subpoint right now
 	past   []trackPoint // oldest -> now, exact tips + 10s grid between
-	future []trackPoint // now -> +30min, exact tips + 10s grid between
+	future []trackPoint // now -> +trackWindow, exact tips + 10s grid between
 }
 
-// computeFrame propagates the satellite across the +-30min window around now.
+// computeFrame propagates the satellite across the +-trackWindow (45min)
+// around now.
 // go-satellite panics on garbage TLE element combinations rather than
 // returning errors, so the propagation of a whole frame is fenced with one
 // recover and surfaced as an error (the caller refetches the TLE).

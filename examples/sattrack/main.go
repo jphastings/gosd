@@ -1,8 +1,8 @@
 // Command sattrack is a GoSD example that turns a board with an HDMI
 // display into a live satellite tracker: a fullscreen NASA Blue Marble
 // world map with the chosen satellite's current position, its ground track
-// over the past 30 minutes (solid, fading out at the oldest tip) and the
-// coming 30 minutes (dashed), and its name, updated once per second with
+// over the past 45 minutes (solid, fading out at the oldest tip) and the
+// coming 45 minutes (dashed), and its name, updated once per second with
 // partial redraws over DRM/KMS dumb buffers.
 //
 // GoSD's stock kernels cut DRM entirely, so this example ships a
