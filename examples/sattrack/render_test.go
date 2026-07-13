@@ -10,11 +10,13 @@ import (
 
 func testRenderer(t *testing.T, size image.Point) *renderer {
 	t.Helper()
-	src := image.NewRGBA(image.Rect(0, 0, 64, 32))
-	for i := range src.Pix {
-		src.Pix[i] = 0x40
+	day := image.NewRGBA(image.Rect(0, 0, 64, 32))
+	night := image.NewRGBA(image.Rect(0, 0, 64, 32))
+	for i := range day.Pix {
+		day.Pix[i] = 0x80
+		night.Pix[i] = 0x10
 	}
-	r, err := newRenderer(size, src)
+	r, err := newRenderer(size, day, night)
 	if err != nil {
 		t.Fatalf("newRenderer: %v", err)
 	}

@@ -1,13 +1,18 @@
 # sattrack — a satellite ground track on an HDMI display
 
 A GoSD example that turns a Raspberry Pi Zero W with a mini-HDMI cable into
-a live satellite tracker: a fullscreen NASA Blue Marble world map with the
-satellite's current position (red circle with a thin black stroke), its
-ground track over the past 30 minutes (solid red line, fading out over its
-oldest ~5 minutes), the coming 30 minutes (dashed red line — 16px dashes
-measured along the track, phase-anchored so painted dashes never crawl),
-and the satellite's name (black text, white stroke) fixed to the right of
-the circle, updating once per second.
+a live satellite tracker: a fullscreen world map — NASA's Black Marble
+city-lights imagery where it's night, the Blue Marble day texture where
+the sun is up, blended through a soft twilight band at the live-computed
+terminator — with the satellite's current position (red circle with a thin
+black stroke), its ground track over the past 30 minutes (solid red line,
+fading out over its oldest ~5 minutes), the coming 30 minutes (dashed red
+line — 16px dashes measured along the track, phase-anchored so painted
+dashes never crawl), and the satellite's name (black text, white stroke)
+fixed to the right of the circle, updating once per second. The terminator
+advances via a once-a-minute strip relight (a pure-Go solar ephemeris
+finds the twilight band analytically per column), so even the day/night
+cycle never costs a full-frame repaint.
 
 Beyond the pretty picture, this example demonstrates two things:
 
@@ -98,3 +103,9 @@ anything that was hard-disabled.
 Earth — <https://visibleearth.nasa.gov/images/73909> — a public-domain
 NASA image, downscaled from the 5400×2700 original to 2048×1024 with
 Catmull-Rom resampling.
+
+`blackmarble.jpg` is NASA's **Black Marble** (Earth at Night 2016 global
+composite), courtesy NASA Earth Observatory / Visible Earth —
+<https://visibleearth.nasa.gov/images/144898> — a public-domain NASA
+image, downscaled from the 3600×1800 original to 2048×1024 with the same
+pipeline.
