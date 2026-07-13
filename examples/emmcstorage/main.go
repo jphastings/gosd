@@ -22,16 +22,17 @@ const (
 )
 
 func main() {
-	if err := <-emmc.FormatAndMount(label, mountpoint, false); err != nil {
-		if errors.Is(err, emmc.ErrNoEMMC) {
+	res := <-emmc.FormatAndMount(label, mountpoint, false)
+	if res.Err != nil {
+		if errors.Is(res.Err, emmc.ErrNoEMMC) {
 			fmt.Println("gosd emmc: no onboard eMMC on this board - nothing to do")
 			return
 		}
-		fmt.Fprintf(os.Stderr, "gosd emmc: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gosd emmc: %v\n", res.Err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("gosd emmc: %s ready at %s\n", label, mountpoint)
+	fmt.Printf("gosd emmc: %s ready at %s (device %s)\n", label, res.MountPoint, res.BlockDevice)
 
 	if err := writeAndReadBack(); err != nil {
 		fmt.Fprintf(os.Stderr, "gosd emmc: %v\n", err)

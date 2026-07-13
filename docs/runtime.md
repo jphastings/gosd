@@ -534,6 +534,11 @@ all) is planned for later.
   the same time; expose or mount, not both. It needs
   `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
   COMPATIBILITY.md's USB gadget footnote for per-board status.
+- See `examples/usbwebsite` for a worked example that combines it with the
+  `emmc` package: it serves the onboard eMMC as a static website, but presents
+  that same eMMC as a USB drive when plugged into a computer so the site can be
+  edited. `emmc.FormatAndMount` returns the device backing the mount, and
+  `emmc.Unmount` releases it so `gadget.MassStorage` can take it exclusively.
 
 ## Testing your app under qemu (no hardware needed)
 
