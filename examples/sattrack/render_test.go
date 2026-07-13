@@ -318,30 +318,33 @@ func abs(v int) int {
 	return v
 }
 
-// The label image is black glyphs with a white stroke (not the retired
-// white-on-black).
-func TestLabelIsBlackGlyphsWithWhiteStroke(t *testing.T) {
+// The label image is black glyphs with a 1px white outline at 50% opacity
+// (not the retired white-on-black, and never accumulating past 50%).
+func TestLabelIsBlackGlyphsWithHalfOpaqueWhiteOutline(t *testing.T) {
 	r := testRenderer(t, image.Pt(400, 200))
 	r.setName("IO-1")
 
-	var black, white int
+	var black, outline, tooOpaqueWhite int
 	b := r.label.Bounds()
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			c := r.label.RGBAAt(x, y) // premultiplied: white has RGB ~= A
-			if c.A < 150 {
-				continue
-			}
+			c := r.label.RGBAAt(x, y) // premultiplied: whiteness has RGB == A
+			whitish := c.R == c.G && c.G == c.B && c.R > 0 && c.R >= c.A-10
 			switch {
-			case c.R < 50 && c.G < 50 && c.B < 50:
+			case c.A > 150 && c.R < 50 && c.G < 50 && c.B < 50:
 				black++
-			case c.R > c.A-50 && c.G > c.A-50 && c.B > c.A-50:
-				white++
+			case whitish && c.A > 60 && c.A <= labelOutlineAlpha+10:
+				outline++
+			case whitish && c.A > labelOutlineAlpha+10:
+				tooOpaqueWhite++
 			}
 		}
 	}
-	if black == 0 || white == 0 {
-		t.Errorf("label has %d dark and %d light pixels; want both (black glyphs, white stroke)", black, white)
+	if black == 0 || outline == 0 {
+		t.Errorf("label has %d dark and %d half-opaque outline pixels; want both (black glyphs, 50%% white stroke)", black, outline)
+	}
+	if tooOpaqueWhite > 0 {
+		t.Errorf("%d outline pixels exceed 50%% opacity; offset-stamp accumulation is not allowed", tooOpaqueWhite)
 	}
 }
 

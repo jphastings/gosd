@@ -189,10 +189,15 @@ func fadeAlpha(ageSec float64) uint8 {
 	return uint8(255 * (trackWindowSec - ageSec) / fadeWindowSec)
 }
 
+// labelOutlineAlpha is the opacity of the label's 1px white outline.
+const labelOutlineAlpha = 128
+
 // setName re-renders the label image: the satellite name at ~height/34 px,
-// black glyphs with a thin white stroke around the outside (drawn 4x offset
-// in white, then once in black) so the name reads on ocean, land, ice, and
-// the red track alike.
+// black glyphs with a 1px white outline at 50% opacity so the name reads
+// on ocean, land, ice, and the red track alike. The outline is built as a
+// single mask - the glyph coverage dilated by 1px minus the glyphs - and
+// composited exactly once; stamping offset 50%-white copies instead would
+// stack past 50% wherever they overlap.
 func (r *renderer) setName(name string) {
 	if name == r.name && r.label != nil {
 		return
@@ -200,24 +205,43 @@ func (r *renderer) setName(name string) {
 	r.name = name
 	r.nameGen++
 
-	d := font.Drawer{Face: r.face}
-	adv := d.MeasureString(name)
 	metrics := r.face.Metrics()
-	w := adv.Ceil() + 4
+	d := font.Drawer{Face: r.face}
+	w := d.MeasureString(name).Ceil() + 4
 	h := (metrics.Ascent + metrics.Descent).Ceil() + 4
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	d.Dst = img
 
-	baseline := fixed.P(2, 2+metrics.Ascent.Ceil())
-	d.Src = image.NewUniform(color.White)
-	for _, off := range [4]image.Point{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-		d.Dot = baseline.Add(fixed.P(off.X, off.Y))
-		d.DrawString(name)
-	}
-	d.Src = image.NewUniform(color.Black)
-	d.Dot = baseline
+	glyphs := image.NewAlpha(image.Rect(0, 0, w, h))
+	d.Dst = glyphs
+	d.Src = image.NewUniform(color.Alpha{A: 0xff})
+	d.Dot = fixed.P(2, 2+metrics.Ascent.Ceil())
 	d.DrawString(name)
+
+	img := image.NewRGBA(glyphs.Bounds())
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			g := uint32(glyphs.AlphaAt(x, y).A)
+			o := uint32(dilatedAlpha(glyphs, x, y)-uint8(g)) * labelOutlineAlpha / 255
+			// White outline under black glyphs (premultiplied alpha).
+			c := uint8(o * (255 - g) / 255)
+			a := uint8(g + o*(255-g)/255)
+			img.SetRGBA(x, y, color.RGBA{R: c, G: c, B: c, A: a})
+		}
+	}
 	r.label = img
+}
+
+// dilatedAlpha is the 8-neighbor maximum of the glyph coverage at (x, y):
+// a 1px dilation of the glyph mask.
+func dilatedAlpha(m *image.Alpha, x, y int) uint8 {
+	var best uint8
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			if a := m.AlphaAt(x+dx, y+dy).A; a > best {
+				best = a
+			}
+		}
+	}
+	return best
 }
 
 // labelRect places the label horizontally to the right of the circle:
