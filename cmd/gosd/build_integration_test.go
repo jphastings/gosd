@@ -132,32 +132,18 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 		}
 	}
 
-	// With no --data-size flag, the default (1GiB) GOSD-DATA partition must
-	// exist: FAT32 (MBR type 0x0C), starting immediately after GOSD-BOOT.
-	// The 1GiB-plus image stays cheap because go-diskfs writes it sparsely.
-	dataPart, err := d.GetPartition(2)
-	if err != nil {
-		t.Fatalf("GetPartition(2) failed: %v", err)
-	}
-	if got, want := dataPart.GetStart(), int64(272*1024*1024); got != want {
-		t.Errorf("partition 2 starts at byte %d, want %d (immediately after GOSD-BOOT)", got, want)
-	}
-	if got, want := dataPart.GetSize(), int64(1024*1024*1024); got != want {
-		t.Errorf("partition 2 size = %d bytes, want %d (the 1GiB default)", got, want)
-	}
-	assertMBRPartitionType(t, d, 2, mbr.Fat32LBA)
-
-	dataFS, err := d.GetFilesystem(2)
-	if err != nil {
-		t.Fatalf("GetFilesystem(2) failed: %v", err)
-	}
-	if label := strings.TrimSpace(dataFS.Label()); label != "GOSD-DATA" {
-		t.Errorf("data partition label = %q, want GOSD-DATA", label)
+	// With no --data-size flag, the default (0, no GOSD-DATA partition) must
+	// produce the single-partition layout. The MBR always has 4 entry slots;
+	// an unused slot reads back as a zero-sized partition rather than an
+	// error.
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d with no --data-size flag, want no partition 2 (opt-in default)", part2.GetSize())
 	}
 }
 
-// TestBuildWithDataSizeZeroOmitsTheDataPartition covers the explicit opt-out:
-// --data-size=0 must produce the original single-partition layout.
+// TestBuildWithDataSizeZeroOmitsTheDataPartition covers the explicit opt-out,
+// which is also now the default: --data-size=0 must produce the
+// single-partition layout.
 func TestBuildWithDataSizeZeroOmitsTheDataPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
 
@@ -183,6 +169,51 @@ func TestBuildWithDataSizeZeroOmitsTheDataPartition(t *testing.T) {
 	// zero-sized partition rather than an error.
 	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
 		t.Errorf("partition 2 has size %d with --data-size=0, want no partition 2", part2.GetSize())
+	}
+}
+
+// TestBuildWithExplicitDataSizeAddsTheDataPartition covers the opt-in path:
+// --data-size must produce a second FAT32 GOSD-DATA partition sized as
+// requested, starting immediately after GOSD-BOOT.
+func TestBuildWithExplicitDataSizeAddsTheDataPartition(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-size", "512MiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	dataPart, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got, want := dataPart.GetStart(), int64(272*1024*1024); got != want {
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after GOSD-BOOT)", got, want)
+	}
+	if got, want := dataPart.GetSize(), int64(512*1024*1024); got != want {
+		t.Errorf("partition 2 size = %d bytes, want %d (the requested 512MiB)", got, want)
+	}
+	assertMBRPartitionType(t, d, 2, mbr.Fat32LBA)
+
+	dataFS, err := d.GetFilesystem(2)
+	if err != nil {
+		t.Fatalf("GetFilesystem(2) failed: %v", err)
+	}
+	if label := strings.TrimSpace(dataFS.Label()); label != "GOSD-DATA" {
+		t.Errorf("data partition label = %q, want GOSD-DATA", label)
 	}
 }
 
