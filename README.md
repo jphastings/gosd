@@ -62,6 +62,13 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    reports hostname and uptime, and falls back to `:8080` if `:80` is
    unavailable).
 
+   > **Calling an HTTPS API from your app?** GoSD images ship no CA bundle,
+   > so `crypto/x509` has no roots to verify a server's certificate against
+   > and outbound HTTPS fails until you blank-import
+   > `golang.org/x/crypto/x509roots/fallback` — see
+   > [`docs/runtime.md`](docs/runtime.md#https-calls-need-a-ca-bundle-your-app-supplies)
+   > for the full pattern.
+
    Need different source per board (different pins, an optional
    peripheral)? `gosd build` passes each selected board's own Go build tag
    to your app's compile — see

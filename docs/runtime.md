@@ -139,6 +139,31 @@ this precedence order (highest wins):
 3. **`config.json`**, baked at build time by `gosd build --wifi-ssid` /
    `--wifi-pass`.
 
+### HTTPS calls need a CA bundle your app supplies
+
+An outbound HTTPS request from `/app` fails with a certificate-verification
+error — something like `x509: certificate signed by unknown authority` —
+even though the same code works fine under `go run` on your development
+machine. GoSD images ship no `/etc/ssl` CA bundle: nothing populates a
+system root store, so `crypto/x509` has no roots to verify any server's
+certificate against.
+
+The fix is a blank import of the Mozilla root bundle into your app binary:
+
+```go
+import _ "golang.org/x/crypto/x509roots/fallback"
+```
+
+Pure Go, no image change, and it costs only a modest amount of binary size.
+See `examples/sattrack/main.go` for the pattern in production use, calling a
+TLE API over HTTPS. Roots are pinned at your app's build time via that
+module's version in your `go.mod`; bump the dependency to pull in newer
+roots.
+
+This is a separate concern from the clock (below): fixing the CA bundle
+doesn't help if the clock still reads 1970, since certificate validity
+periods won't check out either — see "Clock" for that gotcha.
+
 ## Provisioning: hostname and WiFi from Raspberry Pi Imager
 
 Beyond `config.json` baked in at build time and `gosd.toml` hand-edited on
