@@ -10,11 +10,13 @@ import (
 
 func testRenderer(t *testing.T, size image.Point) *renderer {
 	t.Helper()
-	src := image.NewRGBA(image.Rect(0, 0, 64, 32))
-	for i := range src.Pix {
-		src.Pix[i] = 0x40
+	day := image.NewRGBA(image.Rect(0, 0, 64, 32))
+	night := image.NewRGBA(image.Rect(0, 0, 64, 32))
+	for i := range day.Pix {
+		day.Pix[i] = 0x80
+		night.Pix[i] = 0x10
 	}
-	r, err := newRenderer(size, src)
+	r, err := newRenderer(size, day, night)
 	if err != nil {
 		t.Fatalf("newRenderer: %v", err)
 	}
@@ -255,11 +257,12 @@ func TestAntimeridianInjectsNoPhantomArcLength(t *testing.T) {
 	}
 }
 
-// The 30-minute window keeps full opacity until its oldest five minutes,
-// which ramp linearly to zero at the tip.
-func TestFadeAlphaRampsOnlyInTheOldestFiveMinutes(t *testing.T) {
-	if trackWindowSec != 1800 || fadeWindowSec != 300 {
-		t.Fatalf("window constants = %d/%d, want 1800/300 (locked: past 30min, ~5min fade)", trackWindowSec, fadeWindowSec)
+// The 45-minute window keeps full opacity until its oldest ten minutes,
+// which ramp linearly to zero at the tip. (JP live-tuned these from the
+// 30min/5min values gosd-r775 shipped.)
+func TestFadeAlphaRampsOnlyInTheFadeWindow(t *testing.T) {
+	if trackWindowSec != 2700 || fadeWindowSec != 600 {
+		t.Fatalf("window constants = %d/%d, want 2700/600 (JP's tuned values, 2026-07-13)", trackWindowSec, fadeWindowSec)
 	}
 	if a := fadeAlpha(0); a != 255 {
 		t.Errorf("fadeAlpha(0) = %d, want 255", a)
@@ -320,31 +323,39 @@ func abs(v int) int {
 
 // The label image is black glyphs with a 1px white outline at 50% opacity
 // (not the retired white-on-black, and never accumulating past 50%).
-func TestLabelIsBlackGlyphsWithHalfOpaqueWhiteOutline(t *testing.T) {
+// The label is track-red glyphs (the very same constant the lines use)
+// with a 1px solid black outline, like the circle's ring - JP's live
+// amendments 2026-07-13.
+func TestLabelIsTrackRedGlyphsWithBlackOutline(t *testing.T) {
 	r := testRenderer(t, image.Pt(400, 200))
 	r.setName("IO-1")
 
-	var black, outline, tooOpaqueWhite int
+	var red, exactRed, black int
 	b := r.label.Bounds()
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			c := r.label.RGBAAt(x, y) // premultiplied: whiteness has RGB == A
-			whitish := c.R == c.G && c.G == c.B && c.R > 0 && c.R >= c.A-10
+			c := r.label.RGBAAt(x, y)
 			switch {
+			case c.A > 150 && c.R > 150 && c.G < 80 && c.B < 80:
+				red++
+				// A pure glyph pixel is trackRed premultiplied by its
+				// coverage: channel/alpha ratios match trackRed/255
+				// within integer rounding.
+				if abs(int(c.R)*255-int(trackRed.R)*int(c.A)) <= 2*255 &&
+					abs(int(c.G)*255-int(trackRed.G)*int(c.A)) <= 2*255 &&
+					abs(int(c.B)*255-int(trackRed.B)*int(c.A)) <= 2*255 {
+					exactRed++
+				}
 			case c.A > 150 && c.R < 50 && c.G < 50 && c.B < 50:
 				black++
-			case whitish && c.A > 60 && c.A <= labelOutlineAlpha+10:
-				outline++
-			case whitish && c.A > labelOutlineAlpha+10:
-				tooOpaqueWhite++
 			}
 		}
 	}
-	if black == 0 || outline == 0 {
-		t.Errorf("label has %d dark and %d half-opaque outline pixels; want both (black glyphs, 50%% white stroke)", black, outline)
+	if red == 0 || black == 0 {
+		t.Errorf("label has %d red glyph and %d black outline pixels; want both (track-red glyphs, solid black stroke)", red, black)
 	}
-	if tooOpaqueWhite > 0 {
-		t.Errorf("%d outline pixels exceed 50%% opacity; offset-stamp accumulation is not allowed", tooOpaqueWhite)
+	if exactRed == 0 {
+		t.Error("no glyph pixel carries trackRed's exact hue; glyphs must use the track's color constant")
 	}
 }
 

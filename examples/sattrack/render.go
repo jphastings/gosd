@@ -5,6 +5,8 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"sort"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
@@ -25,17 +27,18 @@ const (
 	dashPeriodPx = 28
 )
 
-// fadeWindow is the portion of the past half hour, measured back from its
-// oldest tip, whose alpha ramps 255->0 toward the tip. Everything younger
-// renders at full opacity, which keeps the long middle of the past line
-// byte-identical between ticks (only the head, this window, and the dropped
-// tail repaint).
+// fadeWindow is the portion of the past track window, measured back from
+// its oldest tip, whose alpha ramps 255->0 toward the tip. Everything
+// younger renders at full opacity, which keeps the long middle of the past
+// line byte-identical between ticks (only the head, this window, and the
+// dropped tail repaint).
 //
-// fadeWindowSec is deliberately a standalone knob: JP asked for "the oldest
-// ~5 minutes" of the 30-minute window; flip it to 600 for a 10-minute ramp.
+// Both constants are JP's live-tuned values (2026-07-13): a 45-minute
+// window each way with a 10-minute fade, up from the 30min/5min that
+// gosd-r775 shipped.
 const (
-	trackWindowSec = 1800
-	fadeWindowSec  = 300
+	trackWindowSec = 2700
+	fadeWindowSec  = 600
 )
 
 // circleStroke is the width of the black ring drawn around the outside of
@@ -90,12 +93,22 @@ func (it item) bbox() image.Rectangle {
 // manipulation - no DRM, no clocks - so it runs (and is tested) anywhere.
 type renderer struct {
 	size      image.Point
-	mapImg    *image.RGBA // pristine letterboxed map: the erase source
+	dayImg    *image.RGBA // letterboxed Blue Marble: the daylight texture
+	nightImg  *image.RGBA // letterboxed Black Marble: the base texture
+	litMap    *image.RGBA // lerp(night, day, daylight): the erase source
 	back      *image.RGBA
 	mapRect   image.Rectangle // where the 2:1 map sits within size
 	thickness int
 	radius    int
 	labelGap  int
+
+	// Per-row latitude trig and per-column longitude, so a lighting pass
+	// is one multiply-add and compare per pixel.
+	rowSin, rowCos []float64
+	colLon         []float64
+
+	curSun          sunPos
+	lastTermRefresh time.Time
 
 	face    font.Face
 	label   *image.RGBA // rendered name, outline baked in
@@ -106,21 +119,40 @@ type renderer struct {
 	arc       map[int64]float64 // future grid sample epoch -> cumulative arc length
 }
 
-func newRenderer(size image.Point, mapSrc image.Image) (*renderer, error) {
+func newRenderer(size image.Point, daySrc, nightSrc image.Image) (*renderer, error) {
 	r := &renderer{
 		size:      size,
 		back:      image.NewRGBA(image.Rectangle{Max: size}),
-		mapImg:    image.NewRGBA(image.Rectangle{Max: size}),
+		dayImg:    image.NewRGBA(image.Rectangle{Max: size}),
+		nightImg:  image.NewRGBA(image.Rectangle{Max: size}),
+		litMap:    image.NewRGBA(image.Rectangle{Max: size}),
 		thickness: max(3, size.Y/240),
 		radius:    max(6, size.Y/90),
 	}
 	r.labelGap = max(4, r.radius/2)
 	r.mapRect = letterbox2to1(size)
 
-	// Black bars around the letterboxed map; CatmullRom for the one-off
-	// high-quality scale.
-	draw.Draw(r.mapImg, r.mapImg.Bounds(), image.NewUniform(color.Black), image.Point{}, draw.Src)
-	xdraw.CatmullRom.Scale(r.mapImg, r.mapRect, mapSrc, mapSrc.Bounds(), xdraw.Src, nil)
+	// Black bars around the letterboxed maps; CatmullRom for the one-off
+	// high-quality scales. Both textures stay resident so terminator
+	// strips re-lerp from the originals, never from composited state.
+	for _, m := range []struct {
+		dst *image.RGBA
+		src image.Image
+	}{{r.dayImg, daySrc}, {r.nightImg, nightSrc}} {
+		draw.Draw(m.dst, m.dst.Bounds(), image.NewUniform(color.Black), image.Point{}, draw.Src)
+		xdraw.CatmullRom.Scale(m.dst, r.mapRect, m.src, m.src.Bounds(), xdraw.Src, nil)
+	}
+
+	r.rowSin = make([]float64, size.Y)
+	r.rowCos = make([]float64, size.Y)
+	for y := r.mapRect.Min.Y; y < r.mapRect.Max.Y; y++ {
+		lat := r.rowLat(y)
+		r.rowSin[y], r.rowCos[y] = math.Sin(lat), math.Cos(lat)
+	}
+	r.colLon = make([]float64, size.X)
+	for x := r.mapRect.Min.X; x < r.mapRect.Max.X; x++ {
+		r.colLon[x] = (-180 + (float64(x-r.mapRect.Min.X)+0.5)*360/float64(r.mapRect.Dx())) * degToRad
+	}
 
 	f, err := opentype.Parse(goregular.TTF)
 	if err != nil {
@@ -133,6 +165,18 @@ func newRenderer(size image.Point, mapSrc image.Image) (*renderer, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// rowLat is the latitude (radians) of screen row y's pixel center.
+func (r *renderer) rowLat(y int) float64 {
+	return (90 - (float64(y-r.mapRect.Min.Y)+0.5)*180/float64(r.mapRect.Dy())) * degToRad
+}
+
+// latRow is the screen row whose pixel center is nearest latitude lat
+// (radians), clamped to the map.
+func (r *renderer) latRow(lat float64) int {
+	y := r.mapRect.Min.Y + int(math.Round((90-lat/degToRad)*float64(r.mapRect.Dy())/180-0.5))
+	return min(max(y, r.mapRect.Min.Y), r.mapRect.Max.Y-1)
 }
 
 // letterbox2to1 returns the largest centered 2:1 rectangle within size.
@@ -189,15 +233,21 @@ func fadeAlpha(ageSec float64) uint8 {
 	return uint8(255 * (trackWindowSec - ageSec) / fadeWindowSec)
 }
 
-// labelOutlineAlpha is the opacity of the label's 1px white outline.
-const labelOutlineAlpha = 128
+// The label's 1px outline: solid black, like the circle's ring (JP's live
+// amendments 2026-07-13 - red glyphs superseding gosd-r775's black, then
+// a black outline superseding the white 50% stroke). labelOutlineColor
+// and labelOutlineAlpha stay independent knobs: {255,255,255} and 128
+// restore the earlier half-opaque white look in one edit.
+var labelOutlineColor = color.RGBA{A: 0xff}
+
+const labelOutlineAlpha = 255
 
 // setName re-renders the label image: the satellite name at ~height/34 px,
-// black glyphs with a 1px white outline at 50% opacity so the name reads
-// on ocean, land, ice, and the red track alike. The outline is built as a
-// single mask - the glyph coverage dilated by 1px minus the glyphs - and
-// composited exactly once; stamping offset 50%-white copies instead would
-// stack past 50% wherever they overlap.
+// glyphs in the same red as the track (trackRed) with a 1px outline in
+// labelOutlineColor so the name reads on ocean, land, and ice alike. The
+// outline is built as a single mask - the glyph coverage dilated by 1px
+// minus the glyphs - and composited exactly once, so overlapping
+// neighborhoods can't stack past labelOutlineAlpha.
 func (r *renderer) setName(name string) {
 	if name == r.name && r.label != nil {
 		return
@@ -221,10 +271,14 @@ func (r *renderer) setName(name string) {
 		for x := 0; x < w; x++ {
 			g := uint32(glyphs.AlphaAt(x, y).A)
 			o := uint32(dilatedAlpha(glyphs, x, y)-uint8(g)) * labelOutlineAlpha / 255
-			// White outline under black glyphs (premultiplied alpha).
-			c := uint8(o * (255 - g) / 255)
-			a := uint8(g + o*(255-g)/255)
-			img.SetRGBA(x, y, color.RGBA{R: c, G: c, B: c, A: a})
+			// Track-red glyphs over the outline (premultiplied alpha).
+			ov := o * (255 - g) / 255
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(uint32(trackRed.R)*g/255 + uint32(labelOutlineColor.R)*ov/255),
+				G: uint8(uint32(trackRed.G)*g/255 + uint32(labelOutlineColor.G)*ov/255),
+				B: uint8(uint32(trackRed.B)*g/255 + uint32(labelOutlineColor.B)*ov/255),
+				A: uint8(g + ov),
+			})
 		}
 	}
 	r.label = img
@@ -365,12 +419,163 @@ func (r *renderer) segmentArc(p, q trackPoint) float64 {
 	return math.Hypot(float64(b.X-a.X), float64(b.Y-a.Y))
 }
 
+// termRefreshEvery paces terminator strip refreshes. The terminator moves
+// about a pixel per 80s at this map scale, so once a minute keeps it
+// visually current for the cost of a thin strip repaint.
+const termRefreshEvery = 60 * time.Second
+
+// composeLit rebuilds the whole lit map for the given sun: the night
+// texture as base (bars included), day texture where the sun is up, the
+// twilight lerp between.
+func (r *renderer) composeLit(sun sunPos) {
+	copy(r.litMap.Pix, r.nightImg.Pix)
+	m := r.mapRect
+	cosCol := make([]float64, m.Max.X)
+	for x := m.Min.X; x < m.Max.X; x++ {
+		cosCol[x] = math.Cos(r.colLon[x] - sun.lon)
+	}
+	for y := m.Min.Y; y < m.Max.Y; y++ {
+		a := r.rowSin[y] * sun.sinDec
+		b := r.rowCos[y] * sun.cosDec
+		for x := m.Min.X; x < m.Max.X; x++ {
+			r.litPixel(x, y, daylightAlpha(a+b*cosCol[x]))
+		}
+	}
+}
+
+// litPixel writes lerp(night, day, alpha) at (x, y) into the lit map,
+// always re-lerping from the resident originals.
+func (r *renderer) litPixel(x, y int, alpha uint8) {
+	i := r.litMap.PixOffset(x, y)
+	switch alpha {
+	case 0: // the night base is already in place on full composes, but
+		// strip patches need the explicit write-back
+		copy(r.litMap.Pix[i:i+4], r.nightImg.Pix[i:i+4])
+	case 255:
+		copy(r.litMap.Pix[i:i+4], r.dayImg.Pix[i:i+4])
+	default:
+		a := uint32(alpha)
+		inv := 255 - a
+		d := r.dayImg.Pix[i : i+4 : i+4]
+		n := r.nightImg.Pix[i : i+4 : i+4]
+		o := r.litMap.Pix[i : i+4 : i+4]
+		o[0] = uint8((uint32(d[0])*a + uint32(n[0])*inv) / 255)
+		o[1] = uint8((uint32(d[1])*a + uint32(n[1])*inv) / 255)
+		o[2] = uint8((uint32(d[2])*a + uint32(n[2])*inv) / 255)
+		o[3] = 0xff
+	}
+}
+
+// stripRows finds the screen-row range of column x that needs relighting
+// when the sun moves from oldSun to newSun: rows whose sin(altitude)
+// under either sun falls inside the margin-widened twilight band. The
+// candidate boundaries come analytically from the arcsin branches of
+// sin(alt)=threshold (plus the map edges); midpoints between consecutive
+// candidates classify each interval, so polar day/night and
+// never-reaching-a-threshold columns fall out naturally. The result is
+// the bounding interval of the included ranges - anything between two
+// twilight bands is saturated identically under both suns, so relighting
+// it rewrites identical bytes.
+func (r *renderer) stripRows(x int, oldSun, newSun sunPos) (int, int, bool) {
+	lon := r.colLon[x]
+	inBand := func(s sunPos, y int) bool {
+		v := s.sinAlt(r.rowSin[y], r.rowCos[y], lon)
+		return v > sinStripLo && v < sinStripHi
+	}
+
+	var roots []float64
+	for _, s := range [2]sunPos{oldSun, newSun} {
+		for _, k := range [2]float64{sinStripLo, sinStripHi} {
+			roots = s.latRoots(lon, k, roots)
+		}
+	}
+	ys := make([]int, 0, len(roots)+2)
+	ys = append(ys, r.mapRect.Min.Y, r.mapRect.Max.Y-1)
+	for _, lat := range roots {
+		ys = append(ys, r.latRow(lat))
+	}
+	sort.Ints(ys)
+
+	lo, hi := -1, -1
+	include := func(y int) {
+		if lo == -1 || y < lo {
+			lo = y
+		}
+		if y > hi {
+			hi = y
+		}
+	}
+	for i := 0; i < len(ys); i++ {
+		// The candidate row itself (a boundary can land in-band)...
+		if inBand(oldSun, ys[i]) || inBand(newSun, ys[i]) {
+			include(ys[i])
+		}
+		// ...and the interval up to the next candidate, classified by
+		// its midpoint.
+		if i+1 < len(ys) && ys[i+1] > ys[i]+1 {
+			mid := (ys[i] + ys[i+1]) / 2
+			if inBand(oldSun, mid) || inBand(newSun, mid) {
+				include(ys[i])
+				include(ys[i+1])
+			}
+		}
+	}
+	return lo, hi, lo != -1
+}
+
+// patchLit relights only the terminator strips for the move oldSun ->
+// newSun, patching the lit map in place and returning the touched
+// rectangles (columns grouped into chunks so each rect hugs the local
+// curve). Pixels outside the strips are untouched - that is the partial
+// -update guarantee.
+func (r *renderer) patchLit(oldSun, newSun sunPos) []image.Rectangle {
+	const chunkCols = 64
+	m := r.mapRect
+	var rects []image.Rectangle
+	for x0 := m.Min.X; x0 < m.Max.X; x0 += chunkCols {
+		x1 := min(x0+chunkCols, m.Max.X)
+		chunkLo, chunkHi := -1, -1
+		for x := x0; x < x1; x++ {
+			lo, hi, ok := r.stripRows(x, oldSun, newSun)
+			if !ok {
+				continue
+			}
+			a := r.rowSinCol(x, newSun)
+			for y := lo; y <= hi; y++ {
+				r.litPixel(x, y, daylightAlpha(r.rowSin[y]*newSun.sinDec+r.rowCos[y]*a))
+			}
+			if chunkLo == -1 || lo < chunkLo {
+				chunkLo = lo
+			}
+			if hi > chunkHi {
+				chunkHi = hi
+			}
+		}
+		if chunkLo != -1 {
+			rects = append(rects, image.Rect(x0, chunkLo, x1, chunkHi+1))
+		}
+	}
+	return rects
+}
+
+// rowSinCol precomputes the column-constant factor cos(dec)*cos(lon-lonSun).
+func (r *renderer) rowSinCol(x int, s sunPos) float64 {
+	return s.cosDec * math.Cos(r.colLon[x]-s.lon)
+}
+
 // render composes frame f and returns the changed rectangles (clipped to
 // the screen, overlapping ones merged). The first call - and any call
-// after invalidate - paints and returns the full frame; steady-state calls
-// erase-and-repaint only the display-list difference.
+// after invalidate - recomposes the lit map for the current sun, paints,
+// and returns the full frame; steady-state calls erase-and-repaint only
+// the display-list difference, plus a terminator strip relight once a
+// minute.
 func (r *renderer) render(f frame) []image.Rectangle {
 	full := r.prevItems == nil
+	if full {
+		r.curSun = sunAt(f.sat.t)
+		r.lastTermRefresh = f.sat.t
+		r.composeLit(r.curSun)
+	}
 	items := r.buildItems(f, full)
 
 	var dirty []image.Rectangle
@@ -387,11 +592,17 @@ func (r *renderer) render(f frame) []image.Rectangle {
 				dirty = append(dirty, it.bbox())
 			}
 		}
+		if f.sat.t.Sub(r.lastTermRefresh) >= termRefreshEvery {
+			newSun := sunAt(f.sat.t)
+			dirty = append(dirty, r.patchLit(r.curSun, newSun)...)
+			r.curSun = newSun
+			r.lastTermRefresh = f.sat.t
+		}
 	}
 	dirty = clipAndMerge(dirty, r.back.Bounds())
 
 	for _, rect := range dirty {
-		draw.Draw(r.back, rect, r.mapImg, rect.Min, draw.Src)
+		draw.Draw(r.back, rect, r.litMap, rect.Min, draw.Src)
 	}
 	// Fixed z-order per rect - track lines, then the stroked circle, then
 	// the label - so the circle's black ring paints over any line passing

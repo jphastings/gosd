@@ -1,8 +1,8 @@
 // Command sattrack is a GoSD example that turns a board with an HDMI
 // display into a live satellite tracker: a fullscreen NASA Blue Marble
 // world map with the chosen satellite's current position, its ground track
-// over the past 30 minutes (solid, fading out at the oldest tip) and the
-// coming 30 minutes (dashed), and its name, updated once per second with
+// over the past 45 minutes (solid, fading out at the oldest tip) and the
+// coming 45 minutes (dashed), and its name, updated once per second with
 // partial redraws over DRM/KMS dumb buffers.
 //
 // GoSD's stock kernels cut DRM entirely, so this example ships a
@@ -41,6 +41,15 @@ import (
 //go:embed bluemarble.jpg
 var blueMarbleJPEG []byte
 
+// blackmarble.jpg is NASA's Black Marble (Earth at Night 2016 composite,
+// https://visibleearth.nasa.gov/images/144898), a public-domain NASA
+// image, downscaled to 2048x1024 - attribution and source details in
+// README.md. It is the night-side base texture; the Blue Marble shows
+// through where the sun is up.
+//
+//go:embed blackmarble.jpg
+var blackMarbleJPEG []byte
+
 // defaultNoradID is the satellite tracked when SATTRACK_NORAD_ID isn't
 // set (via the environment or gosd.toml's [env] table).
 const defaultNoradID = "68498"
@@ -68,9 +77,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mapImg, err := jpeg.Decode(bytes.NewReader(blueMarbleJPEG))
+	dayImg, err := jpeg.Decode(bytes.NewReader(blueMarbleJPEG))
 	if err != nil {
 		log.Fatalf("decoding the embedded Blue Marble map failed: %v", err)
+	}
+	nightImg, err := jpeg.Decode(bytes.NewReader(blackMarbleJPEG))
+	if err != nil {
+		log.Fatalf("decoding the embedded Black Marble map failed: %v", err)
 	}
 
 	src := newTLESource(noradID)
@@ -98,7 +111,7 @@ func main() {
 		}
 		log.Printf("display: %dx%d", d.Size().X, d.Size().Y)
 
-		err = drive(ctx, d, mapImg, src, &cur)
+		err = drive(ctx, d, dayImg, nightImg, src, &cur)
 		_ = d.Close()
 		if err != nil {
 			log.Printf("display output failed (%v); reinitializing", err)
@@ -122,8 +135,8 @@ func logDisplayError(err error) {
 // swaps the element set and forces one full repaint (both track windows
 // move); a propagation failure asks the TLE source for a fresh fetch and
 // keeps the screen as-is rather than tearing it down.
-func drive(ctx context.Context, d *display, mapImg image.Image, src *tleSource, cur *sat) error {
-	r, err := newRenderer(d.Size(), mapImg)
+func drive(ctx context.Context, d *display, dayImg, nightImg image.Image, src *tleSource, cur *sat) error {
+	r, err := newRenderer(d.Size(), dayImg, nightImg)
 	if err != nil {
 		return err
 	}
