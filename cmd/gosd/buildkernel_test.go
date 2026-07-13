@@ -321,3 +321,42 @@ func TestPrintKernelBuildSummaryMentionsArtifactsDirFollowUp(t *testing.T) {
 		t.Errorf("summary = %q, want it to report radxa-zero-3e as a cache hit", out)
 	}
 }
+
+func TestApplyOverlayAssertionsOverlayYWinsOverForbiddenAndBecomesRequired(t *testing.T) {
+	spec := kernelspec.KernelSpec{
+		RequiredY:  []string{"CONFIG_VIRTIO_BLK"},
+		ForbiddenY: []string{"CONFIG_DRM", "CONFIG_SOUND", "CONFIG_MEDIA_SUPPORT"},
+	}
+	overlay := kernelbuild.Overlay{ConfigFragment: []byte(
+		"# comment\nCONFIG_DRM=y\nCONFIG_DRM_VIRTIO_GPU=y\n# CONFIG_LOGO is not set\nCONFIG_VIRTIO_BLK=y\n",
+	)}
+
+	got := applyOverlayAssertions(spec, overlay)
+
+	if want := []string{"CONFIG_SOUND", "CONFIG_MEDIA_SUPPORT"}; !equalStrings(got.ForbiddenY, want) {
+		t.Errorf("ForbiddenY = %v, want %v (overlay's CONFIG_DRM=y must win)", got.ForbiddenY, want)
+	}
+	if want := []string{"CONFIG_VIRTIO_BLK", "CONFIG_DRM=y", "CONFIG_DRM_VIRTIO_GPU=y"}; !equalStrings(got.RequiredY, want) {
+		t.Errorf("RequiredY = %v, want %v (overlay =y lines asserted, no duplicates)", got.RequiredY, want)
+	}
+}
+
+func TestApplyOverlayAssertionsNoOpWithoutOverlayYLines(t *testing.T) {
+	spec := kernelspec.KernelSpec{ForbiddenY: []string{"CONFIG_DRM"}}
+	got := applyOverlayAssertions(spec, kernelbuild.Overlay{ConfigFragment: []byte("# CONFIG_DRM is not set\n")})
+	if !equalStrings(got.ForbiddenY, spec.ForbiddenY) || len(got.RequiredY) != 0 {
+		t.Errorf("spec changed by a fragment with no =y lines: %+v", got)
+	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}

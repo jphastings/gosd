@@ -47,8 +47,12 @@ func run(args []string) error {
 
 	return qemurun.Run(ctx, qemurun.Options{
 		ImagePath: imgPath,
-		Stdin:     os.Stdin,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
+		// QEMU_DISPLAY=1 opts into a host display window (scripts/
+		// qemu-run.sh documents it); default stays headless so CI's
+		// qemu-boot job is unaffected.
+		Display: os.Getenv("QEMU_DISPLAY") == "1",
+		Stdin:   os.Stdin,
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
 	})
 }

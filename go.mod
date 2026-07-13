@@ -4,9 +4,11 @@ go 1.26.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/NeowayLabs/drm v0.0.0-20190824133025-4939fc0ad345
 	github.com/beevik/ntp v1.5.0
 	github.com/diskfs/go-diskfs v1.9.3
 	github.com/insomniacslk/dhcp v0.0.0-20260603135910-a415979eb11e
+	github.com/joshuaferrara/go-satellite v0.0.0-20220611180459-512638c64e5b
 	github.com/klauspost/compress v1.19.0
 	github.com/mdlayher/genetlink v1.4.0
 	github.com/mdlayher/netlink v1.11.2
@@ -16,6 +18,8 @@ require (
 	github.com/u-root/u-root v0.16.0
 	github.com/vishvananda/netlink v1.3.1
 	github.com/warthog618/go-gpiocdev v0.9.1
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20260712151947-c1a3b97d708a
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.55.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -34,6 +38,7 @@ require (
 	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/pion/logging v0.2.4 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
@@ -41,5 +46,6 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

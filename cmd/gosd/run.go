@@ -27,6 +27,7 @@ var (
 	runMemoryMiB    int
 	runQemuArgs     []string
 	runKeep         bool
+	runDisplay      bool
 	runHostname     string
 	runArtifactsDir string
 	runGosdInitSrc  string
@@ -59,6 +60,8 @@ place and prints its path instead.`,
 		"extra argument to pass through to qemu-system-aarch64 (repeatable)")
 	cmd.Flags().BoolVar(&runKeep, "keep", false,
 		"keep the built image and temp build directory after qemu exits, instead of deleting them")
+	cmd.Flags().BoolVar(&runDisplay, "display", false,
+		"open qemu's default host display window (Cocoa on macOS, GTK on Linux) showing the guest's virtio-gpu output; serial console stays on this terminal")
 	cmd.Flags().StringVar(&runHostname, "hostname", "",
 		"device hostname (default: sanitized main package name)")
 	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
@@ -150,6 +153,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		ImagePath: imgPath,
 		Port:      runPort,
 		MemoryMiB: runMemoryMiB,
+		Display:   runDisplay,
 		ExtraArgs: runQemuArgs,
 		Stdin:     cmd.InOrStdin(),
 		Stdout:    cmd.OutOrStdout(),

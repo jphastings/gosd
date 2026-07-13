@@ -1,0 +1,11 @@
+# examples/sattrack overlay fragment for qemu-virt: DRM with the virtio
+# GPU driver compiled in (virtio core/PCI are already built into the stock
+# qemu-virt kernel), merged after GoSD's own fragment (overlay wins).
+CONFIG_DRM=y
+CONFIG_DRM_VIRTIO_GPU=y
+
+# Appliance display, same stance as the pi-zero-w fragment: no fbdev shim,
+# no text console over the map, no boot logo.
+# CONFIG_DRM_FBDEV_EMULATION is not set
+# CONFIG_FRAMEBUFFER_CONSOLE is not set
+# CONFIG_LOGO is not set

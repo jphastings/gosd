@@ -38,6 +38,41 @@ func TestArgsHonorsPortMemoryAndExtraArgs(t *testing.T) {
 	}
 }
 
+func TestArgsIsHeadlessByDefaultButAlwaysAttachesAVirtioGPU(t *testing.T) {
+	args := qemurun.Args("/work", "/img.img", qemurun.Options{})
+
+	if !contains(args, "-nographic") {
+		t.Errorf("default args %v missing -nographic", args)
+	}
+	if !contains(args, "virtio-gpu-pci,romfile=") {
+		t.Errorf("default args %v missing the virtio-gpu-pci device", args)
+	}
+}
+
+func TestArgsDisplaySwapsNographicForSerialOnStdio(t *testing.T) {
+	args := qemurun.Args("/work", "/img.img", qemurun.Options{Display: true})
+
+	if contains(args, "-nographic") {
+		t.Errorf("Display args %v still contain -nographic", args)
+	}
+	if contains(args, "-display") {
+		t.Errorf("Display args %v force a -display backend instead of qemu's host default", args)
+	}
+	assertFlag(t, args, "-serial", "mon:stdio")
+	if !contains(args, "virtio-gpu-pci,romfile=") {
+		t.Errorf("Display args %v missing the virtio-gpu-pci device", args)
+	}
+}
+
+func contains(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestExtractBootFilesCopiesEveryBootPartitionFile(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "qemu-virt.img")
 	if err := image.Write(imgPath, image.Spec{
