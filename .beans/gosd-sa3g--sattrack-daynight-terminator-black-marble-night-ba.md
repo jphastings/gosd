@@ -1,11 +1,11 @@
 ---
 # gosd-sa3g
 title: 'sattrack: day/night terminator — Black Marble night base, daylight-masked Blue Marble, strip-updated twilight'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-13T00:52:00Z
-updated_at: 2026-07-13T04:26:35Z
+updated_at: 2026-07-13T04:49:07Z
 ---
 
 JP's request 2026-07-13, building on [[gosd-e9fy]] + [[gosd-r775]]: render night-side Earth with NASA's Black Marble (city lights) and show the Blue Marble day texture only where it's currently daytime, with a realistic fading twilight band at the terminator. App-only: no kernel changes (JP's standing constraint); verification reuses the cached qemu-virt kernel.
@@ -27,12 +27,74 @@ JP's request 2026-07-13, building on [[gosd-e9fy]] + [[gosd-r775]]: render night
 - Real proof with the CACHED qemu-virt kernel: screendumps showing night side with city lights, day side, and a soft terminator band; a second dump ≥2 min later showing the terminator advanced while dashes/track outside the strips did not repaint. Record here.
 - Quality gates + both cross-compiles.
 
+### Results (2026-07-13)
+
+- **Cached-kernel proof**: Image from kernel-build cache entry 60d570e19...
+  via flat --artifacts-dir; no Docker, no kernel rebuild, nothing under
+  examples/sattrack/kernel/ touched. `gosd run --display` booted, TLE
+  for 68498 ("IO-1") fetched, mode 1280x800.
+- **Screendumps** (sattrack-daynight-1/2.png, ~2min10s apart, kept in the
+  agent scratchpad, not committed): night side over the Americas with
+  Black Marble city lights clearly visible (US coasts, Brazil), Blue
+  Marble day side over Europe/Africa/Asia/Australia, soft twilight
+  gradients at both terminators, Antarctic polar night dark on the
+  night-side half - geometry consistent with the July sun (dec ~+22).
+  Label is track-red glyphs with the 1px solid black outline, right of
+  the black-ringed circle. Pixel-level comparison across the gap (which
+  spans two 60s terminator refreshes): all 645 red dash pixels in the
+  deep-night Antarctic sweep byte-identical (no repaint outside strips),
+  while 5527 non-track pixels changed inside the morning terminator band
+  (the strip relight advanced it).
+- **Unit tests**: ephemeris vs equinox/solstice declination and
+  06/12/18 UTC subsolar longitudes; alpha ramp endpoints, ~127 midpoint,
+  monotonicity; strip solver vs a brute-force oracle across four sun
+  geometries including the arcsin-domain (|k|>R) polar branch; gold test
+  - after a 61s tick the lit map equals a from-scratch full compose at
+  the new time AND every changed pixel lies inside a reported dirty rect
+  (bounded <35% of frame, actual far less); a vertical track crossing
+  the terminator stays exactly trackRed after a strip refresh (re-stamp
+  proof).
+- **Gates**: go test/vet, gofmt, golangci-lint darwin+GOOS=linux clean;
+  arm64 and arm/GOARM=6 cross-builds pass.
+- Shipped solver variant (per the implementation-notes latitude): pure
+  analytic arcsin brackets + midpoint interval classification, no
+  full-frame or per-row scanning; the per-column result is the bounding
+  interval of in-band intervals (anything between two twilight bands is
+  saturated identically under both suns, so relighting it rewrites
+  identical bytes - the gold test pins this).
+
+## Summary of Changes
+
+- examples/sattrack/blackmarble.jpg: NASA Black Marble (Earth at Night
+  2016, visibleearth.nasa.gov/images/144898) downscaled 3600x1800 ->
+  2048x1024 (137KB), embedded and attributed like the Blue Marble.
+- examples/sattrack/sun.go (new): NOAA low-accuracy solar ephemeris
+  (declination + equation of time -> subsolar point), the daylight alpha
+  ramp (0 deg / -9 deg named constants), and the per-threshold arcsin
+  latitude-root solver.
+- examples/sattrack/render.go: the erase source is now a lit map -
+  lerp(night, day, alpha) with both scaled textures resident; full
+  compose only at startup/invalidate (cached per-row trig, per-column
+  longitudes, asin only inside the twilight band); a 60s terminator
+  refresh patches only the strip rows each column needs (analytic
+  brackets + midpoint classification, 64-column chunk rects hugging the
+  curve) and feeds the strips into the existing z-ordered dirty-rect
+  repaint, so track/circle/label re-stamp automatically. Label glyphs
+  are now trackRed with a 1px solid black outline (JP's live
+  amendments); window constants live-tuned by JP to 2700/600.
+- examples/sattrack/main.go + README.md: second embed + decode, new
+  description and attribution, 45min copy.
+- Tests: sun_test.go (ephemeris, ramp, solver-vs-oracle, gold
+  strip-refresh test, terminator re-stamp) plus label/fade test updates.
+- No changes outside examples/sattrack/ app code; kernel recipe and
+  runner untouched.
+
 ## Todos
 
-- [ ] Black Marble asset (downscale, embed, attribute)
-- [ ] Solar ephemeris + daylight alpha
-- [ ] Lit-map composite (startup full pass; row/column caches)
-- [ ] 60s terminator strip refresh (analytic row ranges, in-place patch, overlay re-stamp, dirty rects)
-- [ ] Tests per Verification
-- [ ] Cached-kernel qemu proof + screendumps recorded here
-- [ ] README update (new asset attribution, day/night description) + quality gates
+- [x] Black Marble asset (downscale, embed, attribute)
+- [x] Solar ephemeris + daylight alpha
+- [x] Lit-map composite (startup full pass; row/column caches)
+- [x] 60s terminator strip refresh (analytic row ranges, in-place patch, overlay re-stamp, dirty rects)
+- [x] Tests per Verification
+- [x] Cached-kernel qemu proof + screendumps recorded here
+- [x] README update (new asset attribution, day/night description) + quality gates
