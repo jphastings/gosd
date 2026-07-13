@@ -55,9 +55,10 @@ var (
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
-// not given. The .img file is written sparsely, so an unused data partition
-// costs almost nothing on the build host's disk.
-const defaultDataSize = "1GiB"
+// not given. It defaults to 0 (no data partition): persistence is opt-in, so
+// appliance images that don't need /data don't pay its image-size and
+// flash-time cost.
+const defaultDataSize = "0"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -80,7 +81,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", "",
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
-		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); 0 omits the partition entirely")
+		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",

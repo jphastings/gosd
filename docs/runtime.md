@@ -209,16 +209,18 @@ so:
 ## Persistent storage: `/data`
 
 Images are built with a second FAT32 partition, labelled `GOSD-DATA`, sized
-by `gosd build --data-size` (1GiB unless you say otherwise; `--data-size=0`
-omits it). `gosd-init` mounts it read-write at the fixed path `/data`. Data
-written there survives reboots and power cycles. There's no environment
-variable to consult — `/data` is always the path; just write to it.
+by `gosd build --data-size`. It's opt-in: the default is `0` (no partition
+at all), so pass a size (e.g. `--data-size=1GiB`) to get one. `gosd-init`
+mounts it read-write at the fixed path `/data`. Data written there survives
+reboots and power cycles. There's no environment variable to consult —
+`/data` is always the path; just write to it.
 
 Rules of engagement:
 
 - **When there's no partition, `/data` is read-only.** If the image was built
-  with `--data-size=0`, or the card's data partition can't be mounted (a bad
-  card, say), `gosd-init` mounts an empty **read-only** filesystem at `/data`
+  with the default `--data-size=0` (or no `--data-size` at all), or the
+  card's data partition can't be mounted (a bad card, say), `gosd-init`
+  mounts an empty **read-only** filesystem at `/data`
   instead — boot still proceeds normally. A write then fails immediately with
   `EROFS` rather than silently landing in RAM and vanishing on the next
   reboot. This is deliberate: it turns "I thought I had persistence" into a

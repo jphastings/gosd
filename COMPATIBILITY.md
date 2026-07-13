@@ -28,7 +28,7 @@ see `beans list` for what's in flight.
 | App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ |
 | mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ |
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ |
-| Persistent `/data` partition | ✅ | ✅ | ✅ | ✅ |
+| Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] |
 | USB gadget (serial/Ethernet) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
@@ -138,6 +138,13 @@ see `beans list` for what's in flight.
     correctly generated and schema-valid, but only become visible to an end
     user when they pick **No filtering** on Imager's device-selection page.
     See "Device filtering" in `docs/publishing.md`.
+
+[^data-opt-in]: The `GOSD-DATA` partition is opt-in at build time —
+    `gosd build --data-size` defaults to `0` (no partition; `/data` mounts
+    read-only), so pass a size (e.g. `--data-size=1GiB`) to get writable
+    persistence. The capability itself is unchanged and identical across all
+    four boards; see `docs/runtime.md`'s "Persistent storage: `/data`"
+    section.
 
 [^no-emmc]: Neither Raspberry Pi board has onboard eMMC — this is a hardware
     limitation of both boards, not a GoSD gap. The `emmc` package's
