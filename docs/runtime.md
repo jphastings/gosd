@@ -356,6 +356,36 @@ reads it.
   tagged. See [`docs/board-build-tags.md`](board-build-tags.md) for how to
   gate board-specific source with it.
 
+## Bundling a companion binary (`--with-external`)
+
+Not everything your app needs is a pure-Go library. A video decoder, a
+vendor CLI, or any other prebuilt executable can ride along in the same
+image via `gosd build --with-external <path>[:<dest>]` (repeatable):
+
+```sh
+gosd build . --board pi-zero-2w \
+  --with-external ./build/mpv \
+  --with-external ./build/tool:/usr/local/bin/tool
+```
+
+- **Dest defaults to `/bin/<basename of path>`.** An explicit `<dest>` must
+  be an absolute path; one that collides with `/init`, `/app`,
+  `/etc/gosd/*`, `/lib/firmware/*`, or another `--with-external`'s dest is
+  rejected before the build touches the network or the toolchain.
+- **The binary must be fully static.** The initramfs ships no `ld.so` and no
+  library layout, so a dynamically linked binary (one with a `PT_INTERP`
+  program header) is rejected at build time with an actionable error —
+  build it with `CGO_ENABLED=0` (Go) or full static linking (C/C++).
+- **It must match the board's architecture.** `gosd build` checks each
+  external's ELF class/machine against every selected board's target
+  architecture before assembling anything — an arm64 binary alongside
+  `--board pi-zero-w` (armv6) fails immediately, naming the board, instead
+  of shipping something that can't `exec`.
+- **Your app owns it at runtime.** gosd-init stays a single-child
+  supervisor — it starts and restarts only `/app`. Launch, monitor, and
+  restart the companion binary yourself via `os/exec`; if the pair wedges,
+  exit `/app` and let gosd-init's own backoff supervisor restart the unit.
+
 ## GPIO, I2C, SPI
 
 GoSD doesn't ship its own hardware I/O library — use the same pure-Go
