@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	initFileMode     = 0o755
-	appFileMode      = 0o755
-	configFileMode   = 0o644
-	firmwareFileMode = 0o644
+	initFileMode       = 0o755
+	appFileMode        = 0o755
+	configFileMode     = 0o644
+	firmwareFileMode   = 0o644
+	executableFileMode = 0o755
 )
 
 // mountPointDirs are the directories gosd-init unconditionally mounts
@@ -65,6 +66,17 @@ type Options struct {
 	// board's own firmware readers.
 	ExtraFirmware map[string]io.Reader
 
+	// ExtraExecutables holds additional prebuilt static executables to land
+	// at their given absolute dest inside the initramfs (gosd build
+	// --with-external, bean gosd-ig4h) - keyed by dest (e.g. "/bin/mpv"),
+	// mirroring ExtraFirmware's shape. cmd/gosd validates each dest and
+	// pre-flights each binary's ELF class/machine against the board's Arch
+	// before Assemble ever sees it, so this package stays free of any
+	// developer-config or ELF-inspection concerns - it just writes the
+	// bytes at mode 0755. Assemble closes every reader once it's done with
+	// it, exactly like ExtraFirmware.
+	ExtraExecutables map[string]io.Reader
+
 	// ArtifactsDir is checked for each of Board.Artifacts() by name
 	// before falling back to a pinned-URL fetch into CacheDir. Pointing
 	// it at a directory that already contains every artifact a board
@@ -98,6 +110,7 @@ func Assemble(ctx context.Context, opts Options) error {
 		firmware[name] = r
 	}
 	defer closeReaders(firmware)
+	defer closeReaders(opts.ExtraExecutables)
 
 	initBin, err := os.Open(opts.InitBinaryPath)
 	if err != nil {
@@ -124,7 +137,7 @@ func Assemble(ctx context.Context, opts Options) error {
 		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
 	}
 
-	files := make([]initramfs.File, 0, len(firmware)+3)
+	files := make([]initramfs.File, 0, len(firmware)+len(opts.ExtraExecutables)+3)
 	files = append(files,
 		initramfs.File{Path: "/init", Content: initBin, Mode: initFileMode},
 		initramfs.File{Path: "/app", Content: appBin, Mode: appFileMode},
@@ -132,6 +145,9 @@ func Assemble(ctx context.Context, opts Options) error {
 	)
 	for name, r := range firmware {
 		files = append(files, initramfs.File{Path: "/lib/firmware/" + name, Content: r, Mode: firmwareFileMode})
+	}
+	for dest, r := range opts.ExtraExecutables {
+		files = append(files, initramfs.File{Path: dest, Content: r, Mode: executableFileMode})
 	}
 
 	var initramfsBuf bytes.Buffer

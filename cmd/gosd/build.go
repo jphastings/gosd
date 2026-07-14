@@ -52,6 +52,7 @@ var (
 	usbGadget      bool
 	envFlags       []string
 	kernelCfgPath  string
+	withExternal   []string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -92,6 +93,8 @@ func newBuildCmd() *cobra.Command {
 		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key")
 	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
 		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
+	cmd.Flags().StringArrayVar(&withExternal, "with-external", nil,
+		"prebuilt static executable to bundle into the image at <path>[:<dest>] (repeatable); dest must be absolute, default /bin/<basename of path>; the binary must be a fully static ELF matching each selected board's architecture")
 
 	return cmd
 }
@@ -104,6 +107,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	env, err := parseEnvFlags(envFlags)
+	if err != nil {
+		return err
+	}
+
+	externalSpecs, err := parseWithExternalFlags(withExternal)
 	if err != nil {
 		return err
 	}
@@ -162,6 +170,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		extraExecutables, err := openExternalsForBoard(externalSpecs, b)
+		if err != nil {
+			return err
+		}
+
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
@@ -173,11 +186,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				UsbGadget:    usbGadget,
 				Env:          env,
 			},
-			ArtifactsDir:  artifactsDir,
-			CacheDir:      cacheDir,
-			OutputPath:    outputs[b.Name()],
-			DataSizeBytes: dataSizeBytes,
-			ExtraFirmware: extraFirmware,
+			ArtifactsDir:     artifactsDir,
+			CacheDir:         cacheDir,
+			OutputPath:       outputs[b.Name()],
+			DataSizeBytes:    dataSizeBytes,
+			ExtraFirmware:    extraFirmware,
+			ExtraExecutables: extraExecutables,
 		}
 		if err := pipeline.Assemble(ctx, opts); err != nil {
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)

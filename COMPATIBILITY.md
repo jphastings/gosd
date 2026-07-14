@@ -20,6 +20,7 @@ see `beans list` for what's in flight.
 | Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ |
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] |
 | Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
+| Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
 | Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | ✅ |
 | WiFi (WPA2-PSK / open) | ✅ | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
 | Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
@@ -56,6 +57,16 @@ see `beans list` for what's in flight.
     this table, no custom kernel has been run on physical hardware yet
     (hardware bring-up beans for the underlying boards are still open, see
     the note above this table).
+
+[^with-external]: `gosd build --with-external <path>[:<dest>]` (repeatable)
+    bundles a prebuilt, fully static executable into the initramfs at mode
+    0755 (see `docs/runtime.md#bundling-a-companion-binary---with-external`).
+    Build-time validation (`debug/elf`) checks each binary's ELF class/
+    machine against the board's architecture and rejects a dynamically
+    linked binary (`PT_INTERP` present) with an actionable error, so this
+    row is code-complete and fake-artifact-tested against real
+    cross-compiled static Go binaries for both arm64 and armv6 boards; like
+    every other row, it hasn't been exercised on physical hardware yet.
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
     published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,

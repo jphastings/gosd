@@ -82,7 +82,9 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
 
    Omit `--board` to build every supported board at once; run `gosd build
    --help` for the full set of flags (`--hostname`, `--wifi-ssid` /
-   `--wifi-pass`, repeatable `--board`, `-o`/`--output`).
+   `--wifi-pass`, repeatable `--board`, `-o`/`--output`, repeatable
+   `--with-external` to bundle a prebuilt static companion binary — see
+   [`docs/runtime.md`](docs/runtime.md#bundling-a-companion-binary---with-external)).
 
    Don't have a board on hand yet? `gosd run .` cross-compiles your app,
    builds an image, and boots it under `qemu-system-aarch64` in one step,
