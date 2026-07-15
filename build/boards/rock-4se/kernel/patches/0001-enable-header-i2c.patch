@@ -1,0 +1,40 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
+@@ -17,6 +17,37 @@
+ 	};
+ };
+ 
++&i2c2 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's I2C2
++	 * bus (physical pins 27/28, SDA2/SCL2). Mainline leaves i2c2 disabled
++	 * with no board owner; rk3399-base.dtsi already wires its
++	 * pinctrl-0 = <&i2c2_xfer> on the base node, so only status needs
++	 * flipping here. See bean gosd-iosp.
++	 */
++	status = "okay";
++};
++
++&i2c6 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's I2C6
++	 * bus (physical pins 29/31, SCL6/SDA6). Same rationale as i2c2 above
++	 * - disabled with no board owner, pinctrl-0 already wired in
++	 * rk3399-base.dtsi. See bean gosd-iosp.
++	 */
++	status = "okay";
++};
++
++&i2c7 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's I2C7
++	 * bus (physical pins 3/5, SDA7/SCL7 - the Pi-header-equivalent I2C
++	 * position). Same rationale as i2c2 above. A PN532 NFC reader hangs
++	 * off this bus. See bean gosd-iosp.
++	 */
++	status = "okay";
++};
++
+ &sdio0 {
+ 	status = "okay";
+ 

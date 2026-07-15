@@ -29,6 +29,7 @@ import (
 	pizerowmanifest "github.com/jphastings/gosd/build/boards/pi-zero-w"
 	qemuvirtkernel "github.com/jphastings/gosd/build/boards/qemu-virt/kernel"
 	radxakernel "github.com/jphastings/gosd/build/boards/radxa-zero-3e/kernel"
+	rock4sekernel "github.com/jphastings/gosd/build/boards/rock-4se/kernel"
 )
 
 // RefKind distinguishes how Source.Ref must be resolved.
@@ -362,6 +363,68 @@ var specs = map[string]KernelSpec{
 			"CONFIG_USB_DWC3",
 			"CONFIG_PHY_ROCKCHIP_INNO_USB2",
 			"CONFIG_PHY_ROCKCHIP_NANENG_COMBO_PHY",
+			"CONFIG_GPIO_ROCKCHIP",
+			"CONFIG_I2C_RK3X",
+			"CONFIG_SPI_ROCKCHIP",
+			"CONFIG_SPI_SPIDEV",
+			"CONFIG_SERIAL_8250_DW",
+		},
+		ModulesDisabled: true,
+		// Reproducibility left zero: this board's build doesn't set any of
+		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
+	},
+
+	// "rock-4se" is scaffolding-only as of bean gosd-iosp: this board isn't
+	// registered in internal/boards yet (bean gosd-0vvh), so
+	// TestBoardIDsListsExactlyTheFiveKernelBuildingBoards in
+	// kernelspec_test.go fails until that board profile lands and the test
+	// is updated to include it - a known, reported cross-bean coupling, not
+	// silently worked around here. See the bean body's "Scaffolding status"
+	// note.
+	"rock-4se": {
+		BoardID: "rock-4se",
+		Source: Source{
+			Repo:    fleetKernelRepo,
+			Ref:     fleetKernelTag,
+			RefKind: TagRef,
+		},
+		Defconfig: "defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: rock4sekernel.ConfigFragment,
+		DTSPatches:     loadPatches(rock4sekernel.PatchesFS, "patches"),
+
+		DTB: &DTB{
+			MakeTarget: "rockchip/rk3399-rock-4se.dtb",
+			SourcePath: "arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dtb",
+			Filename:   "rk3399-rock-4se.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "Image",
+
+		// See the radxa-zero-3e RequiredY comment above - same origin, now
+		// a hand-maintained literal list. RK3399-T-specific entries
+		// (PHY_ROCKCHIP_TYPEC instead of radxa-zero-3e's RK3566-only
+		// PHY_ROCKCHIP_NANENG_COMBO_PHY; PCI/NVMe/exFAT/mass-storage) come
+		// from bean gosd-je2r's research findings.
+		RequiredY: []string{
+			"CONFIG_ARCH_ROCKCHIP",
+			"CONFIG_MMC_DW",
+			"CONFIG_MMC_DW_ROCKCHIP",
+			"CONFIG_PCI",
+			"CONFIG_PCIE_ROCKCHIP_HOST",
+			"CONFIG_PHY_ROCKCHIP_PCIE",
+			"CONFIG_BLK_DEV_NVME",
+			"CONFIG_EXFAT_FS",
+			"CONFIG_STMMAC_ETH",
+			"CONFIG_DWMAC_ROCKCHIP",
+			"CONFIG_REALTEK_PHY",
+			"CONFIG_USB_DWC3",
+			"CONFIG_PHY_ROCKCHIP_INNO_USB2",
+			"CONFIG_PHY_ROCKCHIP_TYPEC",
+			"CONFIG_USB_CONFIGFS_MASS_STORAGE",
 			"CONFIG_GPIO_ROCKCHIP",
 			"CONFIG_I2C_RK3X",
 			"CONFIG_SPI_ROCKCHIP",
