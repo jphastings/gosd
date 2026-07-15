@@ -43,7 +43,7 @@ func cacheComplete(dir, name string) bool {
 	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(dir, sourceJSONName)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, SourceJSONName)); err != nil {
 		return false
 	}
 	return true

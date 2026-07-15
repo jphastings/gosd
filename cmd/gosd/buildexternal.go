@@ -15,6 +15,7 @@ import (
 	"github.com/jphastings/gosd/internal/container"
 	"github.com/jphastings/gosd/internal/extbuild"
 	"github.com/jphastings/gosd/internal/extconfig"
+	"github.com/jphastings/gosd/internal/fsutil"
 )
 
 // defaultExternalConfigFile is the recipe gosd build-external reads from
@@ -24,11 +25,6 @@ const defaultExternalConfigFile = "./gosd-external.toml"
 // defaultExternalOutputDir is the <arch>/<name>-keyed layout gosd
 // build-external writes into when -o/--output is not given.
 const defaultExternalOutputDir = "./gosd-externals/"
-
-// externalSourceJSONName mirrors internal/extbuild's own sourceJSONName
-// constant (unexported there): the fixed filename a build's provenance
-// record is written under inside its cache entry.
-const externalSourceJSONName = "source.json"
 
 var (
 	externalNames       []string
@@ -356,39 +352,17 @@ func writeExternalOutput(outputDir, archKey, name string, result extbuild.Result
 	}
 
 	destBin := filepath.Join(destDir, name)
-	if err := copyExternalFile(result.OutputPath, destBin); err != nil {
-		return "", err
+	if err := fsutil.CopyFile(result.OutputPath, destBin); err != nil {
+		return "", fmt.Errorf("writing output %s failed: %w", destBin, err)
 	}
 
-	srcJSON := filepath.Join(result.CacheDir, externalSourceJSONName)
-	destJSON := filepath.Join(destDir, name+"."+externalSourceJSONName)
-	if err := copyExternalFile(srcJSON, destJSON); err != nil {
-		return "", err
+	srcJSON := filepath.Join(result.CacheDir, extbuild.SourceJSONName)
+	destJSON := filepath.Join(destDir, name+"."+extbuild.SourceJSONName)
+	if err := fsutil.CopyFile(srcJSON, destJSON); err != nil {
+		return "", fmt.Errorf("writing output %s failed: %w", destJSON, err)
 	}
 
 	return destBin, nil
-}
-
-func copyExternalFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("writing output %s failed: %w", dst, err)
-	}
-	defer func() { _ = in.Close() }()
-
-	info, err := in.Stat()
-	if err != nil {
-		return fmt.Errorf("writing output %s failed: %w", dst, err)
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("writing output %s failed: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("writing output %s failed: %w", dst, err)
-	}
-	return out.Close()
 }
 
 func printExternalBuildSummary(cmd *cobra.Command, outcomes []externalBuildOutcome, outputDir string) {

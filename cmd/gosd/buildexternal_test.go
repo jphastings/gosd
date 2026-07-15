@@ -213,6 +213,20 @@ func TestArchesForExternalIntersectsFilter(t *testing.T) {
 	}
 }
 
+func TestArchesForExternalMultiMatchFollowsFilterOrder(t *testing.T) {
+	ext := externalFixture("mpv", boards.KnownArches["arm64"], boards.KnownArches["arm-6"])
+
+	arches, err := archesForExternal(ext, []boards.Arch{boards.KnownArches["arm-6"], boards.KnownArches["arm64"]})
+	if err != nil {
+		t.Fatalf("archesForExternal: %v", err)
+	}
+	got := archKeys(arches)
+	want := []string{"arm-6", "arm64"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("arches = %v, want %v (order follows --arch flag order, not the recipe's declared arch order)", got, want)
+	}
+}
+
 func TestArchesForExternalEmptyIntersectionErrorsNamingExternal(t *testing.T) {
 	ext := externalFixture("gpiotool", boards.KnownArches["arm64"])
 
@@ -417,6 +431,25 @@ func TestBuildExternalsDockerMissingErrorPropagatesActionably(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gosd build-external") {
 		t.Errorf("error = %q, want it to name gosd build-external (not gosd build-kernel)", err.Error())
+	}
+}
+
+// detectExternalRuntime wraps the real container.Detect, so this test
+// passes a preferred runtime name no machine actually has on $PATH rather
+// than injecting a fake - the point is pinning that THIS command's wrapper
+// hard-codes "gosd build-external" (not a copy-pasted "gosd build-kernel")
+// into the error, not re-testing container.Detect's own behavior (already
+// covered by internal/container's tests).
+func TestDetectExternalRuntimeNamesItselfInMissingRuntimeError(t *testing.T) {
+	_, err := detectExternalRuntime(context.Background(), "gosd-test-nonexistent-runtime")
+	if err == nil {
+		t.Skip("a runtime literally named gosd-test-nonexistent-runtime exists on $PATH; nothing to assert")
+	}
+	if !strings.Contains(err.Error(), "gosd build-external") {
+		t.Errorf("error = %q, want it to name gosd build-external", err.Error())
+	}
+	if strings.Contains(err.Error(), "gosd build-kernel") {
+		t.Errorf("error = %q, want it not to name gosd build-kernel", err.Error())
 	}
 }
 

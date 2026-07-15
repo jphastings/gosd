@@ -3,11 +3,11 @@ package kernelbuild
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/jphastings/gosd/internal/artifacts"
+	"github.com/jphastings/gosd/internal/fsutil"
 	"github.com/jphastings/gosd/internal/kernelspec"
 )
 
@@ -73,31 +73,9 @@ func copyNamed(srcDir, dstDir string, names []string) error {
 		return err
 	}
 	for _, name := range names {
-		if err := copyFile(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
+		if err := fsutil.CopyFile(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", src, err)
-	}
-	defer func() { _ = in.Close() }()
-
-	info, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	return out.Close()
 }
