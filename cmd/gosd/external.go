@@ -1,7 +1,6 @@
 package main
 
 import (
-	"debug/elf"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/staticelf"
 )
 
 // externalSpec is one parsed --with-external flag: a local file and the
@@ -142,62 +142,33 @@ func closeOpenedExternals(files map[string]io.Reader) {
 	}
 }
 
-// elfExpectationsFor returns the ELF class/machine a static binary must
-// have to run on arch, e.g. arm64 boards need ELFCLASS64/EM_AARCH64, and
-// arm/GOARM=6 boards (pi-zero-w) need ELFCLASS32/EM_ARM. It errors for any
-// GOARCH gosd doesn't yet know how to map, rather than silently skipping
-// validation for it.
-func elfExpectationsFor(arch boards.Arch) (elf.Class, elf.Machine, error) {
-	switch arch.GOARCH {
-	case "arm64":
-		return elf.ELFCLASS64, elf.EM_AARCH64, nil
-	case "arm":
-		return elf.ELFCLASS32, elf.EM_ARM, nil
-	default:
-		return 0, 0, fmt.Errorf("--with-external has no ELF class/machine mapping for GOARCH=%s; gosd needs updating to validate externals for this target", arch.GOARCH)
-	}
-}
-
 // validateStaticELF pre-flights f (an opened --with-external file, read
 // position at 0) against board b: it must parse as an ELF binary whose
 // class/machine match b.Arch(), and it must have no PT_INTERP program
 // header (i.e. it must be statically linked, since the gosd initramfs ships
-// no ld.so or library layout for a dynamic loader to resolve against). It
-// only reads f's headers via io.ReaderAt (elf.NewFile never calls Read), so
-// f's read position is untouched and the caller can still hand f to the
-// pipeline as a fresh, unread reader afterwards.
+// no ld.so or library layout for a dynamic loader to resolve against). The
+// underlying ELF check lives in internal/staticelf (shared with
+// internal/extbuild's post-build verification, bean gosd-sn30); this
+// function's job is only to turn staticelf's generic error into
+// --with-external/--board-specific, actionable wording. It only reads f's
+// headers via io.ReaderAt (elf.NewFile never calls Read), so f's read
+// position is untouched and the caller can still hand f to the pipeline as
+// a fresh, unread reader afterwards.
 func validateStaticELF(f *os.File, b boards.Board) error {
-	ef, err := elf.NewFile(f)
-	if err != nil {
-		return fmt.Errorf("--with-external file %s is not a valid ELF binary (%w); gosd build only bundles compiled static executables, not scripts or archives", f.Name(), err)
+	err := staticelf.Verify(f, f.Name(), b.Arch())
+	if err == nil {
+		return nil
 	}
-	defer func() { _ = ef.Close() }()
 
-	wantClass, wantMachine, err := elfExpectationsFor(b.Arch())
-	if err != nil {
+	switch e := err.(type) {
+	case *staticelf.NotELFError:
+		return fmt.Errorf("--with-external file %s is not a valid ELF binary (%w); gosd build only bundles compiled static executables, not scripts or archives", f.Name(), e.Err)
+	case *staticelf.MismatchError:
+		return fmt.Errorf("--with-external file %s is a %s/%s binary, but --board %s needs %s/%s; cross-compile it with GOOS=linux GOARCH=%s%s (or drop --board %s)",
+			f.Name(), e.GotClass, e.GotMachine, b.Name(), e.WantClass, e.WantMachine, b.Arch().GOARCH, staticelf.GOARMSuffix(b.Arch()), b.Name())
+	case *staticelf.DynamicallyLinkedError:
+		return fmt.Errorf("--with-external file %s is dynamically linked (it has a PT_INTERP program header requesting a dynamic loader); the gosd initramfs has no ld.so or library layout, so bundled binaries must be fully static - rebuild it with CGO_ENABLED=0 (Go) or full static linking (C/C++)", f.Name())
+	default:
 		return err
 	}
-	if ef.Class != wantClass || ef.Machine != wantMachine {
-		return fmt.Errorf("--with-external file %s is a %s/%s binary, but --board %s needs %s/%s; cross-compile it with GOOS=linux GOARCH=%s%s (or drop --board %s)",
-			f.Name(), ef.Class, ef.Machine, b.Name(), wantClass, wantMachine, b.Arch().GOARCH, goarmSuffix(b.Arch()), b.Name())
-	}
-
-	for _, p := range ef.Progs {
-		if p.Type == elf.PT_INTERP {
-			return fmt.Errorf("--with-external file %s is dynamically linked (it has a PT_INTERP program header requesting a dynamic loader); the gosd initramfs has no ld.so or library layout, so bundled binaries must be fully static - rebuild it with CGO_ENABLED=0 (Go) or full static linking (C/C++)", f.Name())
-		}
-	}
-
-	return nil
-}
-
-// goarmSuffix returns " GOARM=<n>" for an arch that sets one (e.g.
-// pi-zero-w's arm/GOARM=6), or "" for arches that don't (e.g. arm64) - used
-// to build the exact env a developer needs to cross-compile a replacement
-// --with-external binary for a given board.
-func goarmSuffix(arch boards.Arch) string {
-	if arch.GOARM == "" {
-		return ""
-	}
-	return " GOARM=" + arch.GOARM
 }

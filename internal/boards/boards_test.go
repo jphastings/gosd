@@ -115,6 +115,14 @@ func TestBuildTag(t *testing.T) {
 	}
 }
 
+func TestKnownArchesKeyedByTheirOwnKey(t *testing.T) {
+	for token, arch := range boards.KnownArches {
+		if arch.Key() != token {
+			t.Errorf("KnownArches[%q].Key() = %q, want %q", token, arch.Key(), token)
+		}
+	}
+}
+
 func TestRegisterAndRegisterInternalShareOneNamespace(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-shared-namespace"})
 
