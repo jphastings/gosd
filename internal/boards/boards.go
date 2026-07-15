@@ -85,6 +85,19 @@ type Arch struct {
 	GOARM string
 }
 
+// KnownArches is the fixed vocabulary of target Arch values gosd's board
+// fleet uses today (see CLAUDE.md's Target locked decision), keyed by
+// Arch.Key(). It's independent of which boards happen to be registered: a
+// package that needs to validate an arch token from developer input (e.g.
+// internal/extconfig's gosd-external.toml arch = [...] list) can't rely on
+// the live registry, since boards only register themselves from cmd/gosd's
+// init() - a standalone parser test never runs that. Adding a board whose
+// Arch() isn't already listed here needs a new entry alongside it.
+var KnownArches = map[string]Arch{
+	"arm64": {GOARCH: "arm64"},
+	"arm-6": {GOARCH: "arm", GOARM: "6"},
+}
+
 // Key returns a short, filesystem- and map-safe identifier for a - the
 // distinct value internal/build's per-arch compile cache and cmd/gosd's
 // dedupe logic key on, e.g. "arm64" or "arm-6".
