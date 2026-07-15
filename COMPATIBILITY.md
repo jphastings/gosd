@@ -66,7 +66,12 @@ see `beans list` for what's in flight.
     linked binary (`PT_INTERP` present) with an actionable error, so this
     row is code-complete and fake-artifact-tested against real
     cross-compiled static Go binaries for both arm64 and armv6 boards; like
-    every other row, it hasn't been exercised on physical hardware yet.
+    every other row, it hasn't been exercised on physical hardware yet. The
+    binary itself doesn't have to be Go: `gosd build-external` (see
+    `docs/externals.md`) cross-compiles one from a `gosd-external.toml`
+    recipe inside Docker/Podman, arch-keyed rather than per-board (an
+    arm64 build covers pi-zero-2w/radxa-zero-3e/nanopi-zero2 alike), so it
+    isn't its own row in this per-board table.
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
     published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,

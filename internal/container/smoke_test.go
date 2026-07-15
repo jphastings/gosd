@@ -28,7 +28,7 @@ func TestSmoke_DetectAndRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	rt, err := Detect(ctx, "")
+	rt, err := Detect(ctx, "gosd build-kernel", "")
 	if err != nil {
 		var notInstalled *NotInstalledError
 		var daemonDown *DaemonDownError

@@ -85,7 +85,7 @@ func runBuildKernel(cmd *cobra.Command, _ []string) error {
 	}
 
 	ctx := cmd.Context()
-	rt, err := container.Detect(ctx, effectiveBuilderPref(kernelBuilderPref, cfg))
+	rt, err := container.Detect(ctx, "gosd build-kernel", effectiveBuilderPref(kernelBuilderPref, cfg))
 	if err != nil {
 		return err
 	}

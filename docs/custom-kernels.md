@@ -23,8 +23,9 @@ else's build.
   compiled in, and point `gosd build --artifacts-dir` at the result. This is
   an explicit, opt-in exception to GoSD's usual "no build step needs
   Docker" rule (see `CLAUDE.md`'s locked decisions) — `gosd build` itself
-  still never requires a container runtime; only `gosd build-kernel` does,
-  and it says so in its own `--help` text and errors.
+  still never requires a container runtime; only `gosd build-kernel` and
+  `gosd build-external` (see `docs/externals.md`) do, and each says so in
+  its own `--help` text and errors.
 
 Both tiers produce an ordinary flat artifact directory
 (`kernel8.img`/`Image`, a DTB where the board has one, `kernel.config`,

@@ -120,3 +120,10 @@ sensor)? `gosd build-kernel` is an opt-in, Docker/Podman-driven command that
 compiles a custom kernel from a `gosd-kernel.toml` you declare in your
 project, without slowing down the default zero-Docker path for everyone
 else — see [`docs/custom-kernels.md`](docs/custom-kernels.md).
+
+Need a companion binary that isn't pure Go (a hardware-accelerated video
+player, a vendor CLI)? `gosd build-external` is the same kind of opt-in,
+Docker/Podman-driven command, cross-compiling one from a
+`gosd-external.toml` recipe into a fully static binary `gosd build
+--with-external` bundles into the image — see
+[`docs/externals.md`](docs/externals.md).

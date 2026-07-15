@@ -35,8 +35,10 @@ say so in the bean rather than silently diverging.
   root, Docker, or Linux — `go test ./...` must pass on macOS and Linux.
   Linux-only runtime code goes behind build tags. **Carve-out:** `gosd build`
   itself never requires Docker; `gosd build-kernel` (opt-in custom kernel
-  compiles, see `docs/custom-kernels.md`) requires Docker or Podman, by
-  design, and says so in its own `--help` text and errors.
+  compiles, see `docs/custom-kernels.md`) and `gosd build-external` (opt-in
+  companion-binary cross-compiles, see `docs/externals.md`) each require
+  Docker or Podman, by design, and say so in their own `--help` text and
+  errors.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
   pi-zero-2w / radxa-zero-3e / nanopi-zero2 / qemu-virt, and `GOARCH=arm
   GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline

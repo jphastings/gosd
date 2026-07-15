@@ -8,14 +8,20 @@ import (
 )
 
 // Filenames written into the work directory bind-mounted read-only at
-// /work (see writeWorkDir), and the fixed source.json name every build
-// also produces alongside its output (see writeSourceJSON).
+// /work (see writeWorkDir).
 const (
 	workScriptName  = "script.sh"
 	workWrapperName = "wrapper.sh"
-
-	sourceJSONName = "source.json"
 )
+
+// SourceJSONName is the fixed filename every build produces alongside its
+// output (see writeSourceJSON), inside its own cache entry directory - it's
+// exported so a caller doing its own copy out of Result.CacheDir (e.g.
+// cmd/gosd's build-external, which needs to rename this file per external
+// to avoid multiple externals colliding on one shared arch output
+// directory) has one source of truth for the name, rather than a
+// hard-coded string literal of its own.
+const SourceJSONName = "source.json"
 
 // writeWorkDir populates dir with the developer's build script, written
 // verbatim, and a small generated wrapper that runs it (see wrapperScript).
