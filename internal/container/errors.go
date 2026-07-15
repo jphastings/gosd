@@ -9,6 +9,10 @@ import "fmt"
 // apart (e.g. to skip a smoke test only in the former case) and so both
 // produce different, actionable guidance.
 type NotInstalledError struct {
+	// Command names the gosd subcommand that needed a container runtime
+	// (e.g. "gosd build-kernel", "gosd build-external"), so the error
+	// names the command a user actually ran rather than a hard-coded one.
+	Command string
 	// Preferred is the specific runtime name that was requested and not
 	// found, or "" if this came from auto-detecting both docker and
 	// podman.
@@ -18,11 +22,14 @@ type NotInstalledError struct {
 func (e *NotInstalledError) Error() string {
 	if e.Preferred != "" {
 		return fmt.Sprintf(
-			"gosd build-kernel needs %s (explicitly requested) but it wasn't found on $PATH; install %s, then re-run",
-			e.Preferred, installHint(e.Preferred),
+			"%s needs %s (explicitly requested) but it wasn't found on $PATH; install %s, then re-run",
+			e.Command, e.Preferred, installHint(e.Preferred),
 		)
 	}
-	return "gosd build-kernel needs Docker or Podman; install Docker Desktop (https://docs.docker.com/desktop/), colima (https://colima.run/) or podman (https://podman.io/docs/installation), then re-run"
+	return fmt.Sprintf(
+		"%s needs Docker or Podman; install Docker Desktop (https://docs.docker.com/desktop/), colima (https://colima.run/) or podman (https://podman.io/docs/installation), then re-run",
+		e.Command,
+	)
 }
 
 func installHint(runtime string) string {
@@ -41,6 +48,9 @@ func installHint(runtime string) string {
 // with Docker Desktop/colima/a podman machine that's installed but not
 // currently started.
 type DaemonDownError struct {
+	// Command names the gosd subcommand that needed a container runtime
+	// (see NotInstalledError.Command).
+	Command string
 	Runtime string
 	// Err is the underlying error from the liveness check (e.g. the
 	// `docker info` invocation), if any.
@@ -48,7 +58,7 @@ type DaemonDownError struct {
 }
 
 func (e *DaemonDownError) Error() string {
-	return fmt.Sprintf("gosd build-kernel found %s but its daemon isn't responding; %s, then re-run", e.Runtime, daemonStartHint(e.Runtime))
+	return fmt.Sprintf("%s found %s but its daemon isn't responding; %s, then re-run", e.Command, e.Runtime, daemonStartHint(e.Runtime))
 }
 
 func (e *DaemonDownError) Unwrap() error { return e.Err }

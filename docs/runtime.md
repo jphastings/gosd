@@ -360,7 +360,10 @@ reads it.
 
 Not everything your app needs is a pure-Go library. A video decoder, a
 vendor CLI, or any other prebuilt executable can ride along in the same
-image via `gosd build --with-external <path>[:<dest>]` (repeatable):
+image via `gosd build --with-external <path>[:<dest>]` (repeatable). Don't
+have that binary built yet? `gosd build-external` cross-compiles one from a
+`gosd-external.toml` recipe inside Docker/Podman, ready to hand straight to
+`--with-external` — see [`docs/externals.md`](externals.md).
 
 ```sh
 gosd build . --board pi-zero-2w \

@@ -12,6 +12,12 @@ func healthyDaemon(_ string, _ []string, _, _ io.Writer) (int, error) {
 	return 0, nil
 }
 
+// testCommand stands in for the gosd subcommand name Detect threads into
+// its errors; these tests don't care which real subcommand it is, only
+// that it round-trips into the error message (see NotInstalledError.Command
+// / DaemonDownError.Command).
+const testCommand = "gosd build-kernel"
+
 func TestDetect_ExplicitPreferenceHonored(t *testing.T) {
 	ex := newFakeExec(map[string]string{
 		RuntimeDocker: "/usr/bin/docker",
@@ -19,7 +25,7 @@ func TestDetect_ExplicitPreferenceHonored(t *testing.T) {
 	})
 	ex.runFn = healthyDaemon
 
-	rt, err := detect(context.Background(), RuntimePodman, ex)
+	rt, err := detect(context.Background(), testCommand, RuntimePodman, ex)
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
@@ -38,7 +44,7 @@ func TestDetect_AutoDetectPrefersDockerOverPodman(t *testing.T) {
 	})
 	ex.runFn = healthyDaemon
 
-	rt, err := detect(context.Background(), "", ex)
+	rt, err := detect(context.Background(), testCommand, "", ex)
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
@@ -53,7 +59,7 @@ func TestDetect_PodmanPickedWhenDockerAbsent(t *testing.T) {
 	})
 	ex.runFn = healthyDaemon
 
-	rt, err := detect(context.Background(), "", ex)
+	rt, err := detect(context.Background(), testCommand, "", ex)
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
@@ -65,7 +71,7 @@ func TestDetect_PodmanPickedWhenDockerAbsent(t *testing.T) {
 func TestDetect_NotInstalled_AutoDetect(t *testing.T) {
 	ex := newFakeExec(nil)
 
-	_, err := detect(context.Background(), "", ex)
+	_, err := detect(context.Background(), testCommand, "", ex)
 
 	var notInstalled *NotInstalledError
 	if !errors.As(err, &notInstalled) {
@@ -86,7 +92,7 @@ func TestDetect_NotInstalled_ExplicitPreference(t *testing.T) {
 		RuntimePodman: "/usr/bin/podman",
 	})
 
-	_, err := detect(context.Background(), RuntimeDocker, ex)
+	_, err := detect(context.Background(), testCommand, RuntimeDocker, ex)
 
 	var notInstalled *NotInstalledError
 	if !errors.As(err, &notInstalled) {
@@ -108,7 +114,7 @@ func TestDetect_DaemonDown(t *testing.T) {
 		return 1, errDaemonUnreachable
 	}
 
-	_, err := detect(context.Background(), "", ex)
+	_, err := detect(context.Background(), testCommand, "", ex)
 
 	var daemonDown *DaemonDownError
 	if !errors.As(err, &daemonDown) {
