@@ -134,6 +134,23 @@ jobs:
             fi
           done
 
+  nix-build:
+    name: nix build (flake + vendorHash freshness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+      # This is the mechanism keeping flake.nix's vendorHash in sync with
+      # go.mod/go.sum: a dependency change without a matching vendorHash
+      # update fails here with nix's "hash mismatch in fixed-output
+      # derivation ... got: sha256-..." error — paste that "got:" value
+      # into flake.nix. The job also proves the flake-packaged gosd builds
+      # and runs at all.
+      - name: nix build
+        run: nix build --print-build-logs
+      - name: Smoke-run the packaged gosd
+        run: ./result/bin/gosd --help
+
   qemu-boot:
     name: qemu boot-to-HTTP smoke test
     runs-on: ubuntu-latest

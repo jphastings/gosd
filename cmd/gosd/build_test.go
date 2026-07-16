@@ -254,3 +254,27 @@ func TestResolveOutputsMultiBoardDefaultsToCurrentDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestGosdInitSrcFlagDefaultsToEnv(t *testing.T) {
+	t.Setenv("GOSD_INIT_SRC", "/nix/store/example-gosd-src")
+
+	flag := newBuildCmd().Flags().Lookup("gosd-init-src")
+	if flag == nil {
+		t.Fatal("build command has no --gosd-init-src flag")
+	}
+	if flag.DefValue != "/nix/store/example-gosd-src" {
+		t.Errorf("--gosd-init-src default = %q, want the GOSD_INIT_SRC env value (the package-manager hook)", flag.DefValue)
+	}
+}
+
+func TestGosdInitSrcFlagDefaultsEmptyWithoutEnv(t *testing.T) {
+	t.Setenv("GOSD_INIT_SRC", "")
+
+	flag := newBuildCmd().Flags().Lookup("gosd-init-src")
+	if flag == nil {
+		t.Fatal("build command has no --gosd-init-src flag")
+	}
+	if flag.DefValue != "" {
+		t.Errorf("--gosd-init-src default = %q, want empty when GOSD_INIT_SRC is unset", flag.DefValue)
+	}
+}

@@ -86,8 +86,8 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&wifiPass, "wifi-pass", "", "WiFi password to bake into the image (WPA2-PSK or open networks only)")
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
 		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
-	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", "",
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
+	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
+		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy)")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
 		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,

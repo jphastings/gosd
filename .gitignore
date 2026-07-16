@@ -1,3 +1,6 @@
 # Build outputs that land in the repo root during gate checks
 /gosd-init
 /gosd
+
+# nix build's output symlink
+/result

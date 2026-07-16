@@ -39,6 +39,14 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    go install github.com/jphastings/gosd/cmd/gosd@latest
    ```
 
+   Or, with nix (handy in CI — the flake bundles the Go toolchain and a
+   vendored copy of gosd's own sources, so `gosd build` works offline
+   apart from your app's dependencies and board artifacts):
+
+   ```sh
+   nix run github:jphastings/gosd -- build ./cmd/myapp
+   ```
+
 2. Write a `main.go`. GoSD runs any normal Go program — no special imports
    or SDK required:
 
