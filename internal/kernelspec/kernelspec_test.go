@@ -13,12 +13,13 @@ import (
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
+	"github.com/jphastings/gosd/internal/boards/rock4se"
 	"github.com/jphastings/gosd/internal/kernelspec"
 )
 
-var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "radxa-zero-3e", "nanopi-zero2", "qemu-virt"}
+var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "qemu-virt"}
 
-func TestBoardIDsListsExactlyTheFiveKernelBuildingBoards(t *testing.T) {
+func TestBoardIDsListsExactlyTheKernelBuildingBoards(t *testing.T) {
 	got := kernelspec.BoardIDs()
 	want := append([]string(nil), allBoardIDs...)
 	sort.Strings(want)
@@ -102,6 +103,7 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 		"pi-zero-w":     pizerow.New(),
 		"radxa-zero-3e": radxazero3e.New(),
 		"nanopi-zero2":  nanopizero2.New(),
+		"rock-4se":      rock4se.New(),
 		"qemu-virt":     qemuvirt.New(),
 	}
 
@@ -150,6 +152,7 @@ func TestDTSPatchesOnlyOnRockchipBoards(t *testing.T) {
 	wantPatched := map[string]bool{
 		"radxa-zero-3e": true,
 		"nanopi-zero2":  true,
+		"rock-4se":      true,
 	}
 
 	for _, id := range allBoardIDs {

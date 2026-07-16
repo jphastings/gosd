@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
+	"github.com/jphastings/gosd/internal/boards/rock4se"
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/naming"
@@ -36,6 +37,12 @@ func init() {
 	// --board=qemu-virt, never part of the default no---board build set,
 	// --help text, or catalog generation.
 	boards.RegisterInternal(qemuvirt.New())
+	// rock-4se is registered internal for now (buildable via explicit
+	// --board=rock-4se, e.g. gosd build-kernel): its kernelspec entry and
+	// board profile have landed, but its bootloader/kernel artifact release
+	// hasn't, so real (non---artifacts-dir) image fetches would 404. Bean
+	// gosd-0vvh flips it public once artifacts/vX.Y.Z ships it.
+	boards.RegisterInternal(rock4se.New())
 }
 
 var (
