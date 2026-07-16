@@ -1,11 +1,11 @@
 ---
 # gosd-0vvh
 title: 'ROCK 4SE: board profile (extlinux + bootloader raw-writes)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-13T12:41:54Z
-updated_at: 2026-07-16T16:05:32Z
+updated_at: 2026-07-16T22:31:06Z
 parent: gosd-cuym
 blocked_by:
     - gosd-iosp
@@ -22,7 +22,33 @@ New `internal/boards/rock4se/` mirroring `internal/boards/radxazero3e/` (board.g
 
 ## Todo
 
-- [ ] internal/boards/rock4se/ (board.go, templates, board_test.go) — board.go + templates landed on `bean/gosd-iosp-rock4se-kernel` (build-kernel resolves boards via the registry, so gosd-iosp needed them; see that bean). board_test.go still to do here.
-- [x] RegisterInternal in cmd/gosd/build.go (landed on `bean/gosd-iosp-rock4se-kernel`, same coupling)
-- [ ] Extend cmd/gosd/build_integration_test.go (fake artifacts incl. rk3399-rock-4se.dtb: raw writes, boot partition contents, exact extlinux.conf; keep excluded from default all-boards set until activation)
-- [ ] docs/board-build-tags.md entry
+- [x] internal/boards/rock4se/ (board.go, templates, board_test.go) — board.go + templates landed with gosd-iosp (PR #88: build-kernel resolves boards via the registry, so gosd-iosp needed them); board_test.go landed here.
+- [x] RegisterInternal in cmd/gosd/build.go (landed with gosd-iosp, PR #88, same coupling)
+- [x] Extend cmd/gosd/build_integration_test.go (fake artifacts incl. rk3399-rock-4se.dtb: raw writes, boot partition contents, exact extlinux.conf; kept excluded from default all-boards set until activation)
+- [x] docs/board-build-tags.md entry
+
+## Summary of Changes
+
+Split across two PRs by the build-kernel↔registry coupling (see gosd-iosp):
+
+**PR #88 (with gosd-iosp):** `internal/boards/rock4se/` board.go +
+templates/ (extlinux.conf.tmpl, templates.go) + `RegisterInternal` in
+cmd/gosd/build.go.
+
+**This bean's own branch `bean/gosd-0vvh-rock4se-board-tests`:**
+- `internal/boards/rock4se/board_test.go` — behavioral mirror of the
+  radxazero3e suite: artifact names URL-less, BootFiles contents +
+  initramfs requirement, extlinux `gosd.board=rock-4se`, RawWrites at
+  32768/8388608 with content checks, oversized-u-boot 16MiB panic,
+  empty FirmwareFiles, UsbGadget no-op.
+- `cmd/gosd/build_integration_test.go` —
+  `TestBuildProducesABootableImageForRock4SEFromFakeArtifacts` (network
+  tripwire, raw-write readback at both offsets, boot-partition contents,
+  byte-exact extlinux.conf) + new fake
+  `cmd/gosd/testdata/fake-artifacts/rk3399-rock-4se.dtb`. Also updated
+  `TestBuildWithNoBoardFlagBuildsAllBoards` to assert the absence of BOTH
+  internal boards' images (its comment previously called qemu-virt "the
+  only remaining internal-only board").
+- `docs/board-build-tags.md` — `rock-4se` / `gosd_rock_4se` row + a
+  prose note that the board is internal-only until the activation bean
+  flips it public.

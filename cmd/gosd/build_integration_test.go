@@ -554,9 +554,9 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt is the only remaining internal-only board: the default
-	// no---board build must produce exactly the four public boards' images,
-	// never a fifth for qemu-virt.
+	// qemu-virt and rock-4se are the remaining internal-only boards: the
+	// default no---board build must produce exactly the four public boards'
+	// images, never a fifth or sixth for either of them.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -568,10 +568,12 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 	if len(imgNames) != 4 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 4 (qemu-virt must stay excluded)", len(imgNames), imgNames)
+		t.Errorf("default build produced %d .img files (%v), want exactly 4 (qemu-virt and rock-4se must stay excluded)", len(imgNames), imgNames)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
-		t.Errorf("default build produced hello-qemu-virt.img; it is internal-only and must be excluded from the default build set")
+	for _, absent := range []string{"hello-qemu-virt.img", "hello-rock-4se.img"} {
+		if _, err := os.Stat(filepath.Join(outDir, absent)); err == nil {
+			t.Errorf("default build produced %s; it is internal-only and must be excluded from the default build set", absent)
+		}
 	}
 }
 
@@ -665,6 +667,74 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 		if _, err := os.Stat(listPath); err == nil {
 			t.Errorf("%s was written for a qemu-virt-only build; qemu-virt is internal-only and must never appear in a catalog", listPath)
 		}
+	}
+}
+
+// TestBuildProducesABootableImageForRock4SEFromFakeArtifacts is the
+// acceptance test for the remainder of bean gosd-0vvh: an explicit
+// `gosd build --board=rock-4se`, using --artifacts-dir to supply fake
+// bootloader/kernel files, produces an image with idbloader.img and
+// u-boot.itb raw-written at their locked offsets ahead of the boot
+// partition, and a boot partition containing the kernel, DTB, initramfs,
+// and a rendered extlinux.conf - the same shape as the Radxa Zero 3E and
+// NanoPi Zero2. rock-4se is internal-only (like qemu-virt): it's covered
+// only by this explicit --board case, never by the default all-boards build
+// (TestBuildWithNoBoardFlagBuildsAllBoards) or by catalog output.
+func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-rock-4se.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "rock-4se",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=rock-4se failed: %v", err)
+	}
+
+	assertRawWriteAt(t, imgPath, 32768, "fake idbloader.img")
+	assertRawWriteAt(t, imgPath, 8388608, "fake u-boot.itb")
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{"Image", "rk3399-rock-4se.dtb", "initramfs.cpio.zst", "extlinux/extlinux.conf"} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	wantExtlinuxConf := "default gosd\n" +
+		"timeout 0\n" +
+		"label gosd\n" +
+		"    kernel /Image\n" +
+		"    fdt /rk3399-rock-4se.dtb\n" +
+		"    initrd /initramfs.cpio.zst\n" +
+		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=rock-4se\n"
+	if string(extlinuxConf) != wantExtlinuxConf {
+		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
 }
 
