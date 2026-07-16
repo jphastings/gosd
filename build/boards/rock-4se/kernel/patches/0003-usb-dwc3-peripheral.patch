@@ -1,0 +1,34 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
+@@ -105,3 +105,31 @@
+ 		vddio-supply = <&vcc_1v8>;
+ 	};
+ };
++
++&usbdrd_dwc3_0 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): rk3399-rock-pi-4.dtsi (included
++	 * by this board's .dts) forces BOTH usbdrd_dwc3_0 and usbdrd_dwc3_1
++	 * to dr_mode = "host", so neither port is gadget-capable out of the
++	 * box (bean gosd-je2r Finding #4). betamin's recipe (bean gosd-iosp)
++	 * needs one port in USB mass-storage gadget mode.
++	 *
++	 * "peripheral" (not "otg") because mainline's shared rock-pi-4.dtsi
++	 * wires no extcon/ID-pin role-detection glue to either dwc3
++	 * controller (vcc5v0_host has no id-gpio consumer anywhere in the
++	 * dtsi) - there's no OTG role switching to preserve, and
++	 * "peripheral" matches a fixed gadget device.
++	 *
++	 * WHICH PHYSICAL PORT (UNRESOLVED, best guess): Radxa's docs describe
++	 * a hardware host/device switch on one USB 3.0 OTG port plus a
++	 * dedicated USB 3.0 host port, but rk3399-rock-pi-4.dtsi treats
++	 * usbdrd_dwc3_0/usbdrd_dwc3_1 symmetrically (same vcc5v0_host supply,
++	 * no distinguishing regulator/extcon reference) - which controller is
++	 * physically wired to the switchable OTG port cannot be determined
++	 * from DTS text alone. dwc3_0 is a BEST GUESS; confirm at bring-up
++	 * (dmesg/lsusb while toggling the physical switch, or a schematic
++	 * check) before relying on it. See bean gosd-iosp and gosd-je2r
++	 * Finding #4.
++	 */
++	dr_mode = "peripheral";
++};

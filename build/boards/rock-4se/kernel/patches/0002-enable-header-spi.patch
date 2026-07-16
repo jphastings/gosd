@@ -1,0 +1,35 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
+@@ -48,6 +48,32 @@
+ 	status = "okay";
+ };
+ 
++&spi1 {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's SPI1
++	 * bus (physical pins 19 MOSI/21 MISO/23 SCLK/24 CS0), per Radxa's own
++	 * docs (docs.radxa.com rock4/rock4ab-se pinout - bean gosd-je2r
++	 * Finding #5). rk3399-base.dtsi already wires spi1's
++	 * pinctrl-0 = <&spi1_clk &spi1_tx &spi1_rx &spi1_cs0> on the base
++	 * node, so only status needs flipping here. Mainline leaves spi1
++	 * disabled with no board owner. See bean gosd-iosp.
++	 */
++	status = "okay";
++
++	spidev@0 {
++		/*
++		 * "spidev" alone is refused by drivers/spi/spidev.c
++		 * (spidev_of_check) - rohm,dh2228fv is spidev's own documented
++		 * generic placeholder compatible (Documentation/spi/spidev.rst,
++		 * spidev_dt_ids[]), same convention as radxa-zero-3e's spi3
++		 * patch (bean gosd-fnza).
++		 */
++		compatible = "rohm,dh2228fv";
++		reg = <0>;
++		spi-max-frequency = <10000000>;
++	};
++};
++
+ &sdio0 {
+ 	status = "okay";
+ 

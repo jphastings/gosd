@@ -103,6 +103,18 @@ say so in the bean rather than silently diverging.
   Go `KernelSpec` per board), not shell scripts — `gosd build-kernel`
   (`internal/kernelbuild`) reads it directly. Change a board's kernel build
   there, not by hand-editing a retired `build.sh`/`docker-build.sh`.
+- **Building a board's kernel needs the board *registered*, not just a
+  `kernelspec` entry.** `gosd build-kernel --board <id>` resolves `<id>`
+  through `internal/boards` (registered in `cmd/gosd/build.go`) *before*
+  looking up its `kernelspec` entry, so a kernelspec entry with no registered
+  board fails with "unknown board". A new board's kernel therefore isn't
+  buildable until its board profile is registered — `RegisterInternal` is
+  enough (keeps it out of default all-boards builds, like qemu-virt), so the
+  board-profile bean's registration is a de-facto prerequisite of the kernel
+  bean's build even when the plan sequences them the other way. Adding a
+  `kernelspec` entry also means updating the board-enumerating test lists in
+  `internal/kernelspec/kernelspec_test.go` (the board-count list, the Rockchip
+  DTS-patch allowlist, and the kernelspec-outputs-vs-Artifacts board map).
 - **`gosd build-kernel` builds are content-addressed and cached** (kernel ref
   + image digest + fragment/patches + overlay) in a durable per-OS state dir
   (`internal/kernelbuild`'s `defaultBuildRoot`): identical re-runs are instant
@@ -112,7 +124,12 @@ say so in the bean rather than silently diverging.
   `~/Library/Caches` is storage-pressure-evictable; each silently killed a
   real 75-minute build (beans gosd-0p21, gosd-l4y9). colima in its default
   docker-runtime mode is a fully supported daemon (it presents as a normal
-  docker context).
+  docker context). Because those mounts are local paths, the build must run
+  where the docker daemon and the repo live *together*: a remote/SSH docker
+  context driven from your laptop mounts empty dirs and fails at once. To use
+  a beefier build box, clone the repo under *its* `$HOME` and run
+  `gosd build-kernel` there against its own local docker (mind the same
+  home-dir mount rule if that box is also a Mac running colima).
 - **Artifact releases are tag-first, bump-second.** Any change under
   `build/boards/*` that alters a compiled artifact (kernel config/fragment,
   DTS patch, U-Boot) only reaches real (non-`--artifacts-dir`) builds after a

@@ -13,7 +13,7 @@ name: Build artifacts
 # here — they stay upstream-fetched by the CLI at pinned URL+sha256, per
 # the no-rehosting policy in the repo root CLAUDE.md.
 #
-# The five kernel jobs run `gosd build-kernel` (bean gosd-07fl/epic
+# The kernel jobs run `gosd build-kernel` (bean gosd-07fl/epic
 # gosd-47rm): it drives the same Dockerized, cross-compiling build the old
 # per-board build.sh/docker-build.sh scripts used to run directly (retired
 # by this same bean) from the Go-native internal/kernelspec source of truth,
@@ -23,7 +23,7 @@ name: Build artifacts
 # arm-linux-gnueabihf- (a true cross compile even on an arm64 host — see
 # build/boards/pi-zero-w/README.md). None of them need an arm64 host or QEMU
 # emulation, so they run unchanged on GitHub's amd64 ubuntu-latest runners,
-# which have Docker preinstalled. The two U-Boot jobs are unchanged: they
+# which have Docker preinstalled. The U-Boot jobs are unchanged: they
 # still run their own build.sh/Dockerfile directly (U-Boot orchestration is
 # out of scope for gosd-47rm).
 on:
@@ -143,6 +143,28 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # rock-4se is registered internal-only until its first artifacts release
+  # activates it (epic gosd-cuym, activation bean gosd-h8a8); it's built and
+  # packaged here so that release can carry it from day one. Its U-Boot job
+  # (TF-A from source, no rkbin) lands with bean gosd-dtpo.
+  rock-4se-kernel:
+    name: Build rock-4se kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board rock-4se --staging staging/ -o out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rock-4se-kernel
+          path: staging/rock-4se
+          if-no-files-found: error
+          retention-days: 1
+
   # qemu-virt is an internal-only board (CI + local dev boot testing, see
   # bean gosd-5wm0 and the "qemu-virt board" locked decision in CLAUDE.md).
   # It is still packaged into the same release as the end-user boards so
@@ -177,6 +199,7 @@ jobs:
         radxa-zero-3e-uboot,
         nanopi-zero2-kernel,
         nanopi-zero2-uboot,
+        rock-4se-kernel,
         qemu-virt-kernel,
       ]
     runs-on: ubuntu-latest
@@ -225,6 +248,11 @@ jobs:
         with:
           name: nanopi-zero2-uboot
           path: staging/nanopi-zero2
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rock-4se-kernel
+          path: staging/rock-4se
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
