@@ -1,0 +1,10 @@
+{
+  "$schema_note": "Build-source pins for the Radxa ROCK 4SE. Unlike GoSD's other Rockchip boards there is NO rkbin section here: RK3399's DRAM init is open-source in U-Boot's TPL and its BL31 builds from mainline Trusted-Firmware-A, so everything in idbloader.img/u-boot.itb is compiled from the pinned sources below -- the first blob-free Rockchip board.",
+  "tfa": {
+    "repo": "https://github.com/TrustedFirmware-A/trusted-firmware-a.git",
+    "tag": "v2.15.0",
+    "commit": "da738d5eae93af342fdc4995dd3c05acb4c9d757",
+    "license": "BSD-3-Clause",
+    "license_note": "TF-A is compiled from source at the pinned tag (make PLAT=rk3399 bl31), never fetched as a binary blob; BSD-3-Clause permits embedding the resulting bl31.elf in the u-boot.itb we produce and distribute. The commit is the tag's peeled target (git ls-remote shows the annotated tag object 9ad327a8d124; a clone's HEAD resolves to this commit), verified by the Dockerfile before building."
+  }
+}

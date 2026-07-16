@@ -145,8 +145,7 @@ jobs:
 
   # rock-4se is registered internal-only until its first artifacts release
   # activates it (epic gosd-cuym, activation bean gosd-h8a8); it's built and
-  # packaged here so that release can carry it from day one. Its U-Boot job
-  # (TF-A from source, no rkbin) lands with bean gosd-dtpo.
+  # packaged here so that release can carry it from day one.
   rock-4se-kernel:
     name: Build rock-4se kernel
     runs-on: ubuntu-latest
@@ -162,6 +161,26 @@ jobs:
         with:
           name: rock-4se-kernel
           path: staging/rock-4se
+          if-no-files-found: error
+          retention-days: 1
+
+  # rock-4se's U-Boot needs no rkbin blobs: RK3399's DRAM init is
+  # open-source in U-Boot's TPL and BL31 is compiled from mainline
+  # Trusted-Firmware-A inside the same Dockerfile — see the board's
+  # uboot/README.md (the template for future RK3399-class boards).
+  rock-4se-uboot:
+    name: Build rock-4se U-Boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run build.sh
+        run: build/boards/rock-4se/uboot/build.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rock-4se-uboot
+          path: |
+            build/boards/rock-4se/uboot/out/idbloader.img
+            build/boards/rock-4se/uboot/out/u-boot.itb
           if-no-files-found: error
           retention-days: 1
 
@@ -200,6 +219,7 @@ jobs:
         nanopi-zero2-kernel,
         nanopi-zero2-uboot,
         rock-4se-kernel,
+        rock-4se-uboot,
         qemu-virt-kernel,
       ]
     runs-on: ubuntu-latest
@@ -256,13 +276,18 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: rock-4se-uboot
+          path: staging/rock-4se
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           name: qemu-virt-kernel
           path: staging/qemu-virt
 
       - name: Record U-Boot source provenance
         # gosd build-kernel already wrote each board's kernel source.json
         # entry (staging/<board>/source.json, downloaded above) — see
-        # internal/kernelbuild/output.go. The two Rockchip-family boards
+        # internal/kernelbuild/output.go. The Rockchip-family boards
         # additionally build U-Boot via the unchanged uboot/build.sh script,
         # which has no source.json of its own, so merge its pinned
         # repo/tag/config into the existing per-board source.json here. This
@@ -271,6 +296,7 @@ jobs:
         run: |
           radxa_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/radxa-zero-3e/uboot/build.sh)
           nanopi_zero2_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/nanopi-zero2/uboot/build.sh)
+          rock_4se_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/rock-4se/uboot/build.sh)
 
           jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$radxa_uboot_tag" \
             --arg config "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
@@ -283,6 +309,17 @@ jobs:
             '.uboot = {repo: $repo, ref: $ref, config: $config}' \
             staging/nanopi-zero2/source.json >staging/nanopi-zero2/source.json.tmp
           mv staging/nanopi-zero2/source.json.tmp staging/nanopi-zero2/source.json
+
+          # rock-4se additionally compiles TF-A from source (no rkbin blobs);
+          # copy its pins from the board manifest so the released provenance
+          # names the BL31's exact source too (GPL/BSD provenance parity with
+          # the kernel and U-Boot entries).
+          jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$rock_4se_uboot_tag" \
+            --arg config "build/boards/rock-4se/uboot/bootdelay0.config" \
+            --slurpfile board_manifest build/boards/rock-4se/manifest.json \
+            '.uboot = {repo: $repo, ref: $ref, config: $config} | .tfa = $board_manifest[0].tfa' \
+            staging/rock-4se/source.json >staging/rock-4se/source.json.tmp
+          mv staging/rock-4se/source.json.tmp staging/rock-4se/source.json
 
       - name: Package tarballs and manifest.json
         run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
@@ -307,6 +344,7 @@ jobs:
             dist/pi-zero-w.tar.zst
             dist/radxa-zero-3e.tar.zst
             dist/nanopi-zero2.tar.zst
+            dist/rock-4se.tar.zst
             dist/qemu-virt.tar.zst
             dist/manifest.json
           fail_on_unmatched_files: true
