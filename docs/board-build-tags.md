@@ -17,6 +17,13 @@ underscores:
 | `pi-zero-w` | `gosd_pi_zero_w` |
 | `radxa-zero-3e` | `gosd_radxa_zero_3e` |
 | `nanopi-zero2` | `gosd_nanopi_zero2` |
+| `rock-4se` | `gosd_rock_4se` |
+
+`rock-4se` is currently internal-only (buildable via explicit
+`--board=rock-4se`, excluded from the default all-boards build and from
+end-user docs, per `CLAUDE.md`'s locked decisions) until its first artifact
+release lands and the activation bean flips it public; its build tag exists
+and works today either way.
 
 Gate a file to a board with a `//go:build` constraint:
 
