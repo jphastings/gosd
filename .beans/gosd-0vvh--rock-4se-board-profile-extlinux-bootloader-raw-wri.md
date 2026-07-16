@@ -1,11 +1,11 @@
 ---
 # gosd-0vvh
 title: 'ROCK 4SE: board profile (extlinux + bootloader raw-writes)'
-status: todo
+status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-13T12:41:54Z
-updated_at: 2026-07-13T13:26:10Z
+updated_at: 2026-07-16T16:05:32Z
 parent: gosd-cuym
 blocked_by:
     - gosd-iosp
@@ -22,7 +22,7 @@ New `internal/boards/rock4se/` mirroring `internal/boards/radxazero3e/` (board.g
 
 ## Todo
 
-- [ ] internal/boards/rock4se/ (board.go, templates, board_test.go)
-- [ ] RegisterInternal in cmd/gosd/build.go
+- [ ] internal/boards/rock4se/ (board.go, templates, board_test.go) — board.go + templates landed on `bean/gosd-iosp-rock4se-kernel` (build-kernel resolves boards via the registry, so gosd-iosp needed them; see that bean). board_test.go still to do here.
+- [x] RegisterInternal in cmd/gosd/build.go (landed on `bean/gosd-iosp-rock4se-kernel`, same coupling)
 - [ ] Extend cmd/gosd/build_integration_test.go (fake artifacts incl. rk3399-rock-4se.dtb: raw writes, boot partition contents, exact extlinux.conf; keep excluded from default all-boards set until activation)
 - [ ] docs/board-build-tags.md entry
