@@ -36,12 +36,12 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.4.0 carries the DTS patch enabling header/FPC SPI on the Rockchip
-// boards (bean gosd-fnza): rk3566-radxa-zero-3e.dtb now has spi3 enabled
-// with a spidev child node, and rk3528-nanopi-zero2.dtb has spi1 enabled
-// (plus its alias) with two spidev child nodes. The Pi boards' SPI is
-// config.txt-only and needed no artifact change.
-const Version = "v0.4.0"
+// v0.5.0 adds the Radxa ROCK 4SE (epic gosd-cuym): a trimmed v6.18.37
+// kernel (header I2C/SPI DTS patches, dwc3 in peripheral mode, PCIe/NVMe,
+// exFAT, USB mass-storage gadget) and the first blob-free Rockchip
+// U-Boot (BL31 compiled from mainline TF-A, no rkbin). The other boards'
+// artifacts are unchanged rebuilds.
+const Version = "v0.5.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

@@ -40,13 +40,14 @@ say so in the bean rather than silently diverging.
   Docker or Podman, by design, and say so in their own `--help` text and
   errors.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
-  pi-zero-2w / radxa-zero-3e / nanopi-zero2 / qemu-virt, and `GOARCH=arm
-  GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline
-  compiles the app and gosd-init once per architecture needed by the selected
-  boards (decided 2026-07-06; was arm64-only).
+  pi-zero-2w / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt, and
+  `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
+  build pipeline compiles the app and gosd-init once per architecture needed
+  by the selected boards (decided 2026-07-06; was arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
-  `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf);
-  also `qemu-virt` (internal —
+  `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf),
+  `rock-4se` (Radxa ROCK 4SE, RK3399-T — epic gosd-cuym); also `qemu-virt`
+  (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`
