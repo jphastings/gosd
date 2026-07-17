@@ -51,8 +51,12 @@ func run(args []string) error {
 		// qemu-run.sh documents it); default stays headless so CI's
 		// qemu-boot job is unaffected.
 		Display: os.Getenv("QEMU_DISPLAY") == "1",
-		Stdin:   os.Stdin,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		// QEMU_EXTRA_ARGS carries extra qemu-system-aarch64 arguments,
+		// one per line (documented in scripts/qemu-run.sh) — the
+		// already-built-image counterpart of `gosd run --qemu-arg`.
+		ExtraArgs: qemurun.ParseExtraArgsEnv(os.Getenv("QEMU_EXTRA_ARGS")),
+		Stdin:     os.Stdin,
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
 	})
 }

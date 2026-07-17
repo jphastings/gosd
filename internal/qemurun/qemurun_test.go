@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -176,4 +177,24 @@ func assertFlag(t *testing.T, args []string, flag, want string) {
 func assertContains(t *testing.T, args []string, flag, want string) {
 	t.Helper()
 	assertFlag(t, args, flag, want)
+}
+
+func TestParseExtraArgsEnv(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want []string
+	}{
+		"empty":                           {"", nil},
+		"single":                          {"-smp 2", []string{"-smp 2"}},
+		"one per line":                    {"-device\nvirtio-sound-pci,audiodev=snd0", []string{"-device", "virtio-sound-pci,audiodev=snd0"}},
+		"blank lines and padding dropped": {"\n  -drive  \n\nformat=raw,file=fat:ro:/videos with spaces\n", []string{"-drive", "format=raw,file=fat:ro:/videos with spaces"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := qemurun.ParseExtraArgsEnv(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ParseExtraArgsEnv(%q) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
+	}
 }

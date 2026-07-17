@@ -10,6 +10,11 @@
 # showing the guest's virtio-gpu output - for display apps like
 # examples/sattrack. Unset (the default, and what CI uses) stays headless.
 #
+# QEMU_EXTRA_ARGS appends extra qemu-system-aarch64 arguments, one per
+# line (newline-separated so an argument may contain spaces), e.g. an
+# extra drive or audio device. The already-built-image counterpart of
+# `gosd run --qemu-arg`.
+#
 # Requires qemu-system-aarch64 on PATH:
 #   macOS:  brew install qemu
 #   Debian/Ubuntu: apt-get install qemu-system-arm

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,6 +65,21 @@ type Options struct {
 
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
+}
+
+// ParseExtraArgsEnv splits the QEMU_EXTRA_ARGS environment variable's
+// value into an Options.ExtraArgs slice: one qemu argument per line, blank
+// (or whitespace-only) lines ignored. Newline-separated rather than
+// whitespace-split so a single argument may contain spaces — e.g. a VVFAT
+// drive's file=fat:ro:/path/with spaces.
+func ParseExtraArgsEnv(value string) []string {
+	var args []string
+	for _, line := range strings.Split(value, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			args = append(args, trimmed)
+		}
+	}
+	return args
 }
 
 // CheckAvailable returns an actionable error if qemu-system-aarch64 isn't
