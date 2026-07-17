@@ -520,8 +520,8 @@ func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
 
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
-// produces the pi-zero-2w, pi-zero-w, radxa-zero-3e, and nanopi-zero2
-// images, not just a subset.
+// produces the pi-zero-2w, pi-zero-w, radxa-zero-3e, nanopi-zero2, and
+// rock-4se images, not just a subset.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -542,7 +542,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img"} {
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img"} {
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -554,9 +554,10 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt and rock-4se are the remaining internal-only boards: the
-	// default no---board build must produce exactly the four public boards'
-	// images, never a fifth or sixth for either of them.
+	// qemu-virt is the only remaining internal-only board (rock-4se went
+	// public with bean gosd-h8a8's activation): the default no---board
+	// build must produce exactly the five public boards' images, never a
+	// sixth for qemu-virt.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -567,13 +568,11 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 4 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 4 (qemu-virt and rock-4se must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != 5 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 5 (qemu-virt must stay excluded)", len(imgNames), imgNames)
 	}
-	for _, absent := range []string{"hello-qemu-virt.img", "hello-rock-4se.img"} {
-		if _, err := os.Stat(filepath.Join(outDir, absent)); err == nil {
-			t.Errorf("default build produced %s; it is internal-only and must be excluded from the default build set", absent)
-		}
+	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
+		t.Errorf("default build produced hello-qemu-virt.img; it is internal-only and must be excluded from the default build set")
 	}
 }
 
@@ -677,9 +676,10 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 // u-boot.itb raw-written at their locked offsets ahead of the boot
 // partition, and a boot partition containing the kernel, DTB, initramfs,
 // and a rendered extlinux.conf - the same shape as the Radxa Zero 3E and
-// NanoPi Zero2. rock-4se is internal-only (like qemu-virt): it's covered
-// only by this explicit --board case, never by the default all-boards build
-// (TestBuildWithNoBoardFlagBuildsAllBoards) or by catalog output.
+// NanoPi Zero2. rock-4se is public since bean gosd-h8a8's activation, so
+// it's also covered by the default all-boards build
+// (TestBuildWithNoBoardFlagBuildsAllBoards) and by catalog output
+// (TestBuildCatalogForRock4SEWritesEntry).
 func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -798,6 +798,65 @@ func TestBuildCatalogForNanopiZero2WritesEntry(t *testing.T) {
 	}
 	if len(entry.Devices) != 1 || entry.Devices[0] != "nanopi-zero2" {
 		t.Errorf("devices = %v, want [\"nanopi-zero2\"] (no official Imager tag for non-Pi hardware)", entry.Devices)
+	}
+}
+
+// TestBuildCatalogForRock4SEWritesEntry confirms that, now that rock-4se is
+// a public board (gosd-h8a8's flip), --catalog on a rock-4se-only build
+// writes a real os_list.json entry with the display name from
+// internal/catalog and its "devices" tag falling back to the raw board ID,
+// like the other non-Raspberry-Pi boards.
+func TestBuildCatalogForRock4SEWritesEntry(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-rock-4se.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "rock-4se",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=rock-4se --catalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("the image itself should be built: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "hello-rock-4se.os_list.json"))
+	if err != nil {
+		t.Fatalf("reading hello-rock-4se.os_list.json: %v", err)
+	}
+
+	var list struct {
+		OSList []struct {
+			Name    string   `json:"name"`
+			Devices []string `json:"devices"`
+		} `json:"os_list"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatalf("unmarshaling hello-rock-4se.os_list.json: %v", err)
+	}
+	if len(list.OSList) != 1 {
+		t.Fatalf("hello-rock-4se.os_list.json has %d entries, want 1", len(list.OSList))
+	}
+	entry := list.OSList[0]
+	if want := "hello (Radxa ROCK 4SE)"; entry.Name != want {
+		t.Errorf("name = %q, want %q", entry.Name, want)
+	}
+	if len(entry.Devices) != 1 || entry.Devices[0] != "rock-4se" {
+		t.Errorf("devices = %v, want [\"rock-4se\"] (no official Imager tag for non-Pi hardware)", entry.Devices)
 	}
 }
 

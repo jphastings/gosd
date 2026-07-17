@@ -55,6 +55,20 @@
         "radxa-zero-3e"
       ],
       "init_format": "cloudinit"
+    },
+    {
+      "name": "hello (Radxa ROCK 4SE)",
+      "description": "hello, built with GoSD for Radxa ROCK 4SE",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-rock-4se.img",
+      "extract_size": 28,
+      "extract_sha256": "3168a101821453634be92f8188364e531c0a6dabd9b7be3de11fb23cbb911ed6",
+      "image_download_size": 28,
+      "release_date": "2026-01-15",
+      "devices": [
+        "rock-4se"
+      ],
+      "init_format": "cloudinit"
     }
   ]
 }

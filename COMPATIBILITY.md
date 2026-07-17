@@ -13,29 +13,32 @@ see `beans list` for what's in flight.
 > code-complete and fake-artifact-tested (bean `gosd-et0q`), no bring-up bean
 > filed yet. The NanoPi Zero2 is the same again: code-complete and
 > fake-artifact-tested (bean `gosd-wskc`), with hardware bring-up tracked by
-> bean `gosd-odp7`.
+> bean `gosd-odp7`. The Radxa ROCK 4SE likewise: code-complete and
+> fake-artifact-tested (epic `gosd-cuym`), with hardware bring-up tracked by
+> bean `gosd-sz6p`.
 
-| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 |
-|---|---|---|---|---|
-| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ |
-| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] |
-| Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
-| Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
-| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | ✅ |
-| WiFi (WPA2-PSK / open) | ✅ | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
-| Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] |
-| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] |
-| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ |
-| App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ |
-| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ |
-| SNTP time sync | ✅ | ✅ | ✅ | ✅ |
-| Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
-| Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] |
-| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] |
-| I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] |
-| GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] |
-| SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] |
-| OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
+| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
+|---|---|---|---|---|---|
+| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ | ✅ |
+| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
+| Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
+| Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
+| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ | ✅ | ✅ |
+| WiFi (WPA2-PSK / open) | ✅ | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
+| Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
+| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] | ✅ [^no-filtering] |
+| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
+| Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
+| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
+| NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
+| I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
+| GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
+| SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] | ✅ [^spi] |
+| OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
 (no matching hardware) · ❌ not supported (with a reason below).
@@ -49,8 +52,8 @@ see `beans list` for what's in flight.
     drop straight into `gosd build --artifacts-dir`. The command's pipeline
     was verified end-to-end on the internal `qemu-virt` profile: a real
     Docker build fed straight into a qemu boot-to-HTTP run. Per-board custom
-    kernels (this row) are fake-artifact/CI-tested for all four public
-    boards; the flagship worked example — compiling in USB DVB-T support on
+    kernels (this row) are fake-artifact/CI-tested for every public
+    board; the flagship worked example — compiling in USB DVB-T support on
     the Pi Zero 2W, including the documented rp1-cfe collision workaround —
     was additionally proven with a real Docker build producing a
     `kernel.config` with every expected symbol `=y`. Like every other row in
@@ -70,7 +73,7 @@ see `beans list` for what's in flight.
     binary itself doesn't have to be Go: `gosd build-external` (see
     `docs/externals.md`) cross-compiles one from a `gosd-external.toml`
     recipe inside Docker/Podman, arch-keyed rather than per-board (an
-    arm64 build covers pi-zero-2w/radxa-zero-3e/nanopi-zero2 alike), so it
+    arm64 build covers every board except the armv6 pi-zero-w alike), so it
     isn't its own row in this per-board table.
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
@@ -82,6 +85,51 @@ see `beans list` for what's in flight.
     rc now rather than wait for the final tag so this board is
     hardware-testable sooner (bean `gosd-f39b`'s amended gate). Re-pinning to
     the final `v2026.07` release once it ships is an open item on that bean.
+
+[^rock4se-artifacts]: The ROCK 4SE's kernel and U-Boot are built and
+    published by CI (`rock-4se-kernel` and `rock-4se-uboot` jobs) from the
+    `artifacts/v0.5.0` release onward. Its U-Boot is the first **blob-free
+    Rockchip bootloader** in GoSD: RK3399's DRAM init is open-source in
+    U-Boot's TPL and BL31 is compiled from mainline Trusted-Firmware-A
+    (pinned in `build/boards/rock-4se/manifest.json`) — no rkbin fetch at
+    all, unlike the RK3566/RK3528 boards. See
+    `build/boards/rock-4se/uboot/README.md`.
+
+[^rock4se-wifi]: The ROCK 4SE has onboard WiFi/BT hardware (and its DT
+    nodes exist at the pinned kernel tag), but the stock kernel ships no
+    driver for it: onboard WiFi/BT is explicitly out of scope for the
+    board's initial support (epic `gosd-cuym` locked decision — this board
+    joined GoSD for a wired/NVMe appliance use case). A follow-up bean can
+    enable it later; until then this board is Ethernet-first, like the
+    other Rockchip boards.
+
+[^rock4se-emmc]: The ROCK 4SE's eMMC is an optional plug-in module
+    (socket), not soldered storage. The RK3399's Arasan eMMC controller
+    driver (`CONFIG_MMC_SDHCI_OF_ARASAN`) is present in the published
+    stock `kernel.config`, but only incidentally from the defconfig
+    baseline — no fragment or `RequiredY` asserts it. With no module
+    fitted, `emmc.FormatAndMount` returns `ErrNoEMMC` as on the Pi boards.
+
+[^rock4se-otg]: The stock kernel's DTS patch flips `usbdrd_dwc3_0` to
+    `dr_mode = "peripheral"` for gadget mode — a **best guess** at which
+    of the RK3399's two dwc3 controllers is wired to the board's physical
+    host/device-switch OTG port (the shared upstream DTS treats both
+    symmetrically; gosd-je2r couldn't resolve it from DTS text). If
+    bring-up (bean `gosd-sz6p`) finds the wrong port, the patch swaps to
+    `usbdrd_dwc3_1` — a kernel-artifact change, i.e. a new artifacts
+    release.
+
+[^no-m2]: No NVMe-capable M.2 slot on this board — a hardware limitation,
+    not a GoSD gap. (The NanoPi Zero2's M.2 Key-E socket is for WiFi
+    modules, not NVMe storage.)
+
+[^rock4se-nvme]: The ROCK 4SE's stock kernel enables the RK3399 PCIe host,
+    its PHY, the NVMe block driver, and the exFAT filesystem (+UTF-8 NLS),
+    all asserted by the board's kernel fragment — so an M.2 NVMe SSD
+    formatted exFAT (host-native for USB mass-storage sharing) is mountable
+    by an app via `unix.Mount`. Known risk flagged for bring-up: RK3399
+    PCIe link-training quirks with some NVMe drives (bean `gosd-sz6p`
+    tests with the actual target SSD).
 
 [^pi-no-eth]: Neither the Raspberry Pi Zero 2 W nor the original Zero W has
     an onboard Ethernet port (WiFi only) — this is a hardware limitation of
@@ -159,7 +207,7 @@ see `beans list` for what's in flight.
     `gosd build --data-size` defaults to `0` (no partition; `/data` mounts
     read-only), so pass a size (e.g. `--data-size=1GiB`) to get writable
     persistence. The capability itself is unchanged and identical across all
-    four boards; see `docs/runtime.md`'s "Persistent storage: `/data`"
+    boards; see `docs/runtime.md`'s "Persistent storage: `/data`"
     section.
 
 [^no-emmc]: Neither Raspberry Pi board has onboard eMMC — this is a hardware
@@ -177,8 +225,9 @@ see `beans list` for what's in flight.
     yet hardware-verified. `examples/emmcstorage` is the worked example.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
-    boards, DWC3 on the Radxa; `CONFIG_USB_GADGET`, configfs, ACM/ECM/RNDIS
-    functions) is already enabled on all three kernels. The pure-Go configfs
+    boards, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,
+    ACM/ECM/RNDIS functions) is already enabled on every gadget-capable
+    board's kernel. The pure-Go configfs
     gadget library (package `gadget`, a public v0.3 API surface) is
     implemented and unit-tested against a fake filesystem, with CDC-ACM
     serial gadget mode working end to end (`gosd build --usb-gadget`, see
@@ -193,9 +242,9 @@ see `beans list` for what's in flight.
     incidentally — inherited from the defconfig baseline, asserted by no
     kernel fragment or `internal/kernelspec` `RequiredY` list — so the
     *guaranteed* enablement lands when the fragments gain it explicitly at
-    the next fleet kernel tag bump (never a single-board bump). The Radxa
-    ROCK 4SE (epic `gosd-cuym`, in flight) asserts it in its initial stock
-    kernel. Like every other ✅ in this table, this means code-complete
+    the next fleet kernel tag bump (never a single-board bump). The
+    exception is the Radxa ROCK 4SE (epic `gosd-cuym`), which asserts it in
+    its stock kernel fragment and `RequiredY` from the start. Like every other ✅ in this table, this means code-complete
     and unit-tested, not hardware-verified: no on-device USB enumeration has
     been tried on any board yet, blocked on hardware bring-up (`gosd-m9dj`,
     `gosd-nlzf`), which are themselves blocked on acquiring a bring-up kit
@@ -213,9 +262,10 @@ see `beans list` for what's in flight.
 [^i2c]: I2C is enabled by default on every board as of bean `gosd-85pt` — no
     build flag needed, and there's no opt-out today. Mechanism differs by
     board family: the Pi boards gained `dtparam=i2c_arm=on` in `config.txt`;
-    the two Rockchip boards gained a kernel-build-time device-tree patch
+    the Rockchip boards gained a kernel-build-time device-tree patch
     (`build/boards/radxa-zero-3e/kernel/patches/`,
-    `build/boards/nanopi-zero2/kernel/patches/`) enabling the header-routed
+    `build/boards/nanopi-zero2/kernel/patches/`,
+    `build/boards/rock-4se/kernel/patches/`) enabling the header-routed
     `i2cN` controller node, since the pinned U-Boot on both doesn't support
     `CONFIG_OF_LIBFDT_OVERLAY`/extlinux `fdtoverlays` (checked directly
     against both defconfigs) — so this ✅ carries the same "code-complete,
@@ -227,7 +277,7 @@ see `beans list` for what's in flight.
     `examples/i2cscan` is the worked, cross-board example. GPIO and SPI are
     tracked by separate beans/rows in this table.
 
-[^gpio]: All four boards' kernels already enable the character-device GPIO
+[^gpio]: Every board's kernel already enables the character-device GPIO
     API (`CONFIG_GPIO_CDEV`), so `/dev/gpiochipN` appears at boot with no
     per-board enablement work needed (unlike I2C/SPI, which needed
     device-tree/`config.txt` changes) — bean `gosd-nyad`. `examples/gpioinfo`
@@ -244,9 +294,10 @@ see `beans list` for what's in flight.
     build flag needed, and there's no opt-out today. Mechanism differs by
     board family, the same shape as I2C (`gosd-85pt`): the Pi boards gained
     `dtparam=spi=on` in `config.txt` (both chip selects, `/dev/spidev0.0` and
-    `/dev/spidev0.1`); the two Rockchip boards gained a kernel-build-time
+    `/dev/spidev0.1`); the Rockchip boards gained a kernel-build-time
     device-tree patch (`build/boards/radxa-zero-3e/kernel/patches/`,
-    `build/boards/nanopi-zero2/kernel/patches/`) enabling the header-routed
+    `build/boards/nanopi-zero2/kernel/patches/`,
+    `build/boards/rock-4se/kernel/patches/`) enabling the header-routed
     `spiN` controller node plus a `spidev` child node per header-routed chip
     select (compatible `rohm,dh2228fv` — a bare `"spidev"` compatible is
     refused by the kernel's spidev driver, see `docs/runtime.md`'s SPI
