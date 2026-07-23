@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-07-23T11:56:48Z
-updated_at: 2026-07-23T14:47:55Z
+updated_at: 2026-07-23T14:49:48Z
 ---
 
 Found during first real-hardware boot (gosd-sz6p, rock-4se, 2026-07-23): kernel logs show g_mass_storage probing at boot and failing — 'no file given for LUN0', 'udc fe800000.usb: failed to start g_mass_storage: -22'.
@@ -31,3 +31,5 @@ Task 2: rewrote the 0003-usb-dwc3-peripheral.patch 'WHICH PHYSICAL PORT (UNRESOL
 **Deviation found, not fixed here (scope discipline):** while confirming the bean's cause statement, `grep CONFIG_USB_MASS_STORAGE` on the committed kernel.config shows pi-zero-2w and pi-zero-w ALSO carry `CONFIG_USB_MASS_STORAGE=y` (both have CONFIG_USB_GADGET=y DWC2 dual-role fragments, so the legacy gadget Kconfig dependency is satisfied there too) — this contradicts this bean's own cause paragraph ("the Pi boards don't have it"). This PR's explicit scope is the four Rockchip/qemu boards only, so the Pi fragments were left untouched; flagging here per the repo's locked-decision-diverges-stop-and-say-so convention rather than silently expanding this PR's diff. Recommend a small follow-up bean for the two Pi boards.
 
 Quality gates: `go test ./...`, `go vet ./...`, `gofmt -l .` (clean), `golangci-lint run ./...` and `GOOS=linux golangci-lint run ./...` (0 issues both) all pass.
+
+PR: https://github.com/jphastings/gosd/pull/96 (stacked on #94). Build-verification workflow_dispatch run: https://github.com/jphastings/gosd/actions/runs/30017592659 (not waited on).
