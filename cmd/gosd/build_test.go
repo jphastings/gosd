@@ -36,6 +36,32 @@ func TestResolveBoardsRejectsUnknownBoard(t *testing.T) {
 	}
 }
 
+func TestDeriveAppNameFromDotUsesWorkingDirectoryName(t *testing.T) {
+	appDir := filepath.Join(t.TempDir(), "widget-3")
+	if err := os.Mkdir(appDir, 0o755); err != nil {
+		t.Fatalf("creating fixture app directory: %v", err)
+	}
+	t.Chdir(appDir)
+
+	got, err := deriveAppName(".")
+	if err != nil {
+		t.Fatalf(`deriveAppName("."): %v`, err)
+	}
+	if got != "widget-3" {
+		t.Errorf(`deriveAppName(".") = %q, want "widget-3"`, got)
+	}
+}
+
+func TestDeriveAppNameFromRelativePath(t *testing.T) {
+	got, err := deriveAppName("./examples/hello")
+	if err != nil {
+		t.Fatalf("deriveAppName: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf(`deriveAppName("./examples/hello") = %q, want "hello"`, got)
+	}
+}
+
 func TestParseDataSize(t *testing.T) {
 	cases := []struct {
 		in   string
