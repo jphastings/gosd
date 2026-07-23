@@ -127,7 +127,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	appName := naming.Sanitize(filepath.Base(filepath.Clean(pkgPath)))
+	appName, err := deriveAppName(pkgPath)
+	if err != nil {
+		return err
+	}
 	deviceHostname := hostname
 	if deviceHostname == "" {
 		deviceHostname = appName
@@ -211,6 +214,20 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// deriveAppName computes the default app name gosd uses for the device
+// hostname and output filenames: the sanitized basename of pkgPath's
+// directory. pkgPath is resolved to an absolute path first so that "." (the
+// README quickstart's canonical `gosd build .` invocation) yields the
+// working directory's name rather than filepath.Base(".") == ".", which
+// naming.Sanitize reduces to "" and falls back to "app".
+func deriveAppName(pkgPath string) (string, error) {
+	abs, err := filepath.Abs(pkgPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving %q to an absolute path failed: %w; check the path exists and is accessible", pkgPath, err)
+	}
+	return naming.Sanitize(filepath.Base(abs)), nil
 }
 
 // dataSizeUnits are the size suffixes --data-size accepts, all binary
