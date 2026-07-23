@@ -516,6 +516,11 @@ var specs = map[string]KernelSpec{
 			"CONFIG_SND",
 			"CONFIG_DRM",
 			"CONFIG_MEDIA_SUPPORT",
+			// Legacy mass-storage gadget: leaks in =y from the arm64
+			// defconfig baseline (see this board's kernel-fragment.config
+			// for the full rationale). Found during rock-4se real-hardware
+			// bring-up (bean gosd-sz6p).
+			"CONFIG_USB_MASS_STORAGE",
 		},
 		ModulesDisabled: true,
 	},
