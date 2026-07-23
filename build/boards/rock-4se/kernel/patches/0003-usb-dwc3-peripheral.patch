@@ -1,6 +1,6 @@
 --- a/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
 +++ b/arch/arm64/boot/dts/rockchip/rk3399-rock-4se.dts
-@@ -105,3 +105,31 @@
+@@ -105,3 +105,29 @@
  		vddio-supply = <&vcc_1v8>;
  	};
  };
@@ -19,16 +19,14 @@
 +	 * dtsi) - there's no OTG role switching to preserve, and
 +	 * "peripheral" matches a fixed gadget device.
 +	 *
-+	 * WHICH PHYSICAL PORT (UNRESOLVED, best guess): Radxa's docs describe
-+	 * a hardware host/device switch on one USB 3.0 OTG port plus a
-+	 * dedicated USB 3.0 host port, but rk3399-rock-pi-4.dtsi treats
-+	 * usbdrd_dwc3_0/usbdrd_dwc3_1 symmetrically (same vcc5v0_host supply,
-+	 * no distinguishing regulator/extcon reference) - which controller is
-+	 * physically wired to the switchable OTG port cannot be determined
-+	 * from DTS text alone. dwc3_0 is a BEST GUESS; confirm at bring-up
-+	 * (dmesg/lsusb while toggling the physical switch, or a schematic
-+	 * check) before relying on it. See bean gosd-iosp and gosd-je2r
-+	 * Finding #4.
++	 * PHYSICAL PORT (hardware-verified 2026-07-23, bean gosd-sz6p):
++	 * usbdrd_dwc3_0 IS the top/upper blue USB 3.0 port (the one
++	 * furthest from the PCB) - confirmed via examples/usbserial: a
++	 * CDC-ACM gadget enumerated on macOS and passed an echo
++	 * round-trip. The 4SE's host/device switch is unmarked on the
++	 * PCB; hardware-verified as the position AWAY from the Ethernet
++	 * jack = device/peripheral mode (Radxa's wiki calls this the "H"
++	 * side on ROCK Pi 4 A/B).
 +	 */
 +	dr_mode = "peripheral";
 +};
