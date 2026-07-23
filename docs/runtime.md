@@ -407,7 +407,7 @@ covered below.
 
 `CONFIG_GPIO_CDEV` is already enabled on every board's kernel, so
 `/dev/gpiochipN` character devices for the header/FPC pins exist at boot on
-all four boards with no build flag or device-tree change needed — unlike
+all five boards with no build flag or device-tree change needed — unlike
 I2C and SPI, GPIO needed no per-board enablement work at all. What differs
 per board is *numbering*: which chip backs which pins, and which line
 offset within that chip a given pin is.
@@ -430,6 +430,12 @@ offset within that chip a given pin is.
   global line number). The I2C bus's `GPIO1_A0`/`GPIO1_A1` signals (Radxa,
   header pins 3/5) are therefore `gpiochip1` lines 0 and 1; the NanoPi's
   `GPIO1_B2`/`GPIO1_B3` (FPC pins 12/13) are `gpiochip1` lines 10 and 11.
+- **Radxa ROCK 4SE** (Rockchip RK3399): the same up-to-5-bank convention as
+  above, and the same `GPIO<bank>_<group><pin>`/`group*8 + pin` naming.
+  Hardware-verified during bring-up (bean `gosd-sz6p`, 2026-07-23): all five
+  banks enumerate as `gpiochip0`-`gpiochip4`, 32 lines each. The 40-pin
+  header's `GPIO2_A0` signal (physical pin 27 — also the `i2c2` bus's SDA2
+  line, see the I2C table below) is `gpiochip2` line 0.
 
 | Board | Connector | GPIO controller | Worked example: the I2C pins above, as (chip, line) |
 |---|---|---|---|
@@ -437,6 +443,7 @@ offset within that chip a given pin is.
 | Raspberry Pi Zero W | 40-pin header | One chip, `gpiochip0` (54 lines) | Same as above |
 | Radxa Zero 3E | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` | Pin 3 (GPIO1_A0) → `gpiochip1` line 0; pin 5 (GPIO1_A1) → `gpiochip1` line 1 |
 | NanoPi Zero2 | 30-pin FPC | 5 banks, `gpiochip0`-`gpiochip4` | FPC pin 12 (GPIO1_B2) → `gpiochip1` line 10; FPC pin 13 (GPIO1_B3) → `gpiochip1` line 11 |
+| Radxa ROCK 4SE | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` (32 lines each) | Pin 27 (GPIO2_A0) → `gpiochip2` line 0 |
 
 **Caution: a BCM GPIO number, a physical pin number, and a gpiochip line
 offset are three different numbering schemes that happen to coincide on the
@@ -482,13 +489,15 @@ adds is the device-tree/`config.txt` enablement that was previously missing.
 | Raspberry Pi Zero W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
 | Radxa Zero 3E | `/dev/i2c-3` | 40-pin header pins 3 (SDA) / 5 (SCL) | Same physical header position as the Pi's I2C pins, confirmed against Radxa's own schematic and pinout docs. |
 | NanoPi Zero2 | `/dev/i2c-5` | 30-pin FPC pins 12 (SCL) / 13 (SDA) | Confirmed against FriendlyElec's schematic. **Needs an external ~2.2kΩ pull-up on both lines** — unlike the other boards' I2C pins, this bus has no onboard pull-up resistors (FriendlyElec's own schematic note); most breakout boards include their own, but bare sensor modules may not. |
+| Radxa ROCK 4SE | `/dev/i2c-7` | 40-pin header pins 3 (SDA7) / 5 (SCL7) | Same physical header position as the Pi's I2C pins. **Hardware-verified** (device ACK from a Qwiic Button, bean `gosd-sz6p`, 2026-07-23). Uniquely among GoSD's boards, two more header I2C buses are enabled and equally hardware-verified: `/dev/i2c-2` on pins 27 (SDA2) / 28 (SCL2), and `/dev/i2c-6` on pins 29 (SCL6) / 31 (SDA6) — note the SCL/SDA pin order flips between buses. Adapter numbers are alias-pinned to controller names and stable (buses 0/1/3/4 exist as internal-only buses; 5 and 8 are disabled controllers). |
 
 On the Pi boards, enabling I2C means `config.txt` carries
-`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the two
+`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the three
 Rockchip boards, it means the shipped kernel's device tree enables the
-relevant `i2cN` controller node — see
-`build/boards/radxa-zero-3e/kernel/patches/` and
-`build/boards/nanopi-zero2/kernel/patches/` if you're curious about the
+relevant `i2cN` controller node(s) — see
+`build/boards/radxa-zero-3e/kernel/patches/`,
+`build/boards/nanopi-zero2/kernel/patches/`, and
+`build/boards/rock-4se/kernel/patches/` if you're curious about the
 mechanism, or need to add a similar peripheral enablement yourself.
 
 `examples/i2cscan` is a worked example: it opens every `/dev/i2c-*` present,
@@ -513,14 +522,16 @@ enablement that was previously missing.
 | Raspberry Pi Zero W | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
 | Radxa Zero 3E | `/dev/spidev3.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, confirmed against Radxa's own schematic and pinout docs — but only one chip select: physical pin 26, where a Pi's CE1 would be, is not connected on this board's header, so there is no `/dev/spidev3.1`. |
 | NanoPi Zero2 | `/dev/spidev1.0`, `/dev/spidev1.1` | 30-pin FPC pins 16 (CLK) / 17 (MOSI) / 18 (MISO) / 19 (CS0) / 20 (CS1) | Confirmed against FriendlyElec's schematic; both chip selects are routed to the FPC connector. |
+| Radxa ROCK 4SE | `/dev/spidev1.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, per Radxa's own pinout docs. **Schematic-derived, not hardware-verified** — SPI wasn't exercised during the board's hardware bring-up (bean `gosd-sz6p`). Only one chip select is wired up (CS0); the DTS patch adds no second `spidev` child node, so there is no `/dev/spidev1.1`. |
 
 On the Pi boards, enabling SPI means `config.txt` carries `dtparam=spi=on`
 (Raspberry Pi's own documented mechanism, giving both `spidev0.0` and
-`spidev0.1`); on the two Rockchip boards, it means the shipped kernel's
+`spidev0.1`); on the three Rockchip boards, it means the shipped kernel's
 device tree enables the relevant `spiN` controller node and adds a
 `spidev` child node for each header-routed chip select — see
-`build/boards/radxa-zero-3e/kernel/patches/` and
-`build/boards/nanopi-zero2/kernel/patches/` if you're curious about the
+`build/boards/radxa-zero-3e/kernel/patches/`,
+`build/boards/nanopi-zero2/kernel/patches/`, and
+`build/boards/rock-4se/kernel/patches/` if you're curious about the
 mechanism. Note the child node's `compatible` value: the kernel's spidev
 driver (`drivers/spi/spidev.c`) refuses to bind to a bare `compatible =
 "spidev"` node (it logs "spidev listed directly in DT is not supported" and
