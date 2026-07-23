@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-07-23T11:56:48Z
-updated_at: 2026-07-23T14:55:08Z
+updated_at: 2026-07-23T14:56:40Z
 ---
 
 Found during first real-hardware boot (gosd-sz6p, rock-4se, 2026-07-23): kernel logs show g_mass_storage probing at boot and failing — 'no file given for LUN0', 'udc fe800000.usb: failed to start g_mass_storage: -22'.
@@ -32,4 +32,4 @@ Task 2: rewrote the 0003-usb-dwc3-peripheral.patch 'WHICH PHYSICAL PORT (UNRESOL
 
 Quality gates: `go test ./...`, `go vet ./...`, `gofmt -l .` (clean), `golangci-lint run ./...` and `GOOS=linux golangci-lint run ./...` (0 issues both) all pass.
 
-PR: https://github.com/jphastings/gosd/pull/96 (stacked on #94). Build-verification workflow_dispatch run: https://github.com/jphastings/gosd/actions/runs/30017592659 (not waited on).
+PR: https://github.com/jphastings/gosd/pull/96 (stacked on #94). Build-verification workflow_dispatch runs (not waited on): https://github.com/jphastings/gosd/actions/runs/30018115673 (current, covers all six boards including the Pi extension); https://github.com/jphastings/gosd/actions/runs/30017592659 (earlier run, four-board-only version).
