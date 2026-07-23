@@ -4,8 +4,9 @@ What works on which board, as of the current `main`. This is a snapshot of
 repo state (code, kernel configs, and tracked work in beans), not a roadmap —
 see `beans list` for what's in flight.
 
-> **No board has been through hardware bring-up yet.** Every ✅ below means
-> *code-complete: implemented, unit-tested, and (where applicable)
+> **Only one board has been through hardware bring-up so far: the Radxa
+> ROCK 4SE** (bean `gosd-sz6p`, closed 2026-07-23). Every other ✅ below
+> means *code-complete: implemented, unit-tested, and (where applicable)
 > QEMU-tested via the internal `qemu-virt` profile* — not "verified on a real
 > device." Hardware bring-up for the Pi Zero 2W and Radxa Zero 3E is tracked
 > by beans `gosd-m9dj` and `gosd-nlzf`; until those close, treat every ✅ as
@@ -13,9 +14,10 @@ see `beans list` for what's in flight.
 > code-complete and fake-artifact-tested (bean `gosd-et0q`), no bring-up bean
 > filed yet. The NanoPi Zero2 is the same again: code-complete and
 > fake-artifact-tested (bean `gosd-wskc`), with hardware bring-up tracked by
-> bean `gosd-odp7`. The Radxa ROCK 4SE likewise: code-complete and
-> fake-artifact-tested (epic `gosd-cuym`), with hardware bring-up tracked by
-> bean `gosd-sz6p`.
+> bean `gosd-odp7`. The Radxa ROCK 4SE's own bring-up only exercised a subset
+> of this table's rows (see the footnotes below for exactly which); every
+> ROCK 4SE row without a bring-up-dated footnote is still code-complete-only,
+> the same as every other board.
 
 | Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
 |---|---|---|---|---|---|
@@ -108,16 +110,24 @@ see `beans list` for what's in flight.
     driver (`CONFIG_MMC_SDHCI_OF_ARASAN`) is present in the published
     stock `kernel.config`, but only incidentally from the defconfig
     baseline — no fragment or `RequiredY` asserts it. With no module
-    fitted, `emmc.FormatAndMount` returns `ErrNoEMMC` as on the Pi boards.
+    fitted, `emmc.FormatAndMount` returns `ErrNoEMMC` as on the Pi boards —
+    **hardware-confirmed** during bring-up (bean `gosd-sz6p`, 2026-07-23)
+    via `examples/usbwebsite`'s graceful no-eMMC degradation. The actual
+    format-and-mount codepath needs a fitted module to exercise and remains
+    code-complete-only on this board, same as the rest of the table (see
+    [^emmc]).
 
 [^rock4se-otg]: The stock kernel's DTS patch flips `usbdrd_dwc3_0` to
-    `dr_mode = "peripheral"` for gadget mode — a **best guess** at which
-    of the RK3399's two dwc3 controllers is wired to the board's physical
-    host/device-switch OTG port (the shared upstream DTS treats both
-    symmetrically; gosd-je2r couldn't resolve it from DTS text). If
-    bring-up (bean `gosd-sz6p`) finds the wrong port, the patch swaps to
-    `usbdrd_dwc3_1` — a kernel-artifact change, i.e. a new artifacts
-    release.
+    `dr_mode = "peripheral"` for gadget mode. This was a **best guess** at
+    which of the RK3399's two dwc3 controllers is wired to the board's
+    physical host/device-switch OTG port (the shared upstream DTS treats
+    both symmetrically; gosd-je2r couldn't resolve it from DTS text) —
+    **hardware-verified correct** during bring-up (bean `gosd-sz6p`,
+    2026-07-23): a CDC-ACM gadget (`examples/usbserial`) enumerated on the
+    host and echoed data end to end over `/dev/ttyGS0`, confirming
+    `usbdrd_dwc3_0` (`0xfe800000`, the board's top blue USB 3.0 port,
+    furthest from the Ethernet jack) is the right controller with no swap
+    to `usbdrd_dwc3_1` needed.
 
 [^no-m2]: No NVMe-capable M.2 slot on this board — a hardware limitation,
     not a GoSD gap. (The NanoPi Zero2's M.2 Key-E socket is for WiFi
@@ -127,9 +137,13 @@ see `beans list` for what's in flight.
     its PHY, the NVMe block driver, and the exFAT filesystem (+UTF-8 NLS),
     all asserted by the board's kernel fragment — so an M.2 NVMe SSD
     formatted exFAT (host-native for USB mass-storage sharing) is mountable
-    by an app via `unix.Mount`. Known risk flagged for bring-up: RK3399
-    PCIe link-training quirks with some NVMe drives (bean `gosd-sz6p`
-    tests with the actual target SSD).
+    by an app via `unix.Mount`. **Hardware-verified** during bring-up (bean
+    `gosd-sz6p`, 2026-07-23) with the actual target SSD (KIOXIA
+    XG7000-512): the previously flagged RK3399 PCIe link-training risk
+    didn't manifest — the drive enumerated immediately, sustained 256 MiB
+    @ 840 MB/s sequential read, and exFAT mounted via `unix.Mount` with
+    data surviving unmount/remount. (The link-training timeout logged with
+    the slot empty was confirmed benign probing noise, not a real fault.)
 
 [^pi-no-eth]: Neither the Raspberry Pi Zero 2 W nor the original Zero W has
     an onboard Ethernet port (WiFi only) — this is a hardware limitation of
@@ -222,7 +236,11 @@ see `beans list` for what's in flight.
     FAT-only caveats as the `/data` partition (no unix permissions/symlinks,
     not power-loss-robust; write with the temp-file+fsync+rename pattern).
     Same caveat as the rest of this table: code-complete and unit-tested, not
-    yet hardware-verified. `examples/emmcstorage` is the worked example.
+    yet hardware-verified. `examples/emmcstorage` is the worked example. On
+    the ROCK 4SE specifically, the *no-module-fitted* branch (`ErrNoEMMC`) is
+    hardware-confirmed (bean `gosd-sz6p`, 2026-07-23, see
+    [^rock4se-emmc]) — the actual format/mount path is still
+    code-complete-only on every board, this one included.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
     boards, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,
@@ -245,10 +263,14 @@ see `beans list` for what's in flight.
     the next fleet kernel tag bump (never a single-board bump). The
     exception is the Radxa ROCK 4SE (epic `gosd-cuym`), which asserts it in
     its stock kernel fragment and `RequiredY` from the start. Like every other ✅ in this table, this means code-complete
-    and unit-tested, not hardware-verified: no on-device USB enumeration has
-    been tried on any board yet, blocked on hardware bring-up (`gosd-m9dj`,
-    `gosd-nlzf`), which are themselves blocked on acquiring a bring-up kit
-    (`gosd-s4t4`).
+    and unit-tested, not hardware-verified on the Pi boards or the Radxa
+    Zero 3E: no on-device USB enumeration has been tried on those boards
+    yet, blocked on hardware bring-up (`gosd-m9dj`, `gosd-nlzf`), which are
+    themselves blocked on acquiring a bring-up kit (`gosd-s4t4`).
+    **Exception: the Radxa ROCK 4SE's CDC-ACM path is hardware-verified**
+    (bean `gosd-sz6p`, 2026-07-23, see [^rock4se-otg]) — USB mass storage
+    and every other board's gadget support remain unverified on real
+    hardware.
 
 [^nanopi-usb]: The RK3528 SoC has no USB controller DT node in any numbered
     mainline kernel release as of the pinned tag (v6.18.37) — the `dwc3` node
@@ -266,16 +288,22 @@ see `beans list` for what's in flight.
     (`build/boards/radxa-zero-3e/kernel/patches/`,
     `build/boards/nanopi-zero2/kernel/patches/`,
     `build/boards/rock-4se/kernel/patches/`) enabling the header-routed
-    `i2cN` controller node, since the pinned U-Boot on both doesn't support
-    `CONFIG_OF_LIBFDT_OVERLAY`/extlinux `fdtoverlays` (checked directly
-    against both defconfigs) — so this ✅ carries the same "code-complete,
+    `i2cN` controller node, since the pinned U-Boot on all three doesn't
+    support `CONFIG_OF_LIBFDT_OVERLAY`/extlinux `fdtoverlays` (checked
+    directly against all three defconfigs) — so this ✅ carries the same "code-complete,
     fake-artifact-tested, not hardware-verified" caveat as the rest of this
     table, plus one additional wrinkle: the Rockchip boards' DTB artifact
     needs a new artifacts release (tag bump) before a real, non-
     `--artifacts-dir` build picks up the change. Per-board bus and pin
     numbers are documented in `docs/runtime.md`'s "GPIO, I2C, SPI" section;
     `examples/i2cscan` is the worked, cross-board example. GPIO and SPI are
-    tracked by separate beans/rows in this table.
+    tracked by separate beans/rows in this table. **Exception: the Radxa
+    ROCK 4SE's three header I2C buses (i2c2/i2c6/i2c7) are
+    hardware-verified** — device ACKs confirmed on all three via a Qwiic
+    Button, from a stock (non-`--artifacts-dir`) `gosd build` using the
+    published v0.5.0 artifacts (bean `gosd-sz6p`, 2026-07-23), which also
+    confirms that DTB-artifact wrinkle resolved for this board. Every other
+    board's I2C row remains code-complete-only.
 
 [^gpio]: Every board's kernel already enables the character-device GPIO
     API (`CONFIG_GPIO_CDEV`), so `/dev/gpiochipN` appears at boot with no
@@ -288,7 +316,11 @@ see `beans list` for what's in flight.
     (chip, line) example for each board. Same caveat as the rest of this
     table: code-complete and fake-artifact/QEMU-tested, not yet verified
     against a real GPIO device on hardware (that bench step, an LED blink on
-    each board, is the one item this bean leaves unchecked).
+    each board, is the one item this bean leaves unchecked). **Exception:
+    the Radxa ROCK 4SE's five `gpiochip0`-`gpiochip4` character devices are
+    hardware-confirmed to enumerate** via `examples/gpioinfo` (bean
+    `gosd-sz6p`, 2026-07-23); the LED-blink line-toggle bench step remains
+    unchecked on this board too, same as every other board in this table.
 
 [^spi]: SPI is enabled by default on every board as of bean `gosd-fnza` — no
     build flag needed, and there's no opt-out today. Mechanism differs by
