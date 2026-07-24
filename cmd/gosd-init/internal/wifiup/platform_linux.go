@@ -94,6 +94,16 @@ func (n nlClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 	ae.Flag(unix.NL80211_ATTR_WANT_1X_4WAY_HS, true)
 	ae.Bytes(unix.NL80211_ATTR_PMK, psk[:])
 	ae.Uint32(unix.NL80211_ATTR_AUTH_TYPE, unix.NL80211_AUTHTYPE_OPEN_SYSTEM)
+	// MFP_OPTIONAL declares 802.11w (Protected Management Frames)
+	// capability, letting the firmware negotiate PMF when the AP wants it
+	// and skip it when the AP doesn't — required in practice because
+	// modern APs (any WiFi 6E router sharing one SSID across bands, e.g.
+	// Netgear RAXE300) demand PMF even in "WPA2 Personal" mode: without
+	// this attribute association succeeds but the AP rejects the key
+	// exchange, producing an associate/deauth loop (bean gosd-anyp,
+	// diagnosed on real hardware 2026-07-24). PMF is a WPA2-era 802.11w
+	// feature, not WPA3, so this stays within gosd's WPA2-only scope.
+	ae.Uint32(unix.NL80211_ATTR_USE_MFP, unix.NL80211_MFP_OPTIONAL)
 
 	b, err := ae.Encode()
 	if err != nil {
