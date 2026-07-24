@@ -298,7 +298,19 @@ see `beans list` for what's in flight.
     bump picks up that commit; Ethernet, SD/eMMC, and serial console are
     unaffected. Recheck when bumping the pinned kernel tag. `gosd build
     --usb-gadget` refuses to build for this board (bean `gosd-5pnr`) rather
-    than producing an image whose app can never find a UDC.
+    than producing an image whose app can never find a UDC. Update
+    (bean `gosd-36yy`, 2026-07-24): identified precisely — SoC node in
+    commit `5f3ae9b12a6c` ("arm64: dts: rockchip: Add USB nodes for
+    RK3528"), board enablement in commit `ff660109f412` ("arm64: dts:
+    rockchip: Enable USB 2.0 ports on NanoPi Zero2"), both 2026-06-02. Both
+    are present in mainline's `v7.2-rc4` (an unreleased pre-release for the
+    next major kernel version) but in no tagged, numbered release yet — not
+    even the already-superseded v7.0.x/v7.1.x lines picked them up, as
+    expected for a new-hardware DT addition (not a stable-eligible bug fix).
+    The fleet kernel tag bump stays deferred until a real release ships
+    them; gosd-36yy has the full evidence trail and a pre-baked plan
+    (including the DTS `dr_mode = "peripheral"` patch this board will need)
+    for when it does.
 
 [^i2c]: I2C is enabled by default on every board as of bean `gosd-85pt` — no
     build flag needed, and there's no opt-out today. Mechanism differs by
