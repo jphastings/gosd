@@ -76,7 +76,7 @@ func main() {
 		case errors.Is(res.Err, emmc.ErrNoEMMC):
 			fmt.Println("gosd usbwebsite: no onboard eMMC on this board; this example needs one (e.g. a Radxa Zero 3E)")
 			return
-		case !destructive && needsWipeConsent(res.Err):
+		case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
 			fmt.Printf("gosd usbwebsite: %v\n", res.Err)
 			fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
 			idleForever()
@@ -115,16 +115,6 @@ func isAffirmative(v string) bool {
 	default:
 		return false
 	}
-}
-
-// needsWipeConsent reports whether err is emmc.FormatAndMount's refusal to
-// touch an eMMC that already holds other content — the case wipeConsentEnv
-// unlocks. The emmc package exports no sentinel for this (only ErrNoEMMC), so
-// this matches its message text instead; if that wording ever changes this
-// simply falls through to the generic exit-1 handling below, which is still
-// correct, just less specific.
-func needsWipeConsent(err error) bool {
-	return strings.Contains(err.Error(), "refusing to reformat")
 }
 
 // idleForever blocks forever without exiting, so gosd-init's automatic
