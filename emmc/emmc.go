@@ -13,7 +13,8 @@
 // Formatting is destructive, so it is gated: FormatAndMount will format a blank
 // eMMC freely, but refuses to overwrite anything else (a FAT volume with a
 // different label, or non-FAT content such as a partition table) unless the
-// caller explicitly opts in.
+// caller explicitly opts in, returning an error wrapping ErrRefusedFormat
+// otherwise.
 package emmc
 
 import (
@@ -30,6 +31,14 @@ import (
 // mount — either it has none at all (e.g. a Raspberry Pi board), or the only
 // eMMC present is the device the board booted from and so is off-limits.
 var ErrNoEMMC = errors.New("no onboard eMMC found")
+
+// ErrRefusedFormat reports that the eMMC already holds other content — a FAT
+// volume with a different label, or non-FAT content — and destructive was
+// false, so FormatAndMount left it untouched instead of wiping it. Callers
+// that want to offer the user a way to consent (e.g. an app-env var read from
+// gosd.toml's [env] table) can match this with errors.Is and retry with
+// destructive=true once they have it.
+var ErrRefusedFormat = errors.New("refusing to reformat")
 
 // maxFATLabelLen is the FAT volume-label limit (11 bytes). FAT also stores
 // labels upper-cased; FormatAndMount matches them case-insensitively so the
@@ -57,8 +66,8 @@ const maxFATLabelLen = 11
 //
 // destructive governs only an eMMC that already holds *other* data — a FAT
 // volume with a different label, or non-FAT content: false makes FormatAndMount
-// fail without touching it; true wipes and reformats it. label is limited to 11
-// ASCII characters (the FAT maximum).
+// fail without touching it, wrapping ErrRefusedFormat; true wipes and
+// reformats it. label is limited to 11 ASCII characters (the FAT maximum).
 func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
 	out := make(chan Result, 1)
 	go func() {
@@ -88,7 +97,8 @@ type Result struct {
 	// it, never both at once.
 	BlockDevice string
 	// Err is non-nil if the eMMC could not be formatted and mounted, including
-	// ErrNoEMMC when the board has none.
+	// ErrNoEMMC when the board has none and ErrRefusedFormat when it already
+	// holds other content and destructive was false.
 	Err error
 }
 
@@ -145,7 +155,7 @@ func run(d deps, label, mountpoint string, destructive bool) (string, error) {
 			return "", fmt.Errorf("formatting the blank eMMC at %s failed: %w", device, err)
 		}
 	case !destructive:
-		return "", fmt.Errorf("the eMMC at %s already holds %s; refusing to reformat it as %q without permission — pass destructive=true to wipe it", device, describe(contents), label)
+		return "", fmt.Errorf("the eMMC at %s already holds %s; %w it as %q without permission — pass destructive=true to wipe it", device, describe(contents), ErrRefusedFormat, label)
 	default:
 		if err := d.format(device, label); err != nil {
 			return "", fmt.Errorf("reformatting the eMMC at %s failed: %w", device, err)

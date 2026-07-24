@@ -71,6 +71,11 @@ func TestRunMountsOnlyWhenLabelAlreadyMatches(t *testing.T) {
 }
 
 func TestRunFormatsBlankWithoutDestructive(t *testing.T) {
+	// A blank eMMC never needs consent, even without destructive=true — this
+	// pins the other side of ErrRefusedFormat's contract alongside
+	// TestRunRefusesForeignContentWithoutDestructive below: run only ever
+	// wraps ErrRefusedFormat when the eMMC holds *other* content, never for
+	// blank media.
 	f := &fakeDeps{contents: emmcfmt.Contents{Blank: true}}
 
 	if _, err := run(f.deps(), "APPDATA", "/storage", false); err != nil {
@@ -88,8 +93,8 @@ func TestRunRefusesForeignContentWithoutDestructive(t *testing.T) {
 	f := &fakeDeps{contents: emmcfmt.Contents{IsFAT: true, Label: "OTHERAPP"}}
 
 	_, err := run(f.deps(), "APPDATA", "/storage", false)
-	if err == nil {
-		t.Fatal("run succeeded on foreign content without destructive=true")
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Fatalf("run error = %v, want ErrRefusedFormat", err)
 	}
 	if f.formatted || f.didMount {
 		t.Errorf("touched the device (formatted=%v mounted=%v) when it should have refused", f.formatted, f.didMount)

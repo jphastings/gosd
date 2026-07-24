@@ -15,6 +15,14 @@
 // mounting it locally must never be live at the same time (the host writes raw
 // blocks with no knowledge of our filesystem), so the app either hands the
 // device to a connected computer or keeps it mounted to serve — never both.
+//
+// A board whose eMMC already holds other content (a vendor image, a prior
+// project) needs explicit consent before this app claims it: set the
+// WEBSITE_WIPE_EMMC gosd.toml [env] var (see docs/runtime.md's "App
+// environment variables") to "yes" (or "1"/"true"/"on") to let it wipe and
+// reformat that eMMC. Without consent it leaves the eMMC untouched, logs
+// what to do about it, and idles rather than exiting — gosd-init restarts
+// exited apps regardless of exit code, so exiting here would just crash-loop.
 package main
 
 import (
@@ -34,6 +42,12 @@ const (
 	label      = "WEBSITE"
 	mountpoint = "/storage"
 	httpAddr   = ":80"
+
+	// wipeConsentEnv is the gosd.toml [env] var (see docs/runtime.md's "App
+	// environment variables") a user sets to let usbwebsite claim an eMMC
+	// that already holds other content. Unset, the app only ever formats an
+	// eMMC that's blank or already carries its own label.
+	wipeConsentEnv = "WEBSITE_WIPE_EMMC"
 
 	udcDir = "/sys/class/udc"
 
@@ -55,14 +69,21 @@ const (
 )
 
 func main() {
-	res := <-emmc.FormatAndMount(label, mountpoint, false)
+	destructive := wipeConsented()
+	res := <-emmc.FormatAndMount(label, mountpoint, destructive)
 	if res.Err != nil {
-		if errors.Is(res.Err, emmc.ErrNoEMMC) {
+		switch {
+		case errors.Is(res.Err, emmc.ErrNoEMMC):
 			fmt.Println("gosd usbwebsite: no onboard eMMC on this board; this example needs one (e.g. a Radxa Zero 3E)")
 			return
+		case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
+			fmt.Printf("gosd usbwebsite: %v\n", res.Err)
+			fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
+			idleForever()
+		default:
+			fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
+			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
-		os.Exit(1)
 	}
 	fmt.Printf("gosd usbwebsite: %s ready at %s (device %s)\n", label, res.MountPoint, res.BlockDevice)
 
@@ -72,10 +93,40 @@ func main() {
 		// device.
 		fmt.Println("gosd usbwebsite: computer attached — sharing the website storage as a USB drive")
 		fmt.Println("gosd usbwebsite: edit the files, eject the drive, then power the board standalone to serve them")
-		select {} // block forever; gosd-init keeps the app alive
+		idleForever()
 	}
 
 	serveWebsite(res.MountPoint)
+}
+
+// wipeConsented reports whether the user has opted in, via wipeConsentEnv, to
+// letting usbwebsite wipe and claim an eMMC that already holds other content.
+func wipeConsented() bool {
+	return isAffirmative(os.Getenv(wipeConsentEnv))
+}
+
+// isAffirmative recognizes the usual "yes" spellings for a boolean gosd.toml
+// [env] value, case-insensitively; anything else, including unset or empty,
+// means no — the safe default.
+func isAffirmative(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// idleForever blocks forever without exiting, so gosd-init's automatic
+// restart-on-exit (which applies regardless of exit code) doesn't
+// crash-loop this app while it waits on outside action — a user setting an
+// env var, or plugging in a computer. A bare `select {}` isn't safe for this:
+// with no other goroutine able to wake it, the Go runtime treats that as a
+// deadlock and panics instead of blocking.
+func idleForever() {
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 // presentedAsDrive tries to hand the eMMC to a connected computer as a USB
