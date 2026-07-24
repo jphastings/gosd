@@ -24,6 +24,14 @@ type Deps struct {
 	Reaper     Reaper
 	Rebooter   Rebooter
 
+	// PathExists checks whether a path exists, used by MountBootPartition
+	// to confirm a freshly-mounted FAT candidate is really the GOSD-BOOT
+	// partition (see gosd-pcwl) rather than just a filesystem the kernel
+	// was willing to mount as FAT. Nil-checked like the other optional
+	// deps below: Run defaults it to "always true" so tests that don't
+	// care about this check don't have to wire it up.
+	PathExists func(path string) bool
+
 	// OpenConsole opens /dev/console for logging (step 2). If it fails,
 	// gosd-init falls back to logging on FallbackLog and continues:
 	// losing the console is bad, but not fatal on its own.
@@ -167,10 +175,15 @@ func Run(deps Deps, opts Options) error {
 	}
 	log("hostname set to %q", cfg.Hostname)
 
-	if err := MountBootPartition(deps.Mounter, opts.BootTarget, opts.BootDevices, opts.BootTimeout, deps.Sleep, deps.Now); err != nil {
+	pathExists := deps.PathExists
+	if pathExists == nil {
+		pathExists = func(string) bool { return true }
+	}
+	bootDevice, err := MountBootPartition(deps.Mounter, opts.BootTarget, opts.BootDevices, opts.BootTimeout, pathExists, deps.Sleep, deps.Now)
+	if err != nil {
 		return fatal(deps, log, "mounting boot partition", err)
 	}
-	log("boot partition mounted at %s", opts.BootTarget)
+	log("boot partition mounted at %s from %s", opts.BootTarget, bootDevice)
 
 	// gosd.toml and cloud-init provisioning both live on the just-mounted
 	// GOSD-BOOT partition, so neither can be read before now. Precedence

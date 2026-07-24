@@ -80,6 +80,9 @@ func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
 	if !strings.Contains(console.String(), "[gosd] hostname set to") {
 		t.Errorf("console output missing expected log line: %q", console.String())
 	}
+	if !strings.Contains(console.String(), "boot partition mounted at /boot from /dev/mmcblk0p1") {
+		t.Errorf("console output missing boot partition source device: %q", console.String())
+	}
 }
 
 func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {

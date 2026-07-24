@@ -35,6 +35,8 @@ func (unsupportedPlatform) Mount(string, string, string, uintptr, string) error 
 	return errUnsupportedPlatform
 }
 
+func (unsupportedPlatform) Unmount(string) error { return errUnsupportedPlatform }
+
 func (unsupportedPlatform) SetHostname(string) error { return errUnsupportedPlatform }
 
 func (unsupportedPlatform) Start(string, []string, io.Writer, io.Writer) (int, error) {

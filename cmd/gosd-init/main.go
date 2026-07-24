@@ -60,7 +60,12 @@ func main() {
 	platform.IgnoreShutdownSignals()
 
 	deps := boot.Deps{
-		Mounter:     platform.Mounter,
+		Mounter: platform.Mounter,
+		// PathExists confirms a freshly-mounted GOSD-BOOT candidate really
+		// is GOSD-BOOT (see boot.MountBootPartition and gosd-pcwl); plain
+		// os.Stat is enough since gosd-init only ever calls it against an
+		// already-mounted path.
+		PathExists:  pathExists,
 		Hostname:    platform.Hostname,
 		AppStarter:  platform.AppStarter,
 		Reaper:      platform.Reaper,
@@ -145,6 +150,14 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 		return initcfg.CmdlineArgs{}, err
 	}
 	return initcfg.ParseCmdline(string(data)), nil
+}
+
+// pathExists reports whether path exists, used by boot.MountBootPartition
+// to check for the GOSD-BOOT sentinel file on a freshly-mounted candidate
+// (see gosd-pcwl).
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // readGosdToml reads and parses /boot/gosd.toml, the hand-editable fallback
