@@ -58,6 +58,11 @@ const (
 	// image-layout terms; this check fires first with a message about the
 	// artifact itself.
 	maxUbootEndBytes = 16 * 1024 * 1024
+
+	// defaultConsoleBaud is this board's own console rate, used whenever
+	// BuildConfig.ConsoleBaud is unset (0) - see bean gosd-je2r's
+	// research. --console-baud overrides it; see bean gosd-zp9s.
+	defaultConsoleBaud = 1500000
 )
 
 type board struct{}
@@ -91,7 +96,7 @@ func (board) Artifacts() []boards.ArtifactRef {
 // mainline DTS pins both controllers to host, and gadget mode is enabled by
 // the custom-kernel dr_mode DTS patch, not a boot-time toggle), so
 // --usb-gadget has no boot-file effect here.
-func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
+func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
 	kernel, err := art.Open(kernelArtifactName)
@@ -111,7 +116,11 @@ func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]i
 	}
 	files[initramfsName] = art.Initramfs
 
-	extlinuxConf, err := templates.RenderExtlinuxConf()
+	consoleBaud := cfg.ConsoleBaud
+	if consoleBaud == 0 {
+		consoleBaud = defaultConsoleBaud
+	}
+	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud})
 	if err != nil {
 		return nil, fmt.Errorf("rendering extlinux.conf: %w", err)
 	}
@@ -173,4 +182,10 @@ func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 // gosd-sz6p, 2026-07-23, see COMPATIBILITY.md's [^rock4se-otg] footnote).
 func (board) UsbGadgetSupport() boards.GadgetSupport {
 	return boards.GadgetSupport{Supported: true}
+}
+
+// ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's
+// console= argument carries the baud rate BootFiles renders it with.
+func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
 }

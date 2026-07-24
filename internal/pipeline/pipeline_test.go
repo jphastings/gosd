@@ -53,6 +53,10 @@ func (b *fakeBoard) UsbGadgetSupport() boards.GadgetSupport {
 	return boards.GadgetSupport{Supported: true}
 }
 
+func (b *fakeBoard) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
+}
+
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)

@@ -41,7 +41,7 @@ func TestRenderConfigTxt_NoArm64bitLine(t *testing.T) {
 }
 
 func TestRenderCmdlineTxt(t *testing.T) {
-	got, err := RenderCmdlineTxt(CmdlineTxtData{Board: "pi-zero-w"})
+	got, err := RenderCmdlineTxt(CmdlineTxtData{Board: "pi-zero-w", ConsoleBaud: 115200})
 	if err != nil {
 		t.Fatalf("RenderCmdlineTxt() error = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestRenderCmdlineTxt(t *testing.T) {
 }
 
 func TestRenderCmdlineTxt_IsSingleLine(t *testing.T) {
-	got, err := RenderCmdlineTxt(CmdlineTxtData{Board: "pi-zero-w"})
+	got, err := RenderCmdlineTxt(CmdlineTxtData{Board: "pi-zero-w", ConsoleBaud: 115200})
 	if err != nil {
 		t.Fatalf("RenderCmdlineTxt() error = %v", err)
 	}
@@ -59,6 +59,17 @@ func TestRenderCmdlineTxt_IsSingleLine(t *testing.T) {
 		if r == '\n' {
 			t.Fatalf("RenderCmdlineTxt() contains a newline at byte %d, want a single line: %q", i, got)
 		}
+	}
+}
+
+func TestRenderCmdlineTxt_ConsoleBaudOverride(t *testing.T) {
+	got, err := RenderCmdlineTxt(CmdlineTxtData{Board: "pi-zero-w", ConsoleBaud: 57600})
+	if err != nil {
+		t.Fatalf("RenderCmdlineTxt() error = %v", err)
+	}
+	want := "console=serial0,57600 quiet init=/init gosd.board=pi-zero-w"
+	if got != want {
+		t.Errorf("RenderCmdlineTxt(ConsoleBaud: 57600) = %q, want %q", got, want)
 	}
 }
 

@@ -21,6 +21,9 @@ func (fakeBoard) FirmwareFiles(boards.Artifacts) map[string]io.Reader { return n
 func (fakeBoard) UsbGadgetSupport() boards.GadgetSupport {
 	return boards.GadgetSupport{Supported: true}
 }
+func (fakeBoard) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
+}
 
 func TestRegisterMakesABoardFindable(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-findable"})

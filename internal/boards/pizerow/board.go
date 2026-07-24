@@ -40,6 +40,11 @@ const (
 	// the FAT boot partition; config.txt's "initramfs" directive and
 	// this name must match.
 	initramfsName = "initramfs.cpio.zst"
+
+	// defaultConsoleBaud is this board's own console rate, used whenever
+	// BuildConfig.ConsoleBaud is unset (0) - see bean gosd-06kj's
+	// research. --console-baud overrides it; see bean gosd-zp9s.
+	defaultConsoleBaud = 115200
 )
 
 type board struct{}
@@ -110,7 +115,11 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 	}
 	files["config.txt"] = strings.NewReader(configTxt)
 
-	cmdlineTxt, err := templates.RenderCmdlineTxt(templates.CmdlineTxtData{Board: boardName})
+	consoleBaud := cfg.ConsoleBaud
+	if consoleBaud == 0 {
+		consoleBaud = defaultConsoleBaud
+	}
+	cmdlineTxt, err := templates.RenderCmdlineTxt(templates.CmdlineTxtData{Board: boardName, ConsoleBaud: consoleBaud})
 	if err != nil {
 		return nil, fmt.Errorf("rendering cmdline.txt: %w", err)
 	}
@@ -153,4 +162,10 @@ func (board) FirmwareFiles(art boards.Artifacts) map[string]io.Reader {
 // package a UDC to bind to.
 func (board) UsbGadgetSupport() boards.GadgetSupport {
 	return boards.GadgetSupport{Supported: true}
+}
+
+// ConsoleBaudSupport implements boards.Board: supported. cmdline.txt's
+// console= argument carries the baud rate BootFiles renders it with.
+func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
 }

@@ -4,4 +4,4 @@ label gosd
     kernel /Image
     fdt /rk3528-nanopi-zero2.dtb
     initrd /initramfs.cpio.zst
-    append console=ttyS0,1500000n8 quiet init=/init gosd.board=nanopi-zero2
+    append console=ttyS0,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=nanopi-zero2

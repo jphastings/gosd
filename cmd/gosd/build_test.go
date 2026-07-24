@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
 )
@@ -100,6 +103,97 @@ func TestValidateUsbGadgetAllBoardsDefaultOnlyNamesIncapableOnes(t *testing.T) {
 		if strings.Contains(msg, capableBoard) && !strings.Contains(msg, "--board") {
 			t.Errorf("validateUsbGadget error mentions capable board %q outside of a --board suggestion: %q", capableBoard, msg)
 		}
+	}
+}
+
+func TestValidateConsoleBaudRateAcceptsUnset(t *testing.T) {
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+
+	if err := validateConsoleBaudRate(cmd, 0); err != nil {
+		t.Errorf("validateConsoleBaudRate(0) = %v, want nil: 0 means --console-baud wasn't passed", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("validateConsoleBaudRate(0) printed %q, want no warning for the unset sentinel", buf.String())
+	}
+}
+
+func TestValidateConsoleBaudRateRejectsNegative(t *testing.T) {
+	cmd := &cobra.Command{}
+	if err := validateConsoleBaudRate(cmd, -1); err == nil {
+		t.Fatal("validateConsoleBaudRate(-1) succeeded, want an error")
+	}
+}
+
+func TestValidateConsoleBaudRateAcceptsCommonRateSilently(t *testing.T) {
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+
+	if err := validateConsoleBaudRate(cmd, 115200); err != nil {
+		t.Errorf("validateConsoleBaudRate(115200) = %v, want nil", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("validateConsoleBaudRate(115200) printed %q, want no warning for a common rate", buf.String())
+	}
+}
+
+func TestValidateConsoleBaudRateWarnsOnUncommonRateButSucceeds(t *testing.T) {
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+
+	if err := validateConsoleBaudRate(cmd, 42); err != nil {
+		t.Errorf("validateConsoleBaudRate(42) = %v, want nil: uncommon rates warn, they don't fail", err)
+	}
+	if !strings.Contains(buf.String(), "42") {
+		t.Errorf("validateConsoleBaudRate(42) printed %q, want a warning mentioning the uncommon rate", buf.String())
+	}
+}
+
+func TestValidateConsoleBaudSkippedWhenUnset(t *testing.T) {
+	incapable := []boards.Board{mustFindBoard(t, "qemu-virt")}
+	if err := validateConsoleBaud(incapable, 0); err != nil {
+		t.Errorf("validateConsoleBaud(qemu-virt, 0) = %v, want nil: --console-baud wasn't passed", err)
+	}
+}
+
+func TestValidateConsoleBaudRejectsIncapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "qemu-virt")}
+
+	err := validateConsoleBaud(selected, 115200)
+	if err == nil {
+		t.Fatal("validateConsoleBaud([qemu-virt], 115200) succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "qemu-virt") {
+		t.Errorf("validateConsoleBaud error = %q, want it to mention qemu-virt", err.Error())
+	}
+}
+
+func TestValidateConsoleBaudAcceptsCapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+	if err := validateConsoleBaud(selected, 115200); err != nil {
+		t.Errorf("validateConsoleBaud([pi-zero-2w], 115200) = %v, want nil: pi-zero-2w supports --console-baud", err)
+	}
+}
+
+func TestValidateConsoleBaudMixedBoardsNamesOnlyTheIncapableOne(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w"), mustFindBoard(t, "qemu-virt")}
+
+	err := validateConsoleBaud(selected, 115200)
+	if err == nil {
+		t.Fatal("validateConsoleBaud([pi-zero-2w, qemu-virt], 115200) succeeded, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "qemu-virt") {
+		t.Errorf("validateConsoleBaud error = %q, want it to name qemu-virt", msg)
+	}
+	if !strings.Contains(msg, "--board") {
+		t.Errorf("validateConsoleBaud error = %q, want it to suggest restricting with --board since pi-zero-2w does support --console-baud", msg)
+	}
+	if !strings.Contains(msg, "pi-zero-2w") {
+		t.Errorf("validateConsoleBaud error = %q, want it to name the capable board pi-zero-2w as the suggested restriction", msg)
 	}
 }
 

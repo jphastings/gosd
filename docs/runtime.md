@@ -588,6 +588,50 @@ all) is planned for later.
   edited. `emmc.FormatAndMount` returns the device backing the mount, and
   `emmc.Unmount` releases it so `gadget.MassStorage` can take it exclusively.
 
+## Serial console baud rate (`--console-baud`)
+
+Every board's kernel talks to its debug UART at a fixed default rate baked
+into the boot config `gosd build` renders: 1500000 (1.5Mbaud) on the three
+Rockchip boards (Radxa Zero 3E, NanoPi Zero2, Radxa ROCK 4SE), 115200 on the
+two Pi boards. Some common USB-serial adapters — notably CP210x and PL2303
+families — can't reliably read 1.5Mbaud; garbled or missing console output
+on an otherwise-working board is a strong signal you've hit this rather than
+a real boot failure. See COMPATIBILITY.md's Radxa Zero 3E serial footnote for
+the specific case this was found on.
+
+`gosd build --console-baud <rate>` bakes a different rate into the same
+config, for every board that renders one:
+
+```sh
+gosd build . --board radxa-zero-3e --console-baud 115200
+```
+
+- **Only the rate changes.** The UART device itself (`ttyS2`, `serial0`,
+  etc.) is fixed per board and unaffected by this flag.
+- **Any positive integer is accepted.** A rate outside the common set (9600,
+  19200, 38400, 57600, 115200, 230400, 460800, 921600, 1500000, 3000000)
+  prints a warning rather than failing outright — a mismatched or unusual
+  rate is far more often a typo than an intentional choice, but the flag's
+  entire purpose is accommodating hardware GoSD can't enumerate in advance,
+  so it doesn't hard-block anything positive.
+- **`qemu-virt` can't honor it.** That profile's console is a fixed
+  `qemu-system-aarch64 -append "console=ttyAMA0"` argument with no baud rate
+  at all (a virtual console has no real adapter to mismatch rates with) — see
+  `internal/qemurun`. `--console-baud` together with `--board=qemu-virt`
+  fails fast with an actionable error rather than silently doing nothing.
+- **U-Boot's own output is unaffected.** On the Rockchip boards, U-Boot
+  itself prints at its compiled-in 1500000 regardless of `--console-baud` —
+  the flag only changes what the *kernel and onward* (gosd-init, your app's
+  stdout/stderr) render into extlinux.conf/cmdline.txt. If you need U-Boot's
+  own boot log readable too, use an adapter that supports 1.5Mbaud (or
+  compile a custom U-Boot with a different `CONFIG_BAUDRATE`, out of scope
+  for this flag).
+- **No reflash needed to try a different rate on an already-flashed card.**
+  `extlinux/extlinux.conf` (Rockchip boards) or `cmdline.txt` (Pi boards) on
+  the `GOSD-BOOT` partition is a plain text file — hand-editing the
+  `console=` argument there has the same effect as rebuilding with
+  `--console-baud`.
+
 ## Testing your app under qemu (no hardware needed)
 
 You don't need a Pi or a Radxa on your desk to see your app run through the

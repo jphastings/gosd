@@ -154,6 +154,51 @@ func TestBootFilesConfigTxtAddsUsbGadgetOverlayWhenRequested(t *testing.T) {
 	}
 }
 
+func TestBootFilesDefaultsConsoleBaudTo115200(t *testing.T) {
+	b := pizero2w.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+
+	files, err := b.BootFiles(boards.BuildConfig{}, art)
+	if err != nil {
+		t.Fatalf("BootFiles: %v", err)
+	}
+	cmdline, err := io.ReadAll(files["cmdline.txt"])
+	if err != nil {
+		t.Fatalf("reading cmdline.txt: %v", err)
+	}
+	if !strings.Contains(string(cmdline), "console=serial0,115200") {
+		t.Errorf("cmdline.txt = %q, want it to default to console=serial0,115200 when ConsoleBaud is unset", cmdline)
+	}
+}
+
+func TestBootFilesHonorsConsoleBaudOverride(t *testing.T) {
+	b := pizero2w.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+
+	files, err := b.BootFiles(boards.BuildConfig{ConsoleBaud: 57600}, art)
+	if err != nil {
+		t.Fatalf("BootFiles: %v", err)
+	}
+	cmdline, err := io.ReadAll(files["cmdline.txt"])
+	if err != nil {
+		t.Fatalf("reading cmdline.txt: %v", err)
+	}
+	if !strings.Contains(string(cmdline), "console=serial0,57600") {
+		t.Errorf("cmdline.txt = %q, want it to contain console=serial0,57600 when ConsoleBaud=57600", cmdline)
+	}
+	if strings.Contains(string(cmdline), "115200") {
+		t.Errorf("cmdline.txt = %q, want the default 115200 rate gone once overridden", cmdline)
+	}
+}
+
+func TestConsoleBaudSupportIsSupported(t *testing.T) {
+	if got := pizero2w.New().ConsoleBaudSupport(); !got.Supported {
+		t.Errorf("ConsoleBaudSupport() = %+v, want Supported: true (cmdline.txt's console= rate is board-rendered)", got)
+	}
+}
+
 func TestRawWritesIsEmpty(t *testing.T) {
 	if got := pizero2w.New().RawWrites(boards.Artifacts{}); len(got) != 0 {
 		t.Errorf("RawWrites() = %v, want empty: the Pi boots via the GPU ROM and FAT partition alone", got)

@@ -60,6 +60,7 @@ var (
 	envFlags       []string
 	kernelCfgPath  string
 	withExternal   []string
+	consoleBaud    int
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -102,6 +103,8 @@ func newBuildCmd() *cobra.Command {
 		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
 	cmd.Flags().StringArrayVar(&withExternal, "with-external", nil,
 		"prebuilt static executable to bundle into the image at <path>[:<dest>] (repeatable); dest must be absolute, default /bin/<basename of path>; the binary must be a fully static ELF matching each selected board's architecture")
+	cmd.Flags().IntVar(&consoleBaud, "console-baud", 0,
+		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
 
 	return cmd
 }
@@ -123,12 +126,20 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := validateConsoleBaudRate(cmd, consoleBaud); err != nil {
+		return err
+	}
+
 	selected, err := resolveBoards(boardIDs)
 	if err != nil {
 		return err
 	}
 
 	if err := validateUsbGadget(selected, usbGadget); err != nil {
+		return err
+	}
+
+	if err := validateConsoleBaud(selected, consoleBaud); err != nil {
 		return err
 	}
 
@@ -199,6 +210,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				WifiPassword: wifiPass,
 				UsbGadget:    usbGadget,
 				Env:          env,
+				ConsoleBaud:  consoleBaud,
 			},
 			ArtifactsDir:     artifactsDir,
 			CacheDir:         cacheDir,
@@ -416,6 +428,71 @@ func validateUsbGadget(selected []boards.Board, usbGadget bool) error {
 	)
 	if len(capable) > 0 {
 		msg += fmt.Sprintf("; other selected boards do support --usb-gadget (%s) — try restricting the build with --board=%s",
+			strings.Join(capable, ", "), capable[0])
+	}
+	return errors.New(msg)
+}
+
+// consoleBaudCommonRates are typical UART baud rates. --console-baud accepts
+// any positive integer - a board's kernel/bootloader driver dictates what
+// actually works, and this flag's whole purpose is working around USB-serial
+// adapters (CP210x, PL2303, ...) GoSD can't enumerate in advance, so nothing
+// here is treated as a hard limit - but a value outside this set is far more
+// likely to be a typo (a dropped digit, say) than an intentional exotic
+// rate, so validateConsoleBaudRate warns rather than silently accepting it.
+var consoleBaudCommonRates = map[int]bool{
+	9600: true, 19200: true, 38400: true, 57600: true, 115200: true,
+	230400: true, 460800: true, 921600: true, 1500000: true, 3000000: true,
+}
+
+// validateConsoleBaudRate checks --console-baud's raw value before any board
+// resolution happens. 0 is the flag's default (meaning "not passed") and
+// always succeeds, leaving every board's own rate unchanged. Any positive
+// integer is accepted; one outside consoleBaudCommonRates prints a warning
+// to cmd's stderr but still proceeds - permissive-with-warning, since a
+// board/adapter pair genuinely needing an unusual rate is a real (if rare)
+// case this flag exists to serve, not something to block outright.
+func validateConsoleBaudRate(cmd *cobra.Command, rate int) error {
+	if rate < 0 {
+		return fmt.Errorf("--console-baud %d is invalid; give a positive number of bits per second (e.g. 115200), or omit the flag to keep each board's own default", rate)
+	}
+	if rate > 0 && !consoleBaudCommonRates[rate] {
+		cmd.PrintErrf("gosd build --console-baud %d: not a commonly used baud rate; continuing, but double-check your adapter and board both actually support it\n", rate)
+	}
+	return nil
+}
+
+// validateConsoleBaud fails fast when --console-baud is set (non-zero) and
+// any board in selected can't honor a boot-config baud override (see
+// boards.Board.ConsoleBaudSupport) - same shape as validateUsbGadget's
+// capability check, so a board whose boot config has no console= at all
+// (currently just qemu-virt) fails loudly instead of silently ignoring the
+// flag. A no-op when consoleBaud is 0 (flag not passed) or every selected
+// board supports it.
+func validateConsoleBaud(selected []boards.Board, consoleBaud int) error {
+	if consoleBaud == 0 {
+		return nil
+	}
+
+	var incapable, capable []string
+	for _, b := range selected {
+		support := b.ConsoleBaudSupport()
+		if support.Supported {
+			capable = append(capable, b.Name())
+			continue
+		}
+		incapable = append(incapable, fmt.Sprintf("%s (%s)", b.Name(), support.Reason))
+	}
+	if len(incapable) == 0 {
+		return nil
+	}
+
+	msg := fmt.Sprintf(
+		"--console-baud failed: %s cannot honor a console baud override",
+		strings.Join(incapable, "; "),
+	)
+	if len(capable) > 0 {
+		msg += fmt.Sprintf("; other selected boards do support --console-baud (%s) — try restricting the build with --board=%s",
 			strings.Join(capable, ", "), capable[0])
 	}
 	return errors.New(msg)
