@@ -31,6 +31,16 @@ Needs a board with **both** onboard eMMC and a USB gadget controller — the
 the NanoPi Zero2 has eMMC but no USB gadget). On a board with no eMMC it logs
 that and exits; with no gadget controller it just serves.
 
+### A board whose eMMC already holds other content
+
+Real hardware often ships with something already on the eMMC — vendor
+firmware, a prior project. `usbwebsite` refuses to touch that without
+explicit consent: set `WEBSITE_WIPE_EMMC = "yes"` in the `[env]` table of
+`gosd.toml` on the `GOSD-BOOT` partition (see docs/runtime.md's "App
+environment variables"), then reboot. Without it, the app logs what to do
+and idles rather than exiting, since `gosd-init` restarts exited apps
+regardless of exit code and would otherwise crash-loop it forever.
+
 ## Build & run
 
 ```sh
