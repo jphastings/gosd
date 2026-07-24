@@ -279,7 +279,9 @@ see `beans list` for what's in flight.
     kernel source (bean `gosd-rqx8`). Consequence: the NanoPi Zero2 has no
     USB at all — host or gadget — until a future fleet-wide kernel version
     bump picks up that commit; Ethernet, SD/eMMC, and serial console are
-    unaffected. Recheck when bumping the pinned kernel tag.
+    unaffected. Recheck when bumping the pinned kernel tag. `gosd build
+    --usb-gadget` refuses to build for this board (bean `gosd-5pnr`) rather
+    than producing an image whose app can never find a UDC.
 
 [^i2c]: I2C is enabled by default on every board as of bean `gosd-85pt` — no
     build flag needed, and there's no opt-out today. Mechanism differs by

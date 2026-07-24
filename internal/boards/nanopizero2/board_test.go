@@ -213,3 +213,13 @@ func TestFirmwareFilesIsEmpty(t *testing.T) {
 		t.Errorf("FirmwareFiles() = %v, want empty: no runtime-loaded firmware needed for this board's storage/GbE drivers", got)
 	}
 }
+
+func TestUsbGadgetSupportIsUnsupported(t *testing.T) {
+	got := nanopizero2.New().UsbGadgetSupport()
+	if got.Supported {
+		t.Fatal("UsbGadgetSupport().Supported = true, want false: the RK3528 has no USB controller DT node at the pinned kernel tag")
+	}
+	if !strings.Contains(got.Reason, "gosd-vcae") {
+		t.Errorf("UsbGadgetSupport().Reason = %q, want it to reference the tracking bean gosd-vcae", got.Reason)
+	}
+}

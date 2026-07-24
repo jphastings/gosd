@@ -36,6 +36,73 @@ func TestResolveBoardsRejectsUnknownBoard(t *testing.T) {
 	}
 }
 
+func TestValidateUsbGadgetSkippedWhenFlagNotSet(t *testing.T) {
+	incapable := []boards.Board{mustFindBoard(t, "nanopi-zero2")}
+	if err := validateUsbGadget(incapable, false); err != nil {
+		t.Errorf("validateUsbGadget(nanopi-zero2, false) = %v, want nil: --usb-gadget wasn't passed", err)
+	}
+}
+
+func TestValidateUsbGadgetRejectsIncapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "nanopi-zero2")}
+
+	err := validateUsbGadget(selected, true)
+	if err == nil {
+		t.Fatal("validateUsbGadget([nanopi-zero2], true) succeeded, want an error")
+	}
+	for _, want := range []string{"nanopi-zero2", "COMPATIBILITY.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validateUsbGadget error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestValidateUsbGadgetAcceptsCapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+	if err := validateUsbGadget(selected, true); err != nil {
+		t.Errorf("validateUsbGadget([pi-zero-2w], true) = %v, want nil: pi-zero-2w supports --usb-gadget", err)
+	}
+}
+
+func TestValidateUsbGadgetMixedBoardsNamesOnlyTheIncapableOne(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w"), mustFindBoard(t, "nanopi-zero2")}
+
+	err := validateUsbGadget(selected, true)
+	if err == nil {
+		t.Fatal("validateUsbGadget([pi-zero-2w, nanopi-zero2], true) succeeded, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "nanopi-zero2") {
+		t.Errorf("validateUsbGadget error = %q, want it to name nanopi-zero2", msg)
+	}
+	if !strings.Contains(msg, "--board") {
+		t.Errorf("validateUsbGadget error = %q, want it to suggest restricting with --board since pi-zero-2w does support --usb-gadget", msg)
+	}
+	if !strings.Contains(msg, "pi-zero-2w") {
+		t.Errorf("validateUsbGadget error = %q, want it to name the capable board pi-zero-2w as the suggested restriction", msg)
+	}
+}
+
+func TestValidateUsbGadgetAllBoardsDefaultOnlyNamesIncapableOnes(t *testing.T) {
+	// boards.All() is the no---board default build set, which now
+	// includes nanopi-zero2 (public since bean gosd-wskc) - the exact
+	// scenario that produced the confusing runtime "build with gosd build
+	// --usb-gadget" advice this check exists to catch earlier.
+	err := validateUsbGadget(boards.All(), true)
+	if err == nil {
+		t.Fatal("validateUsbGadget(boards.All(), true) succeeded, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "nanopi-zero2") {
+		t.Errorf("validateUsbGadget error = %q, want it to name nanopi-zero2", msg)
+	}
+	for _, capableBoard := range []string{"pi-zero-2w", "pi-zero-w", "radxa-zero-3e", "rock-4se"} {
+		if strings.Contains(msg, capableBoard) && !strings.Contains(msg, "--board") {
+			t.Errorf("validateUsbGadget error mentions capable board %q outside of a --board suggestion: %q", capableBoard, msg)
+		}
+	}
+}
+
 func TestDeriveAppNameFromDotUsesWorkingDirectoryName(t *testing.T) {
 	appDir := filepath.Join(t.TempDir(), "widget-3")
 	if err := os.Mkdir(appDir, 0o755); err != nil {

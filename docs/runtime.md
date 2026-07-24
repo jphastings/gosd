@@ -561,6 +561,10 @@ all) is planned for later.
   from host to peripheral mode (the *inner* micro-USB is the data port, not
   the one marked PWR); the Radxa Zero 3E needs no flag-driven change at all
   — its USB-C OTG/power port negotiates role automatically.
+- `gosd build --usb-gadget` fails fast, naming the offending board, for any
+  selected board with no USB peripheral controller at its pinned artifacts
+  (e.g. the NanoPi Zero2 today — see COMPATIBILITY.md's USB gadget row)
+  rather than producing an image whose app can never find a UDC.
 - Activation is your app's job, not `gosd-init`'s: construct a
   `gadget.Gadget`, add a `gadget.ACM{}` function, and call `Apply()` at
   startup (`Close()` to tear it down). Without `--usb-gadget` at build time,

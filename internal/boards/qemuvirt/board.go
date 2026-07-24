@@ -98,3 +98,17 @@ func (board) RawWrites(boards.Artifacts) []image.RawWrite { return nil }
 func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
+
+// UsbGadgetSupport implements boards.Board: unsupported. The fixed
+// qemu-system-aarch64 invocation this profile boots under (see
+// internal/qemurun.Args) attaches only virtio-blk, virtio-net, and
+// virtio-gpu - no USB controller device model - so there's no UDC for the
+// gadget package to bind to. qemu-virt is CI/local-test-only (never a real
+// board, never in a default build), so this isn't tracked as a bug the way
+// nanopi-zero2's is.
+func (board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{
+		Supported: false,
+		Reason:    "the qemu-virt profile's fixed QEMU machine has no USB controller device model (virtio-blk/virtio-net/virtio-gpu only); it's a CI/local-test profile, not real hardware",
+	}
+}

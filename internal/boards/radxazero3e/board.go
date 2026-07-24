@@ -162,3 +162,11 @@ func mustReadArtifact(art boards.Artifacts, name string) []byte {
 func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
+
+// UsbGadgetSupport implements boards.Board: supported. This board's dwc3
+// controller negotiates host/peripheral role automatically (see BootFiles's
+// comment), so it always has a UDC available for the gadget package to bind
+// to.
+func (board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{Supported: true}
+}
