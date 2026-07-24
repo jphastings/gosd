@@ -21,7 +21,7 @@ see `beans list` for what's in flight.
 
 | Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
 |---|---|---|---|---|---|
-| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ | ✅ | ✅ |
+| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ [^radxa-serial] | ✅ | ✅ |
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
 | Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
 | Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
@@ -161,6 +161,23 @@ see `beans list` for what's in flight.
     performance ceiling for any CPU-bound app logic on this board, not a
     missing optimization — plan accordingly for anything heavier than
     GPIO/network I/O.
+
+[^radxa-serial]: The Zero 3E's 1500000-baud debug console is unreliable on
+    CP210x/PL2303-family USB-serial adapters — bytes garble (slow rising
+    edges read back with high bits skewed set) at that rate, while the same
+    adapter/wires read the ROCK 4SE and NanoPi Zero2 cleanly at the same
+    1500000 (bean `gosd-nlzf`, 2026-07-24 bench debugging; reproduced on two
+    Zero 3E units and both GoSD and Armbian, so it's an adapter/UART
+    interaction, not board damage). Radxa's own serial documentation notes
+    the same limitation and recommends a CH340-based adapter/cable instead.
+    Two workarounds need no reflash: `gosd build --console-baud 115200` at
+    build time, or hand-editing `console=ttyS2,...` in
+    `extlinux/extlinux.conf` on the flashed `GOSD-BOOT` partition — either
+    way, U-Boot's own output stays at its compiled-in 1500000 regardless,
+    since that's baked into the pinned U-Boot binary, not something `gosd
+    build` renders. See `docs/runtime.md`'s "Serial console baud rate"
+    section for the full writeup; a kernel-side drive-strength fix (bean
+    `gosd-zp9s`) remains open, pending bench verification.
 
 [^pi-zero-w-wifi]: The Zero W's WiFi/BT combo chip is a single revision,
     plain BCM43430 (unlike the Zero 2 W's three chip revisions) — the

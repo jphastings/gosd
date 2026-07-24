@@ -70,6 +70,36 @@ type BuildConfig struct {
 	// precedence (a hand-edited gosd.toml [env] entry overrides the same
 	// key here).
 	Env map[string]string
+
+	// ConsoleBaud overrides the serial console baud rate baked into a
+	// board's boot config (extlinux.conf's console= argument on the
+	// Rockchip boards, cmdline.txt's on the Pi boards) when --console-baud
+	// is passed. Zero means "not set": the board keeps its own default
+	// rate. This exists because some common USB-serial adapters (CP210x,
+	// PL2303) can't reliably read a board's default rate - see bean
+	// gosd-zp9s and COMPATIBILITY.md's radxa-zero-3e serial footnote. The
+	// UART device itself (ttyS2, etc.) is never affected, only its rate;
+	// see boards.Board.ConsoleBaudSupport for which boards can honor this
+	// at all.
+	ConsoleBaud int
+}
+
+// ConsoleBaudSupport reports whether a board's boot config can carry a
+// --console-baud override at all. gosd build --console-baud consults this
+// for every selected board before assembling anything, and refuses to build
+// for any board that returns Supported: false, rather than silently
+// producing an image whose console rate didn't actually change (see
+// validateConsoleBaud in cmd/gosd/build.go, mirroring validateUsbGadget's
+// shape).
+type ConsoleBaudSupport struct {
+	// Supported is false when the board has no boot-time config file this
+	// flag can render into (currently just qemu-virt: its console is a
+	// fixed QEMU -append argument with no baud rate at all).
+	Supported bool
+	// Reason explains why when Supported is false; folded verbatim into
+	// gosd build's --console-baud error. Unused (may be empty) when
+	// Supported is true.
+	Reason string
 }
 
 // GadgetSupport reports whether a board can boot its USB controller into
@@ -171,6 +201,11 @@ type Board interface {
 	// board that returns Supported: false, rather than producing an
 	// image whose app can never find a UDC at /sys/class/udc.
 	UsbGadgetSupport() GadgetSupport
+
+	// ConsoleBaudSupport reports whether this board's boot config can
+	// honor a --console-baud override. See ConsoleBaudSupport's doc
+	// comment for how gosd build --console-baud uses this.
+	ConsoleBaudSupport() ConsoleBaudSupport
 }
 
 // BuildTag returns the Go build tag gosd passes to the app compile (and only

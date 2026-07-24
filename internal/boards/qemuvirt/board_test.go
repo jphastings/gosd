@@ -115,6 +115,16 @@ func TestUsbGadgetSupportIsUnsupported(t *testing.T) {
 	}
 }
 
+func TestConsoleBaudSupportIsUnsupported(t *testing.T) {
+	got := qemuvirt.New().ConsoleBaudSupport()
+	if got.Supported {
+		t.Fatal("ConsoleBaudSupport().Supported = true, want false: qemu-virt's console= has no baud rate at all")
+	}
+	if got.Reason == "" {
+		t.Error("ConsoleBaudSupport().Reason is empty, want an explanation")
+	}
+}
+
 func TestFirmwareFilesIsEmpty(t *testing.T) {
 	if got := qemuvirt.New().FirmwareFiles(boards.Artifacts{}); len(got) != 0 {
 		t.Errorf("FirmwareFiles() = %v, want empty: virtio devices need no runtime-loaded firmware", got)

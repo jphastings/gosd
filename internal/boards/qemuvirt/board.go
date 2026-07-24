@@ -112,3 +112,18 @@ func (board) UsbGadgetSupport() boards.GadgetSupport {
 		Reason:    "the qemu-virt profile's fixed QEMU machine has no USB controller device model (virtio-blk/virtio-net/virtio-gpu only); it's a CI/local-test profile, not real hardware",
 	}
 }
+
+// ConsoleBaudSupport implements boards.Board: unsupported. This profile has
+// no on-device bootloader config file - the runner passes qemu's `-append
+// "console=ttyAMA0 ..."` argument directly (see internal/qemurun.Args) with
+// no baud rate at all, since a virtio/PL011 console has no real adapter to
+// mismatch rates with, which is the entire problem --console-baud exists to
+// work around. qemu-virt is CI/local-test-only (never a real board, never in
+// a default build), so this isn't tracked as a bug the way a real board's
+// would be.
+func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{
+		Supported: false,
+		Reason:    "qemu-virt's console is a fixed QEMU -append argument (console=ttyAMA0) with no baud rate at all; it's a CI/local-test profile, not real hardware with a real adapter to accommodate",
+	}
+}

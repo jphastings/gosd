@@ -6,7 +6,9 @@
 // The content of both templates is locked by bean gosd-eu2x; do not change
 // it without updating that decision. ConfigTxtData.UsbGadget (gosd-uo9f) is
 // an additive exception: it only ever appends a line, never changing what
-// renders when it's unset.
+// renders when it's unset. CmdlineTxtData.ConsoleBaud (gosd-zp9s) is another
+// additive exception: it only ever changes the console= baud number, never
+// the UART device (serial0) or anything else on the line.
 package templates
 
 import (
@@ -46,6 +48,9 @@ type ConfigTxtData struct {
 type CmdlineTxtData struct {
 	// Board is the gosd board ID, passed through as gosd.board=<Board>.
 	Board string
+	// ConsoleBaud is the serial console baud rate baked into console=,
+	// e.g. 115200. See boards.BuildConfig.ConsoleBaud / --console-baud.
+	ConsoleBaud int
 }
 
 // RenderConfigTxt renders config.txt for the given data.

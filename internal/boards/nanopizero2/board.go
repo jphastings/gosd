@@ -74,6 +74,11 @@ const (
 	// fires late and reports the collision in image-layout terms; this
 	// check fires first with a message about the artifact itself.
 	maxUbootEndBytes = 16 * 1024 * 1024
+
+	// defaultConsoleBaud is this board's own console rate, used whenever
+	// BuildConfig.ConsoleBaud is unset (0) - see bean gosd-wskc's
+	// research. --console-baud overrides it; see bean gosd-zp9s.
+	defaultConsoleBaud = 1500000
 )
 
 type board struct{}
@@ -108,7 +113,7 @@ func (board) Artifacts() []boards.ArtifactRef {
 // finding), so there is no boot-time gadget change to make here yet - see
 // UsbGadgetSupport, which is what actually stops `gosd build --usb-gadget`
 // from selecting this board before BootFiles is ever called.
-func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
+func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
 	kernel, err := art.Open(kernelArtifactName)
@@ -128,7 +133,11 @@ func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]i
 	}
 	files[initramfsName] = art.Initramfs
 
-	extlinuxConf, err := templates.RenderExtlinuxConf()
+	consoleBaud := cfg.ConsoleBaud
+	if consoleBaud == 0 {
+		consoleBaud = defaultConsoleBaud
+	}
+	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud})
 	if err != nil {
 		return nil, fmt.Errorf("rendering extlinux.conf: %w", err)
 	}
@@ -198,4 +207,10 @@ func (board) UsbGadgetSupport() boards.GadgetSupport {
 		Supported: false,
 		Reason:    "the RK3528 has no USB controller device-tree node at the pinned kernel tag (host or peripheral); tracked by bean gosd-vcae, arrives with a future fleet-wide kernel bump",
 	}
+}
+
+// ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's
+// console= argument carries the baud rate BootFiles renders it with.
+func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
 }

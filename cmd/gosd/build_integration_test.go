@@ -305,6 +305,111 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 	}
 }
 
+// TestBuildConsoleBaudOverridesRockchipExtlinuxConf is the acceptance test
+// for gosd-zp9s's --console-baud flag on the Rockchip boot chain: it
+// overrides extlinux.conf's console= rate while leaving the UART device
+// (ttyS2) and everything else in the file unchanged.
+func TestBuildConsoleBaudOverridesRockchipExtlinuxConf(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-radxa-zero-3e.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "radxa-zero-3e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--console-baud", "115200",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	if !strings.Contains(string(extlinuxConf), "console=ttyS2,115200n8") {
+		t.Errorf("extlinux.conf = %q, want it to contain console=ttyS2,115200n8", extlinuxConf)
+	}
+	if strings.Contains(string(extlinuxConf), "1500000") {
+		t.Errorf("extlinux.conf = %q, want the default 1500000 rate gone once overridden", extlinuxConf)
+	}
+}
+
+// TestBuildConsoleBaudOverridesPiCmdlineTxt is the acceptance test for
+// gosd-zp9s's --console-baud flag on the Pi boot chain: it overrides
+// cmdline.txt's console= rate the same way.
+func TestBuildConsoleBaudOverridesPiCmdlineTxt(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--console-baud", "57600",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	cmdlineTxt, err := fs.ReadFile("cmdline.txt")
+	if err != nil {
+		t.Fatalf("reading cmdline.txt: %v", err)
+	}
+	if !strings.Contains(string(cmdlineTxt), "console=serial0,57600") {
+		t.Errorf("cmdline.txt = %q, want it to contain console=serial0,57600", cmdlineTxt)
+	}
+	if strings.Contains(string(cmdlineTxt), "115200") {
+		t.Errorf("cmdline.txt = %q, want the default 115200 rate gone once overridden", cmdlineTxt)
+	}
+}
+
+// TestBuildConsoleBaudFailsActionablyForIncapableBoard confirms --console-
+// baud refuses to build for qemu-virt (whose console has no baud rate at
+// all - see qemuvirt.ConsoleBaudSupport) rather than silently ignoring the
+// flag.
+func TestBuildConsoleBaudFailsActionablyForIncapableBoard(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "qemu-virt",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--console-baud", "115200",
+		"-o", filepath.Join(t.TempDir(), "hello-qemu-virt.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --board=qemu-virt --console-baud=115200 succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "qemu-virt") {
+		t.Errorf("error = %q, want it to name qemu-virt", err.Error())
+	}
+}
+
 // TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts is the
 // acceptance test for gosd-wskc: an explicit `gosd build --board=nanopi-
 // zero2`, using --artifacts-dir to supply fake bootloader/kernel files,

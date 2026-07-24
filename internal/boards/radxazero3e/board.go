@@ -54,6 +54,12 @@ const (
 	// fires late and reports the collision in image-layout terms; this
 	// check fires first with a message about the artifact itself.
 	maxUbootEndBytes = 16 * 1024 * 1024
+
+	// defaultConsoleBaud is this board's own console rate, used whenever
+	// BuildConfig.ConsoleBaud is unset (0) - the Rockchip default of
+	// 1500000n8 (see bean gosd-gbsz's research). --console-baud overrides
+	// it; see bean gosd-zp9s.
+	defaultConsoleBaud = 1500000
 )
 
 type board struct{}
@@ -86,7 +92,7 @@ func (board) Artifacts() []boards.ArtifactRef {
 // ignored: unlike the Pi Zero 2W, this board's USB-C OTG/power port and
 // dwc3 controller negotiate host/peripheral role automatically, so
 // --usb-gadget needs no boot-time change here.
-func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
+func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
 	kernel, err := art.Open(kernelArtifactName)
@@ -106,7 +112,11 @@ func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]i
 	}
 	files[initramfsName] = art.Initramfs
 
-	extlinuxConf, err := templates.RenderExtlinuxConf()
+	consoleBaud := cfg.ConsoleBaud
+	if consoleBaud == 0 {
+		consoleBaud = defaultConsoleBaud
+	}
+	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud})
 	if err != nil {
 		return nil, fmt.Errorf("rendering extlinux.conf: %w", err)
 	}
@@ -169,4 +179,10 @@ func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 // to.
 func (board) UsbGadgetSupport() boards.GadgetSupport {
 	return boards.GadgetSupport{Supported: true}
+}
+
+// ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's
+// console= argument carries the baud rate BootFiles renders it with.
+func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
 }

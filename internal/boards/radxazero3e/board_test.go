@@ -137,6 +137,51 @@ func TestBootFilesIgnoresUsbGadget(t *testing.T) {
 	}
 }
 
+func TestBootFilesDefaultsConsoleBaudTo1500000(t *testing.T) {
+	b := radxazero3e.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+
+	files, err := b.BootFiles(boards.BuildConfig{}, art)
+	if err != nil {
+		t.Fatalf("BootFiles: %v", err)
+	}
+	extlinuxConf, err := io.ReadAll(files["extlinux/extlinux.conf"])
+	if err != nil {
+		t.Fatalf("reading extlinux.conf: %v", err)
+	}
+	if !strings.Contains(string(extlinuxConf), "console=ttyS2,1500000n8") {
+		t.Errorf("extlinux.conf = %q, want it to default to console=ttyS2,1500000n8 when ConsoleBaud is unset", extlinuxConf)
+	}
+}
+
+func TestBootFilesHonorsConsoleBaudOverride(t *testing.T) {
+	b := radxazero3e.New()
+	art := resolveFakeArtifacts(t, b)
+	art.Initramfs = strings.NewReader("fake initramfs bytes")
+
+	files, err := b.BootFiles(boards.BuildConfig{ConsoleBaud: 115200}, art)
+	if err != nil {
+		t.Fatalf("BootFiles: %v", err)
+	}
+	extlinuxConf, err := io.ReadAll(files["extlinux/extlinux.conf"])
+	if err != nil {
+		t.Fatalf("reading extlinux.conf: %v", err)
+	}
+	if !strings.Contains(string(extlinuxConf), "console=ttyS2,115200n8") {
+		t.Errorf("extlinux.conf = %q, want it to contain console=ttyS2,115200n8 when ConsoleBaud=115200", extlinuxConf)
+	}
+	if strings.Contains(string(extlinuxConf), "1500000") {
+		t.Errorf("extlinux.conf = %q, want the default 1500000 rate gone once overridden", extlinuxConf)
+	}
+}
+
+func TestConsoleBaudSupportIsSupported(t *testing.T) {
+	if got := radxazero3e.New().ConsoleBaudSupport(); !got.Supported {
+		t.Errorf("ConsoleBaudSupport() = %+v, want Supported: true (extlinux.conf's console= rate is board-rendered)", got)
+	}
+}
+
 func TestRawWritesOffsetsAndContent(t *testing.T) {
 	b := radxazero3e.New()
 	art := resolveFakeArtifacts(t, b)
