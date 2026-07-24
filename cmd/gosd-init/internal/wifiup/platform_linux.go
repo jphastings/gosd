@@ -93,17 +93,20 @@ func (n nlClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 	ae.Uint32(unix.NL80211_ATTR_AKM_SUITES, akmSuitePSK)
 	ae.Flag(unix.NL80211_ATTR_WANT_1X_4WAY_HS, true)
 	ae.Bytes(unix.NL80211_ATTR_PMK, psk[:])
-	ae.Uint32(unix.NL80211_ATTR_AUTH_TYPE, unix.NL80211_AUTHTYPE_OPEN_SYSTEM)
-	// MFP_OPTIONAL declares 802.11w (Protected Management Frames)
-	// capability, letting the firmware negotiate PMF when the AP wants it
-	// and skip it when the AP doesn't — required in practice because
-	// modern APs (any WiFi 6E router sharing one SSID across bands, e.g.
-	// Netgear RAXE300) demand PMF even in "WPA2 Personal" mode: without
-	// this attribute association succeeds but the AP rejects the key
-	// exchange, producing an associate/deauth loop (bean gosd-anyp,
-	// diagnosed on real hardware 2026-07-24). PMF is a WPA2-era 802.11w
-	// feature, not WPA3, so this stays within gosd's WPA2-only scope.
-	ae.Uint32(unix.NL80211_ATTR_USE_MFP, unix.NL80211_MFP_OPTIONAL)
+	// No further attributes — the mirror of mdlayher/wifi's ConnectWPAPSK
+	// must be EXACT (bean gosd-anyp, Pi Zero 2W bring-up 2026-07-24). Two
+	// well-intentioned additions each broke the firmware-offloaded 4-way
+	// handshake into an endless associate/deauth loop on real hardware:
+	//  - NL80211_ATTR_AUTH_TYPE = OPEN_SYSTEM: the library omits it, so
+	//    the kernel defaults to AUTHTYPE_AUTOMATIC; forcing OPEN_SYSTEM
+	//    disturbs brcmfmac's auth plumbing ahead of its firmware
+	//    supplicant. gokrazy runs the unmodified library call in
+	//    production on the same BCM43430/1 silicon — the deltas were ours.
+	//  - NL80211_ATTR_USE_MFP = MFP_OPTIONAL: also not sent by the
+	//    library; PMF-demanding APs (WiFi 6E routers in "WPA2" mode) are
+	//    a real gap, but declaring MFP here did not fix them and is not
+	//    part of the proven-working attribute set. Track PMF support in
+	//    bean gosd-anyp's follow-ups instead.
 
 	b, err := ae.Encode()
 	if err != nil {
