@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-07-24T06:38:28Z
-updated_at: 2026-07-24T07:46:42Z
+updated_at: 2026-07-24T07:50:21Z
 ---
 
 Found during NanoPi Zero2 eMMC-refit testing (gosd-odp7, 2026-07-24). With an eMMC fitted, the kernel enumerates it as mmcblk0 and the SD as mmcblk1. gosd-init's boot-partition probe walks candidates by device name (mmcblk0p1 first), so it probed the eMMC's first partition as GOSD-BOOT — kernel FAT driver rejected it ('FAT-fs (mmcblk0p1): bogus number of reserved sectors', retried ~3 times over ~0.8s) and the probe then fell through to the SD's mmcblk1p1, which mounted fine. Failed-safe ONLY because that eMMC partition isn't valid FAT: any eMMC whose p1 IS a valid FAT filesystem (vendor-shipped image, previously-flashed GoSD image) would be mounted as /boot instead of the SD the user just flashed — stale gosd.toml, wrong app config, very confusing failures.
@@ -66,3 +66,16 @@ Tests (cmd/gosd-init/internal/boot/mounts_test.go, sequence_test.go):
   log line names the source device.
 - Existing MountBootPartition tests updated for the new signature/return
   value; fakeMounter gained Unmount tracking (unmounts, unmountsFor).
+
+## Known residual
+
+The sentinel check rejects candidates that mount as valid FAT but aren't a
+GoSD boot partition at all (vendor image, arbitrary FAT content) — it cannot
+distinguish between two *actual* GoSD boot partitions. An eMMC that itself
+carries a stale, previously-flashed GoSD image also has gosd.toml at its
+root, passes the sentinel check, and still wins by device-name order alone
+(mmcblk0 before mmcblk1) over a freshly-flashed SD card. Disambiguating that
+case needs boot-source information gosd-init doesn't currently have — e.g.
+U-Boot passing the actually-booted device on the kernel cmdline — which is a
+separate design (per-board U-Boot/bootloader support needs checking) and is
+out of this bean's scope. Tracked as a follow-up: [[gosd-vzk2]].

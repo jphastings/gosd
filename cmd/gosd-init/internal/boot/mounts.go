@@ -56,12 +56,12 @@ func mountEarly(m Mounter) error {
 }
 
 // bootSentinelFile is the file MountBootPartition requires at the root of a
-// freshly-mounted candidate before accepting it as GOSD-BOOT, rather than
-// accepting the first candidate the kernel is willing to mount as FAT (see
-// gosd-pcwl). internal/pipeline.Assemble writes gosd.toml onto every
-// board's boot partition unconditionally — unlike config.txt (Pi-only) or
-// extlinux.conf (Rockchip-only) — which is what makes it safe to key off
-// across the whole board matrix.
+// freshly-mounted candidate before accepting it as a GoSD boot partition,
+// rather than accepting the first candidate the kernel is willing to mount
+// as FAT (see gosd-pcwl). internal/pipeline.Assemble writes gosd.toml onto
+// every board's boot partition unconditionally — unlike config.txt
+// (Pi-only) or extlinux.conf (Rockchip-only) — which is what makes it safe
+// to key off across the whole board matrix.
 const bootSentinelFile = "gosd.toml"
 
 // MountBootPartition mounts the GOSD-BOOT FAT partition read-only at
@@ -73,12 +73,18 @@ const bootSentinelFile = "gosd.toml"
 // A candidate that mounts as valid FAT is not accepted on that basis alone:
 // with an eMMC fitted, its first partition can sort before the SD card's in
 // device-name order (mmcblk0 vs mmcblk1) and, if it happens to already hold
-// a valid FAT filesystem (a previously-flashed GoSD image, or a vendor
-// image), would otherwise be silently mounted as /boot instead of the SD
-// card the user just flashed. So each successful FAT mount is additionally
-// checked for bootSentinelFile at its root; a candidate missing it is
-// unmounted and probing moves on to the next one, within the same timeout
-// budget as an outright mount failure.
+// a valid FAT filesystem that isn't a GoSD boot partition at all (a vendor
+// image, a blank/reformatted card), it would otherwise be silently mounted
+// as /boot instead of the SD card the user just flashed. So each successful
+// FAT mount is additionally checked for bootSentinelFile at its root; a
+// candidate missing it is unmounted and probing moves on to the next one,
+// within the same timeout budget as an outright mount failure.
+//
+// This only rules out non-GoSD FAT content; it cannot distinguish between
+// two actual GoSD boot partitions (e.g. an eMMC that itself carries a
+// stale, previously-flashed GoSD image also has gosd.toml at its root and
+// still wins by device-name order). See gosd-pcwl's "Known residual" note
+// and its follow-up bean for that case.
 func MountBootPartition(m Mounter, target string, devices []string, timeout time.Duration, pathExists func(path string) bool, sleep func(time.Duration), now func() time.Time) (string, error) {
 	deadline := now().Add(timeout)
 	var lastErr error
