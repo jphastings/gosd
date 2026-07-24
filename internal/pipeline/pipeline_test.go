@@ -49,6 +49,10 @@ func (b *fakeBoard) RawWrites(boards.Artifacts) []image.RawWrite { return b.rawW
 
 func (b *fakeBoard) FirmwareFiles(boards.Artifacts) map[string]io.Reader { return b.firmware }
 
+func (b *fakeBoard) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{Supported: true}
+}
+
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)

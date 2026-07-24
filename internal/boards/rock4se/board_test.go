@@ -210,3 +210,9 @@ func TestFirmwareFilesIsEmpty(t *testing.T) {
 		t.Errorf("FirmwareFiles() = %v, want empty: no runtime-loaded firmware on this board in v0.1", got)
 	}
 }
+
+func TestUsbGadgetSupportIsSupported(t *testing.T) {
+	if got := rock4se.New().UsbGadgetSupport(); !got.Supported {
+		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dr_mode DTS patch bakes gadget mode into the device tree)", got)
+	}
+}

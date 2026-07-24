@@ -166,3 +166,11 @@ func mustReadArtifact(art boards.Artifacts, name string) []byte {
 func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
+
+// UsbGadgetSupport implements boards.Board: supported. The custom-kernel
+// dr_mode DTS patch bakes gadget mode into this board's device tree (see
+// BootFiles's comment), and the CDC-ACM path is hardware-verified (bean
+// gosd-sz6p, 2026-07-23, see COMPATIBILITY.md's [^rock4se-otg] footnote).
+func (board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{Supported: true}
+}

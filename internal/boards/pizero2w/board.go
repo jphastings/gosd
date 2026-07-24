@@ -133,3 +133,11 @@ func (board) FirmwareFiles(art boards.Artifacts) map[string]io.Reader {
 	}
 	return files
 }
+
+// UsbGadgetSupport implements boards.Board: supported. This board's dwc2
+// controller is put into peripheral mode by the dtoverlay BootFiles renders
+// into config.txt when BuildConfig.UsbGadget is set, giving the gadget
+// package a UDC to bind to.
+func (board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{Supported: true}
+}

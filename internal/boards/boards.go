@@ -72,6 +72,25 @@ type BuildConfig struct {
 	Env map[string]string
 }
 
+// GadgetSupport reports whether a board can boot its USB controller into
+// peripheral mode at the pinned kernel and device tree its Artifacts resolve
+// to - the fact `gosd build --usb-gadget` checks, board by board, before
+// assembling any image (see COMPATIBILITY.md's USB gadget row). This is a
+// static fact about the pinned artifacts, not a boot-time choice: it doesn't
+// change based on BuildConfig.UsbGadget, and it's independent of whether a
+// capable board also needs a boot-file change (BootFiles reads
+// BuildConfig.UsbGadget for that).
+type GadgetSupport struct {
+	// Supported is false when the board's pinned kernel/DT has no USB
+	// peripheral controller for the gadget package to bind to.
+	Supported bool
+	// Reason explains why when Supported is false: it's folded verbatim
+	// into gosd build's --usb-gadget error, so it should name the missing
+	// hardware/DT node and, if there's a bean tracking the fix, mention
+	// it. Unused (and may be empty) when Supported is true.
+	Reason string
+}
+
 // Arch is the Go cross-compile target a board's binaries (the user's app and
 // gosd-init) need: GOOS is always "linux" (internal/build hard-codes it), so
 // only GOARCH and, for architectures that need it (arm), GOARM vary per
@@ -144,6 +163,14 @@ type Board interface {
 	// inside the initramfs, keyed by their path relative to
 	// /lib/firmware. Empty for boards with no runtime-loaded firmware.
 	FirmwareFiles(art Artifacts) map[string]io.Reader
+
+	// UsbGadgetSupport reports whether this board can boot its USB
+	// controller into peripheral mode at the pinned artifacts. gosd
+	// build --usb-gadget consults this for every selected board before
+	// compiling or assembling anything, and refuses to build for any
+	// board that returns Supported: false, rather than producing an
+	// image whose app can never find a UDC at /sys/class/udc.
+	UsbGadgetSupport() GadgetSupport
 }
 
 // BuildTag returns the Go build tag gosd passes to the app compile (and only

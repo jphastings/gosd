@@ -217,3 +217,9 @@ func keys(m map[string]io.Reader) []string {
 	}
 	return out
 }
+
+func TestUsbGadgetSupportIsSupported(t *testing.T) {
+	if got := pizerow.New().UsbGadgetSupport(); !got.Supported {
+		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dwc2 overlay puts the port into peripheral mode)", got)
+	}
+}

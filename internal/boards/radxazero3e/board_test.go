@@ -210,3 +210,9 @@ func TestFirmwareFilesIsEmpty(t *testing.T) {
 		t.Errorf("FirmwareFiles() = %v, want empty: no runtime-loaded firmware on this board in v0.1", got)
 	}
 }
+
+func TestUsbGadgetSupportIsSupported(t *testing.T) {
+	if got := radxazero3e.New().UsbGadgetSupport(); !got.Supported {
+		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dwc3 negotiates host/peripheral role automatically)", got)
+	}
+}

@@ -105,6 +105,16 @@ func TestRawWritesIsEmpty(t *testing.T) {
 	}
 }
 
+func TestUsbGadgetSupportIsUnsupported(t *testing.T) {
+	got := qemuvirt.New().UsbGadgetSupport()
+	if got.Supported {
+		t.Fatal("UsbGadgetSupport().Supported = true, want false: the qemu-virt invocation attaches no USB controller device model")
+	}
+	if got.Reason == "" {
+		t.Error("UsbGadgetSupport().Reason is empty, want an explanation")
+	}
+}
+
 func TestFirmwareFilesIsEmpty(t *testing.T) {
 	if got := qemuvirt.New().FirmwareFiles(boards.Artifacts{}); len(got) != 0 {
 		t.Errorf("FirmwareFiles() = %v, want empty: virtio devices need no runtime-loaded firmware", got)

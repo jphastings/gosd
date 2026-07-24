@@ -105,7 +105,9 @@ func (board) Artifacts() []boards.ArtifactRef {
 // rendered from the locked template. BuildConfig.UsbGadget is deliberately
 // ignored: this board has no USB controller in any numbered mainline
 // kernel release as of the pinned kernel tag (see bean gosd-cwjf's "USB gate"
-// finding), so there is no boot-time gadget change to make here yet.
+// finding), so there is no boot-time gadget change to make here yet - see
+// UsbGadgetSupport, which is what actually stops `gosd build --usb-gadget`
+// from selecting this board before BootFiles is ever called.
 func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
@@ -182,4 +184,18 @@ func mustReadArtifact(art boards.Artifacts, name string) []byte {
 // need no runtime-loaded firmware, per bean gosd-vcae's findings.
 func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
+}
+
+// UsbGadgetSupport implements boards.Board: unsupported. The RK3528 has no
+// USB controller device-tree node in any numbered mainline kernel release as
+// of the pinned kernel tag (see COMPATIBILITY.md's [^nanopi-usb] footnote and
+// bean gosd-vcae's findings) - there's no UDC for the gadget package to bind
+// to at all, host or peripheral. This lands with a future fleet-wide kernel
+// bump (bean gosd-vcae), never a single-board one (see CLAUDE.md's "same
+// kernel tag" locked decision).
+func (board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{
+		Supported: false,
+		Reason:    "the RK3528 has no USB controller device-tree node at the pinned kernel tag (host or peripheral); tracked by bean gosd-vcae, arrives with a future fleet-wide kernel bump",
+	}
 }

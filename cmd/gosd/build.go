@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -124,6 +125,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	selected, err := resolveBoards(boardIDs)
 	if err != nil {
+		return err
+	}
+
+	if err := validateUsbGadget(selected, usbGadget); err != nil {
 		return err
 	}
 
@@ -378,6 +383,42 @@ func resolveBoards(ids []string) ([]boards.Board, error) {
 		selected = append(selected, b)
 	}
 	return selected, nil
+}
+
+// validateUsbGadget fails fast when --usb-gadget is set and any board in
+// selected has no USB peripheral controller at its pinned artifacts (see
+// boards.Board.UsbGadgetSupport) - without this check, `gosd build
+// --usb-gadget` for such a board succeeds and produces an image whose app
+// can never find a UDC at /sys/class/udc, with no earlier warning than
+// gosd-init's own boot-time log line (see COMPATIBILITY.md's USB gadget
+// row). A no-op when usbGadget is false or every selected board supports it.
+func validateUsbGadget(selected []boards.Board, usbGadget bool) error {
+	if !usbGadget {
+		return nil
+	}
+
+	var incapable, capable []string
+	for _, b := range selected {
+		support := b.UsbGadgetSupport()
+		if support.Supported {
+			capable = append(capable, b.Name())
+			continue
+		}
+		incapable = append(incapable, fmt.Sprintf("%s (%s)", b.Name(), support.Reason))
+	}
+	if len(incapable) == 0 {
+		return nil
+	}
+
+	msg := fmt.Sprintf(
+		"--usb-gadget failed: no USB peripheral controller at the pinned artifacts for %s; see COMPATIBILITY.md's USB gadget row",
+		strings.Join(incapable, "; "),
+	)
+	if len(capable) > 0 {
+		msg += fmt.Sprintf("; other selected boards do support --usb-gadget (%s) — try restricting the build with --board=%s",
+			strings.Join(capable, ", "), capable[0])
+	}
+	return errors.New(msg)
 }
 
 // ensureOutputDir makes sure the directory gosd is about to write into
