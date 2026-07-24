@@ -7,9 +7,10 @@
 // It demonstrates gadget.MassStorage (sharing a block device over USB) on top
 // of the emmc package (which reports the device backing its mount). The board
 // must be built with `gosd build --usb-gadget` so its USB port is in peripheral
-// mode, and must have onboard eMMC and a USB gadget controller — the Radxa Zero
-// 3E is the board that has both today. Without an eMMC it logs that plainly and
-// exits; without a USB controller it just serves.
+// mode, and must have onboard eMMC fitted and a USB gadget controller (see
+// COMPATIBILITY.md for current per-board status). Without eMMC it logs that
+// plainly and idles rather than exiting; without a USB controller it just
+// serves.
 //
 // The USB-vs-website decision is made once per boot: presenting the drive and
 // mounting it locally must never be live at the same time (the host writes raw
@@ -74,8 +75,8 @@ func main() {
 	if res.Err != nil {
 		switch {
 		case errors.Is(res.Err, emmc.ErrNoEMMC):
-			fmt.Println("gosd usbwebsite: no onboard eMMC on this board; this example needs one (e.g. a Radxa Zero 3E)")
-			return
+			fmt.Println("gosd usbwebsite: no onboard eMMC on this board; this example needs a board with eMMC fitted")
+			idleForever()
 		case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
 			fmt.Printf("gosd usbwebsite: %v\n", res.Err)
 			fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
