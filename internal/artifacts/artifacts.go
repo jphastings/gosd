@@ -41,7 +41,7 @@ import (
 // exFAT, USB mass-storage gadget) and the first blob-free Rockchip
 // U-Boot (BL31 compiled from mainline TF-A, no rkbin). The other boards'
 // artifacts are unchanged rebuilds.
-const Version = "v0.5.0"
+const Version = "v0.6.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
