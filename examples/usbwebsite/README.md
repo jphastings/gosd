@@ -26,10 +26,12 @@ releases that device so the USB drive can take it exclusively.
 
 ## Boards
 
-Needs a board with **both** onboard eMMC and a USB gadget controller — the
-**Radxa Zero 3E** today (the Raspberry Pi boards have USB gadget but no eMMC;
-the NanoPi Zero2 has eMMC but no USB gadget). On a board with no eMMC it logs
-that and exits; with no gadget controller it just serves.
+Needs a board with **both** onboard eMMC fitted and a USB gadget controller —
+see `COMPATIBILITY.md`'s eMMC and USB gadget rows for current per-board
+status (eMMC is a build-to-order option on some boards, so having the right
+board model isn't the same as having eMMC fitted). On a board with no eMMC it
+logs that and idles rather than exiting; with no gadget controller it just
+serves.
 
 ### A board whose eMMC already holds other content
 
