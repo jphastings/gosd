@@ -14,11 +14,14 @@ package boot
 
 import "io"
 
-// Mounter mounts a single filesystem, mirroring the Linux mount(2) syscall
-// signature so the real implementation is a thin wrapper around
-// golang.org/x/sys/unix.Mount.
+// Mounter mounts and unmounts a single filesystem, mirroring the Linux
+// mount(2)/umount(2) syscall signatures so the real implementation is a thin
+// wrapper around golang.org/x/sys/unix. Unmount is only needed to reverse a
+// mount that turns out to be wrong after the fact — see
+// MountBootPartition's GOSD-BOOT sentinel check.
 type Mounter interface {
 	Mount(source, target, fstype string, flags uintptr, data string) error
+	Unmount(target string) error
 }
 
 // HostnameSetter sets the kernel hostname (sethostname(2)).

@@ -43,6 +43,10 @@ func TestMountEarlyStopsAtFirstFailure(t *testing.T) {
 	}
 }
 
+// alwaysExists is a pathExists stub for tests that don't care about the
+// GOSD-BOOT sentinel check itself, only about device-candidate behavior.
+func alwaysExists(string) bool { return true }
+
 func TestMountBootPartitionTriesEachDeviceInOrder(t *testing.T) {
 	devices := []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1"}
 	m := &fakeMounter{fn: func(c mountCall) error {
@@ -53,12 +57,64 @@ func TestMountBootPartitionTriesEachDeviceInOrder(t *testing.T) {
 	}}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountBootPartition(m, "/boot", devices, 10*time.Second, clock.Sleep, clock.Now)
+	dev, err := MountBootPartition(m, "/boot", devices, 10*time.Second, alwaysExists, clock.Sleep, clock.Now)
 	if err != nil {
 		t.Fatalf("MountBootPartition() = %v, want nil", err)
 	}
+	if dev != "/dev/mmcblk1p1" {
+		t.Errorf("MountBootPartition() returned device %q, want %q", dev, "/dev/mmcblk1p1")
+	}
 	if got := m.callsFor("/boot"); got != 2 {
 		t.Fatalf("MountBootPartition() made %d attempts, want 2 (first device fails, second succeeds)", got)
+	}
+}
+
+func TestMountBootPartitionAcceptsSingleCandidateWithSentinelPresent(t *testing.T) {
+	// The normal, no-eMMC path: one candidate, it mounts as FAT, and it
+	// carries gosd.toml — must be accepted without any unmount/retry.
+	m := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	dev, err := MountBootPartition(m, "/boot", []string{"/dev/mmcblk0p1"}, 10*time.Second, alwaysExists, clock.Sleep, clock.Now)
+	if err != nil {
+		t.Fatalf("MountBootPartition() = %v, want nil", err)
+	}
+	if dev != "/dev/mmcblk0p1" {
+		t.Errorf("MountBootPartition() returned device %q, want %q", dev, "/dev/mmcblk0p1")
+	}
+	if got := m.unmountsFor("/boot"); got != 0 {
+		t.Errorf("MountBootPartition() unmounted /boot %d times, want 0", got)
+	}
+}
+
+// TestMountBootPartitionSkipsCandidateMissingGosdBootSentinel is the exact
+// hardware scenario from gosd-pcwl: with an eMMC fitted, its first
+// partition (mmcblk0p1) sorts before the SD card's (mmcblk1p1) and mounts
+// as valid FAT, but it isn't GOSD-BOOT. The probe must reject it via the
+// sentinel check and move on to the SD card instead of accepting the first
+// FAT-valid mount it finds.
+func TestMountBootPartitionSkipsCandidateMissingGosdBootSentinel(t *testing.T) {
+	devices := []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1"}
+	m := &fakeMounter{} // every Mount call succeeds - the eMMC's p1 is valid FAT too
+	checks := 0
+	pathExists := func(string) bool {
+		checks++
+		return checks == 2 // only the second (SD card) candidate carries gosd.toml
+	}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	dev, err := MountBootPartition(m, "/boot", devices, 10*time.Second, pathExists, clock.Sleep, clock.Now)
+	if err != nil {
+		t.Fatalf("MountBootPartition() = %v, want nil", err)
+	}
+	if dev != "/dev/mmcblk1p1" {
+		t.Errorf("MountBootPartition() returned device %q, want the SD card's %q", dev, "/dev/mmcblk1p1")
+	}
+	if got := m.callsFor("/boot"); got != 2 {
+		t.Errorf("MountBootPartition() attempted %d mounts, want 2 (eMMC rejected, then SD accepted)", got)
+	}
+	if got := m.unmountsFor("/boot"); got != 1 {
+		t.Errorf("MountBootPartition() unmounted /boot %d times, want exactly 1 (rejecting the eMMC candidate)", got)
 	}
 }
 
@@ -75,7 +131,7 @@ func TestMountBootPartitionRetriesUntilSuccess(t *testing.T) {
 	}}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountBootPartition(m, "/boot", devices, 10*time.Second, clock.Sleep, clock.Now)
+	_, err := MountBootPartition(m, "/boot", devices, 10*time.Second, alwaysExists, clock.Sleep, clock.Now)
 	if err != nil {
 		t.Fatalf("MountBootPartition() = %v, want nil", err)
 	}
@@ -89,7 +145,7 @@ func TestMountBootPartitionGivesUpAfterTimeout(t *testing.T) {
 	m := &fakeMounter{fn: func(mountCall) error { return errBoom }}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountBootPartition(m, "/boot", devices, 10*time.Second, clock.Sleep, clock.Now)
+	_, err := MountBootPartition(m, "/boot", devices, 10*time.Second, alwaysExists, clock.Sleep, clock.Now)
 	if err == nil {
 		t.Fatal("MountBootPartition() = nil, want error after exhausting the timeout")
 	}

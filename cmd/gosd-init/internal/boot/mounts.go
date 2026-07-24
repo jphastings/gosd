@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"strings"
 	"time"
 )
@@ -54,23 +55,49 @@ func mountEarly(m Mounter) error {
 	return nil
 }
 
+// bootSentinelFile is the file MountBootPartition requires at the root of a
+// freshly-mounted candidate before accepting it as GOSD-BOOT, rather than
+// accepting the first candidate the kernel is willing to mount as FAT (see
+// gosd-pcwl). internal/pipeline.Assemble writes gosd.toml onto every
+// board's boot partition unconditionally — unlike config.txt (Pi-only) or
+// extlinux.conf (Rockchip-only) — which is what makes it safe to key off
+// across the whole board matrix.
+const bootSentinelFile = "gosd.toml"
+
 // MountBootPartition mounts the GOSD-BOOT FAT partition read-only at
-// target, trying each candidate device in turn. The MMC controller may
-// still be probing when gosd-init reaches this step (no udev is available
-// to wait on), so failures are retried for up to timeout before giving up.
-func MountBootPartition(m Mounter, target string, devices []string, timeout time.Duration, sleep func(time.Duration), now func() time.Time) error {
+// target, trying each candidate device in turn, and returns the device it
+// mounted from. The MMC controller may still be probing when gosd-init
+// reaches this step (no udev is available to wait on), so failures are
+// retried for up to timeout before giving up.
+//
+// A candidate that mounts as valid FAT is not accepted on that basis alone:
+// with an eMMC fitted, its first partition can sort before the SD card's in
+// device-name order (mmcblk0 vs mmcblk1) and, if it happens to already hold
+// a valid FAT filesystem (a previously-flashed GoSD image, or a vendor
+// image), would otherwise be silently mounted as /boot instead of the SD
+// card the user just flashed. So each successful FAT mount is additionally
+// checked for bootSentinelFile at its root; a candidate missing it is
+// unmounted and probing moves on to the next one, within the same timeout
+// budget as an outright mount failure.
+func MountBootPartition(m Mounter, target string, devices []string, timeout time.Duration, pathExists func(path string) bool, sleep func(time.Duration), now func() time.Time) (string, error) {
 	deadline := now().Add(timeout)
 	var lastErr error
 	for {
 		for _, dev := range devices {
-			if err := m.Mount(dev, target, "vfat", msRdOnly, ""); err == nil {
-				return nil
-			} else {
+			if err := m.Mount(dev, target, "vfat", msRdOnly, ""); err != nil {
 				lastErr = err
+				continue
+			}
+			if pathExists(path.Join(target, bootSentinelFile)) {
+				return dev, nil
+			}
+			lastErr = fmt.Errorf("%s mounted as a valid FAT filesystem but has no %s at its root: not the GOSD-BOOT partition", dev, bootSentinelFile)
+			if err := m.Unmount(target); err != nil {
+				return "", fmt.Errorf("unmounting %s after it failed the GOSD-BOOT sentinel check: %w", dev, err)
 			}
 		}
 		if !now().Before(deadline) {
-			return fmt.Errorf("mounting boot partition at %s failed after retrying for %s (tried %s): %w",
+			return "", fmt.Errorf("mounting boot partition at %s failed after retrying for %s (tried %s): %w",
 				target, timeout, strings.Join(devices, ", "), lastErr)
 		}
 		sleep(250 * time.Millisecond)

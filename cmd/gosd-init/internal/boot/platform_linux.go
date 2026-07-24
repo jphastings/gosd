@@ -34,6 +34,10 @@ func (linuxMounter) Mount(source, target, fstype string, flags uintptr, data str
 	return unix.Mount(source, target, fstype, flags, data)
 }
 
+func (linuxMounter) Unmount(target string) error {
+	return unix.Unmount(target, 0)
+}
+
 type linuxHostname struct{}
 
 func (linuxHostname) SetHostname(name string) error {

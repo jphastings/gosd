@@ -6,14 +6,18 @@ import (
 	"time"
 )
 
-// fakeMounter lets tests script Mount outcomes and inspect what was
+// fakeMounter lets tests script Mount/Unmount outcomes and inspect what was
 // attempted, without touching any real filesystem.
 type fakeMounter struct {
-	mu    sync.Mutex
-	calls []mountCall
+	mu       sync.Mutex
+	calls    []mountCall
+	unmounts []string
 	// fn, if set, determines the result of each Mount call; by default
 	// every mount succeeds.
 	fn func(call mountCall) error
+	// unmountFn, if set, determines the result of each Unmount call; by
+	// default every unmount succeeds.
+	unmountFn func(target string) error
 }
 
 type mountCall struct {
@@ -34,6 +38,30 @@ func (m *fakeMounter) Mount(source, target, fstype string, flags uintptr, data s
 		return fn(call)
 	}
 	return nil
+}
+
+func (m *fakeMounter) Unmount(target string) error {
+	m.mu.Lock()
+	m.unmounts = append(m.unmounts, target)
+	fn := m.unmountFn
+	m.mu.Unlock()
+
+	if fn != nil {
+		return fn(target)
+	}
+	return nil
+}
+
+func (m *fakeMounter) unmountsFor(target string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, t := range m.unmounts {
+		if t == target {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *fakeMounter) callsFor(target string) int {
