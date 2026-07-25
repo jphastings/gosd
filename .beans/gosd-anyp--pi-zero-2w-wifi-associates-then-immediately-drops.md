@@ -1,7 +1,7 @@
 ---
 # gosd-anyp
 title: Pi Zero 2W WiFi associates then immediately drops in a loop (WPA2)
-status: todo
+status: in-progress
 type: bug
 priority: normal
 created_at: 2026-07-24T19:18:43Z
@@ -15,7 +15,7 @@ Ruled out so far: brcmfmac firmware set complete (bin+nvram txt+clm_blob all pre
 Open leads (JP checking at time of filing): passphrase as actually written into gosd.toml by the build's --wifi-pass (shell-quoting risk); router possibly WPA2/WPA3 transitional with PMF quirks (locked decision: WPA2-PSK only, WPA3 out of scope but must be LOGGED clearly — currently nothing detects/logs a transitional/PMF mismatch).
 
 Improvements this bean should land regardless of root cause:
-1. Log the nl80211 disconnect/deauth REASON CODE in the 'lost its WiFi association' message — reason 15 (4-way timeout) vs 2 vs others discriminates instantly and would have saved this session real time.
+1. Log the nl80211 disconnect/deauth REASON CODE in the 'lost its WiFi association' message — reason 15 (4-way timeout) vs 2 vs others discriminates instantly and would have saved this session real time. (landed on this bean's branch, 2026-07-25)
 2. Commit the IEEE-vector DerivePSK test (replacing the self-referential assertion).
 3. Curiosity to explain: interface enumerated as wlan2 (not wlan0) on a single-radio board with no driver reloads visible.
 4. If transitional/PMF is implicated: detect and log clearly per the WiFi-scope locked decision, and decide whether CONNECT attrs need MFP-capable set.

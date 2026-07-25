@@ -150,6 +150,14 @@ func pickInterface(ifis []Interface) (Interface, bool) {
 // DHCP for as long as the association holds. It returns only when stop
 // is closed.
 func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan struct{}) {
+	watcher, err := deps.Wifi.WatchDisconnects(ifi)
+	if err != nil {
+		deps.Log("subscribing to %s disconnect events failed: %v; association losses will be logged without a reason code", ifi.Name, err)
+		watcher = nil
+	} else {
+		defer func() { _ = watcher.Close() }()
+	}
+
 	backoff := deps.NewBackoff()
 	for {
 		select {
@@ -170,8 +178,15 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 		}
 		backoff.Reset()
 		deps.Log("%s associated with %q", ifi.Name, creds.SSID)
+		if watcher != nil {
+			// Drop any reason events emitted before or during this
+			// (re)connect — most notably associate's own defensive
+			// Disconnect — so a stale code is never pinned on the next
+			// genuine association loss.
+			watcher.TakeReason()
+		}
 
-		runUntilDisconnect(deps, ifi, stop)
+		runUntilDisconnect(deps, ifi, watcher, stop)
 	}
 }
 
@@ -206,14 +221,14 @@ func associate(deps Deps, ifi Interface, creds Credentials) error {
 // runUntilDisconnect runs netup.RunDHCP on ifi until either the
 // association is lost (detected by polling WifiClient.Associated) or
 // stop is closed, then returns so runAssociationLoop can reconnect.
-func runUntilDisconnect(deps Deps, ifi Interface, stop <-chan struct{}) {
+func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, stop <-chan struct{}) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		watchAssociation(deps, ifi, cancel, stop)
+		watchAssociation(deps, ifi, watcher, cancel, stop)
 	}()
 
 	ndeps := netup.Deps{
@@ -233,7 +248,9 @@ func runUntilDisconnect(deps Deps, ifi Interface, stop <-chan struct{}) {
 // associationPollPeriod is how often watchAssociation checks whether ifi
 // is still associated. mdlayher/wifi exposes no deauth/disconnect event
 // stream (only request/response nl80211 commands), so polling BSS status
-// is the only portable way to detect a lost association.
+// is the only portable way to detect a lost association; the
+// DisconnectWatcher supplements the poll with the reason code once a
+// loss is noticed, it doesn't replace loss detection.
 const associationPollPeriod = 3 * time.Second
 
 // watchAssociation polls ifi's association state every
@@ -242,7 +259,7 @@ const associationPollPeriod = 3 * time.Second
 // closes — either way, disconnect must always be called exactly once
 // before this returns, or runUntilDisconnect would block forever waiting
 // on the now-uncancellable DHCP context.
-func watchAssociation(deps Deps, ifi Interface, disconnect context.CancelFunc, stop <-chan struct{}) {
+func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disconnect context.CancelFunc, stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
@@ -257,7 +274,11 @@ func watchAssociation(deps Deps, ifi Interface, disconnect context.CancelFunc, s
 			continue
 		}
 		if !ok {
-			deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
+			if reason, observed := takeReason(watcher); observed {
+				deps.Log("%s lost its WiFi association (%s); reconnecting", ifi.Name, reason)
+			} else {
+				deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
+			}
 			if err := deps.ClearNetworkUp(); err != nil {
 				deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
 			}
@@ -265,4 +286,13 @@ func watchAssociation(deps Deps, ifi Interface, disconnect context.CancelFunc, s
 			return
 		}
 	}
+}
+
+// takeReason consults the watcher when there is one; a nil watcher (the
+// subscription failed at loop start) simply never observes a reason.
+func takeReason(watcher DisconnectWatcher) (DisconnectReason, bool) {
+	if watcher == nil {
+		return DisconnectReason{}, false
+	}
+	return watcher.TakeReason()
 }
