@@ -93,20 +93,19 @@ func (n nlClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 	ae.Uint32(unix.NL80211_ATTR_AKM_SUITES, akmSuitePSK)
 	ae.Flag(unix.NL80211_ATTR_WANT_1X_4WAY_HS, true)
 	ae.Bytes(unix.NL80211_ATTR_PMK, psk[:])
-	// No further attributes — the mirror of mdlayher/wifi's ConnectWPAPSK
-	// must be EXACT (bean gosd-anyp, Pi Zero 2W bring-up 2026-07-24). Two
-	// well-intentioned additions each broke the firmware-offloaded 4-way
-	// handshake into an endless associate/deauth loop on real hardware:
-	//  - NL80211_ATTR_AUTH_TYPE = OPEN_SYSTEM: the library omits it, so
-	//    the kernel defaults to AUTHTYPE_AUTOMATIC; forcing OPEN_SYSTEM
-	//    disturbs brcmfmac's auth plumbing ahead of its firmware
-	//    supplicant. gokrazy runs the unmodified library call in
-	//    production on the same BCM43430/1 silicon — the deltas were ours.
-	//  - NL80211_ATTR_USE_MFP = MFP_OPTIONAL: also not sent by the
-	//    library; PMF-demanding APs (WiFi 6E routers in "WPA2" mode) are
-	//    a real gap, but declaring MFP here did not fix them and is not
-	//    part of the proven-working attribute set. Track PMF support in
-	//    bean gosd-anyp's follow-ups instead.
+	// No further attributes — this mirrors mdlayher/wifi's ConnectWPAPSK
+	// exactly, the only attribute set proven working on this silicon
+	// (gokrazy runs the unmodified library in production on BCM43430/1).
+	// Two additions were tried during the gosd-anyp bring-up and
+	// eliminated: the associate/deauth loop was identical with and
+	// without them, so neither is part of any known-good set:
+	//  - NL80211_ATTR_AUTH_TYPE = OPEN_SYSTEM (the library omits it; the
+	//    kernel defaults to AUTHTYPE_AUTOMATIC)
+	//  - NL80211_ATTR_USE_MFP = MFP_OPTIONAL (PMF-demanding APs are a
+	//    real gap, but this alone demonstrably didn't close it)
+	// The surviving suspect is AP-side WPA3-transition mode versus the
+	// firmware supplicant — read bean gosd-anyp before adding anything
+	// here.
 
 	b, err := ae.Encode()
 	if err != nil {
