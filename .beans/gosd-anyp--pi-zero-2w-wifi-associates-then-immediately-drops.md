@@ -35,5 +35,19 @@ Fix direction: declare NL80211_ATTR_USE_MFP = MFP_CAPABLE in wifiup's CONNECT �
 
 **Experiment plan (updated 2026-07-25):**
 
-1. Cheapest discriminator — no guest SSID needed: switch the phone hotspot to WPA2-only (Android: Security = WPA2-Personal; iOS: Maximize Compatibility) and retry the already-flashed card. Predicted outcome: connects.
+1. ~~Cheapest discriminator — no guest SSID needed: switch the phone hotspot to WPA2-only (Android: Security = WPA2-Personal; iOS: Maximize Compatibility) and retry the already-flashed card. Predicted outcome: connects.~~ **Already answered — see below: the hotspot WAS in Maximize Compatibility yesterday, and it looped.**
 2. gokrazy SD experiment, reinterpreted: run it against the same failing SSID and record which kernel the image uses (default `gok` build = kernel.org mainline; `kernel.rpi` = downstream — check `uname -r` or the image's config). If it ALSO fails → AP-transition × firmware-supplicant confirmed: land reason-code logging + transitional-mode detection/logging per the WiFi-scope locked decision, document "use a WPA2-only SSID", then bench-try AKM PSK-SHA256 (0x000FAC06) + USE_MFP in CONNECT before considering a host-side EAPOL fallback. If it CONNECTS → the delta is runtime, not kernel: diff regulatory-region setting, retry cadence, exact CONNECT attributes, and firmware version from dmesg; replicate in wifiup one at a time.
+
+**Further eliminations (2026-07-25, later):**
+
+- **WPA3-transition mode is NOT the (sole) trigger.** JP confirms the phone hotspot was in iOS "Maximize Compatibility" during ALL of yesterday's hotspot tests — that mode forces 2.4 GHz AND downgrades security to WPA2-only (Apple documents the band change and "reduced security"; community consensus and Apple-forum guidance confirm the WPA2 downgrade is exactly what the toggle is for). So the WPA2-only discriminator has effectively already run: a pure-WPA2 2.4 GHz AP still produced the associate/deauth loop. The raspberrypi/linux#4976 transitional-AP story cannot be the whole explanation (it may still contribute on the RAXE300).
+- **Firmware version eliminated:** our manifest pins RPi-Distro/firmware-nonfree @ 9794282e; its `brcmfmac43436s-sdio.bin` (git blob 85dca979, 442211 bytes) is byte-identical to the current `bookworm` branch head — we ship the newest 43436s blob that exists, so gokrazy cannot be winning on a newer blob.
+- **Kernel-version window eliminated (probably):** gokrazy's default kernel is linux 7.1.4 — six releases past our 6.18 pin — but the brcmfmac commit log v6.18→v7.1 contains no firmware-supplicant/PMK/4-way-relevant change (only UAF/probe/P2P fixes, external-SAE work, and new-device support). A core cfg80211 delta in that window can't be fully excluded from the desk.
+
+**Surviving suspects, ranked (2026-07-25):**
+
+1. Runtime client-side deltas vs gokrazy's wifi daemon — the only known differences between a working and failing userspace on this silicon: gokrazy sets a regulatory domain before connecting (wifiup never does; the chip sits on world domain "00"), and retries on a slow 15s cadence.
+2. The wlan2 enumeration curiosity (improvement 3), promoted to suspect: interfaces enumerated wlan0→wlan1→wlan2 before wifiup ran implies the driver created/destroyed interfaces twice — possible firmware restarts or SDIO instability, and a wedged firmware fails every handshake regardless of AP. Next serial capture: keep full dmesg and look for brcmfmac reprobe/reset lines.
+3. Our kernel config trim (bcm2711_defconfig minus cuts) — not desk-checkable; the gokrazy card covers it implicitly.
+
+The gokrazy SD card remains THE decisive experiment (item 2 above, outcome branches unchanged) — it tests their whole stack against ours on the same board+AP in one boot. The reason-code logging now on this branch will independently classify the failure (e.g. reason 15 = our side never completed EAPOL vs 2/23 = AP rejected the keys) on the next GoSD boot.
