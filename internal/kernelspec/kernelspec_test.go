@@ -81,16 +81,12 @@ func TestGetUnknownBoardReturnsNotFound(t *testing.T) {
 }
 
 // dtbExemptFromArtifacts documents boards whose KernelSpec.DTB.Filename is
-// not (yet) tracked by the board's internal/boards.Board.Artifacts(): a
-// pre-existing gap discovered while writing this drift test, recorded in
-// bean gosd-di6v rather than silently worked around. pi-zero-2w's kernel
-// build produces bcm2710-rpi-zero-2-w.dtb, but internal/boards/pizero2w
-// never asks for a DTB artifact (unlike pi-zero-w) - the GPU firmware's own
-// fallback device tree is used instead. Fixing that wiring is out of scope
-// for this bean; see the bean body for the follow-up note.
-var dtbExemptFromArtifacts = map[string]bool{
-	"pi-zero-2w": true,
-}
+// not (yet) tracked by the board's internal/boards.Board.Artifacts(). Empty
+// now that bean gosd-f59k wired pi-zero-2w's DTB into its Board.Artifacts()/
+// BootFiles() - the one board that had the gap (pi-zero-w already tracked
+// its own). Kept as an escape hatch so a deliberately-still-pending future
+// gap doesn't need to touch this test's structure to be recorded.
+var dtbExemptFromArtifacts = map[string]bool{}
 
 // TestKernelSpecOutputsMatchBoardArtifacts is the drift guard the bean
 // calls for: every filename a KernelSpec says the kernel build produces

@@ -23,6 +23,7 @@ Root cause was `pi-zero-2w` only: its board profile (`internal/boards/pizero2w/b
 - `cmd/gosd/testdata/fake-artifacts/bcm2710-rpi-zero-2-w.dtb`: new fixture file (the fake-artifacts dir had every other board's DTB already, just not this one — proof the gap was never exercised).
 - `cmd/gosd/build_integration_test.go`: `TestBuildProducesABootableImageFromFakeArtifacts` now asserts `bcm2710-rpi-zero-2-w.dtb` is present in the built image's boot partition — the assertion that would have caught this, matching the equivalent assertion the pi-zero-w test already had.
 - `COMPATIBILITY.md`: added a `[^pi-dtb]` footnote on the Pi Zero 2W's "Image build via `gosd build`" cell documenting the bug and the fix, following the same pattern as the existing `[^radxa-serial]` hardware-bring-up footnote.
+- `internal/kernelspec/kernelspec_test.go`: this exact gap was already flagged, as a documented exemption, by `TestKernelSpecOutputsMatchBoardArtifacts` (bean `gosd-di6v`) — `dtbExemptFromArtifacts["pi-zero-2w"]` existed because the drift guard caught pi-zero-2w's `KernelSpec.DTB.Filename` not appearing in its `Board.Artifacts()`, but fixing the wiring was out of that bean's scope. Removed the now-stale exemption so the drift guard actually re-engages for this board.
 
 Rockchip boards were out of scope and untouched — they place their DTB via an extlinux `fdt` line, a different mechanism already verified on hardware.
 
