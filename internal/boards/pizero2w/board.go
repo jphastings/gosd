@@ -23,13 +23,15 @@ const (
 	// boardName is the --board flag value and Artifacts() key namespace.
 	boardName = "pi-zero-2w"
 
-	// kernelArtifactName is the artifact the pipeline must resolve for
-	// the kernel image config.txt names ("kernel=kernel8.img"). It has no
-	// per-file pinned URL (ArtifactRef.URL is empty): it's one of the
-	// files GoSD compiles itself, resolved either from --artifacts-dir or,
-	// falling back, from the CI-built artifact release (see bean
-	// gosd-wtpa and internal/artifacts).
+	// kernelArtifactName and dtbArtifactName are the artifacts the
+	// pipeline must resolve for the kernel image config.txt names
+	// ("kernel=kernel8.img") and the device tree blob the GPU ROM loads.
+	// Neither has a per-file pinned URL (ArtifactRef.URL is empty):
+	// they're files GoSD compiles itself, resolved either from
+	// --artifacts-dir or, falling back, from the CI-built artifact
+	// release (see bean gosd-wtpa and internal/artifacts).
 	kernelArtifactName = "kernel8.img"
+	dtbArtifactName    = "bcm2710-rpi-zero-2-w.dtb"
 
 	// initramfsName is the file name the initramfs is written under in
 	// the FAT boot partition; config.txt's "initramfs" directive and
@@ -55,14 +57,14 @@ func (board) Name() string { return boardName }
 // its 32-bit-only predecessor, the Pi Zero W - see bean gosd-ajpz).
 func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
 
-// Artifacts implements boards.Board: the kernel (not yet automatically
-// fetchable), the GPU boot firmware, and the WiFi firmware blobs pinned in
-// manifest.json.
+// Artifacts implements boards.Board: the kernel and DTB (not yet
+// automatically fetchable), the GPU boot firmware, and the WiFi firmware
+// blobs pinned in manifest.json.
 func (board) Artifacts() []boards.ArtifactRef {
 	m := manifest.Load()
 
-	refs := make([]boards.ArtifactRef, 0, 1+len(m.BootFiles.Files)+len(m.WifiFirmware.Files))
-	refs = append(refs, boards.ArtifactRef{Name: kernelArtifactName})
+	refs := make([]boards.ArtifactRef, 0, 2+len(m.BootFiles.Files)+len(m.WifiFirmware.Files))
+	refs = append(refs, boards.ArtifactRef{Name: kernelArtifactName}, boards.ArtifactRef{Name: dtbArtifactName})
 	refs = append(refs, fileRefs(m.BootFiles.Files)...)
 	refs = append(refs, fileRefs(m.WifiFirmware.Files)...)
 	return refs
@@ -76,19 +78,25 @@ func fileRefs(files []manifest.File) []boards.ArtifactRef {
 	return refs
 }
 
-// BootFiles implements boards.Board: the kernel, GPU boot firmware,
+// BootFiles implements boards.Board: the kernel, DTB, GPU boot firmware,
 // rendered config.txt/cmdline.txt, and the initramfs the build pipeline has
 // already built into art.Initramfs.
 func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	m := manifest.Load()
 
-	files := make(map[string]io.Reader, len(m.BootFiles.Files)+3)
+	files := make(map[string]io.Reader, len(m.BootFiles.Files)+4)
 
 	kernel, err := art.Open(kernelArtifactName)
 	if err != nil {
 		return nil, err
 	}
 	files[kernelArtifactName] = kernel
+
+	dtb, err := art.Open(dtbArtifactName)
+	if err != nil {
+		return nil, err
+	}
+	files[dtbArtifactName] = dtb
 
 	for _, f := range m.BootFiles.Files {
 		r, err := art.Open(f.Name)

@@ -38,7 +38,7 @@ func TestName(t *testing.T) {
 	}
 }
 
-func TestArtifactsIncludesKernelAndManifestFiles(t *testing.T) {
+func TestArtifactsIncludesKernelDTBAndManifestFiles(t *testing.T) {
 	refs := pizero2w.New().Artifacts()
 
 	names := make(map[string]boards.ArtifactRef, len(refs))
@@ -47,7 +47,7 @@ func TestArtifactsIncludesKernelAndManifestFiles(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel8.img", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel8.img", "bcm2710-rpi-zero-2-w.dtb", "bootcode.bin", "start.elf", "fixup.dat",
 		"brcmfmac43436-sdio.bin", "brcmfmac43436-sdio.clm_blob", "brcmfmac43436-sdio.txt",
 		"brcmfmac43436s-sdio.bin", "brcmfmac43436s-sdio.txt",
 	} {
@@ -56,12 +56,14 @@ func TestArtifactsIncludesKernelAndManifestFiles(t *testing.T) {
 		}
 	}
 
-	if kernel := names["kernel8.img"]; kernel.URL != "" {
-		t.Errorf("kernel8.img has URL %q; it has no automatic fetch source yet and must come from --artifacts-dir only", kernel.URL)
+	for _, noURL := range []string{"kernel8.img", "bcm2710-rpi-zero-2-w.dtb"} {
+		if ref := names[noURL]; ref.URL != "" {
+			t.Errorf("%s has URL %q; it has no automatic fetch source yet and must come from --artifacts-dir only", noURL, ref.URL)
+		}
 	}
 
 	for name, ref := range names {
-		if name == "kernel8.img" {
+		if name == "kernel8.img" || name == "bcm2710-rpi-zero-2-w.dtb" {
 			continue
 		}
 		if ref.URL == "" || ref.SHA256 == "" {
@@ -90,7 +92,7 @@ func TestBootFilesContents(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel8.img", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel8.img", "bcm2710-rpi-zero-2-w.dtb", "bootcode.bin", "start.elf", "fixup.dat",
 		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
 	} {
 		if _, ok := files[want]; !ok {
