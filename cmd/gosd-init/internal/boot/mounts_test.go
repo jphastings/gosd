@@ -159,6 +159,48 @@ func TestMountBootPartitionGivesUpAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestFilterBootDevicesRestrictsToBootedDisk(t *testing.T) {
+	devices := []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1", "/dev/vda1"}
+
+	tests := []struct {
+		name        string
+		bootDev     string
+		want        []string
+		wantMatched bool
+	}{
+		{"mmc disk uses p separator", "mmcblk1", []string{"/dev/mmcblk1p1"}, true},
+		{"virtio disk appends digits directly", "vda", []string{"/dev/vda1"}, true},
+		{"accepts a /dev/ prefix", "/dev/mmcblk0", []string{"/dev/mmcblk0p1"}, true},
+		{"unknown disk falls back to every candidate", "nvme0n1", devices, false},
+		{"empty falls back to every candidate", "", devices, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, matched := FilterBootDevices(devices, tt.bootDev)
+			if matched != tt.wantMatched {
+				t.Fatalf("FilterBootDevices(%q) matched = %v, want %v", tt.bootDev, matched, tt.wantMatched)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("FilterBootDevices(%q) = %v, want %v", tt.bootDev, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("FilterBootDevices(%q) = %v, want %v", tt.bootDev, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterBootDevicesDoesNotClaimLongerDiskNames(t *testing.T) {
+	// mmcblk1 must not claim mmcblk10's partitions via a bare prefix match.
+	got, matched := FilterBootDevices([]string{"/dev/mmcblk10p1"}, "mmcblk1")
+	if matched {
+		t.Fatalf("FilterBootDevices claimed %v for disk mmcblk1", got)
+	}
+}
+
 func TestMountDataPartitionMountsReadWriteWithFlush(t *testing.T) {
 	m := &fakeMounter{}
 	clock := newFakeClock(time.Unix(0, 0))

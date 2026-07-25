@@ -159,12 +159,14 @@ func Run(deps Deps, opts Options) error {
 
 	// Only reachable now that /proc is mounted (mountEarly above), which
 	// is what makes /proc/cmdline readable in the first place.
+	var bootDev string
 	if cmdline, err := deps.ReadCmdline(); err != nil {
 		log("reading kernel cmdline failed, no gosd.* overrides applied: %v", err)
 	} else {
 		if cmdline.Board != "" {
 			cfg.Board = cmdline.Board
 		}
+		bootDev = cmdline.BootDev
 		if cmdline.Debug {
 			log("debug mode enabled (gosd.debug)")
 		}
@@ -179,7 +181,16 @@ func Run(deps Deps, opts Options) error {
 	if pathExists == nil {
 		pathExists = func(string) bool { return true }
 	}
-	bootDevice, err := MountBootPartition(deps.Mounter, opts.BootTarget, opts.BootDevices, opts.BootTimeout, pathExists, deps.Sleep, deps.Now)
+	bootDevices := opts.BootDevices
+	if bootDev != "" {
+		if filtered, matched := FilterBootDevices(bootDevices, bootDev); matched {
+			bootDevices = filtered
+			log("gosd.bootdev=%s: probing only its partitions for GOSD-BOOT (%s)", bootDev, strings.Join(filtered, ", "))
+		} else {
+			log("gosd.bootdev=%s matches no boot partition candidate; probing all of %s", bootDev, strings.Join(bootDevices, ", "))
+		}
+	}
+	bootDevice, err := MountBootPartition(deps.Mounter, opts.BootTarget, bootDevices, opts.BootTimeout, pathExists, deps.Sleep, deps.Now)
 	if err != nil {
 		return fatal(deps, log, "mounting boot partition", err)
 	}
