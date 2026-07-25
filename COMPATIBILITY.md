@@ -21,7 +21,7 @@ see `beans list` for what's in flight.
 
 | Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
 |---|---|---|---|---|---|
-| Image build via `gosd build` | ✅ | ✅ [^armv6-perf] | ✅ [^radxa-serial] | ✅ | ✅ |
+| Image build via `gosd build` | ✅ [^pi-dtb] | ✅ [^armv6-perf] | ✅ [^radxa-serial] | ✅ | ✅ |
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
 | Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
 | Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
@@ -161,6 +161,18 @@ see `beans list` for what's in flight.
     performance ceiling for any CPU-bound app logic on this board, not a
     missing optimization — plan accordingly for anything heavier than
     GPIO/network I/O.
+
+[^pi-dtb]: Until bean `gosd-f59k` (fixed 2026-07-25), the Pi Zero 2W's boot
+    partition omitted its device tree blob (`bcm2710-rpi-zero-2-w.dtb`) —
+    firmware and `kernel8.img` loaded, then the kernel hung before any
+    console output (no device tree = no drivers, no UART), a silent failure
+    with a healthy-looking ACT LED. Found during the Zero 2W's first
+    hardware bring-up (bean `gosd-m9dj`, 2026-07-24); the Pi Zero W board
+    profile already copied its DTB correctly and was unaffected. Fixed by
+    adding the DTB to `pizero2w`'s `Artifacts()`/`BootFiles()`, with an
+    integration-test assertion added so a regression fails CI; hardware
+    verification of a flash with no hand-patch remains a bench follow-up
+    under `gosd-m9dj`.
 
 [^radxa-serial]: The Zero 3E's 1500000-baud debug console is unreliable on
     CP210x/PL2303-family USB-serial adapters — bytes garble (slow rising

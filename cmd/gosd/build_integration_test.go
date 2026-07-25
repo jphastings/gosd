@@ -77,7 +77,7 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel8.img", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel8.img", "bcm2710-rpi-zero-2-w.dtb", "bootcode.bin", "start.elf", "fixup.dat",
 		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
 	} {
 		if _, err := fs.ReadFile(want); err != nil {
