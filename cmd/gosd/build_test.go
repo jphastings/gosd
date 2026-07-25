@@ -60,6 +60,20 @@ func TestValidateUsbGadgetRejectsIncapableBoard(t *testing.T) {
 	}
 }
 
+func TestValidateUsbGadgetRejectsPi3B(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-3b")}
+
+	err := validateUsbGadget(selected, true)
+	if err == nil {
+		t.Fatal("validateUsbGadget([pi-3b], true) succeeded, want an error: the 3B's USB is hard-wired through its LAN9514 hub")
+	}
+	for _, want := range []string{"pi-3b", "LAN9514", "COMPATIBILITY.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validateUsbGadget error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
 func TestValidateUsbGadgetAcceptsCapableBoard(t *testing.T) {
 	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
 	if err := validateUsbGadget(selected, true); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
+	"github.com/jphastings/gosd/internal/boards/pi3b"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
@@ -17,7 +18,7 @@ import (
 	"github.com/jphastings/gosd/internal/kernelspec"
 )
 
-var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "qemu-virt"}
+var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "pi-3b", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "qemu-virt"}
 
 func TestBoardIDsListsExactlyTheKernelBuildingBoards(t *testing.T) {
 	got := kernelspec.BoardIDs()
@@ -97,6 +98,7 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 	boardsByID := map[string]boards.Board{
 		"pi-zero-2w":    pizero2w.New(),
 		"pi-zero-w":     pizerow.New(),
+		"pi-3b":         pi3b.New(),
 		"radxa-zero-3e": radxazero3e.New(),
 		"nanopi-zero2":  nanopizero2.New(),
 		"rock-4se":      rock4se.New(),
@@ -199,6 +201,7 @@ func TestPiRequiredYIsDerivedFromFragment(t *testing.T) {
 	cases := map[string]string{
 		"pi-zero-2w": "../../build/boards/pi-zero-2w/kernel.fragment",
 		"pi-zero-w":  "../../build/boards/pi-zero-w/kernel.fragment",
+		"pi-3b":      "../../build/boards/pi-3b/kernel.fragment",
 	}
 
 	for id, fragmentPath := range cases {

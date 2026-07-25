@@ -659,10 +659,10 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt is the only remaining internal-only board (rock-4se went
-	// public with bean gosd-h8a8's activation): the default no---board
-	// build must produce exactly the five public boards' images, never a
-	// sixth for qemu-virt.
+	// qemu-virt and pi-3b are the internal-only boards (pi-3b until bean
+	// gosd-7wv9's activation flips it public): the default no---board
+	// build must produce exactly the five public boards' images, never
+	// one for either internal board.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -674,10 +674,12 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 	if len(imgNames) != 5 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 5 (qemu-virt must stay excluded)", len(imgNames), imgNames)
+		t.Errorf("default build produced %d .img files (%v), want exactly 5 (internal-only boards must stay excluded)", len(imgNames), imgNames)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
-		t.Errorf("default build produced hello-qemu-virt.img; it is internal-only and must be excluded from the default build set")
+	for _, internalImg := range []string{"hello-qemu-virt.img", "hello-pi-3b.img"} {
+		if _, err := os.Stat(filepath.Join(outDir, internalImg)); err == nil {
+			t.Errorf("default build produced %s; that board is internal-only and must be excluded from the default build set", internalImg)
+		}
 	}
 }
 
@@ -770,6 +772,181 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 	} {
 		if _, err := os.Stat(listPath); err == nil {
 			t.Errorf("%s was written for a qemu-virt-only build; qemu-virt is internal-only and must never appear in a catalog", listPath)
+		}
+	}
+}
+
+// TestBuildProducesABootableImageForPi3BFromFakeArtifacts is the acceptance
+// test for bean gosd-ypg1: an explicit `gosd build --board=pi-3b` (the board
+// is internal-only until bean gosd-7wv9's activation, so it never rides the
+// default build), using --artifacts-dir to supply fake kernel/firmware
+// files, produces an image whose boot partition carries the GPU-ROM boot
+// flow (kernel8.img, bcm2710-rpi-3-b.dtb, boot firmware, config.txt with
+// arm_64bit=1 and no dtoverlay, cmdline.txt) and whose initramfs carries the
+// Cypress 43430 WiFi blobs under their 3-model-b alias names.
+func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-3b.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-3b",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"--wifi-ssid", "test-network",
+		"--wifi-pass", "test-passphrase",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=pi-3b failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
+	} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	cmdlineTxt, err := fs.ReadFile("cmdline.txt")
+	if err != nil {
+		t.Fatalf("reading cmdline.txt: %v", err)
+	}
+	if !strings.Contains(string(cmdlineTxt), "gosd.board=pi-3b") {
+		t.Errorf("cmdline.txt = %q, want it to contain gosd.board=pi-3b", cmdlineTxt)
+	}
+	if !strings.Contains(string(cmdlineTxt), "console=serial0,115200") {
+		t.Errorf("cmdline.txt = %q, want the default console=serial0,115200 (mini-UART)", cmdlineTxt)
+	}
+
+	configTxt, err := fs.ReadFile("config.txt")
+	if err != nil {
+		t.Fatalf("reading config.txt: %v", err)
+	}
+	if !strings.Contains(string(configTxt), "arm_64bit=1") {
+		t.Errorf("config.txt = %q, want arm_64bit=1 (the 3B boots the arm64 kernel8.img)", configTxt)
+	}
+	if !strings.Contains(string(configTxt), "kernel=kernel8.img") {
+		t.Errorf("config.txt = %q, want it to reference kernel8.img", configTxt)
+	}
+	if strings.Contains(string(configTxt), "dtoverlay") {
+		t.Errorf("config.txt = %q, want no dtoverlay line: the 3B's hub-wired USB can never be a peripheral", configTxt)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	records := decodeInitramfs(t, initramfsBytes)
+
+	wantEntries := []string{
+		"init",
+		"app",
+		"etc/gosd/config.json",
+		"lib/firmware/brcm/cyfmac43430-sdio.bin",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,3-model-b.bin",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,3-model-b.clm_blob",
+		"lib/firmware/brcm/brcmfmac43430-sdio.raspberrypi,3-model-b.txt",
+	}
+	for _, want := range wantEntries {
+		if !hasRecord(records, want) {
+			t.Errorf("initramfs is missing entry %q; got entries %v", want, recordNames(records))
+		}
+	}
+
+	configJSON := recordContent(t, records, "etc/gosd/config.json")
+	for _, want := range []string{`"board":"pi-3b"`, `"hostname":"integration-test"`, `"ssid":"test-network"`, `"passphrase":"test-passphrase"`} {
+		if !strings.Contains(string(configJSON), want) {
+			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
+		}
+	}
+}
+
+// TestBuildUsbGadgetFailsActionablyForPi3B confirms `gosd build
+// --board=pi-3b --usb-gadget` fails before any image assembly with an error
+// naming the board and the hardware reason (gosd-5pnr's capability check):
+// the 3B's SoC USB is hard-wired through its LAN9514 hub, so no UDC can
+// ever exist for the gadget package to bind.
+func TestBuildUsbGadgetFailsActionablyForPi3B(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-3b",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--usb-gadget",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-3b.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --board=pi-3b --usb-gadget succeeded, want an error")
+	}
+	for _, want := range []string{"pi-3b", "LAN9514"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestBuildCatalogForPi3BOnlyWritesNothing mirrors the qemu-virt catalog
+// test above for the other internal-only board: until bean gosd-7wv9's
+// activation, a pi-3b-only --catalog build writes no os_list.json (an
+// internal board must never appear in a catalog end users paste into
+// Imager), while the image itself still builds. gosd-7wv9 replaces this
+// test with a writes-entry one when the board goes public (the gosd-wskc/
+// gosd-h8a8 pattern).
+func TestBuildCatalogForPi3BOnlyWritesNothing(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-pi-3b.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-3b",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=pi-3b --catalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("the image itself should still be built: %v", err)
+	}
+	for _, listPath := range []string{
+		filepath.Join(outDir, "os_list.json"),
+		filepath.Join(outDir, "hello-pi-3b.os_list.json"),
+	} {
+		if _, err := os.Stat(listPath); err == nil {
+			t.Errorf("%s was written for a pi-3b-only build; pi-3b is internal-only until bean gosd-7wv9's activation and must not appear in a catalog yet", listPath)
 		}
 	}
 }

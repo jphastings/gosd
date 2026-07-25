@@ -25,6 +25,7 @@ import (
 	"sort"
 
 	nanopikernel "github.com/jphastings/gosd/build/boards/nanopi-zero2/kernel"
+	pi3bmanifest "github.com/jphastings/gosd/build/boards/pi-3b"
 	pizero2wmanifest "github.com/jphastings/gosd/build/boards/pi-zero-2w"
 	pizerowmanifest "github.com/jphastings/gosd/build/boards/pi-zero-w"
 	qemuvirtkernel "github.com/jphastings/gosd/build/boards/qemu-virt/kernel"
@@ -230,8 +231,8 @@ func loadPatches(fsys embed.FS, dir string) []Patch {
 	return patches
 }
 
-// piZeroCommitRef and piZeroCommitDate are pinned identically for both Pi
-// boards, for fleet consistency across the two Broadcom boards - see
+// piZeroCommitRef and piZeroCommitDate are pinned identically for every Pi
+// board, for fleet consistency across the Broadcom boards - see
 // build/boards/pi-zero-2w/README.md for why this particular commit on
 // rpi-6.18.y was chosen.
 const (
@@ -315,6 +316,44 @@ var specs = map[string]KernelSpec{
 		KernelFilename:   "kernel.img",
 
 		RequiredY:       requiredYFromFragment(pizerowmanifest.KernelFragment),
+		ModulesDisabled: true,
+
+		Reproducibility: Reproducibility{
+			KBUILDBuildTimestamp: piZeroCommitDate,
+			KBUILDBuildUser:      "gosd",
+			KBUILDBuildHost:      "gosd-ci",
+		},
+	},
+
+	"pi-3b": {
+		BoardID: "pi-3b",
+		Source: Source{
+			Repo:       piZeroRepo,
+			Ref:        piZeroCommitRef,
+			RefKind:    CommitRef,
+			CommitDate: piZeroCommitDate,
+		},
+		Defconfig: "bcm2711_defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: pi3bmanifest.KernelFragment,
+
+		// The rpi tree builds both bcm2710-rpi-3-b.dtb (the rpi-style DT
+		// the Pi firmware loads by board match - same convention as the
+		// Zero 2W's bcm2710-rpi-zero-2-w.dtb) and a mainline-style
+		// bcm2837-rpi-3-b.dtb the firmware never uses; GoSD tracks only
+		// the former (bean gosd-ypg1's verification).
+		DTB: &DTB{
+			MakeTarget: "dtbs",
+			SourcePath: "arch/arm64/boot/dts/broadcom/bcm2710-rpi-3-b.dtb",
+			Filename:   "bcm2710-rpi-3-b.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "kernel8.img",
+
+		RequiredY:       requiredYFromFragment(pi3bmanifest.KernelFragment),
 		ModulesDisabled: true,
 
 		Reproducibility: Reproducibility{
