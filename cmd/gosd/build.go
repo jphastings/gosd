@@ -14,6 +14,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
+	"github.com/jphastings/gosd/internal/boards/pi3b"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
@@ -43,6 +44,13 @@ func init() {
 	// release, so real (non---artifacts-dir) fetches for this board now
 	// resolve (bean gosd-h8a8's activation flip).
 	boards.Register(rock4se.New())
+	// pi-3b is internal-only until its kernel artifacts exist in a
+	// published artifacts release: a public registration now would 404 on
+	// real (non---artifacts-dir) artifact fetches (the gosd-wskc/gosd-0vvh
+	// precedent). Flip to boards.Register in bean gosd-7wv9's activation
+	// PR, alongside the artifacts.Version bump, catalog entry, and
+	// COMPATIBILITY.md column.
+	boards.RegisterInternal(pi3b.New())
 }
 
 var (

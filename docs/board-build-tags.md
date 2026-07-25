@@ -15,9 +15,15 @@ underscores:
 |---|---|
 | `pi-zero-2w` | `gosd_pi_zero_2w` |
 | `pi-zero-w` | `gosd_pi_zero_w` |
+| `pi-3b` | `gosd_pi_3b` |
 | `radxa-zero-3e` | `gosd_radxa_zero_3e` |
 | `nanopi-zero2` | `gosd_nanopi_zero2` |
 | `rock-4se` | `gosd_rock_4se` |
+
+`pi-3b` is currently internal-only: it's buildable via an explicit
+`--board=pi-3b` with `--artifacts-dir`, but excluded from the default
+all-boards build until its kernel artifacts ship in a published artifacts
+release (bean gosd-7wv9 flips it public).
 
 Gate a file to a board with a `//go:build` constraint:
 
