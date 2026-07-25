@@ -276,6 +276,168 @@ func TestRunReconnectsAfterAssociationIsLost(t *testing.T) {
 	}
 }
 
+// driveAssociationLoss brings wifi up to a marked (DHCP-complete)
+// association, then advances the clock through association polls until
+// the loss is noticed and logged. wifi must be scripted with
+// associatedResults ending in false.
+func driveAssociationLoss(t *testing.T, clock *fakeClock, wifi *fakeWifiClient, marked *counter, log *testLog) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for marked.load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if marked.load() == 0 {
+		t.Fatal("network was never marked up before testing the disconnect")
+	}
+
+	if !advanceUntil(clock, associationPollPeriod, func() bool { return wifi.associatedCallCount() >= 2 }) {
+		t.Fatalf("associatedCalls = %d, want >= 2", wifi.associatedCallCount())
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !log.contains("lost its WiFi association") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !log.contains("lost its WiFi association") {
+		t.Fatalf("log missing disconnect message: %v", log.snapshot())
+	}
+}
+
+func newLossScriptedTest(clock *fakeClock) (*fakeWifiClient, *fakeLinks, *fakeDHCP) {
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		associatedResults: []bool{true, false},
+	}
+	lease := &netup.Lease{
+		Address:     net.IPNet{IP: net.IPv4(10, 1, 1, 2), Mask: net.CIDRMask(24, 32)},
+		ObtainedAt:  clock.Now(),
+		RenewAfter:  time.Hour,
+		RebindAfter: 2 * time.Hour,
+		ExpireAfter: 3 * time.Hour,
+	}
+	return wifi, newFakeLinks(), &fakeDHCP{requestResults: []requestResult{{lease: lease}}}
+}
+
+func TestRunLogsDisconnectReasonWhenObserved(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi, links, dhcp := newLossScriptedTest(clock)
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, marked, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for marked.load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	// Only now — after association — does the AP deauth, as the mlme
+	// event stream would report it.
+	wifi.disconnectWatcher.setReason(DisconnectReason{Code: 15, FromAP: true})
+
+	driveAssociationLoss(t, clock, wifi, marked, log)
+
+	want := "wlan0 lost its WiFi association (reason 15 (4-way handshake timeout), reported by AP); reconnecting"
+	if !log.contains(want) {
+		t.Errorf("log missing reason-annotated disconnect message %q: %v", want, log.snapshot())
+	}
+}
+
+func TestRunDiscardsReasonObservedBeforeAssociation(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi, links, dhcp := newLossScriptedTest(clock)
+	// A reason event from before the association — e.g. from associate's
+	// own defensive Disconnect — must not be pinned on a later loss.
+	wifi.disconnectWatcher.setReason(DisconnectReason{Code: 3})
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, marked, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	driveAssociationLoss(t, clock, wifi, marked, log)
+
+	if !log.contains("lost its WiFi association; reconnecting") {
+		t.Errorf("log missing plain (reason-free) disconnect message: %v", log.snapshot())
+	}
+	if log.contains("(reason") {
+		t.Errorf("stale pre-association reason was attributed to the loss: %v", log.snapshot())
+	}
+}
+
+func TestRunStillReconnectsWhenDisconnectWatchFails(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi, links, dhcp := newLossScriptedTest(clock)
+	wifi.watchErr = errBoom
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, marked, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	driveAssociationLoss(t, clock, wifi, marked, log)
+
+	if !log.contains("subscribing to wlan0 disconnect events failed") {
+		t.Errorf("log missing subscription-failure notice: %v", log.snapshot())
+	}
+	if !log.contains("lost its WiFi association; reconnecting") {
+		t.Errorf("log missing plain (reason-free) disconnect message: %v", log.snapshot())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() < 2 {
+		t.Errorf("Connect called %d times, want at least 2 (reconnect must survive a watch failure)", wifi.connectCallCount())
+	}
+}
+
+func TestRunClosesDisconnectWatcherOnStop(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		connectErr:        errBoom, // park the loop in its retry select
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{}
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		Run(deps, Options{Stop: stop})
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() == 0 {
+		t.Fatal("Connect was never attempted")
+	}
+
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after stop closed")
+	}
+	if !wifi.disconnectWatcher.wasClosed() {
+		t.Error("disconnect watcher was not closed when the loop ended")
+	}
+}
+
 func TestRunLogsProbingMessageForHiddenNetwork(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	wifi := &fakeWifiClient{interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}}}

@@ -44,6 +44,33 @@ type WifiClient interface {
 	// stream exposed by mdlayher/wifi) to detect a lost connection and
 	// trigger a reconnect.
 	Associated(ifi Interface) (bool, error)
+
+	// WatchDisconnects subscribes to ifi's nl80211 MLME events
+	// (disconnect / deauthenticate / disassociate) so the reconnect loop
+	// can report WHY an association dropped — Associated's polling only
+	// reveals THAT it dropped. The returned watcher must be Closed when
+	// the loop ends. Failing to subscribe loses diagnostics, nothing
+	// more: callers degrade to logging association losses without a
+	// reason code.
+	WatchDisconnects(ifi Interface) (DisconnectWatcher, error)
+}
+
+// DisconnectWatcher accumulates nl80211 disconnect reason codes for one
+// interface in the background, never blocking its consumer: TakeReason
+// is an instant read of the most recently observed event, not a wait for
+// one, so a slow or silent event socket can never stall the reconnect
+// loop.
+type DisconnectWatcher interface {
+	// TakeReason returns the most recent disconnect reason observed
+	// since the previous call, clearing it so one event can never be
+	// attributed to two separate association losses. ok=false means no
+	// disconnect / deauthenticate / disassociate event has been seen
+	// since the last call.
+	TakeReason() (reason DisconnectReason, ok bool)
+
+	// Close ends the subscription and its background receiver. Safe to
+	// call while events are still arriving.
+	Close() error
 }
 
 // CredentialSource supplies the network wifiup should join. v0.1 wires

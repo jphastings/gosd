@@ -167,6 +167,11 @@ type fakeWifiClient struct {
 	associatedCalls   int
 
 	disconnectCalls int
+
+	// disconnectWatcher is handed out by WatchDisconnects (unless
+	// watchErr is set) so tests can script observed disconnect reasons.
+	disconnectWatcher fakeDisconnectWatcher
+	watchErr          error
 }
 
 type connectPSKCall struct {
@@ -207,6 +212,52 @@ func (f *fakeWifiClient) Disconnect(Interface) error {
 	defer f.mu.Unlock()
 	f.disconnectCalls++
 	return nil
+}
+
+func (f *fakeWifiClient) WatchDisconnects(Interface) (DisconnectWatcher, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.watchErr != nil {
+		return nil, f.watchErr
+	}
+	return &f.disconnectWatcher, nil
+}
+
+// fakeDisconnectWatcher mimics the real watcher's latest-reason-wins,
+// clear-on-take behavior so tests can script what the mlme event stream
+// observed and when.
+type fakeDisconnectWatcher struct {
+	mu     sync.Mutex
+	reason DisconnectReason
+	seen   bool
+	closed bool
+}
+
+func (w *fakeDisconnectWatcher) setReason(r DisconnectReason) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.reason, w.seen = r, true
+}
+
+func (w *fakeDisconnectWatcher) TakeReason() (DisconnectReason, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	reason, seen := w.reason, w.seen
+	w.seen = false
+	return reason, seen
+}
+
+func (w *fakeDisconnectWatcher) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return nil
+}
+
+func (w *fakeDisconnectWatcher) wasClosed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closed
 }
 
 func (f *fakeWifiClient) Associated(Interface) (bool, error) {
