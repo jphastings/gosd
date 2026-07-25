@@ -186,7 +186,12 @@ func Args(workDir, imgPath string, opts Options) []string {
 	args = append(args,
 		"-kernel", filepath.Join(workDir, "Image"),
 		"-initrd", filepath.Join(workDir, "initramfs.cpio.zst"),
-		"-append", "console=ttyAMA0 gosd.board=qemu-virt",
+		// gosd.bootdev names the disk the kernel was booted from (the
+		// virtio-blk drive below, always vda) so gosd-init's GOSD-BOOT
+		// probe skips any other candidate — the same mechanism real
+		// bootloaders would use to point past a stale eMMC image (see
+		// gosd-vzk2), exercised end-to-end on every qemu boot.
+		"-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda",
 		"-drive", "if=none,file="+imgPath+",format=raw,id=hd0",
 		"-device", "virtio-blk-pci,drive=hd0,romfile=",
 		"-netdev", fmt.Sprintf("user,id=n0,hostfwd=tcp::%d-:80", port),

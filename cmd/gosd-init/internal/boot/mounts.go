@@ -83,8 +83,9 @@ const bootSentinelFile = "gosd.toml"
 // This only rules out non-GoSD FAT content; it cannot distinguish between
 // two actual GoSD boot partitions (e.g. an eMMC that itself carries a
 // stale, previously-flashed GoSD image also has gosd.toml at its root and
-// still wins by device-name order). See gosd-pcwl's "Known residual" note
-// and its follow-up bean for that case.
+// still wins by device-name order). When the bootloader can name the disk
+// it actually booted from (gosd.bootdev, see gosd-vzk2), the caller closes
+// that gap by narrowing devices with FilterBootDevices first.
 func MountBootPartition(m Mounter, target string, devices []string, timeout time.Duration, pathExists func(path string) bool, sleep func(time.Duration), now func() time.Time) (string, error) {
 	deadline := now().Add(timeout)
 	var lastErr error
@@ -108,6 +109,68 @@ func MountBootPartition(m Mounter, target string, devices []string, timeout time
 		}
 		sleep(250 * time.Millisecond)
 	}
+}
+
+// FilterBootDevices narrows the boot-partition candidate list to the
+// partitions of the disk named by bootDev (the gosd.bootdev kernel
+// command-line parameter: a kernel block-device name with an optional /dev/
+// prefix, e.g. "vda" or "mmcblk1"). It reports whether anything matched;
+// when nothing does — an unknown name, or a bootDev from a different
+// board's wiring — it returns the input list unchanged so the probe
+// degrades to the full walk rather than failing outright.
+//
+// Restricting (not merely reordering) is deliberate: with two real GoSD
+// boot partitions present, a reorder would still let the stale one win any
+// retry round in which the booted disk's device node hasn't appeared yet.
+// The booted disk's first partition is the very partition the kernel and
+// initramfs were just loaded from, so probing only it cannot lose a boot
+// that would otherwise have worked.
+func FilterBootDevices(devices []string, bootDev string) ([]string, bool) {
+	disk := strings.TrimPrefix(bootDev, "/dev/")
+	if disk == "" {
+		return devices, false
+	}
+	var matched []string
+	for _, dev := range devices {
+		if onDisk(strings.TrimPrefix(dev, "/dev/"), disk) {
+			matched = append(matched, dev)
+		}
+	}
+	if len(matched) == 0 {
+		return devices, false
+	}
+	return matched, true
+}
+
+// onDisk reports whether the block device named dev is disk itself or one
+// of its partitions, following the kernel's naming rule: disks whose name
+// ends in a digit take a "p" separator (mmcblk1 -> mmcblk1p1), others append
+// the partition number directly (vda -> vda1). A plain prefix check would
+// wrongly claim mmcblk1p1 for a hypothetical disk mmcblk1p, or mmcblk10p1
+// for mmcblk1.
+func onDisk(dev, disk string) bool {
+	rest, ok := strings.CutPrefix(dev, disk)
+	if !ok {
+		return false
+	}
+	if rest == "" {
+		return true
+	}
+	if disk[len(disk)-1] >= '0' && disk[len(disk)-1] <= '9' {
+		rest, ok = strings.CutPrefix(rest, "p")
+		if !ok {
+			return false
+		}
+	}
+	if rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrDataPartitionMissing reports that no candidate GOSD-DATA device node

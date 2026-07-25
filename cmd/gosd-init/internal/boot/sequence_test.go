@@ -128,6 +128,95 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 	}
 }
 
+func TestRunProbesOnlyTheBootdevDiskForGosdBoot(t *testing.T) {
+	// The gosd-vzk2 repro: a stale GoSD image on eMMC (mmcblk0) and a fresh
+	// one on SD (mmcblk1) both mount as FAT and both carry gosd.toml, so
+	// device-name order alone would pick the stale eMMC. With gosd.bootdev
+	// naming the booted SD disk, only its partition may ever be probed.
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     mounter,
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) {
+			return initcfg.CmdlineArgs{BootDev: "mmcblk1"}, nil
+		},
+		Sleep: clock.Sleep,
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	for _, call := range mounter.calls {
+		if call.target == "/boot" && call.source != "/dev/mmcblk1p1" {
+			t.Errorf("GOSD-BOOT probe mounted %s; gosd.bootdev=mmcblk1 must restrict probing to /dev/mmcblk1p1", call.source)
+		}
+	}
+	if !strings.Contains(console.String(), "boot partition mounted at /boot from /dev/mmcblk1p1") {
+		t.Errorf("console output missing the booted-disk mount: %q", console.String())
+	}
+}
+
+func TestRunProbesAllCandidatesWhenBootdevMatchesNothing(t *testing.T) {
+	// An unrecognized gosd.bootdev (a typo, or a future board naming a disk
+	// gosd-init doesn't list) must degrade to the existing full walk, not
+	// fail the boot.
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     mounter,
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) {
+			return initcfg.CmdlineArgs{BootDev: "nvme0n1"}, nil
+		},
+		Sleep: clock.Sleep,
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !strings.Contains(console.String(), "boot partition mounted at /boot from /dev/mmcblk0p1") {
+		t.Errorf("console output missing the fallback mount from the first candidate: %q", console.String())
+	}
+	if !strings.Contains(console.String(), "matches no boot partition candidate") {
+		t.Errorf("console output missing the no-match warning: %q", console.String())
+	}
+}
+
 func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
 	// gosd.toml's hostname must win over config.json's, and take effect
 	// via a second SetHostname call, since gosd.toml can only be read

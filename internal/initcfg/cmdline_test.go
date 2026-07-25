@@ -39,6 +39,16 @@ func TestParseCmdline(t *testing.T) {
 			want:    CmdlineArgs{},
 		},
 		{
+			name:    "bootdev names the booted disk",
+			cmdline: "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda",
+			want:    CmdlineArgs{Board: "qemu-virt", BootDev: "vda"},
+		},
+		{
+			name:    "bootdev without value is ignored",
+			cmdline: "gosd.bootdev",
+			want:    CmdlineArgs{},
+		},
+		{
 			name:    "empty cmdline",
 			cmdline: "",
 			want:    CmdlineArgs{},

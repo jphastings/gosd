@@ -9,13 +9,22 @@ import "strings"
 type CmdlineArgs struct {
 	// Board overrides Config.Board when non-empty, from gosd.board=<id>.
 	Board string
+	// BootDev names the disk the bootloader actually loaded the kernel
+	// from, from gosd.bootdev=<name>: a kernel block-device name with an
+	// optional /dev/ prefix (e.g. vda, mmcblk1, /dev/mmcblk1). gosd-init
+	// uses it to probe only that disk's partitions for GOSD-BOOT, so a
+	// stale GoSD image on another medium (eMMC vs SD) can't win by
+	// device-name order. Empty when the bootloader can't supply it — all
+	// current real-hardware images — in which case the probe walks every
+	// candidate as before.
+	BootDev string
 	// Debug enables verbose logging, from a bare gosd.debug or
 	// gosd.debug=<truthy value>.
 	Debug bool
 }
 
 // ParseCmdline parses the contents of /proc/cmdline (or an equivalent
-// string) for the gosd.board and gosd.debug parameters.
+// string) for the gosd.board, gosd.bootdev and gosd.debug parameters.
 func ParseCmdline(cmdline string) CmdlineArgs {
 	var args CmdlineArgs
 	for _, tok := range strings.Fields(cmdline) {
@@ -24,6 +33,10 @@ func ParseCmdline(cmdline string) CmdlineArgs {
 		case "gosd.board":
 			if hasValue {
 				args.Board = value
+			}
+		case "gosd.bootdev":
+			if hasValue {
+				args.BootDev = value
 			}
 		case "gosd.debug":
 			args.Debug = !hasValue || isTruthy(value)
