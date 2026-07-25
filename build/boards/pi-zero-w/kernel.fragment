@@ -82,6 +82,13 @@ CONFIG_SPI=y
 CONFIG_SPI_BCM2835=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
+# bcmrpi_defconfig ships CONFIG_SERIAL_8250_RUNTIME_UARTS=0 and relies on the
+# Pi firmware injecting `8250.nr_uarts=1` into the kernel cmdline. Our zero-w
+# bench boot got no such injection, so the 8250 core aborted init (nr_uarts=0),
+# the mini-UART console probe failed -EINVAL, and its error path clock-gated
+# the AUX block — killing earlycon on the same peripheral too. Register the
+# one port at boot unconditionally instead (gosd-md4w).
+CONFIG_SERIAL_8250_RUNTIME_UARTS=1
 CONFIG_SERIAL_8250_BCM2835AUX=y
 CONFIG_SERIAL_AMBA_PL011=y
 CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
