@@ -1,7 +1,7 @@
 ---
 # gosd-anyp
 title: Pi Zero 2W WiFi associates then immediately drops in a loop (WPA2)
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-07-24T19:18:43Z
@@ -76,3 +76,13 @@ How it was cornered (all on the z2wprobe gokrazy image, our verbatim code vs the
 Fix landed on this branch: `connectRequestFlags = netlink.Request | netlink.Acknowledge` with the trap documented; CONNECT attribute construction extracted to `connectPSKAttributes` and pinned by a linux CI unit test (flags include Request + exact library attribute sequence — the test that would have caught this on day one); AUTH_TYPE=OPEN_SYSTEM restored (mdlayher v0.8.0 DOES send it — yesterday's removal reverted); honest ack logging ("connect accepted; awaiting association" instead of "associated with").
 
 Remaining before PR: flash a real GoSD image built from this branch (bench-gosd-steps.md) and confirm join + mDNS + HTTP on GoSD's own kernel; note whether the wlan2-enumeration curiosity (improvement 3) persists there. Improvement 1 (reason codes): done on this branch. Improvement 4 (transitional-mode detection): de-scoped from this bug — no evidence any AP mode was ever a factor (nothing was ever transmitted); track separately if wanted.
+
+**FINAL CONFIRMATION (2026-07-25 evening): fixed end-to-end on GoSD's own stack.** A hello image built from this branch (first flash needing NO DTB hand-patch — hardware proof of gosd-f59k/#109) booted, joined "Porque Fi" via wifiup, took a DHCP lease, and answered mDNS+HTTP as hello.local ~25s after power-on. Serial shows the new honest log line (`connect accepted ... awaiting association`) followed by the lease. Residual curiosity, explicitly NOT blocking: the interface still enumerates as wlan2 on our kernel even on a healthy boot (improvement 3) — benign, likely early-probe retries; investigate only if it ever matters.
+
+## Summary of Changes
+
+- `cmd/gosd-init/internal/wifiup/platform_linux.go`: THE FIX — `connectRequestFlags = netlink.Request | netlink.Acknowledge` (Request was missing; the kernel silently skips-and-acks such messages, so every CONNECT was a no-op). CONNECT attribute construction extracted to `connectPSKAttributes`, restored `AUTH_TYPE=OPEN_SYSTEM` (mdlayher v0.8.0 sends it; the earlier removal misread the library), trap documented in comments.
+- `cmd/gosd-init/internal/wifiup/connect_linux_test.go` (new): CI regression test pinning the Request flag and the exact mdlayher-v0.8.0 attribute sequence — the test that would have caught this on day one.
+- `cmd/gosd-init/internal/wifiup/wifiup.go`: log "connect accepted; awaiting association" on the CONNECT ack instead of "associated with" (the optimistic line that disguised the no-op as an associate/deauth loop for two bench days).
+- `cmd/gosd-init/internal/wifiup/` (earlier commits on this branch): nl80211 deauth reason-code logging behind the WifiClient seam (improvement 1); IEEE-vector DerivePSK test replacing the self-referential assertion (improvement 2).
+- Bean body: full investigation trail — gokrazy control experiment, wifiup-probe boots 1-10, every eliminated theory, and the netlink lesson.
