@@ -177,7 +177,12 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 			}
 		}
 		backoff.Reset()
-		deps.Log("%s associated with %q", ifi.Name, creds.SSID)
+		// The CONNECT ack only means the kernel accepted the request —
+		// the firmware's scan/auth/assoc/4-way handshake is still in
+		// flight (bean gosd-anyp: logging "associated" here masked a
+		// no-op CONNECT for two bench days). Association is confirmed,
+		// or not, by the poll in watchAssociation.
+		deps.Log("%s: connect accepted for %q; awaiting association", ifi.Name, creds.SSID)
 		if watcher != nil {
 			// Drop any reason events emitted before or during this
 			// (re)connect — most notably associate's own defensive

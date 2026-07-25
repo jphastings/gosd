@@ -77,9 +77,47 @@ func (n nlClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 		return fmt.Errorf("resolving nl80211 family: %w", err)
 	}
 
-	// Cipher/AKM suite OUI values (Wi-Fi Alliance 00-0F-AC-XX), matching
-	// github.com/mdlayher/wifi's ConnectWPAPSK exactly: CCMP-128 (AES,
-	// the only cipher WPA2 in gosd's scope uses) and PSK authentication.
+	b, err := connectPSKAttributes(ifi, ssid, psk)
+	if err != nil {
+		return fmt.Errorf("encoding CONNECT attributes: %w", err)
+	}
+
+	_, err = conn.Execute(genetlink.Message{
+		Header: genetlink.Header{
+			Command: unix.NL80211_CMD_CONNECT,
+			Version: family.Version,
+		},
+		Data: b,
+	}, family.ID, connectRequestFlags)
+	if err != nil {
+		return fmt.Errorf("nl80211 CONNECT: %w", err)
+	}
+	return nil
+}
+
+// connectRequestFlags MUST include netlink.Request. mdlayher/netlink does
+// not add it automatically (Conn.fixMsg fills in only Length, Sequence,
+// and PID), and the kernel's netlink_rcv_skb SKIPS messages without
+// NLM_F_REQUEST while still returning a success ack when NLM_F_ACK is
+// set — so a bare-Acknowledge CONNECT is a silently-acknowledged no-op:
+// the firmware is never asked to join anything, no association ever
+// forms, and no error surfaces anywhere. That was the entire cause of
+// the gosd-anyp "associate/deauth loop" (which was neither an associate
+// nor a deauth); mdlayher/wifi's own execute() ORs Request in at every
+// call site for exactly this reason.
+const connectRequestFlags = netlink.Request | netlink.Acknowledge
+
+// connectPSKAttributes builds the CONNECT attribute payload: the exact
+// attribute set, order, and values of mdlayher/wifi v0.8.0's
+// ConnectWPAPSK (client_linux.go:146-163) with the pre-derived PMK in
+// place of the library's internal derivation — including AUTH_TYPE =
+// OPEN_SYSTEM, which the library does send as its final attribute.
+// Bench-verified attribute-for-attribute on 2026-07-25 (bean gosd-anyp,
+// probe boots 6-10). Change this only in lockstep with the library.
+func connectPSKAttributes(ifi Interface, ssid string, psk [32]byte) ([]byte, error) {
+	// Cipher/AKM suite OUI values (Wi-Fi Alliance 00-0F-AC-XX): CCMP-128
+	// (AES, the only cipher WPA2 in gosd's scope uses) and PSK
+	// authentication.
 	const (
 		cipherSuiteCCMP128 = 0x000FAC04
 		akmSuitePSK        = 0x000FAC02
@@ -94,36 +132,8 @@ func (n nlClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 	ae.Uint32(unix.NL80211_ATTR_AKM_SUITES, akmSuitePSK)
 	ae.Flag(unix.NL80211_ATTR_WANT_1X_4WAY_HS, true)
 	ae.Bytes(unix.NL80211_ATTR_PMK, psk[:])
-	// No further attributes — this mirrors mdlayher/wifi's ConnectWPAPSK
-	// exactly, the only attribute set proven working on this silicon
-	// (gokrazy runs the unmodified library in production on BCM43430/1).
-	// Two additions were tried during the gosd-anyp bring-up and
-	// eliminated: the associate/deauth loop was identical with and
-	// without them, so neither is part of any known-good set:
-	//  - NL80211_ATTR_AUTH_TYPE = OPEN_SYSTEM (the library omits it; the
-	//    kernel defaults to AUTHTYPE_AUTOMATIC)
-	//  - NL80211_ATTR_USE_MFP = MFP_OPTIONAL (PMF-demanding APs are a
-	//    real gap, but this alone demonstrably didn't close it)
-	// The surviving suspect is AP-side WPA3-transition mode versus the
-	// firmware supplicant — read bean gosd-anyp before adding anything
-	// here.
-
-	b, err := ae.Encode()
-	if err != nil {
-		return fmt.Errorf("encoding CONNECT attributes: %w", err)
-	}
-
-	_, err = conn.Execute(genetlink.Message{
-		Header: genetlink.Header{
-			Command: unix.NL80211_CMD_CONNECT,
-			Version: family.Version,
-		},
-		Data: b,
-	}, family.ID, netlink.Acknowledge)
-	if err != nil {
-		return fmt.Errorf("nl80211 CONNECT: %w", err)
-	}
-	return nil
+	ae.Uint32(unix.NL80211_ATTR_AUTH_TYPE, unix.NL80211_AUTHTYPE_OPEN_SYSTEM)
+	return ae.Encode()
 }
 
 func (n nlClient) Disconnect(ifi Interface) error {
