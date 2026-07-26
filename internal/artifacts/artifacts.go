@@ -36,12 +36,13 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.5.0 adds the Radxa ROCK 4SE (epic gosd-cuym): a trimmed v6.18.37
-// kernel (header I2C/SPI DTS patches, dwc3 in peripheral mode, PCIe/NVMe,
-// exFAT, USB mass-storage gadget) and the first blob-free Rockchip
-// U-Boot (BL31 compiled from mainline TF-A, no rkbin). The other boards'
-// artifacts are unchanged rebuilds.
-const Version = "v0.6.0"
+// v0.7.0 carries the Pi bring-up kernel fixes: the pi-zero-w's mini-UART
+// registered at boot (gosd-md4w), its SDIO controller enabled and the hwsim
+// phantom radios removed (gosd-6nl2), the VideoCore peripheral dma-ranges
+// window patched into its DTB (gosd-1ey5), the legacy USB gadget zoo evicted
+// from the Pi kernels in favour of configfs composition (gosd-spjt), and the
+// Pi 3B kernelspec (gosd-ypg1). Non-Pi boards are unchanged rebuilds.
+const Version = "v0.7.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
