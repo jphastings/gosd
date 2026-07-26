@@ -4,7 +4,7 @@ What works on which board, as of the current `main`. This is a snapshot of
 repo state (code, kernel configs, and tracked work in beans), not a roadmap —
 see `beans list` for what's in flight.
 
-> **Four of the five boards have now been through hardware bring-up**: the
+> **Four of the six boards have now been through hardware bring-up**: the
 > Radxa ROCK 4SE (bean `gosd-sz6p`, 2026-07-23), the NanoPi Zero2 (bean
 > `gosd-odp7`, 2026-07-24), the Raspberry Pi Zero 2W (bean `gosd-m9dj`,
 > 2026-07-25, with the WiFi root-cause saga in bean `gosd-anyp`), and the
@@ -14,7 +14,12 @@ see `beans list` for what's in flight.
 > the app on real hardware with DHCP and mDNS proven, but its remaining
 > checklist items (boot-time baseline, power-cycle survival, gadget,
 > peripherals) are still open, and its 1.5M-baud serial console needs an
-> adapter workaround (see the `gosd build` row's footnote).
+> adapter workaround (see the `gosd build` row's footnote). The Raspberry
+> Pi 3B — one image covering the 3B and the 3B+, activated 2026-07-26 with
+> its first published artifacts (`artifacts/v0.8.0`, epic `gosd-xhc3`) —
+> had its maiden hardware boot the same day, reaching HTTP over wired
+> Ethernet first try (on a 3B+; see [^pi3b-eth]), but its formal bring-up
+> checklist (bean `gosd-f5xm`) is still open.
 >
 > Each completed bring-up hardware-proved a common core on that board:
 > `gosd build` → flash → boot chain → serial console → network up (Ethernet
@@ -28,35 +33,35 @@ see `beans list` for what's in flight.
 > One distinction to keep in mind throughout: several fixes found during
 > the Pi bring-ups live in kernel fragments or DTS patches (beans
 > `gosd-md4w`, `gosd-1ey5`, `gosd-6nl2`, and `gosd-spjt`'s legacy-gadget
-> eviction). Each is hardware-proven, but only via locally built kernels
-> (`gosd build-kernel` + `--artifacts-dir`); they reach ordinary
-> `gosd build` images at the next `artifacts/vX.Y.Z` release. Footnotes
-> below say so wherever this applies. Separately, Raspberry Pi 3-family
-> support is in flight (epic `gosd-xhc3`) and joins this table once its
-> boards are activated.
+> eviction). Each was hardware-proven via locally built kernels
+> (`gosd build-kernel` + `--artifacts-dir`) first; all of them shipped in
+> `artifacts/v0.7.0` (pinned since bean `gosd-xo9u`), so ordinary
+> `gosd build` images now carry them — what remains open on any of those
+> beans is bench re-verification from the published artifacts, noted in
+> footnotes where it applies.
 
-| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
-|---|---|---|---|---|---|
-| Image build via `gosd build` | ✅ [^pi-dtb] | ✅ [^armv6-perf] | ✅ [^radxa-serial] | ✅ | ✅ |
-| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
-| Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
-| Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
-| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ [^eth-verified] | ✅ [^eth-verified] | ✅ [^eth-verified] |
-| WiFi (WPA2-PSK / open) | ✅ [^pi-zero-2w-wifi] | ✅ [^pi-zero-w-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
-| Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
-| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] | ✅ [^no-filtering] |
-| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
-| Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
-| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
-| NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
-| I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
-| GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
-| SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] | ✅ [^spi] |
-| OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
+| Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Raspberry Pi 3B | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
+|---|---|---|---|---|---|---|
+| Image build via `gosd build` | ✅ [^pi-dtb] | ✅ [^armv6-perf] | ✅ [^pi3b-family] | ✅ [^radxa-serial] | ✅ | ✅ |
+| Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ [^pi3b-artifacts] | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
+| Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
+| Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
+| Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ [^pi3b-eth] | ✅ [^eth-verified] | ✅ [^eth-verified] | ✅ [^eth-verified] |
+| WiFi (WPA2-PSK / open) | ✅ [^pi-zero-2w-wifi] | ✅ [^pi-zero-w-wifi] | ✅ [^pi3b-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
+| Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ✅ [^hidden-ssid][^pi3b-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
+| Imager catalog provisioning | ✅ [^pi-tag] | ✅ [^pi-zero-w-tag] | ✅ [^pi3b-tag] | ✅ [^no-filtering] | ✅ [^no-filtering] | ✅ [^no-filtering] |
+| `gosd.toml` config (fallback) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| App env vars (`gosd.toml [env]`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| mDNS (`<hostname>.local`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
+| Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
+| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ➖ [^pi3b-no-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
+| NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
+| I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
+| GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
+| SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] | ✅ [^spi] |
+| OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
 (no matching hardware) · ❌ not supported (with a reason below).
@@ -164,6 +169,68 @@ see `beans list` for what's in flight.
     data surviving unmount/remount. (The link-training timeout logged with
     the slot empty was confirmed benign probing noise, not a real fault.)
 
+[^pi3b-family]: **One `pi-3b` image covers the whole Pi 3B family — 3B and
+    3B+** (JP's locked decision, epic `gosd-xhc3` / bean `gosd-oq0z`): the
+    boot partition ships both models' DTBs (`bcm2710-rpi-3-b.dtb` and
+    `bcm2710-rpi-3-b-plus.dtb`, the GPU firmware picks by board revision)
+    and the kernel carries both models' USB-Ethernet drivers (see
+    [^pi3b-eth]). The one family asymmetry is WiFi — see [^pi3b-wifi]. The
+    BCM2837 is the same arm64 SoC family as the Zero 2W, and the board
+    boots the same GPU-ROM flow (no U-Boot).
+
+[^pi3b-artifacts]: The Pi 3B's kernel (`kernel8.img` plus both family DTBs)
+    is built and published by CI (`pi-3b-kernel` job,
+    `.github/workflows/build-artifacts.yml`, bean `gosd-0nl7`) from the
+    `artifacts/v0.8.0` release onward, at the same Pi fleet kernel pin as
+    the Zeros. There is no bootloader artifact: the Pi's GPU ROM boots the
+    FAT partition directly.
+
+[^pi3b-eth]: Onboard wired Ethernet is this board's headline feature vs the
+    Zeros, and is **hardware-verified** (2026-07-26, epic `gosd-xhc3`'s
+    maiden boot, recorded in bean `gosd-f5xm`): DHCP, mDNS, and HTTP 200
+    end-to-end over the wire, first try. The bench board was a **3B+**,
+    whose LAN7515 GbE chip came up via `lan78xx` (`CONFIG_USB_LAN78XX=y`,
+    asserted in the kernel fragment by bean `gosd-oq0z`); that boot used
+    the 3B DTB as a firmware fallback, before bean `gosd-oq0z` shipped the
+    3B+'s own DTB. The plain 3B's LAN9514 100Mbit chip uses `smsc95xx`
+    (`CONFIG_USB_NET_SMSC95XX=y`, asserted since bean `gosd-ypg1`) — both
+    chips self-enumerate on USB, DTB-agnostic, but a plain 3B hasn't been
+    on the bench yet, so the 3B half of the family claim is
+    code-asserted, not hardware-verified (bean `gosd-f5xm`).
+
+[^pi3b-wifi]: Code-complete, not hardware-verified on this board: the 3B's
+    BCM43438 is the same Cypress 43430 blob set as the Pi Zero W's (bean
+    `gosd-06kj`), shipped in the initramfs under this board's
+    `brcmfmac43430-sdio.raspberrypi,3-model-b.*` alias names, through the
+    same `wifiup` stack that is hardware-proven on both Pi Zeros. Family
+    caveat: the **3B+**'s WiFi chip is a BCM43455, whose blob set
+    (`43455` + `3-model-b-plus` aliases) is NOT yet in this board's
+    manifest — WiFi on a 3B+ does not work yet (follow-up recorded in bean
+    `gosd-oq0z`); a 3B+ is wired-Ethernet-first for now.
+
+[^pi3b-tag]: Raspberry Pi Imager's official catalog
+    (`downloads.raspberrypi.org/os_list_imagingutility_v4.json`, fetched
+    and inspected directly on 2026-07-26 for this board's activation — see
+    `internal/catalog.boardImagerDeviceTags`) defines the "Raspberry Pi 3"
+    device (description: "Raspberry Pi 3 Model A+ / B / B+ and Compute
+    Module 3 / 3+") with tags `["pi3-64bit", "pi3-32bit"]`. GoSD's pi-3b
+    image is arm64, so its catalog entry carries `pi3-64bit` only. The
+    same shared-namespace consequence as [^pi-tag], in both directions:
+    the "Raspberry Pi Zero 2 W" device carries exactly the same tags, so
+    a GoSD pi-3b entry also appears when a user selects **Raspberry Pi
+    Zero 2 W** in Imager's device-filter step — just as the pi-zero-2w
+    entry already appears under "Raspberry Pi 3".
+
+[^pi3b-no-gadget]: USB gadget mode is structurally impossible on the Pi 3B
+    family — a hardware limitation, not a GoSD gap (epic `gosd-xhc3`
+    locked decision): the BCM2837's only USB port is hard-wired through
+    the onboard hub/Ethernet chip (LAN9514 on the 3B, LAN7515 on the 3B+),
+    so the controller can never be put into peripheral mode and no UDC can
+    ever exist for the `gadget` package to bind. `gosd build
+    --board=pi-3b --usb-gadget` fails fast with an actionable error (bean
+    `gosd-5pnr`'s capability check), and the board's `config.txt` template
+    has no dwc2-overlay branch at all.
+
 [^pi-no-eth]: Neither the Raspberry Pi Zero 2 W nor the original Zero W has
     an onboard Ethernet port (WiFi only) — this is a hardware limitation of
     both boards, not a GoSD gap. `gosd-init`'s wired-networking code
@@ -172,8 +239,9 @@ see `beans list` for what's in flight.
     port would likely work through the same DHCP path, but this is untested
     and not a documented/supported configuration.
 
-[^eth-verified]: Wired Ethernet is hardware-verified on all three Ethernet
-    boards during their bring-ups: DHCP lease, mDNS resolution from macOS,
+[^eth-verified]: Wired Ethernet is hardware-verified on all three Rockchip
+    Ethernet boards during their bring-ups (the Pi 3B's is covered
+    separately, see [^pi3b-eth]): DHCP lease, mDNS resolution from macOS,
     and HTTP reachability (over IPv6, incidentally proving both stacks) on
     the ROCK 4SE (bean `gosd-sz6p`, 2026-07-23) and the NanoPi Zero2 (bean
     `gosd-odp7`, 2026-07-24, which also observed the SNTP clock sync);
@@ -229,8 +297,8 @@ see `beans list` for what's in flight.
     so every join ever issued was a no-op that logging disguised as an
     associate/deauth loop. The fix is gosd-init code (plus a CI regression
     test pinning the netlink flags and attribute sequence), so it needed no
-    artifact release. One cosmetic kernel-fragment fix does ride the next
-    artifacts version: bean `gosd-6nl2` disables the phantom
+    artifact release. One cosmetic kernel-fragment fix shipped in
+    `artifacts/v0.7.0`: bean `gosd-6nl2` disables the phantom
     `mac80211_hwsim` radios that made the real radio enumerate as `wlan2`.
 
 [^pi-zero-w-wifi]: The Zero W's WiFi/BT combo chip is a single revision,
@@ -244,7 +312,7 @@ see `beans list` for what's in flight.
     firmware-offloaded handshake, DHCP, mDNS and HTTP all work on a real
     Zero W — after three kernel fixes found during bring-up (`gosd-md4w`
     console, `gosd-1ey5` SD DMA, `gosd-6nl2` phantom-radio/SDIO-controller),
-    which reach released artifacts at the next artifacts version.
+    all shipped in `artifacts/v0.7.0`.
 
 [^no-radio]: The Radxa Zero 3E has no WiFi radio — its kernel build carries
     no `cfg80211`/`brcmfmac`-equivalent driver, and its board profile
@@ -303,9 +371,9 @@ see `beans list` for what's in flight.
     board the partition was found, mounted read-write, and its contents
     served over HTTP.
 
-[^no-emmc]: Neither Raspberry Pi board has onboard eMMC — this is a hardware
-    limitation of both boards, not a GoSD gap. The `emmc` package's
-    `FormatAndMount` returns `ErrNoEMMC` on these boards. An app that wants
+[^no-emmc]: No Raspberry Pi board in this table has onboard eMMC — a
+    hardware limitation of these boards, not a GoSD gap. The `emmc`
+    package's `FormatAndMount` returns `ErrNoEMMC` on these boards. An app that wants
     USB-shareable storage here uses the SD card's `GOSD-DATA` partition
     instead (`gosd build --data-size`): `examples/usbwebsite` falls back to
     it on `ErrNoEMMC` automatically, serving from gosd-init's `/data` mount
@@ -338,7 +406,7 @@ see `beans list` for what's in flight.
     everywhere except the NanoPi Zero2.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
-    boards, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,
+    Zeros, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,
     ACM/ECM/RNDIS functions) is already enabled on every gadget-capable
     board's kernel. The pure-Go configfs
     gadget library (package `gadget`, a public v0.3 API surface) is
@@ -351,7 +419,8 @@ see `beans list` for what's in flight.
     with read-only and removable flags) is implemented and unit-tested the
     same way (bean `gosd-k2fs`). Mass storage additionally needs
     `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel: every current
-    board's recorded published `kernel.config` already carries it, but only
+    gadget-capable board's recorded published `kernel.config` already
+    carries it, but only
     incidentally — inherited from the defconfig baseline, asserted by no
     kernel fragment or `internal/kernelspec` `RequiredY` list — so the
     *guaranteed* enablement lands when the fragments gain it explicitly at
@@ -384,10 +453,9 @@ see `beans list` for what's in flight.
     hardware-proven (bean `gosd-spjt`, 2026-07-26): with the overlay in
     place the bench Zero W got a UDC and enumerated on the host — as
     Gadget Zero. The kernel fragments now evict the whole
-    `drivers/usb/gadget/legacy` family, effective at the next
-    `artifacts/vX.Y.Z` release; until that release and the bench re-run
-    tracked in `gosd-spjt`, an app's own gadget (mass storage included)
-    remains unverified on both Pi Zeros.
+    `drivers/usb/gadget/legacy` family, shipped in `artifacts/v0.7.0`;
+    until the bench re-run tracked in `gosd-spjt`, an app's own gadget
+    (mass storage included) remains unverified on both Pi Zeros.
 
 [^nanopi-usb]: The RK3528 SoC has no USB controller DT node in any numbered
     mainline kernel release as of the pinned tag (v6.18.37) — the `dwc3` node

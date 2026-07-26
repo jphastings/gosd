@@ -36,13 +36,13 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.7.0 carries the Pi bring-up kernel fixes: the pi-zero-w's mini-UART
-// registered at boot (gosd-md4w), its SDIO controller enabled and the hwsim
-// phantom radios removed (gosd-6nl2), the VideoCore peripheral dma-ranges
-// window patched into its DTB (gosd-1ey5), the legacy USB gadget zoo evicted
-// from the Pi kernels in favour of configfs composition (gosd-spjt), and the
-// Pi 3B kernelspec (gosd-ypg1). Non-Pi boards are unchanged rebuilds.
-const Version = "v0.7.0"
+// v0.8.0 carries the first pi-3b artifacts (gosd-0nl7's CI kernel job):
+// kernel8.img plus both family DTBs - bcm2710-rpi-3-b.dtb and
+// bcm2710-rpi-3-b-plus.dtb, one image covering the 3B and 3B+ with the GPU
+// firmware picking by board revision (gosd-oq0z). Every other board is an
+// unchanged rebuild of v0.7.0 from identical source pins and configs (the
+// two Pi Zero tarballs are byte-identical to v0.7.0's).
+const Version = "v0.8.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

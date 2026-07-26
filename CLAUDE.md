@@ -40,11 +40,12 @@ say so in the bean rather than silently diverging.
   Docker or Podman, by design, and say so in their own `--help` text and
   errors.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
-  pi-zero-2w / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt, and
-  `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
+  pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt,
+  and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
   build pipeline compiles the app and gosd-init once per architecture needed
   by the selected boards (decided 2026-07-06; was arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
+  `pi-3b` (BCM2837, one image covers the 3B and 3B+ — epic gosd-xhc3),
   `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf),
   `rock-4se` (Radxa ROCK 4SE, RK3399-T — epic gosd-cuym); also `qemu-virt`
   (internal —

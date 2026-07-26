@@ -46,6 +46,7 @@ const dateFormat = "2006-01-02"
 var boardDisplayNames = map[string]string{
 	"pi-zero-2w":    "Raspberry Pi Zero 2 W",
 	"pi-zero-w":     "Raspberry Pi Zero W",
+	"pi-3b":         "Raspberry Pi 3B",
 	"radxa-zero-3e": "Radxa Zero 3E",
 	"nanopi-zero2":  "NanoPi Zero2",
 	"rock-4se":      "Radxa ROCK 4SE",
@@ -76,6 +77,15 @@ func displayName(boardID string) string {
 // Assistant OS use). Side effect of the shared namespace: the entry also
 // appears when "Raspberry Pi 3" is selected.
 //
+// pi-3b carries "pi3-64bit" too: the same official catalog's "Raspberry
+// Pi 3" device entry (description "Raspberry Pi 3 Model A+ / B / B+ and
+// Compute Module 3 / 3+") carries exactly ["pi3-64bit", "pi3-32bit"],
+// re-fetched and inspected directly on 2026-07-26 for bean gosd-7wv9's
+// activation, and GoSD's pi-3b image is arm64-only. The shared namespace
+// cuts both ways: a GoSD pi-3b entry also appears when a user selects
+// "Raspberry Pi Zero 2 W" in Imager's device-filter step, just as the
+// pi-zero-2w entry already appears under "Raspberry Pi 3".
+//
 // pi-zero-w carries "pi1-32bit": the same official catalog's top-level
 // "imager.devices" list has a "Raspberry Pi Zero" entry whose description
 // is literally "Raspberry Pi Zero, Zero W, and Zero WH" and whose tags are
@@ -97,6 +107,7 @@ func displayName(boardID string) string {
 var boardImagerDeviceTags = map[string][]string{
 	"pi-zero-2w": {"pi3-64bit"},
 	"pi-zero-w":  {"pi1-32bit"},
+	"pi-3b":      {"pi3-64bit"},
 }
 
 // imagerDeviceTags returns the devices array for boardID's catalog entry -

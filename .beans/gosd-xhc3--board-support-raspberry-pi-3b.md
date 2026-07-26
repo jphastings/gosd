@@ -1,21 +1,21 @@
 ---
 # gosd-xhc3
 title: 'Board support: Raspberry Pi 3B'
-status: todo
+status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-25T23:20:08Z
-updated_at: 2026-07-26T09:50:59Z
+updated_at: 2026-07-26T12:55:00Z
 ---
 
 Add the Raspberry Pi 3B (board ID pi-3b, BCM2837 SoC, arm64) as a GoSD board. Same Broadcom family and GPU-ROM boot flow as pi-zero-2w; joins the existing Pi fleet kernel pin. Headline feature vs the Zeros: onboard wired Ethernet (LAN9514 USB hub + 100Mbit). Planned 2026-07-26; decomposition mirrors the ROCK 4SE epic (gosd-cuym) adapted to the Pi family (no U-Boot, no viability-research bean: mainline-tree presence was verified up front, see below).
 
 ## Children
 
-- gosd-ypg1 — board profile, kernelspec + fragment, firmware manifest (internal registration; first PR)
-- gosd-0nl7 — trimmed arm64 kernel build (kernel8.img) + CI artifacts job
-- gosd-7wv9 — artifacts release + board activation (batches into the next release window, see gosd-36yy cross-ref below)
-- gosd-f5xm — hardware bring-up and boot-time measurement
+- gosd-ypg1 — board profile, kernelspec + fragment, firmware manifest (internal registration; first PR) — completed
+- gosd-0nl7 — trimmed arm64 kernel build (kernel8.img) + CI artifacts job — code merged (#125); bean bookkeeping (dispatch-run todo) still open, though artifacts/v0.8.0 shipping pi-3b.tar.zst proves the wiring end-to-end
+- gosd-7wv9 — artifacts release + board activation — completed 2026-07-26: pi-3b is public, pinned to artifacts/v0.8.0, cataloged (`pi3-64bit`, live-verified), and in COMPATIBILITY.md; the activation milestone is done
+- gosd-f5xm — hardware bring-up and boot-time measurement — in progress (maiden boot done, formal checklist open); the epic stays open until it lands
 
 ## Locked decisions
 

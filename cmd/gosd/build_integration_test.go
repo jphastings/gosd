@@ -695,8 +695,8 @@ func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
 
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
-// produces the pi-zero-2w, pi-zero-w, radxa-zero-3e, nanopi-zero2, and
-// rock-4se images, not just a subset.
+// produces the pi-zero-2w, pi-zero-w, pi-3b, radxa-zero-3e, nanopi-zero2,
+// and rock-4se images, not just a subset.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -717,7 +717,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img"} {
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-pi-3b.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img"} {
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -729,10 +729,9 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt and pi-3b are the internal-only boards (pi-3b until bean
-	// gosd-7wv9's activation flips it public): the default no---board
-	// build must produce exactly the five public boards' images, never
-	// one for either internal board.
+	// qemu-virt is the only internal-only board (pi-3b went public in bean
+	// gosd-7wv9's activation): the default no---board build must produce
+	// exactly the six public boards' images, never one for qemu-virt.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -743,13 +742,11 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 5 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 5 (internal-only boards must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != 6 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 6 (internal-only boards must stay excluded)", len(imgNames), imgNames)
 	}
-	for _, internalImg := range []string{"hello-qemu-virt.img", "hello-pi-3b.img"} {
-		if _, err := os.Stat(filepath.Join(outDir, internalImg)); err == nil {
-			t.Errorf("default build produced %s; that board is internal-only and must be excluded from the default build set", internalImg)
-		}
+	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
+		t.Error("default build produced hello-qemu-virt.img; that board is internal-only and must be excluded from the default build set")
 	}
 }
 
@@ -847,14 +844,16 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 }
 
 // TestBuildProducesABootableImageForPi3BFromFakeArtifacts is the acceptance
-// test for bean gosd-ypg1: an explicit `gosd build --board=pi-3b` (the board
-// is internal-only until bean gosd-7wv9's activation, so it never rides the
-// default build), using --artifacts-dir to supply fake kernel/firmware
-// files, produces an image whose boot partition carries the GPU-ROM boot
-// flow (kernel8.img, both family DTBs - the firmware picks the 3B's or the
-// 3B+'s by board revision (bean gosd-oq0z) - boot firmware, config.txt with
-// arm_64bit=1 and no dtoverlay, cmdline.txt) and whose initramfs carries the
-// Cypress 43430 WiFi blobs under their 3-model-b alias names.
+// test for bean gosd-ypg1: an explicit `gosd build --board=pi-3b`, using
+// --artifacts-dir to supply fake kernel/firmware files, produces an image
+// whose boot partition carries the GPU-ROM boot flow (kernel8.img, both
+// family DTBs - the firmware picks the 3B's or the 3B+'s by board revision
+// (bean gosd-oq0z) - boot firmware, config.txt with arm_64bit=1 and no
+// dtoverlay, cmdline.txt) and whose initramfs carries the Cypress 43430
+// WiFi blobs under their 3-model-b alias names. pi-3b is public since bean
+// gosd-7wv9's activation, so it's also covered by the default all-boards
+// build (TestBuildWithNoBoardFlagBuildsAllBoards) and by catalog output
+// (TestBuildCatalogForPi3BWritesEntry).
 func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -979,14 +978,14 @@ func TestBuildUsbGadgetFailsActionablyForPi3B(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogForPi3BOnlyWritesNothing mirrors the qemu-virt catalog
-// test above for the other internal-only board: until bean gosd-7wv9's
-// activation, a pi-3b-only --catalog build writes no os_list.json (an
-// internal board must never appear in a catalog end users paste into
-// Imager), while the image itself still builds. gosd-7wv9 replaces this
-// test with a writes-entry one when the board goes public (the gosd-wskc/
-// gosd-h8a8 pattern).
-func TestBuildCatalogForPi3BOnlyWritesNothing(t *testing.T) {
+// TestBuildCatalogForPi3BWritesEntry confirms that, now that pi-3b is a
+// public board (gosd-7wv9's flip), --catalog on a pi-3b-only build writes a
+// real os_list.json entry - unlike qemu-virt (still internal-only, see
+// TestBuildCatalogForQemuVirtOnlyWritesNothing above) - carrying the
+// official "pi3-64bit" Imager device tag (the "Raspberry Pi 3" device's
+// arm64 tag, verified live against the official catalog on 2026-07-26; see
+// internal/catalog.boardImagerDeviceTags).
+func TestBuildCatalogForPi3BWritesEntry(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
@@ -1011,15 +1010,33 @@ func TestBuildCatalogForPi3BOnlyWritesNothing(t *testing.T) {
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
-		t.Errorf("the image itself should still be built: %v", err)
+		t.Errorf("the image itself should be built: %v", err)
 	}
-	for _, listPath := range []string{
-		filepath.Join(outDir, "os_list.json"),
-		filepath.Join(outDir, "hello-pi-3b.os_list.json"),
-	} {
-		if _, err := os.Stat(listPath); err == nil {
-			t.Errorf("%s was written for a pi-3b-only build; pi-3b is internal-only until bean gosd-7wv9's activation and must not appear in a catalog yet", listPath)
-		}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "hello-pi-3b.os_list.json"))
+	if err != nil {
+		t.Fatalf("reading hello-pi-3b.os_list.json: %v", err)
+	}
+
+	var list struct {
+		OSList []struct {
+			Name    string   `json:"name"`
+			Devices []string `json:"devices"`
+		} `json:"os_list"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatalf("unmarshaling hello-pi-3b.os_list.json: %v", err)
+	}
+	if len(list.OSList) != 1 {
+		t.Fatalf("hello-pi-3b.os_list.json has %d entries, want 1", len(list.OSList))
+	}
+
+	entry := list.OSList[0]
+	if want := "hello (Raspberry Pi 3B)"; entry.Name != want {
+		t.Errorf("name = %q, want %q", entry.Name, want)
+	}
+	if len(entry.Devices) != 1 || entry.Devices[0] != "pi3-64bit" {
+		t.Errorf("devices = %v, want [\"pi3-64bit\"] (the official Raspberry Pi 3 device tag for arm64 images)", entry.Devices)
 	}
 }
 
