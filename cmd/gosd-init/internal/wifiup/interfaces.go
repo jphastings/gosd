@@ -36,6 +36,16 @@ type WifiClient interface {
 	// needs to know or care which form the credential started as.
 	ConnectPSK(ifi Interface, ssid string, psk [32]byte) error
 
+	// SupportsOffloadedHandshake reports whether ifi's phy advertises
+	// NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK — the firmware-offload
+	// capability the kernel requires before it will accept ConnectPSK's
+	// PMK-carrying CONNECT at all; without it every such CONNECT is
+	// rejected with EINVAL before reaching the driver. A phy that lacks
+	// it either has no firmware supplicant or is not a real radio at
+	// all (mac80211_hwsim's simulated phys — bean gosd-6nl2), so wifiup
+	// checks this before its first ConnectPSK.
+	SupportsOffloadedHandshake(ifi Interface) (bool, error)
+
 	// Disconnect tears down any existing association on ifi.
 	Disconnect(ifi Interface) error
 

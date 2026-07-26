@@ -84,6 +84,9 @@ func Run(deps Deps, opts Options) {
 	if !ok {
 		return // opts.Stop closed before a wlan interface appeared.
 	}
+	if !creds.Open {
+		ifi = skipWithoutOffloadedHandshake(deps, ifi)
+	}
 	deps.Log("using WiFi interface %s", ifi.Name)
 
 	if err := deps.Links.SetUp(ifi.Name); err != nil {
@@ -143,6 +146,51 @@ func pickInterface(ifis []Interface) (Interface, bool) {
 		return ifis[0], true
 	}
 	return Interface{}, false
+}
+
+// skipWithoutOffloadedHandshake guards a WPA2-PSK join before the first
+// CONNECT: a phy without NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK has
+// every PMK-carrying CONNECT rejected with EINVAL by the kernel itself,
+// so retrying against it can never succeed — and on kernels that build
+// in mac80211_hwsim, the picked interface may be one of its simulated
+// radios rather than the real one (bean gosd-6nl2: pi-zero-w spent a
+// bench session in exactly that EINVAL loop). If picked lacks the
+// feature this logs an actionable error and moves to the next capable
+// candidate; with no capable candidate it returns picked anyway, so the
+// association loop still runs (and keeps logging honestly) rather than
+// silently giving up. A failed check is treated as "unknown", not as
+// unsupported — never skipping a real radio over a netlink hiccup.
+func skipWithoutOffloadedHandshake(deps Deps, picked Interface) Interface {
+	supported, err := deps.Wifi.SupportsOffloadedHandshake(picked)
+	if err != nil {
+		deps.Log("checking WPA2 handshake offload on %s failed: %v; proceeding with it anyway", picked.Name, err)
+		return picked
+	}
+	if supported {
+		return picked
+	}
+	deps.Log("%s cannot do firmware-offloaded WPA2-PSK (missing 4WAY_HANDSHAKE_STA_PSK); if this device has multiple WiFi interfaces one may be a phantom (e.g. mac80211_hwsim) — see bean gosd-6nl2", picked.Name)
+
+	ifis, err := deps.Wifi.Interfaces()
+	if err != nil {
+		return picked
+	}
+	for _, cand := range ifis {
+		if cand.Index == picked.Index {
+			continue
+		}
+		supported, err := deps.Wifi.SupportsOffloadedHandshake(cand)
+		if err != nil {
+			deps.Log("checking WPA2 handshake offload on %s failed: %v", cand.Name, err)
+			continue
+		}
+		if !supported {
+			deps.Log("%s cannot do firmware-offloaded WPA2-PSK (missing 4WAY_HANDSHAKE_STA_PSK); if this device has multiple WiFi interfaces one may be a phantom (e.g. mac80211_hwsim) — see bean gosd-6nl2", cand.Name)
+			continue
+		}
+		return cand
+	}
+	return picked
 }
 
 // runAssociationLoop associates ifi with creds's network, retrying

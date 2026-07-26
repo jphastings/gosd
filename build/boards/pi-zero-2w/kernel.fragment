@@ -52,6 +52,13 @@ CONFIG_BRCMFMAC=y
 CONFIG_BRCMFMAC_SDIO=y
 # CONFIG_BRCMFMAC_USB is not set
 CONFIG_RFKILL=y
+# bcm2711_defconfig ships mac80211_hwsim as =m and the ModulesDisabled
+# build promotes it to =y, creating two simulated radios with no
+# firmware 4-way-handshake offload. On this board they occupied
+# wlan0/wlan1 and pushed the real radio to wlan2 (the gosd-anyp /
+# gosd-m9dj "wlan2 curiosity"); on pi-zero-w wifiup picked a phantom
+# outright (bean gosd-6nl2).
+# CONFIG_MAC80211_HWSIM is not set
 
 # --- Net: IPv4 + IPv6, packet sockets, unix sockets ---
 CONFIG_INET=y

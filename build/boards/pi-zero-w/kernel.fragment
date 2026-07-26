@@ -48,6 +48,18 @@ CONFIG_BRCMFMAC=y
 CONFIG_BRCMFMAC_SDIO=y
 # CONFIG_BRCMFMAC_USB is not set
 CONFIG_RFKILL=y
+# The BCM43430's SDIO bus needs its own controller driver: this board
+# boots the mainline-style DT (bcm2835-rpi-zero-w.dtb), whose WiFi node
+# sits on the `brcm,bcm2835-sdhci` controller that only sdhci-iproc
+# binds. bcmrpi_defconfig instead covers WiFi SDIO with the downstream
+# bcm2835-mmc driver, which matches downstream-only DT compatibles — so
+# without this the radio never enumerates at all (bean gosd-6nl2).
+CONFIG_MMC_SDHCI_IPROC=y
+# bcmrpi_defconfig ships mac80211_hwsim as =m and the ModulesDisabled
+# build promotes it to =y, creating two simulated radios (wlan0/wlan1)
+# with no firmware 4-way-handshake offload; wifiup picked a phantom and
+# every WPA2 CONNECT was EINVAL'd (bean gosd-6nl2).
+# CONFIG_MAC80211_HWSIM is not set
 
 # --- Net: IPv4 + IPv6, packet sockets, unix sockets ---
 CONFIG_INET=y

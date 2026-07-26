@@ -161,6 +161,14 @@ type fakeWifiClient struct {
 	connectPSKErr   error
 	connectPSKCalls []connectPSKCall
 
+	// offloadUnsupported names interfaces whose phy lacks
+	// 4WAY_HANDSHAKE_STA_PSK; any interface not listed supports it, so
+	// tests that predate (or don't care about) the guard need no
+	// scripting. offloadErr, when set, fails every check instead.
+	offloadUnsupported map[string]bool
+	offloadErr         error
+	offloadChecks      int
+
 	// associatedResults is polled in order (repeating the last entry)
 	// each time Associated is called.
 	associatedResults []bool
@@ -175,8 +183,9 @@ type fakeWifiClient struct {
 }
 
 type connectPSKCall struct {
-	ssid string
-	psk  [32]byte
+	ifname string
+	ssid   string
+	psk    [32]byte
 }
 
 func (f *fakeWifiClient) Interfaces() ([]Interface, error) {
@@ -200,11 +209,27 @@ func (f *fakeWifiClient) Connect(_ Interface, ssid string) error {
 	return f.connectErr
 }
 
-func (f *fakeWifiClient) ConnectPSK(_ Interface, ssid string, psk [32]byte) error {
+func (f *fakeWifiClient) ConnectPSK(ifi Interface, ssid string, psk [32]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.connectPSKCalls = append(f.connectPSKCalls, connectPSKCall{ssid: ssid, psk: psk})
+	f.connectPSKCalls = append(f.connectPSKCalls, connectPSKCall{ifname: ifi.Name, ssid: ssid, psk: psk})
 	return f.connectPSKErr
+}
+
+func (f *fakeWifiClient) SupportsOffloadedHandshake(ifi Interface) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.offloadChecks++
+	if f.offloadErr != nil {
+		return false, f.offloadErr
+	}
+	return !f.offloadUnsupported[ifi.Name], nil
+}
+
+func (f *fakeWifiClient) offloadCheckCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.offloadChecks
 }
 
 func (f *fakeWifiClient) Disconnect(Interface) error {
