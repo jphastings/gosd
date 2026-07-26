@@ -18,3 +18,49 @@ If the firmware genuinely cannot: this is existential for the board (WiFi is the
 Regardless of outcome, land the small wifiup improvement: check the 4WAY_HANDSHAKE_STA_PSK ext feature before CONNECT (as mdlayher's ConnectWPAPSK does) and log an actionable "this WiFi chip's firmware lacks offloaded WPA2 handshake support" instead of a raw EINVAL retry loop.
 
 Evidence: scratchpad qltr-boot-07-dmafix.raw (session 3). gosd-qltr blocked on this bean for its WiFi items; SD/console/boot items are all now PASSING on this board.
+
+
+## Verification (2026-07-26, desk) — hypothesis OVERTURNED; no firmware wall exists
+
+Full report: scratchpad/6nl2-fwsup-verification.md. Verdicts:
+
+1. EINVAL gating paths confirmed at the pin (nl80211_connect L13099-102 for
+   WANT_1X_4WAY_HS without 4WAY_HANDSHAKE_STA_1X; nl80211_crypto_settings
+   L12107-116 for ATTR_PMK without STA_PSK) — and an audit of every other
+   EINVAL branch reachable by our attribute set ruled them out.
+2. brcmfmac FWSUP advertisement path confirmed (feature.c L349 sup_wpa probe;
+   cfg80211.c L7709-17 sets both STA_PSK and STA_1X together).
+3. **The 43430 firmware DOES support fwsup**: the pinned cyfmac43430-sdio.bin
+   carries `idsup-idauth` in its build tag (downloaded + strings-verified);
+   RPi-Distro/firmware-nonfree#23 names BCM43430/1 as advertising the 4WAY
+   features; and our own z2wprobe boot-10 capture is bench proof of the path
+   on a 43430a1 blob.
+
+**Actual root cause (from the qltr-boot-07 capture): phantom radios.** The
+armv6 kernel builds in `mac80211_hwsim` (bcmrpi_defconfig =m promoted to =y
+by ModulesDisabled; no fragment disables it), creating simulated wlan0/wlan1
+with no handshake features — wifiup picked hwsim's wlan1 → EINVAL by the
+gates above. The REAL radio never enumerated at all: the fragment lacks
+CONFIG_MMC_SDHCI_IPROC, the only driver at the pin binding the mainline DT's
+`brcm,bcm2835-sdhci` WiFi-SDIO node (the defconfig's downstream bcm2835-mmc
+driver matches downstream-only compatibles). This also explains the zero
+brcmfmac dmesg lines. **Bonus resolution: the Zero 2W's "wlan2 curiosity"
+(gosd-anyp/m9dj) is the same hwsim phantoms occupying wlan0/wlan1 — its
+kernel.config also has MAC80211_HWSIM=y; its real radio simply landed at
+wlan2 and got picked. Pi 3B (gosd-xhc3): no firmware wall; same hwsim trap
+to avoid in its not-yet-built kernel.**
+
+## Fix plan (kernel-config level; the EAPOL design question is MOOT)
+
+- build/boards/pi-zero-w/kernel.fragment: `CONFIG_MMC_SDHCI_IPROC=y` (real
+  radio enumerates) + `# CONFIG_MAC80211_HWSIM is not set` (kill phantoms).
+- build/boards/pi-zero-2w/kernel.fragment: kill hwsim likewise (removes the
+  wlan2 offset; cosmetic but real).
+- build/boards/pi-3b/kernel.fragment: ensure hwsim is disabled from birth.
+- wifiup: pre-CONNECT check of NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK
+  with an actionable error (would have named this bug instantly). Whether
+  Interfaces() should also skip phys lacking the feature (auto-pick the real
+  radio) — JP's call; the fragment fix makes it moot on our own boards.
+- Bench validation: rebuild zero-w kernel locally, boot: real radio as wlan0,
+  brcmfmac dmesg present, association + hello.local. Then the usual
+  artifacts-release batching for the fragment changes.
