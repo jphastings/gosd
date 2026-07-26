@@ -37,7 +37,7 @@ see `beans list` for what's in flight.
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
-| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
+| USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
 | NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
@@ -312,6 +312,26 @@ see `beans list` for what's in flight.
     (bean `gosd-sz6p`, 2026-07-23, see [^rock4se-otg]) — USB mass storage
     and every other board's gadget support remain unverified on real
     hardware.
+
+[^pi-dwc2]: Until bean `gosd-spjt` (image-side fix landed 2026-07-26),
+    neither Pi Zero could actually reach gadget mode on real hardware
+    despite this row's ✅: `--usb-gadget` rendered
+    `dtoverlay=dwc2,dr_mode=peripheral` into config.txt, but nothing shipped
+    `overlays/dwc2.dtbo` to the boot partition, so `start.elf` skipped the
+    directive silently and no UDC ever appeared (found during the Zero W/2W
+    bench bring-up under bean `gosd-4ajn`). Fixed by pinning the overlay
+    (raspberrypi/firmware, same commit as the GPU boot firmware) in both
+    boards' manifests and shipping it on `--usb-gadget` builds — effective
+    in any `gosd build` from that commit, with no artifact release needed.
+    A second blocker rides the next artifacts release: both Zeros'
+    *published* kernels carry the kernel's legacy test gadgets built-in
+    (defconfig `=m` promoted by the no-modules build), and the first of
+    them — "Gadget Zero", `0x0525`/`0xa4a0` — claims the board's only UDC
+    before the app can apply its own configfs gadget. The kernel fragments
+    now evict the whole `drivers/usb/gadget/legacy` family, effective at
+    the next `artifacts/vX.Y.Z` release; until that release and the bench
+    re-run tracked in `gosd-spjt`, gadget mode on both Pi Zeros remains
+    unverified on real hardware.
 
 [^nanopi-usb]: The RK3528 SoC has no USB controller DT node in any numbered
     mainline kernel release as of the pinned tag (v6.18.37) — the `dwc3` node

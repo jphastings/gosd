@@ -55,7 +55,7 @@ func TestArtifactsIncludesKernelDTBAndManifestFiles(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel.img", "bcm2835-rpi-zero-w.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel.img", "bcm2835-rpi-zero-w.dtb", "bootcode.bin", "start.elf", "fixup.dat", "dwc2.dtbo",
 		"cyfmac43430-sdio.bin", "cyfmac43430-sdio.clm_blob", "brcmfmac43430-sdio.txt",
 	} {
 		if _, ok := names[want]; !ok {
@@ -159,6 +159,9 @@ func TestBootFilesConfigTxtAddsUsbGadgetOverlayWhenRequested(t *testing.T) {
 	if strings.Contains(string(configWithout), "dtoverlay=dwc2") {
 		t.Errorf("config.txt = %q, want no dwc2 overlay when --usb-gadget is not set", configWithout)
 	}
+	if _, ok := without["overlays/dwc2.dtbo"]; ok {
+		t.Error("BootFiles() ships overlays/dwc2.dtbo without --usb-gadget; it must ride only with config.txt's dtoverlay line")
+	}
 
 	art.Initramfs = strings.NewReader("fake initramfs bytes")
 	with, err := b.BootFiles(boards.BuildConfig{UsbGadget: true}, art)
@@ -171,6 +174,21 @@ func TestBootFilesConfigTxtAddsUsbGadgetOverlayWhenRequested(t *testing.T) {
 	}
 	if !strings.Contains(string(configWith), "dtoverlay=dwc2,dr_mode=peripheral") {
 		t.Errorf("config.txt = %q, want the dwc2 peripheral-mode overlay when --usb-gadget is set", configWith)
+	}
+
+	// The .dtbo itself must ship alongside the config.txt line: without it
+	// on the boot partition, start.elf skips the directive silently and no
+	// UDC ever appears (bean gosd-spjt).
+	dtbo, ok := with["overlays/dwc2.dtbo"]
+	if !ok {
+		t.Fatal("BootFiles() with UsbGadget=true is missing overlays/dwc2.dtbo")
+	}
+	dtboBytes, err := io.ReadAll(dtbo)
+	if err != nil {
+		t.Fatalf("reading overlays/dwc2.dtbo: %v", err)
+	}
+	if string(dtboBytes) != "fake dwc2.dtbo" {
+		t.Errorf("overlays/dwc2.dtbo content = %q, want the resolved artifact's content", dtboBytes)
 	}
 }
 

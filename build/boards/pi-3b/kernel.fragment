@@ -97,6 +97,20 @@ CONFIG_USB_NET_SMSC95XX=y
 # Legacy mass-storage gadget: kept cut for consistency with every other
 # board's fragment (bean gosd-z9l4), and doubly dead here with no UDC.
 # CONFIG_USB_MASS_STORAGE is not set
+# The rest of the legacy gadget zoo (drivers/usb/gadget/legacy/), cut for
+# the same consistency: with CONFIG_USB_GADGET off none of these can be
+# enabled anyway, but the Zero boards' fragments evict them explicitly
+# (a built-in legacy gadget claims the UDC before the app's configfs
+# gadget — bean gosd-spjt) and this fragment mirrors theirs.
+# CONFIG_USB_ZERO is not set
+# CONFIG_USB_ETH is not set
+# CONFIG_USB_GADGETFS is not set
+# CONFIG_USB_G_SERIAL is not set
+# CONFIG_USB_G_PRINTER is not set
+# CONFIG_USB_CDC_COMPOSITE is not set
+# CONFIG_USB_G_ACM_MS is not set
+# CONFIG_USB_G_MULTI is not set
+# CONFIG_USB_G_HID is not set
 
 # --- Peripherals: GPIO cdev (v1 uapi too), I2C, SPI, serial consoles ---
 CONFIG_GPIO_CDEV=y

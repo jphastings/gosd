@@ -104,6 +104,13 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 		t.Errorf("config.txt = %q, want it to contain dtparam=spi=on (SPI is enabled by default, bean gosd-fnza)", configTxt)
 	}
 
+	// Without --usb-gadget the dwc2 overlay must stay off the boot
+	// partition, mirroring config.txt's absent dtoverlay line (bean
+	// gosd-spjt).
+	if _, err := fs.ReadFile("overlays/dwc2.dtbo"); err == nil {
+		t.Error("boot partition unexpectedly contains overlays/dwc2.dtbo; it must ship only with --usb-gadget")
+	}
+
 	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
 	if err != nil {
 		t.Fatalf("reading initramfs.cpio.zst: %v", err)
@@ -407,6 +414,69 @@ func TestBuildConsoleBaudFailsActionablyForIncapableBoard(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "qemu-virt") {
 		t.Errorf("error = %q, want it to name qemu-virt", err.Error())
+	}
+}
+
+// TestBuildUsbGadgetShipsDwc2OverlayForPiZeros is the acceptance test for
+// bean gosd-spjt: a `gosd build --usb-gadget` for each Pi Zero board must
+// put the pinned dwc2 overlay at overlays/dwc2.dtbo on the FAT boot
+// partition, alongside config.txt's dtoverlay line — before this, the line
+// was rendered but the .dtbo never shipped, and the Pi firmware skipped the
+// overlay silently, leaving the app with no UDC. The fake artifact stands in
+// for the raspberrypi/firmware download exactly like bootcode.bin's; the
+// network tripwire proves --artifacts-dir keeps satisfying every pinned
+// fetch.
+func TestBuildUsbGadgetShipsDwc2OverlayForPiZeros(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	for _, board := range []string{"pi-zero-2w", "pi-zero-w"} {
+		t.Run(board, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "hello-"+board+".img")
+
+			cmd := newRootCmd()
+			cmd.SetArgs([]string{
+				"build", "../../examples/hello",
+				"--board", board,
+				"--artifacts-dir", "testdata/fake-artifacts",
+				"--usb-gadget",
+				"-o", imgPath,
+			})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("gosd build --board=%s --usb-gadget failed: %v", board, err)
+			}
+
+			d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+			if err != nil {
+				t.Fatalf("reopening the built image failed: %v", err)
+			}
+			defer func() { _ = d.Close() }()
+
+			fs, err := d.GetFilesystem(1)
+			if err != nil {
+				t.Fatalf("GetFilesystem(1) failed: %v", err)
+			}
+
+			dtbo, err := fs.ReadFile("overlays/dwc2.dtbo")
+			if err != nil {
+				t.Fatalf("boot partition is missing overlays/dwc2.dtbo: %v", err)
+			}
+			if got, want := string(dtbo), "fake dwc2.dtbo content for gosd integration tests\n"; got != want {
+				t.Errorf("overlays/dwc2.dtbo content = %q, want the resolved artifact's content %q", got, want)
+			}
+
+			configTxt, err := fs.ReadFile("config.txt")
+			if err != nil {
+				t.Fatalf("reading config.txt: %v", err)
+			}
+			if !strings.Contains(string(configTxt), "dtoverlay=dwc2,dr_mode=peripheral") {
+				t.Errorf("config.txt = %q, want the dwc2 peripheral-mode overlay line with --usb-gadget", configTxt)
+			}
+		})
 	}
 }
 

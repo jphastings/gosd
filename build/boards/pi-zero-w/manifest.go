@@ -20,6 +20,7 @@ var raw []byte
 type Manifest struct {
 	Board        string       `json:"board"`
 	BootFiles    FileGroup    `json:"bootFiles"`
+	Overlays     FileGroup    `json:"overlays"`
 	WifiFirmware WifiFirmware `json:"wifiFirmware"`
 }
 
