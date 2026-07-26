@@ -29,9 +29,10 @@ the Pi fleet pin, never a single-board bump (bean `gosd-ypg1`, epic
   `internal/kernelspec.KernelSpec`, the Go-native source of truth for how
   this board's kernel is built.
 - `kernel.config` — the full `.config` a real build produces, committed for
-  reference and diffing. **Absent until bean gosd-0nl7's first real build
-  lands it** (with provenance), matching how the other Pi boards' configs
-  were only committed after a green local Docker build.
+  reference and cross-build diffing (bean gosd-0nl7, from the 2026-07-26
+  local Docker build that also fed the maiden hardware boot). Generated, never
+  hand-edited; regenerate via `gosd build-kernel --board pi-3b -o out/` and
+  copy `out/kernel.config` here.
 
 The kernel and device tree blob are built by
 `gosd build-kernel --board pi-3b`, which drives a
