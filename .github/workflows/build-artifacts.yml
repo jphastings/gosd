@@ -72,6 +72,30 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # pi-3b is registered internal-only until its first artifacts release
+  # activates it (epic gosd-xhc3, activation bean gosd-7wv9); it's built and
+  # packaged here so that release can carry it from day one. One pi-3b image
+  # covers the whole 3B family (bean gosd-oq0z): the staging output holds
+  # both bcm2710-rpi-3-b.dtb and bcm2710-rpi-3-b-plus.dtb, and the firmware
+  # picks the blob by board revision.
+  pi-3b-kernel:
+    name: Build pi-3b kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board pi-3b --staging staging/ -o out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pi-3b
+          path: staging/pi-3b
+          if-no-files-found: error
+          retention-days: 1
+
   radxa-zero-3e-kernel:
     name: Build radxa-zero-3e kernel
     runs-on: ubuntu-latest
@@ -214,6 +238,7 @@ jobs:
       [
         pi-zero-2w-kernel,
         pi-zero-w-kernel,
+        pi-3b-kernel,
         radxa-zero-3e-kernel,
         radxa-zero-3e-uboot,
         nanopi-zero2-kernel,
@@ -248,6 +273,11 @@ jobs:
         with:
           name: pi-zero-w
           path: staging/pi-zero-w
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pi-3b
+          path: staging/pi-3b
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -342,6 +372,7 @@ jobs:
           files: |
             dist/pi-zero-2w.tar.zst
             dist/pi-zero-w.tar.zst
+            dist/pi-3b.tar.zst
             dist/radxa-zero-3e.tar.zst
             dist/nanopi-zero2.tar.zst
             dist/rock-4se.tar.zst
