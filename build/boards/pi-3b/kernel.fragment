@@ -69,6 +69,12 @@ CONFIG_BRCMFMAC=y
 CONFIG_BRCMFMAC_SDIO=y
 # CONFIG_BRCMFMAC_USB is not set
 CONFIG_RFKILL=y
+# bcm2711_defconfig ships mac80211_hwsim as =m and the ModulesDisabled
+# build would promote it to =y, creating simulated radios (with no
+# firmware 4-way-handshake offload) that wifiup can pick over the real
+# one — the trap that bit pi-zero-w and pi-zero-2w (bean gosd-6nl2).
+# Disabled from birth; this board's kernel has never been built.
+# CONFIG_MAC80211_HWSIM is not set
 
 # --- Net: IPv4 + IPv6, packet sockets, unix sockets ---
 CONFIG_INET=y

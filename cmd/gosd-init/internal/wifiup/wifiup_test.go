@@ -174,6 +174,135 @@ func TestRunConnectsWPAPSKWithResolvedPSK(t *testing.T) {
 	}
 }
 
+func TestRunSkipsInterfaceWithoutHandshakeOffload(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	// wlan0 is a phantom (no 4-way-handshake offload, like
+	// mac80211_hwsim's simulated radios); wlan1 is the real radio.
+	wifi := &fakeWifiClient{
+		interfacesResults:  [][]Interface{{{Name: "wlan0", Index: 1}, {Name: "wlan1", Index: 2}}},
+		offloadUnsupported: map[string]bool{"wlan0": true},
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", PSK: [32]byte{1}}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectPSKCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	call, ok := wifi.lastConnectPSK()
+	if !ok {
+		t.Fatal("ConnectPSK was never called")
+	}
+	if call.ifname != "wlan1" {
+		t.Errorf("ConnectPSK used %s, want wlan1 (the offload-capable candidate)", call.ifname)
+	}
+	if !links.sawSetUp("wlan1") {
+		t.Error("wlan1 was never brought up")
+	}
+	if !log.contains("wlan0 cannot do firmware-offloaded WPA2-PSK (missing 4WAY_HANDSHAKE_STA_PSK)") {
+		t.Errorf("log missing actionable offload error for wlan0: %v", log.snapshot())
+	}
+	if !log.contains("mac80211_hwsim") && !log.contains("gosd-6nl2") {
+		t.Errorf("offload error is missing its phantom-radio pointer: %v", log.snapshot())
+	}
+}
+
+func TestRunProceedsWithSoleInterfaceLackingOffload(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults:  [][]Interface{{{Name: "wlan0", Index: 1}}},
+		offloadUnsupported: map[string]bool{"wlan0": true},
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", PSK: [32]byte{1}}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectPSKCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	call, ok := wifi.lastConnectPSK()
+	if !ok {
+		t.Fatal("ConnectPSK was never attempted on the sole interface")
+	}
+	if call.ifname != "wlan0" {
+		t.Errorf("ConnectPSK used %s, want wlan0 (no capable candidate exists, so proceed honestly)", call.ifname)
+	}
+	if !log.contains("wlan0 cannot do firmware-offloaded WPA2-PSK") {
+		t.Errorf("log missing actionable offload error: %v", log.snapshot())
+	}
+}
+
+func TestRunProceedsWhenOffloadCheckFails(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		offloadErr:        errBoom,
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", PSK: [32]byte{1}}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectPSKCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if wifi.connectPSKCallCount() == 0 {
+		t.Fatal("ConnectPSK was never attempted (a failed check must not skip a possibly-real radio)")
+	}
+	if !log.contains("checking WPA2 handshake offload on wlan0 failed") {
+		t.Errorf("log missing check-failure notice: %v", log.snapshot())
+	}
+}
+
+func TestRunSkipsOffloadCheckForOpenNetwork(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}}}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "open-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if wifi.connectCallCount() == 0 {
+		t.Fatal("Connect was never attempted")
+	}
+	if n := wifi.offloadCheckCount(); n != 0 {
+		t.Errorf("SupportsOffloadedHandshake called %d times for an open network, want 0 (open joins carry no PMK)", n)
+	}
+}
+
 func TestRunRetriesAssociationWithBackoffOnFailure(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	wifi := &fakeWifiClient{

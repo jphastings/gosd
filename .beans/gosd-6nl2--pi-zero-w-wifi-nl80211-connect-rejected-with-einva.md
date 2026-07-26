@@ -1,10 +1,10 @@
 ---
 # gosd-6nl2
 title: 'pi-zero-w WiFi: nl80211 CONNECT rejected with EINVAL — 43430 firmware-supplicant capability suspected'
-status: todo
+status: in-progress
 type: bug
 created_at: 2026-07-26T04:10:40Z
-updated_at: 2026-07-26T04:10:40Z
+updated_at: 2026-07-26T05:21:15Z
 ---
 
 Found in Pi Zero W bring-up session 3 (gosd-qltr, 2026-07-26, immediately after gosd-1ey5's DMA fix let gosd-init reach wifiup). The radio probes (interface wlan1, cfg80211 up) but every ConnectPSK fails instantly with `nl80211 CONNECT: netlink receive: invalid argument` — the kernel REJECTS the request (contrast the Zero 2W saga, where CONNECT was accepted). wifiup's backoff loop and honest logging behave exactly as designed.
@@ -64,3 +64,39 @@ to avoid in its not-yet-built kernel.**
 - Bench validation: rebuild zero-w kernel locally, boot: real radio as wlan0,
   brcmfmac dmesg present, association + hello.local. Then the usual
   artifacts-release batching for the fragment changes.
+
+## Summary of Changes (implementation done 2026-07-26; bench validation pending)
+
+- build/boards/pi-zero-w/kernel.fragment: added `CONFIG_MMC_SDHCI_IPROC=y`
+  (the only driver at the pin binding the mainline DT's `brcm,bcm2835-sdhci`
+  WiFi-SDIO node — without it the BCM43430 never enumerates) and
+  `# CONFIG_MAC80211_HWSIM is not set` (bcmrpi_defconfig's =m was promoted
+  to =y by ModulesDisabled, creating the phantom wlan0/wlan1).
+- build/boards/pi-zero-2w/kernel.fragment: hwsim disabled likewise (removes
+  the gosd-anyp/gosd-m9dj wlan2 offset).
+- build/boards/pi-3b/kernel.fragment: hwsim disabled from birth
+  (preventative; this kernel has never been built).
+- wifiup pre-CONNECT guard: new WifiClient method
+  `SupportsOffloadedHandshake(ifi)` — GET_WIPHY + SPLIT_WIPHY_DUMP,
+  EXT_FEATURES bit-test for 4WAY_HANDSHAKE_STA_PSK, mirroring mdlayher/wifi
+  v0.8.0's unexported checkExtFeature; dump flags include netlink.Request
+  (the connectRequestFlags lesson). For PSK joins, an interface failing the
+  check gets an actionable log naming the interface, the missing feature,
+  and the phantom-radio possibility, and wifiup skips to the next capable
+  candidate; sole/no-capable candidate proceeds honestly, check errors never
+  skip. Open-network joins skip the check (no PMK involved). Fake-driven
+  behavioral tests run on macOS. ConnectPSK's attribute set untouched.
+- internal/artifacts.Version NOT bumped (tag-first, bump-second): the
+  fragment changes reach real builds only after the next artifacts release.
+
+Bench validation still pending (next zero-w session):
+
+- [ ] Rebuild the zero-w kernel locally (`gosd build-kernel --board pi-zero-w`)
+      and boot with `--artifacts-dir`
+- [ ] Real radio enumerates: `mmc1` SDIO + brcmfmac dmesg lines present,
+      firmware `BCM43430/1 wl0: … 7.45.98` reported
+- [ ] Interface is wlan0 (no hwsim phantoms), guard passes
+      (4WAY_HANDSHAKE_STA_PSK advertised)
+- [ ] CONNECT accepted → association with the bench AP
+- [ ] hello.local resolves over WiFi
+- [ ] Then the usual artifacts-release batching for the fragment changes

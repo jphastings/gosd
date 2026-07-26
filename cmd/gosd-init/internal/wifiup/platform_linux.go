@@ -136,6 +136,87 @@ func connectPSKAttributes(ifi Interface, ssid string, psk [32]byte) ([]byte, err
 	return ae.Encode()
 }
 
+// SupportsOffloadedHandshake reports whether ifi's phy advertises
+// NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK by dumping the phy's
+// capabilities (GET_WIPHY with SPLIT_WIPHY_DUMP, restricted to ifi's
+// ifindex) and bit-testing the EXT_FEATURES bitmap. mdlayher/wifi v0.8.0
+// performs this exact check inside ConnectWPAPSK (checkExtFeature,
+// client_linux.go:1102 — unexported, so mirrored here the same way
+// ConnectPSK mirrors its CONNECT), over the same style of short-lived
+// generic netlink connection.
+func (n nlClient) SupportsOffloadedHandshake(ifi Interface) (bool, error) {
+	conn, err := genetlink.Dial(nil)
+	if err != nil {
+		return false, fmt.Errorf("dialing generic netlink: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	family, err := conn.GetFamily(unix.NL80211_GENL_NAME)
+	if err != nil {
+		return false, fmt.Errorf("resolving nl80211 family: %w", err)
+	}
+
+	ae := netlink.NewAttributeEncoder()
+	ae.Uint32(unix.NL80211_ATTR_IFINDEX, uint32(ifi.Index))
+	ae.Flag(unix.NL80211_ATTR_SPLIT_WIPHY_DUMP, true)
+	b, err := ae.Encode()
+	if err != nil {
+		return false, fmt.Errorf("encoding GET_WIPHY attributes: %w", err)
+	}
+
+	msgs, err := conn.Execute(genetlink.Message{
+		Header: genetlink.Header{
+			Command: unix.NL80211_CMD_GET_WIPHY,
+			Version: family.Version,
+		},
+		Data: b,
+	}, family.ID, wiphyDumpFlags)
+	if err != nil {
+		return false, fmt.Errorf("nl80211 GET_WIPHY: %w", err)
+	}
+
+	features, err := extFeaturesBitmap(msgs)
+	if err != nil {
+		return false, fmt.Errorf("parsing GET_WIPHY response: %w", err)
+	}
+	return hasExtFeature(features, unix.NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK), nil
+}
+
+// wiphyDumpFlags MUST include netlink.Request for the same reason as
+// connectRequestFlags: mdlayher/netlink never adds it, and the kernel
+// silently skips messages without NLM_F_REQUEST.
+const wiphyDumpFlags = netlink.Request | netlink.Dump
+
+// extFeaturesBitmap finds the NL80211_ATTR_EXT_FEATURES byte array in a
+// GET_WIPHY dump. A split dump spreads the phy's attributes over many
+// messages; a phy that predates ext features may legitimately have none,
+// which yields an empty bitmap (every feature reads as unsupported), not
+// an error.
+func extFeaturesBitmap(msgs []genetlink.Message) ([]byte, error) {
+	for _, msg := range msgs {
+		attrs, err := netlink.UnmarshalAttributes(msg.Data)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range attrs {
+			if a.Type == unix.NL80211_ATTR_EXT_FEATURES {
+				return a.Data, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// hasExtFeature bit-tests an nl80211 ext-feature index against the
+// little-endian EXT_FEATURES bitmap, exactly as nl80211 itself packs it
+// (and as mdlayher/wifi's checkExtFeature reads it).
+func hasExtFeature(features []byte, feature uint) bool {
+	if feature/8 >= uint(len(features)) {
+		return false
+	}
+	return features[feature/8]&(1<<(feature%8)) != 0
+}
+
 func (n nlClient) Disconnect(ifi Interface) error {
 	return n.c.Disconnect(&mlwifi.Interface{Index: ifi.Index})
 }
