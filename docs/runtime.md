@@ -407,13 +407,13 @@ covered below.
 
 `CONFIG_GPIO_CDEV` is already enabled on every board's kernel, so
 `/dev/gpiochipN` character devices for the header/FPC pins exist at boot on
-all five boards with no build flag or device-tree change needed — unlike
+every board with no build flag or device-tree change needed — unlike
 I2C and SPI, GPIO needed no per-board enablement work at all. What differs
 per board is *numbering*: which chip backs which pins, and which line
 offset within that chip a given pin is.
 
-- **Raspberry Pi Zero 2 W / Zero W** (BCM2837/BCM2835): the whole SoC is one
-  chip, `gpiochip0` (54 lines). Its device tree maps lines to BCM GPIO
+- **Raspberry Pi Zero 2 W / Zero W / 3B** (BCM2837/BCM2835): the whole SoC
+  is one chip, `gpiochip0` (54 lines). Its device tree maps lines to BCM GPIO
   numbers 1:1 (`gpio-ranges = <&gpio 0 0 54>`, an identity mapping), so
   `gpiochip0`'s line offset is always the same number as the "GPIOn"
   silkscreened on most Pi pinout diagrams. Physical header pin 3 (the I2C
@@ -441,6 +441,7 @@ offset within that chip a given pin is.
 |---|---|---|---|
 | Raspberry Pi Zero 2 W | 40-pin header | One chip, `gpiochip0` (54 lines) | Pin 3 (GPIO2) → `gpiochip0` line 2; pin 5 (GPIO3) → `gpiochip0` line 3 |
 | Raspberry Pi Zero W | 40-pin header | One chip, `gpiochip0` (54 lines) | Same as above |
+| Raspberry Pi 3B (and 3B+) | 40-pin header | One chip, `gpiochip0` (54 lines) | Same as above |
 | Radxa Zero 3E | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` | Pin 3 (GPIO1_A0) → `gpiochip1` line 0; pin 5 (GPIO1_A1) → `gpiochip1` line 1 |
 | NanoPi Zero2 | 30-pin FPC | 5 banks, `gpiochip0`-`gpiochip4` | FPC pin 12 (GPIO1_B2) → `gpiochip1` line 10; FPC pin 13 (GPIO1_B3) → `gpiochip1` line 11 |
 | Radxa ROCK 4SE | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` (32 lines each) | Pin 27 (GPIO2_A0) → `gpiochip2` line 0 |
@@ -487,6 +488,7 @@ adds is the device-tree/`config.txt` enablement that was previously missing.
 |---|---|---|---|
 | Raspberry Pi Zero 2 W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same pins as `GPIO2`/`GPIO3` on any Pi — the standard Pi I2C position. Using those pins as plain GPIO is unavailable while I2C is enabled. |
 | Raspberry Pi Zero W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
+| Raspberry Pi 3B (and 3B+) | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
 | Radxa Zero 3E | `/dev/i2c-3` | 40-pin header pins 3 (SDA) / 5 (SCL) | Same physical header position as the Pi's I2C pins, confirmed against Radxa's own schematic and pinout docs. |
 | NanoPi Zero2 | `/dev/i2c-5` | 30-pin FPC pins 12 (SCL) / 13 (SDA) | Confirmed against FriendlyElec's schematic. **Needs an external ~2.2kΩ pull-up on both lines** — unlike the other boards' I2C pins, this bus has no onboard pull-up resistors (FriendlyElec's own schematic note); most breakout boards include their own, but bare sensor modules may not. |
 | Radxa ROCK 4SE | `/dev/i2c-7` | 40-pin header pins 3 (SDA7) / 5 (SCL7) | Same physical header position as the Pi's I2C pins. **Hardware-verified** (device ACK from a Qwiic Button, bean `gosd-sz6p`, 2026-07-23). Uniquely among GoSD's boards, two more header I2C buses are enabled and equally hardware-verified: `/dev/i2c-2` on pins 27 (SDA2) / 28 (SCL2), and `/dev/i2c-6` on pins 29 (SCL6) / 31 (SDA6) — note the SCL/SDA pin order flips between buses. Adapter numbers are alias-pinned to controller names and stable (buses 0/1/3/4 exist as internal-only buses; 5 and 8 are disabled controllers). |
@@ -520,6 +522,7 @@ enablement that was previously missing.
 |---|---|---|---|
 | Raspberry Pi Zero 2 W | `/dev/spidev0.0`, `/dev/spidev0.1` | Header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CE0) / 26 (CE1) | The standard Pi SPI0 position, both chip selects. |
 | Raspberry Pi Zero W | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
+| Raspberry Pi 3B (and 3B+) | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
 | Radxa Zero 3E | `/dev/spidev3.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, confirmed against Radxa's own schematic and pinout docs — but only one chip select: physical pin 26, where a Pi's CE1 would be, is not connected on this board's header, so there is no `/dev/spidev3.1`. |
 | NanoPi Zero2 | `/dev/spidev1.0`, `/dev/spidev1.1` | 30-pin FPC pins 16 (CLK) / 17 (MOSI) / 18 (MISO) / 19 (CS0) / 20 (CS1) | Confirmed against FriendlyElec's schematic; both chip selects are routed to the FPC connector. |
 | Radxa ROCK 4SE | `/dev/spidev1.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, per Radxa's own pinout docs. **Schematic-derived, not hardware-verified** — SPI wasn't exercised during the board's hardware bring-up (bean `gosd-sz6p`). Only one chip select is wired up (CS0); the DTS patch adds no second `spidev` child node, so there is no `/dev/spidev1.1`. |
@@ -701,8 +704,9 @@ honest comparison:
   built yet — it's aimed at a single-purpose appliance you reflash, not a
   managed fleet.
 - **A wider range of boards, or x86:** gokrazy supports a broad set of
-  targets. GoSD is deliberately narrow: two arm64 boards (Pi Zero 2 W,
-  Radxa Zero 3E), at least for now.
+  targets. GoSD is deliberately narrow: a small set of Raspberry Pi,
+  Radxa, and FriendlyElec boards (see `COMPATIBILITY.md`), at least for
+  now.
 - **A one-file, hand-a-friend-an-SD-card appliance, optimized for the
   smallest/cheapest boards:** this is GoSD's focus — minimal image, fast
   boot, no persistence to worry about, and (once the artifact pipeline and

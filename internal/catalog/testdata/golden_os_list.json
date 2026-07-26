@@ -15,6 +15,20 @@
       "init_format": "cloudinit"
     },
     {
+      "name": "hello (Raspberry Pi 3B)",
+      "description": "hello, built with GoSD for Raspberry Pi 3B",
+      "icon": "",
+      "url": "https://example.com/downloads/hello-pi-3b.img",
+      "extract_size": 25,
+      "extract_sha256": "e597ef761edfcd3e60b8b33cb13692087260894301f9ea7c4ff615d6d2e94355",
+      "image_download_size": 25,
+      "release_date": "2026-01-15",
+      "devices": [
+        "pi3-64bit"
+      ],
+      "init_format": "cloudinit"
+    },
+    {
       "name": "hello (Raspberry Pi Zero 2 W)",
       "description": "hello, built with GoSD for Raspberry Pi Zero 2 W",
       "icon": "",
