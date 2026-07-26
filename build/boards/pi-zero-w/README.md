@@ -15,6 +15,16 @@ at the same pinned commit as `build/boards/pi-zero-2w` (bean `gosd-s7fk`, epic
   this board's kernel is built.
 - `kernel.config` — the full `.config` this produces, committed for
   reference and diffing across future rebuilds.
+- `kernel/patches/` — device-tree patches applied (in filename order,
+  `patch -p1`) before the config step. Currently one: the soc node's
+  `dma-ranges` gains the VideoCore peripheral window
+  (`<0x7e000000 0x20000000 0x02000000>`) that the downstream `bcm2708.dtsi`
+  carries but the mainline-style `bcm2835.dtsi` we build our DTB from lacks.
+  The rpi tree's downstream slave-DMA convention — clients hand the DMA core
+  CPU physical addresses and rely on `dma-ranges` to translate them to bus
+  addresses — makes that window load-bearing: without it, mapping the sdhost
+  data FIFO for DMA fails (`DMA addr 0xffffffff+4 overflow`) and all SD-card
+  I/O breaks. Bean `gosd-1ey5` has the full root-cause analysis.
 
 The kernel and device tree blob are built by
 `gosd build-kernel --board pi-zero-w` (bean gosd-07fl), which drives a

@@ -1,6 +1,6 @@
 package manifest
 
-import _ "embed"
+import "embed"
 
 // KernelFragment is the GoSD Kconfig fragment merged onto bcmrpi_defconfig
 // (via scripts/kconfig/merge_config.sh) to build this board's trimmed
@@ -14,3 +14,13 @@ import _ "embed"
 //
 //go:embed kernel.fragment
 var KernelFragment []byte
+
+// PatchesFS embeds this board's device-tree patches, applied in filename
+// order with `patch -p1` before the config step (see internal/kernelbuild).
+// The mainline-style bcm2835 DTs in the raspberrypi/linux tree lack the
+// peripheral dma-ranges window the tree's downstream slave-DMA convention
+// requires, which broke all SD-card I/O on real hardware — bean gosd-1ey5
+// has the full analysis.
+//
+//go:embed kernel/patches
+var PatchesFS embed.FS

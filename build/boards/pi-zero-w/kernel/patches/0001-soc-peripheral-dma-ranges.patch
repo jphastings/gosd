@@ -1,0 +1,20 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2835.dtsi
++++ b/arch/arm/boot/dts/broadcom/bcm2835.dtsi
+@@ -35,7 +35,16 @@
+
+ 	soc {
+ 		ranges = <0x7e000000 0x20000000 0x02000000>;
+-		dma-ranges = <0x40000000 0x00000000 0x20000000>;
++		/*
++		 * GoSD (github.com/jphastings/gosd): add the VideoCore
++		 * peripheral window that the downstream bcm2708.dtsi carries,
++		 * so this tree's slave-DMA convention (clients pass CPU phys
++		 * addresses, translated via dma-ranges - downstream commits
++		 * c03fe8928bd3 and 372f4e66dad6) also works with this
++		 * mainline-style DT. See bean gosd-1ey5.
++		 */
++		dma-ranges = <0x40000000 0x00000000 0x20000000>,
++			     <0x7e000000 0x20000000 0x02000000>;
+ 	};
+
+ 	arm-pmu {
