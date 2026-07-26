@@ -41,3 +41,25 @@ main @ 446a5bb with the day's DTB + WiFi fixes, flashed via dd, no hand-patch).
 
 Checklist blocked on [[gosd-md4w]] (fragment fix + local gosd build-kernel +
 --artifacts-dir bench validation; artifacts-release dance only after proven).
+
+
+### Bring-up session 2 (2026-07-26, ~00:45-01:45) — console FIXED and proven; SD I/O is the next wall
+
+- gosd-md4w's fix validated on hardware: the RUNTIME_UARTS=1 kernel (local
+  gosd build-kernel, ~20min) registers the mini-UART cleanly —
+  `Serial: 8250/16550 driver, 1 ports` → `ttyS0 at MMIO 0x20215040` →
+  console live, earlycon hands off. Full [gosd] output visible for the
+  first time on this board.
+- The working console immediately exposed the next layer: [[gosd-1ey5]] —
+  mainline sdhost's DMA path throws `DMA addr 0xffffffff+4 overflow` on the
+  first partition-scan read; no /dev/mmcblk0p1 ever appears; gosd-init
+  fatal-loops on the boot-partition mount. WiFi still untested (never gets
+  that far). Both cmdline workarounds eliminated on-bench (force_pio is not
+  a mainline param; initcall-blacklisting the DMA controller makes sdhost
+  defer forever).
+- Also observed: with the controller wedged, gosd-init's reboot-after-fatal
+  never fires (10+ min hang) — noted inside gosd-1ey5 as a secondary issue.
+- Bench flow note: one boot was wasted flashing a stale image (build step
+  silently skipped) — check `ls -l hello-pi-zero-w.img` freshness before dd.
+
+Checklist now blocked on [[gosd-1ey5]] (SD I/O). Console item is DONE.
