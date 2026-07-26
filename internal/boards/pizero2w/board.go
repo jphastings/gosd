@@ -58,14 +58,17 @@ func (board) Name() string { return boardName }
 func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
 
 // Artifacts implements boards.Board: the kernel and DTB (not yet
-// automatically fetchable), the GPU boot firmware, and the WiFi firmware
-// blobs pinned in manifest.json.
+// automatically fetchable), the GPU boot firmware, the dwc2 overlay, and the
+// WiFi firmware blobs pinned in manifest.json. The overlay is always
+// resolved (Artifacts has no build config to consult) but only shipped by
+// BootFiles when BuildConfig.UsbGadget is set.
 func (board) Artifacts() []boards.ArtifactRef {
 	m := manifest.Load()
 
-	refs := make([]boards.ArtifactRef, 0, 2+len(m.BootFiles.Files)+len(m.WifiFirmware.Files))
+	refs := make([]boards.ArtifactRef, 0, 2+len(m.BootFiles.Files)+len(m.Overlays.Files)+len(m.WifiFirmware.Files))
 	refs = append(refs, boards.ArtifactRef{Name: kernelArtifactName}, boards.ArtifactRef{Name: dtbArtifactName})
 	refs = append(refs, fileRefs(m.BootFiles.Files)...)
+	refs = append(refs, fileRefs(m.Overlays.Files)...)
 	refs = append(refs, fileRefs(m.WifiFirmware.Files)...)
 	return refs
 }
@@ -104,6 +107,20 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 			return nil, err
 		}
 		files[f.Name] = r
+	}
+
+	// The dwc2 overlay ships only alongside config.txt's conditional
+	// "dtoverlay=dwc2" line: without the .dtbo on the boot partition the
+	// firmware skips that directive silently, and the gadget package never
+	// gets a UDC (bean gosd-spjt).
+	if cfg.UsbGadget {
+		for _, f := range m.Overlays.Files {
+			r, err := art.Open(f.Name)
+			if err != nil {
+				return nil, err
+			}
+			files[path.Join(m.Overlays.DestDir, f.Name)] = r
+		}
 	}
 
 	configTxt, err := templates.RenderConfigTxt(templates.ConfigTxtData{InitramfsName: initramfsName, UsbGadget: cfg.UsbGadget})

@@ -25,6 +25,22 @@
       }
     ]
   },
+  "overlays": {
+    "source": {
+      "repo": "https://github.com/raspberrypi/firmware",
+      "ref": "1.20260521",
+      "commit": "09267f5354d40519d82fbd2193b9e211ec304055"
+    },
+    "destDir": "overlays",
+    "files": [
+      {
+        "name": "dwc2.dtbo",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/overlays/dwc2.dtbo",
+        "sha256": "3e6f8e33e5749bcb2a5c7808b48123e65e88fc465d64ec16b74d50ffe5037e34"
+      }
+    ],
+    "notes": "The dwc2 overlay rebinds the SoC's USB controller from the downstream dwc_otg driver to mainline dwc2 with an explicit dr_mode, giving the gadget package a UDC. BootFiles ships it to overlays/dwc2.dtbo ONLY when the image was built with --usb-gadget, matching config.txt's conditional 'dtoverlay=dwc2,dr_mode=peripheral' line — without the .dtbo on the boot partition, start.elf skips that directive silently (bean gosd-spjt). Pinned at the same raspberrypi/firmware commit as bootFiles above."
+  },
   "wifiFirmware": {
     "source": {
       "repo": "https://github.com/RPi-Distro/firmware-nonfree",

@@ -83,6 +83,23 @@ CONFIG_USB_CONFIGFS_RNDIS=y
 # actually uses. Found during rock-4se real-hardware bring-up (bean
 # gosd-sz6p); this board leaks the same symbol from its own defconfig.
 # CONFIG_USB_MASS_STORAGE is not set
+# The REST of the legacy gadget zoo leaks in the same way: bcm2711_defconfig
+# ships these =m and the ModulesDisabled build promotes them to =y (the
+# same trap as mac80211_hwsim above). Built-in, whichever initializes first
+# claims the board's only UDC before the app can apply its configfs gadget —
+# the 2026-07-26 Zero W bench test enumerated as the kernel's own "Gadget
+# Zero" test device (0x0525/0xa4a0) instead of the app's mass-storage
+# gadget, and this board's recorded kernel.config carries the identical
+# zoo (bean gosd-spjt). The configfs function drivers above stay in.
+# CONFIG_USB_ZERO is not set
+# CONFIG_USB_ETH is not set
+# CONFIG_USB_GADGETFS is not set
+# CONFIG_USB_G_SERIAL is not set
+# CONFIG_USB_G_PRINTER is not set
+# CONFIG_USB_CDC_COMPOSITE is not set
+# CONFIG_USB_G_ACM_MS is not set
+# CONFIG_USB_G_MULTI is not set
+# CONFIG_USB_G_HID is not set
 
 # --- Peripherals: GPIO cdev (v1 uapi too), I2C, SPI, serial consoles ---
 CONFIG_GPIO_CDEV=y
