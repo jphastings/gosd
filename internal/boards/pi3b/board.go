@@ -1,14 +1,16 @@
-// Package pi3b implements internal/boards.Board for the Raspberry Pi 3B:
-// GPU boot firmware and config.txt/cmdline.txt in the FAT boot partition
+// Package pi3b implements internal/boards.Board for the Raspberry Pi 3B
+// family - one image covers both the 3B and the 3B+ (bean gosd-oq0z): GPU
+// boot firmware and config.txt/cmdline.txt in the FAT boot partition
 // (no U-Boot - the GPU ROM loads kernel8.img directly, same as the Pi Zero
-// 2W), and WiFi firmware (plus its board-specific alias names) under
-// /lib/firmware in the initramfs. The BCM2837 is the same arm64 family as
-// the Zero 2W; what sets this board apart is onboard wired Ethernet (a
-// LAN9514 USB hub + 100Mbit chip on the SoC's only USB port) - and,
-// consequently, no USB gadget support ever (see UsbGadgetSupport). Pinned
-// sources live in build/boards/pi-3b/manifest.json; locked template content
-// lives in this package's templates sub-package. See bean gosd-ypg1 (epic
-// gosd-xhc3).
+// 2W), both models' DTBs (the firmware picks by board revision), and WiFi
+// firmware (plus its board-specific alias names) under /lib/firmware in the
+// initramfs. The BCM2837 is the same arm64 family as the Zero 2W; what sets
+// this board apart is onboard wired Ethernet (on the SoC's only USB port: a
+// LAN9514 USB hub + 100Mbit chip on the 3B, a LAN7515 GbE chip on the 3B+)
+// - and, consequently, no USB gadget support ever (see UsbGadgetSupport).
+// Pinned sources live in build/boards/pi-3b/manifest.json; locked template
+// content lives in this package's templates sub-package. See bean gosd-ypg1
+// (epic gosd-xhc3).
 package pi3b
 
 import (
@@ -27,15 +29,19 @@ const (
 	// boardName is the --board flag value and Artifacts() key namespace.
 	boardName = "pi-3b"
 
-	// kernelArtifactName and dtbArtifactName are the artifacts the
+	// kernelArtifactName and the two DTB names are the artifacts the
 	// pipeline must resolve for the kernel image config.txt names
-	// ("kernel=kernel8.img") and the device tree blob the GPU ROM loads.
-	// Neither has a per-file pinned URL (ArtifactRef.URL is empty):
-	// they're compiled by `gosd build-kernel --board pi-3b` and resolved
-	// either from --artifacts-dir or, falling back, from the CI-built
-	// artifact release (see bean gosd-wtpa and internal/artifacts).
-	kernelArtifactName = "kernel8.img"
-	dtbArtifactName    = "bcm2710-rpi-3-b.dtb"
+	// ("kernel=kernel8.img") and the device tree blobs the GPU ROM picks
+	// from by board revision - the 3B's and the 3B+'s ship side by side
+	// (the 2026-07-26 maiden boot's 3B+ firmware requested the -plus blob
+	// first; bean gosd-oq0z). None has a per-file pinned URL
+	// (ArtifactRef.URL is empty): they're compiled by
+	// `gosd build-kernel --board pi-3b` and resolved either from
+	// --artifacts-dir or, falling back, from the CI-built artifact release
+	// (see bean gosd-wtpa and internal/artifacts).
+	kernelArtifactName  = "kernel8.img"
+	dtbArtifactName     = "bcm2710-rpi-3-b.dtb"
+	dtbPlusArtifactName = "bcm2710-rpi-3-b-plus.dtb"
 
 	// initramfsName is the file name the initramfs is written under in
 	// the FAT boot partition; config.txt's "initramfs" directive and
@@ -61,14 +67,18 @@ func (board) Name() string { return boardName }
 // family as the Pi Zero 2W, so it runs the same arm64 kernel/userspace.
 func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
 
-// Artifacts implements boards.Board: the kernel and DTB (artifact-release
-// resolved), the GPU boot firmware, and the WiFi firmware blobs pinned in
-// manifest.json.
+// Artifacts implements boards.Board: the kernel and both family DTBs
+// (artifact-release resolved), the GPU boot firmware, and the WiFi firmware
+// blobs pinned in manifest.json.
 func (board) Artifacts() []boards.ArtifactRef {
 	m := manifest.Load()
 
-	refs := make([]boards.ArtifactRef, 0, 2+len(m.BootFiles.Files)+len(m.WifiFirmware.Files))
-	refs = append(refs, boards.ArtifactRef{Name: kernelArtifactName}, boards.ArtifactRef{Name: dtbArtifactName})
+	refs := make([]boards.ArtifactRef, 0, 3+len(m.BootFiles.Files)+len(m.WifiFirmware.Files))
+	refs = append(refs,
+		boards.ArtifactRef{Name: kernelArtifactName},
+		boards.ArtifactRef{Name: dtbArtifactName},
+		boards.ArtifactRef{Name: dtbPlusArtifactName},
+	)
 	refs = append(refs, fileRefs(m.BootFiles.Files)...)
 	refs = append(refs, fileRefs(m.WifiFirmware.Files)...)
 	return refs
@@ -82,25 +92,21 @@ func fileRefs(files []manifest.File) []boards.ArtifactRef {
 	return refs
 }
 
-// BootFiles implements boards.Board: the kernel, DTB, GPU boot firmware,
-// rendered config.txt/cmdline.txt, and the initramfs the build pipeline has
-// already built into art.Initramfs.
+// BootFiles implements boards.Board: the kernel, both family DTBs, GPU boot
+// firmware, rendered config.txt/cmdline.txt, and the initramfs the build
+// pipeline has already built into art.Initramfs.
 func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	m := manifest.Load()
 
-	files := make(map[string]io.Reader, len(m.BootFiles.Files)+4)
+	files := make(map[string]io.Reader, len(m.BootFiles.Files)+5)
 
-	kernel, err := art.Open(kernelArtifactName)
-	if err != nil {
-		return nil, err
+	for _, name := range []string{kernelArtifactName, dtbArtifactName, dtbPlusArtifactName} {
+		r, err := art.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		files[name] = r
 	}
-	files[kernelArtifactName] = kernel
-
-	dtb, err := art.Open(dtbArtifactName)
-	if err != nil {
-		return nil, err
-	}
-	files[dtbArtifactName] = dtb
 
 	for _, f := range m.BootFiles.Files {
 		r, err := art.Open(f.Name)

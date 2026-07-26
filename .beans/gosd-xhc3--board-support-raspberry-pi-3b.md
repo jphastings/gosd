@@ -3,8 +3,9 @@
 title: 'Board support: Raspberry Pi 3B'
 status: todo
 type: epic
+priority: normal
 created_at: 2026-07-25T23:20:08Z
-updated_at: 2026-07-25T23:20:08Z
+updated_at: 2026-07-26T09:50:59Z
 ---
 
 Add the Raspberry Pi 3B (board ID pi-3b, BCM2837 SoC, arm64) as a GoSD board. Same Broadcom family and GPU-ROM boot flow as pi-zero-2w; joins the existing Pi fleet kernel pin. Headline feature vs the Zeros: onboard wired Ethernet (LAN9514 USB hub + 100Mbit). Planned 2026-07-26; decomposition mirrors the ROCK 4SE epic (gosd-cuym) adapted to the Pi family (no U-Boot, no viability-research bean: mainline-tree presence was verified up front, see below).
@@ -134,4 +135,10 @@ the firmware injects 8250.nr_uarts. Record actual results here when they
 arrive; they inform gosd-0nl7 (kernel) and gosd-f5xm (bring-up) but block
 nothing.
 
-RESULTS: (pending)
+RESULTS (2026-07-26 — the planned stock-image hack was superseded: a real pi-3b-profile boot happened instead, recorded here and in gosd-f5xm):
+
+- First pi-3b-profile boot on hardware: full chain to hello.local HTTP 200 over WIRED Ethernet — the board family's headline feature, working first try, via a locally-built kernel (`gosd build-kernel --board=pi-3b` + `--artifacts-dir`).
+- The bench board is actually a **3B+** (rev a020d3, "RPI3BP" silkscreen): the firmware log requested `bcm2710-rpi-3-b-plus.dtb` FIRST and fell back to our shipped `bcm2710-rpi-3-b.dtb` (the fallback booted fine).
+- Ethernet came up via **lan78xx** (the 3B+'s LAN7515 GbE chip), NOT smsc95xx (the 3B's LAN9514) — CONFIG_USB_LAN78XX was present only by defconfig luck; the fragment asserted only SMSC95XX at the time.
+- USB-attached Ethernet is why the wrong-model DTB still worked: both chips self-enumerate on USB, DTB-agnostic.
+- **Locked decision (JP, 2026-07-26): the pi-3b board covers the whole Pi 3B family — 3B and 3B+ — in one image.** Bean gosd-oq0z ships both DTBs (firmware picks by board rev) and promotes CONFIG_USB_LAN78XX=y into the fragment. Discovered follow-up recorded there: 3B+ WiFi is a BCM43455 (needs the 43455 blob set + 3-model-b-plus aliases, not this epic's current manifest).

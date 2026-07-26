@@ -72,7 +72,7 @@ func writePatches(dir, subdir string, patches []kernelspec.Patch) error {
 // clone repo@ref -> apply GoSD DTS patches -> make <defconfig> -> merge the
 // GoSD fragment -> apply the developer overlay (patches, then fragment -
 // both after GoSD's own) -> make olddefconfig -> assert RequiredY/ForbiddenY
-// survived -> build the kernel image + DTB -> copy outputs and the
+// survived -> build the kernel image + DTB(s) -> copy outputs and the
 // generated .config to /out.
 func buildScript(spec kernelspec.KernelSpec) string {
 	var b strings.Builder
@@ -114,15 +114,23 @@ func buildScript(spec kernelspec.KernelSpec) string {
 	fmt.Fprintf(&b, "echo \"==> Building %s\"\n", spec.KernelMakeTarget)
 	fmt.Fprintf(&b, "make -j\"$(nproc)\" %s\n\n", spec.KernelMakeTarget)
 
-	if spec.DTB != nil {
-		fmt.Fprintf(&b, "echo \"==> Building %s\"\n", spec.DTB.MakeTarget)
-		fmt.Fprintf(&b, "make -j\"$(nproc)\" %s\n\n", spec.DTB.MakeTarget)
+	// Each distinct DTB make target is built once: additional DTBs usually
+	// share the primary's target (pi-3b's "dtbs" builds every blob in one
+	// pass), and re-running the same make would only waste time.
+	builtDTBTargets := map[string]bool{}
+	for _, dtb := range spec.AllDTBs() {
+		if builtDTBTargets[dtb.MakeTarget] {
+			continue
+		}
+		builtDTBTargets[dtb.MakeTarget] = true
+		fmt.Fprintf(&b, "echo \"==> Building %s\"\n", dtb.MakeTarget)
+		fmt.Fprintf(&b, "make -j\"$(nproc)\" %s\n\n", dtb.MakeTarget)
 	}
 
 	fmt.Fprint(&b, "echo \"==> Copying outputs to /out\"\n")
 	fmt.Fprintf(&b, "install -m 0644 %s /out/%s\n", spec.KernelSourcePath, spec.KernelFilename)
-	if spec.DTB != nil {
-		fmt.Fprintf(&b, "install -m 0644 %s /out/%s\n", spec.DTB.SourcePath, spec.DTB.Filename)
+	for _, dtb := range spec.AllDTBs() {
+		fmt.Fprintf(&b, "install -m 0644 %s /out/%s\n", dtb.SourcePath, dtb.Filename)
 	}
 	fmt.Fprintf(&b, "cp .config /out/%s\n\n", generatedConfigName)
 

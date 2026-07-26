@@ -139,6 +139,13 @@ type KernelSpec struct {
 	// DTB is nil for boards with no device tree blob to build.
 	DTB *DTB
 
+	// AdditionalDTBs lists further device tree blobs the build copies out
+	// alongside DTB, for boards whose one image covers several hardware
+	// revisions and lets the boot firmware pick the blob. Only pi-3b sets
+	// it today (the 3B+'s DTB rides next to the 3B's - see that spec's
+	// comment); it is never set when DTB is nil.
+	AdditionalDTBs []DTB
+
 	// KernelMakeTarget is the `make` target that builds the kernel image,
 	// e.g. "Image" or "zImage".
 	KernelMakeTarget string
@@ -168,6 +175,15 @@ type KernelSpec struct {
 	ModulesDisabled bool
 
 	Reproducibility Reproducibility
+}
+
+// AllDTBs returns every device tree blob the build produces: DTB (when
+// non-nil) followed by AdditionalDTBs. Empty for DTB-less boards.
+func (s KernelSpec) AllDTBs() []DTB {
+	if s.DTB == nil {
+		return nil
+	}
+	return append([]DTB{*s.DTB}, s.AdditionalDTBs...)
 }
 
 // requiredYFromFragment extracts every literal "CONFIG_FOO=y" line from a
@@ -359,6 +375,18 @@ var specs = map[string]KernelSpec{
 			SourcePath: "arch/arm64/boot/dts/broadcom/bcm2710-rpi-3-b.dtb",
 			Filename:   "bcm2710-rpi-3-b.dtb",
 		},
+		// One pi-3b image covers the whole 3B family: the firmware picks
+		// the DTB by board revision, so the 3B+'s blob ships alongside the
+		// 3B's. The 2026-07-26 maiden boot was on a 3B+ (rev a020d3) whose
+		// firmware requested bcm2710-rpi-3-b-plus.dtb first and only fell
+		// back to the 3B blob because the plus blob was missing (bean
+		// gosd-oq0z). Same "dtbs" make target - the tree builds every DTB
+		// in one pass; only the copy-out differs.
+		AdditionalDTBs: []DTB{{
+			MakeTarget: "dtbs",
+			SourcePath: "arch/arm64/boot/dts/broadcom/bcm2710-rpi-3-b-plus.dtb",
+			Filename:   "bcm2710-rpi-3-b-plus.dtb",
+		}},
 
 		KernelMakeTarget: "Image",
 		KernelSourcePath: "arch/arm64/boot/Image",

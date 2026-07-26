@@ -61,12 +61,12 @@ func cacheKey(spec kernelspec.KernelSpec, overlay Overlay, image string) (string
 }
 
 // outputFilenames is the board's own artifact output names (the kernel
-// image, and its DTB if any) - the "output names" cache key input, and the
+// image, and its DTBs if any) - the "output names" cache key input, and the
 // set of files an artifacts-dir consumer looks for.
 func outputFilenames(spec kernelspec.KernelSpec) []string {
 	names := []string{spec.KernelFilename}
-	if spec.DTB != nil {
-		names = append(names, spec.DTB.Filename)
+	for _, dtb := range spec.AllDTBs() {
+		names = append(names, dtb.Filename)
 	}
 	return names
 }
