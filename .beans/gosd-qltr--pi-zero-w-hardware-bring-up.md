@@ -63,3 +63,16 @@ Checklist blocked on [[gosd-md4w]] (fragment fix + local gosd build-kernel +
   silently skipped) — check `ls -l hello-pi-zero-w.img` freshness before dd.
 
 Checklist now blocked on [[gosd-1ey5]] (SD I/O). Console item is DONE.
+
+
+### Bring-up session 3 (2026-07-26, ~05:00) — SD stack FIXED end-to-end; WiFi hits a capability wall
+
+- [[gosd-1ey5]] dma-ranges patch bench-proven: clean partition scan, GOSD-BOOT
+  mounts, gosd-init runs the app. Console (gosd-md4w) + SD (gosd-1ey5) both
+  green — the Zero W now boots GoSD properly.
+- WiFi: radio probes (wlan1) but every CONNECT is rejected with EINVAL —
+  filed as [[gosd-6nl2]] (suspected: plain-43430 firmware lacks the firmware
+  supplicant the offloaded-handshake API requires; potentially a host-side
+  EAPOL design decision — existential for this WiFi-only board).
+- Checklist state: flash/boot/serial/console items PASS; WiFi/HTTP/mDNS/
+  timing/power-cycle items blocked on [[gosd-6nl2]].
