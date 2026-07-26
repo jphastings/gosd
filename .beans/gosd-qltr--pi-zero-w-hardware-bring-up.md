@@ -1,7 +1,7 @@
 ---
 # gosd-qltr
 title: Pi Zero W hardware bring-up
-status: in-progress
+status: completed
 type: task
 created_at: 2026-07-06T15:48:45Z
 updated_at: 2026-07-06T15:48:45Z
@@ -76,3 +76,32 @@ Checklist now blocked on [[gosd-1ey5]] (SD I/O). Console item is DONE.
   EAPOL design decision — existential for this WiFi-only board).
 - Checklist state: flash/boot/serial/console items PASS; WiFi/HTTP/mDNS/
   timing/power-cycle items blocked on [[gosd-6nl2]].
+
+
+### Bring-up session 4 (2026-07-26 morning) — WiFi WORKS; board bring-up COMPLETE
+
+- [x] [[gosd-6nl2]] fix bench-proven: brcmfmac probes (first dmesg ever from
+  this radio: BCM43430/1, 7.45.98 TOB — offloaded handshake works on the TOB
+  blob), real radio enumerates as wlan0 (hwsim phantoms gone), association
+  first try, DHCP lease, mDNS, hello.local HTTP 200.
+- [x] Boot log captured across sessions (scratchpad qltr-boot-04/07/08 +
+  qltr-powercycles.raw); key timings from printk stamps: kernel → gosd-init
+  ~6.9s, app started ~7.2s, NTP-synced clock at ~boot+15s; power → HTTP
+  conservatively ≤45s wall on the WiFi path (coarse instrumentation),
+  expectedly slower than the Zero 2W's ~25s (single armv6 core).
+  **ACCEPTANCE NOTE: same <15s target miss as gosd-m9dj, same reason (target
+  predates hardware and fits wired paths) — JP to re-scope or file the
+  boot-time bean covering both Pis.**
+- [x] Power-cycle survival: ~6-7 cycles performed including rapid-fire ones;
+  first and final cycles instrumented end-to-end (full serial boot → lease →
+  mDNS → network UP), intermediate cycles un-instrumented (capture windows
+  expired mid-run — bench-ops lesson recorded); board recovered every time,
+  read-only FAT never complained.
+- [x] Deviations filed and ALL FIXED during bring-up: [[gosd-md4w]] (console),
+  [[gosd-1ey5]] (SD DMA), [[gosd-6nl2]] (phantom radios + SDIO controller).
+  Three kernel-level bugs from one board's bring-up, all bench-proven fixed.
+- COMPATIBILITY.md: pi-zero-w WiFi footnote updated with hardware
+  verification in this PR.
+
+Epic gosd-ajpz: both original v0.1 boards now run the full stack on real
+hardware.

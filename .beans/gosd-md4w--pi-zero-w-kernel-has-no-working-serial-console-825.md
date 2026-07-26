@@ -1,7 +1,7 @@
 ---
 # gosd-md4w
 title: pi-zero-w kernel has no working serial console (8250 RUNTIME_UARTS=0)
-status: in-progress
+status: completed
 type: bug
 created_at: 2026-07-25T22:39:39Z
 updated_at: 2026-07-25T22:53:23Z
@@ -71,3 +71,5 @@ changes needed since RequiredY derivation only collects `=y` lines).
 - [ ] local `gosd build-kernel --board pi-zero-w` rebuild
 - [ ] bench boot with working serial console (via `--artifacts-dir`)
 - [ ] artifacts release dance (tag-first, then separate Version-bump PR)
+
+**Closed 2026-07-26**: fix bench-proven (see gosd-qltr sessions 2-4); the remaining artifacts-release step is owned by the batch-release window (gosd-36yy / gosd-7wv9), consistent with gosd-1ey5 and gosd-6nl2.
