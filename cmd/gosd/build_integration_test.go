@@ -851,7 +851,8 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 // is internal-only until bean gosd-7wv9's activation, so it never rides the
 // default build), using --artifacts-dir to supply fake kernel/firmware
 // files, produces an image whose boot partition carries the GPU-ROM boot
-// flow (kernel8.img, bcm2710-rpi-3-b.dtb, boot firmware, config.txt with
+// flow (kernel8.img, both family DTBs - the firmware picks the 3B's or the
+// 3B+'s by board revision (bean gosd-oq0z) - boot firmware, config.txt with
 // arm_64bit=1 and no dtoverlay, cmdline.txt) and whose initramfs carries the
 // Cypress 43430 WiFi blobs under their 3-model-b alias names.
 func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
@@ -890,7 +891,8 @@ func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bcm2710-rpi-3-b-plus.dtb",
+		"bootcode.bin", "start.elf", "fixup.dat",
 		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
 	} {
 		if _, err := fs.ReadFile(want); err != nil {

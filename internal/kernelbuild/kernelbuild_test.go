@@ -108,8 +108,8 @@ func writeFakeOutputs(runSpec container.RunSpec, spec kernelspec.KernelSpec) err
 		spec.KernelFilename: "fake kernel image\n",
 		"kernel.config":     "# fake generated config\n",
 	}
-	if spec.DTB != nil {
-		files[spec.DTB.Filename] = "fake dtb\n"
+	for _, dtb := range spec.AllDTBs() {
+		files[dtb.Filename] = "fake dtb\n"
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(outDir, name), []byte(content), 0o644); err != nil {
@@ -245,6 +245,9 @@ func TestBuild_CacheMissesOnChangedInput(t *testing.T) {
 				ConfigFragment: []byte("CONFIG_DIFFERENT=y\n"),
 			},
 		},
+		// A newly-listed additional DTB must invalidate old cache entries,
+		// which lack the new output file (pi-3b's 3B+ blob, bean gosd-oq0z).
+		"additional DTB added": {spec: withAdditionalDTB(base), overlay: baseOverlay},
 	}
 
 	baseKey := buildAndGetKey(t, base, baseOverlay, "")
@@ -306,6 +309,15 @@ func withRef(spec kernelspec.KernelSpec, ref string) kernelspec.KernelSpec {
 
 func withFragment(spec kernelspec.KernelSpec, fragment []byte) kernelspec.KernelSpec {
 	spec.ConfigFragment = fragment
+	return spec
+}
+
+func withAdditionalDTB(spec kernelspec.KernelSpec) kernelspec.KernelSpec {
+	spec.AdditionalDTBs = []kernelspec.DTB{{
+		MakeTarget: spec.DTB.MakeTarget,
+		SourcePath: "arch/arm64/boot/dts/test-plus.dtb",
+		Filename:   "test-board-plus.dtb",
+	}}
 	return spec
 }
 

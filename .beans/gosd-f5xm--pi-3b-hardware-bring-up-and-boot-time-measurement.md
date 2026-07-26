@@ -1,11 +1,11 @@
 ---
 # gosd-f5xm
 title: 'Pi 3B: hardware bring-up and boot-time measurement'
-status: todo
+status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-25T23:22:33Z
-updated_at: 2026-07-25T23:22:42Z
+updated_at: 2026-07-26T09:51:15Z
 parent: gosd-xhc3
 blocked_by:
     - gosd-7wv9
@@ -44,3 +44,12 @@ the sdwire rig). Stock `gosd build` image from the published release — no
   build refuses --usb-gadget.
 - Boot files/WiFi-state diagnostics from the other Pi bring-ups apply
   (memory: pi-bringup-fat-partition-tricks; gosd-anyp WiFi-drop watch item).
+
+## Pre-release session record: 2026-07-26 maiden boot (kept in-progress — the full checklist above still runs post-activation on the published release)
+
+Not the checklist run: this was an early hardware session with a locally-built kernel (`gosd build-kernel --board=pi-3b` + `--artifacts-dir`), before any pi-3b artifacts release exists. Findings:
+
+- **First pi-3b-profile boot on hardware: full chain to hello.local HTTP 200 over WIRED Ethernet** — the family's headline feature, working first try. The Ethernet checklist item's driver path is bench-proven early (on lan78xx, see below); it still re-runs against the published release.
+- **The bench board is a 3B+** (rev a020d3, "RPI3BP" silkscreen), not a 3B: firmware requested `bcm2710-rpi-3-b-plus.dtb` first, fell back to our shipped `bcm2710-rpi-3-b.dtb`, and booted fine on the fallback. JP's locked decision follows: pi-3b covers the whole family in one image (bean gosd-oq0z ships both DTBs — post-activation, verify the firmware loads the -plus blob directly, no fallback line in the firmware log).
+- **Ethernet came up via lan78xx** (the 3B+'s LAN7515 GbE), not smsc95xx (the 3B's LAN9514) — it was enabled only by defconfig luck until gosd-oq0z asserted CONFIG_USB_LAN78XX=y in the fragment. Both chips self-enumerate on USB (DTB-agnostic), which is why the wrong-model DTB still had working Ethernet.
+- **WiFi watch item for the checklist**: this bench board's radio is the 3B+'s BCM43455, which our manifest's 43430 blob set does not cover — expect the WiFi item to need the 43455 blobs + `raspberrypi,3-model-b-plus` aliases (recorded in gosd-oq0z as an epic-level follow-up), or a real 3B on the bench.

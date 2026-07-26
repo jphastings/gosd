@@ -17,11 +17,13 @@
 # - No USB gadget block: the 3B's SoC USB port is hard-wired through the
 #   onboard LAN9514 hub, so it can never be a peripheral — no UDC can ever
 #   exist on this board. dwc2 and the gadget stack are cut outright.
-# - USB HOST + wired Ethernet block: the LAN9514 (USB2 hub + 100Mbit eth) is
-#   this board's headline feature. The stock DTB's usb node is
+# - USB HOST + wired Ethernet block: onboard Ethernet is this board's
+#   headline feature, and the one pi-3b image covers the whole 3B family —
+#   the 3B's LAN9514 (USB2 hub + 100Mbit eth, smsc95xx) AND the 3B+'s
+#   LAN7515 (GbE, lan78xx). The stock DTBs' usb node is
 #   compatible "brcm,bcm2708-usb", which binds the rpi tree's dwc_otg driver
 #   (CONFIG_USB_DWCOTG) — NOT dwc2, whose of_match table has no bcm2708-usb
-#   entry (verified at the pinned commit). All four symbols below are
+#   entry (verified at the pinned commit). All the symbols below are
 #   already =y in the bcm2711_defconfig baseline; asserting them here
 #   promotes them into kernelspec RequiredY so a future trim can't cut the
 #   board's Ethernet silently.
@@ -82,14 +84,20 @@ CONFIG_IPV6=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y
 
-# --- USB HOST + wired Ethernet: dwc_otg host controller, LAN9514 (smsc95xx) ---
-# See the header comment: the LAN9514 hub+eth hangs off the SoC's only USB
-# port, routed by the stock DTB to the bcm2708-usb node -> dwc_otg driver.
+# --- USB HOST + wired Ethernet: dwc_otg host controller, LAN9514 (smsc95xx)
+#     on the 3B, LAN7515 (lan78xx) on the 3B+ ---
+# See the header comment: both chips hang off the SoC's only USB port,
+# routed by the stock DTBs to the bcm2708-usb node -> dwc_otg driver.
 CONFIG_USB=y
 CONFIG_USB_DWCOTG=y
 CONFIG_USB_NET_DRIVERS=y
 CONFIG_USB_USBNET=y
 CONFIG_USB_NET_SMSC95XX=y
+# The 3B+'s Ethernet driver. On the 2026-07-26 maiden hardware boot (which
+# revealed the bench board is a 3B+), the link came up via lan78xx present
+# only by bcm2711_defconfig luck — this fragment asserted only SMSC95XX, so
+# a trim could have cut the 3B+'s Ethernet silently (bean gosd-oq0z).
+CONFIG_USB_LAN78XX=y
 
 # --- No USB gadget: hub-wired port can never be a peripheral (see header) ---
 # CONFIG_USB_DWC2 is not set

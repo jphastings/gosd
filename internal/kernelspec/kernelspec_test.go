@@ -130,6 +130,14 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 					t.Errorf("DTB.Filename %q is not in %s's Artifacts()", spec.DTB.Filename, id)
 				}
 			}
+
+			// AdditionalDTBs get no exemption map: a board only lists one
+			// when it means to ship it (pi-3b's 3B+ blob, bean gosd-oq0z).
+			for _, dtb := range spec.AdditionalDTBs {
+				if !artifactNames[dtb.Filename] {
+					t.Errorf("AdditionalDTBs filename %q is not in %s's Artifacts()", dtb.Filename, id)
+				}
+			}
 		})
 	}
 }
@@ -176,6 +184,30 @@ func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 			}
 		} else if len(spec.DTSPatches) != 0 {
 			t.Errorf("%s: want no DTS patches, got %d", id, len(spec.DTSPatches))
+		}
+	}
+}
+
+// TestAdditionalDTBsOnlyOnExpectedBoards guards against extra DTBs silently
+// appearing on (or vanishing from) a board: only pi-3b ships a second blob
+// (the 3B+'s, so one image covers the whole 3B family - bean gosd-oq0z).
+// Every other board builds at most its single primary DTB.
+func TestAdditionalDTBsOnlyOnExpectedBoards(t *testing.T) {
+	wantAdditional := map[string][]string{
+		"pi-3b": {"bcm2710-rpi-3-b-plus.dtb"},
+	}
+
+	for _, id := range allBoardIDs {
+		spec, ok := kernelspec.Get(id)
+		if !ok {
+			t.Fatalf("Get(%q) not found", id)
+		}
+		var got []string
+		for _, dtb := range spec.AdditionalDTBs {
+			got = append(got, dtb.Filename)
+		}
+		if !equalStrings(got, wantAdditional[id]) {
+			t.Errorf("%s: AdditionalDTBs filenames = %v, want %v", id, got, wantAdditional[id])
 		}
 	}
 }

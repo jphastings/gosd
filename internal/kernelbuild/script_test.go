@@ -199,6 +199,27 @@ func TestScript_NoDTBSkipsDTBBuildAndCopy(t *testing.T) {
 	}
 }
 
+// TestScript_AdditionalDTBsCopiedSharedMakeTargetBuiltOnce covers the
+// pi-3b family shape (bean gosd-oq0z): an additional DTB sharing the
+// primary's make target ("dtbs" builds every blob in one pass) is copied
+// out as its own output file without re-running make.
+func TestScript_AdditionalDTBsCopiedSharedMakeTargetBuiltOnce(t *testing.T) {
+	spec := withAdditionalDTB(testSpec())
+	s := captureBuild(t, spec, kernelbuild.Overlay{}).script
+
+	if got := strings.Count(s, "make -j\"$(nproc)\" test.dtb"); got != 1 {
+		t.Errorf("shared DTB make target appears %d times, want 1:\n%s", got, s)
+	}
+	for _, want := range []string{
+		"install -m 0644 arch/arm64/boot/dts/test.dtb /out/test-board.dtb",
+		"install -m 0644 arch/arm64/boot/dts/test-plus.dtb /out/test-board-plus.dtb",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("script missing DTB copy line %q:\n%s", want, s)
+		}
+	}
+}
+
 func TestScript_PatchFilesWrittenInOrder(t *testing.T) {
 	c := captureBuild(t, testSpec(), testOverlay())
 	if len(c.gosdPatchFiles) != 2 {

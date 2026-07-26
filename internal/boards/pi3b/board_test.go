@@ -54,23 +54,29 @@ func TestArtifactsIncludesKernelDTBAndManifestFiles(t *testing.T) {
 		names[r.Name] = r
 	}
 
-	for _, want := range []string{
-		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+	// Both family DTBs ship in one image (the firmware picks by board
+	// revision - the 3B+'s firmware asks for the -plus blob; bean gosd-oq0z).
+	kernelBuilt := []string{"kernel8.img", "bcm2710-rpi-3-b.dtb", "bcm2710-rpi-3-b-plus.dtb"}
+
+	for _, want := range append(kernelBuilt,
+		"bootcode.bin", "start.elf", "fixup.dat",
 		"cyfmac43430-sdio.bin", "cyfmac43430-sdio.clm_blob", "brcmfmac43430-sdio.txt",
-	} {
+	) {
 		if _, ok := names[want]; !ok {
 			t.Errorf("Artifacts() is missing %q", want)
 		}
 	}
 
-	for _, noURL := range []string{"kernel8.img", "bcm2710-rpi-3-b.dtb"} {
+	noURLNames := make(map[string]bool, len(kernelBuilt))
+	for _, noURL := range kernelBuilt {
+		noURLNames[noURL] = true
 		if ref := names[noURL]; ref.URL != "" {
 			t.Errorf("%s has URL %q; it is compiled by gosd build-kernel and must resolve from --artifacts-dir or the artifact release, never a pinned URL", noURL, ref.URL)
 		}
 	}
 
 	for name, ref := range names {
-		if name == "kernel8.img" || name == "bcm2710-rpi-3-b.dtb" {
+		if noURLNames[name] {
 			continue
 		}
 		if ref.URL == "" || ref.SHA256 == "" {
@@ -99,7 +105,8 @@ func TestBootFilesContents(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bootcode.bin", "start.elf", "fixup.dat",
+		"kernel8.img", "bcm2710-rpi-3-b.dtb", "bcm2710-rpi-3-b-plus.dtb",
+		"bootcode.bin", "start.elf", "fixup.dat",
 		"config.txt", "cmdline.txt", "initramfs.cpio.zst",
 	} {
 		if _, ok := files[want]; !ok {
