@@ -129,9 +129,11 @@ type KernelSpec struct {
 	ConfigFragment []byte
 
 	// DTSPatches are device-tree patches applied, in order, before the
-	// config step. Empty for the two Pi boards (they use the stock
-	// upstream DTS unmodified); populated for the three Rockchip-family
-	// boards.
+	// config step. Populated for the three Rockchip-family boards
+	// (peripheral enablement) and for pi-zero-w (its mainline-style DT
+	// needs the downstream peripheral dma-ranges window — bean
+	// gosd-1ey5); empty for the arm64 Pi boards, which use the tree's
+	// downstream (bcm2710-prefixed) DTs unmodified.
 	DTSPatches []Patch
 
 	// DTB is nil for boards with no device tree blob to build.
@@ -304,6 +306,15 @@ var specs = map[string]KernelSpec{
 		Toolchain: Toolchain{KernelArch: "arm", CrossCompile: "arm-linux-gnueabihf-"},
 
 		ConfigFragment: pizerowmanifest.KernelFragment,
+
+		// The rpi tree's downstream slave-DMA convention (clients pass
+		// CPU phys addresses; the DMA core translates them via the DT's
+		// dma-ranges) requires the VideoCore peripheral window that
+		// only the downstream bcm2708/bcm2710 DTs carry. This board
+		// ships the mainline-style bcm2835 DT, so the window is patched
+		// in — without it every sdhost DMA transfer fails and the SD
+		// card is unusable (bean gosd-1ey5).
+		DTSPatches: loadPatches(pizerowmanifest.PatchesFS, "kernel/patches"),
 
 		DTB: &DTB{
 			MakeTarget: "dtbs",

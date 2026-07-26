@@ -146,11 +146,17 @@ func TestEmbeddedConfigFragmentsAreNonEmpty(t *testing.T) {
 	}
 }
 
-func TestDTSPatchesOnlyOnRockchipBoards(t *testing.T) {
+// TestDTSPatchesOnlyOnExpectedBoards guards against DTS patches silently
+// appearing on (or vanishing from) a board: the Rockchip-family boards carry
+// peripheral-enablement patches, and pi-zero-w carries the peripheral
+// dma-ranges window its mainline-style DT lacks (bean gosd-1ey5). Every
+// other board must build its device tree unpatched.
+func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 	wantPatched := map[string]bool{
 		"radxa-zero-3e": true,
 		"nanopi-zero2":  true,
 		"rock-4se":      true,
+		"pi-zero-w":     true,
 	}
 
 	for _, id := range allBoardIDs {

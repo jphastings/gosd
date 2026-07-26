@@ -11,8 +11,10 @@ see `beans list` for what's in flight.
 > device." Hardware bring-up for the Pi Zero 2W and Radxa Zero 3E is tracked
 > by beans `gosd-m9dj` and `gosd-nlzf`; until those close, treat every ✅ as
 > "should work" rather than "confirmed working." The Pi Zero W is the same:
-> code-complete and fake-artifact-tested (bean `gosd-et0q`), no bring-up bean
-> filed yet. The NanoPi Zero2 is the same again: code-complete and
+> code-complete and fake-artifact-tested (bean `gosd-et0q`), with hardware
+> bring-up in progress (bean `gosd-qltr`: serial console proven on the bench;
+> the SD-card DMA fix from bean `gosd-1ey5` still awaits bench validation and
+> an artifact release). The NanoPi Zero2 is the same again: code-complete and
 > fake-artifact-tested (bean `gosd-wskc`), with hardware bring-up tracked by
 > bean `gosd-odp7`. The Radxa ROCK 4SE's own bring-up only exercised a subset
 > of this table's rows (see the footnotes below for exactly which); every
