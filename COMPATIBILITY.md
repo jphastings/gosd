@@ -262,7 +262,12 @@ see `beans list` for what's in flight.
 
 [^no-emmc]: Neither Raspberry Pi board has onboard eMMC — this is a hardware
     limitation of both boards, not a GoSD gap. The `emmc` package's
-    `FormatAndMount` returns `ErrNoEMMC` on these boards.
+    `FormatAndMount` returns `ErrNoEMMC` on these boards. An app that wants
+    USB-shareable storage here uses the SD card's `GOSD-DATA` partition
+    instead (`gosd build --data-size`): `examples/usbwebsite` falls back to
+    it on `ErrNoEMMC` automatically, serving from gosd-init's `/data` mount
+    and handing the raw partition to `gadget.MassStorage` when a computer is
+    attached (bean `gosd-4ajn`).
 
 [^emmc]: The `emmc` package (public API, see `docs/runtime.md`'s "Onboard
     eMMC" section) auto-discovers the board's onboard eMMC — distinguishing

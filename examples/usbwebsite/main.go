@@ -1,21 +1,26 @@
-// Command usbwebsite turns a GoSD board with onboard eMMC into a tiny
-// self-contained website appliance that you edit by USB. On a standalone boot
-// it serves the eMMC's contents as a static website over HTTP; plugged into a
-// computer it presents that same eMMC as a removable USB drive, so you can drop
-// or edit the site's files, then power it standalone again to serve them.
+// Command usbwebsite turns a GoSD board into a tiny self-contained website
+// appliance that you edit by USB. On a standalone boot it serves its storage
+// volume's contents as a static website over HTTP; plugged into a computer it
+// presents that same volume as a removable USB drive, so you can drop or edit
+// the site's files, then power it standalone again to serve them.
+//
+// The volume is the onboard eMMC on boards that have one fitted, and
+// otherwise the SD card's GOSD-DATA partition — so eMMC-less boards like the
+// Raspberry Pi Zeros work too, as long as the image was built with
+// `gosd build --data-size` (which creates that partition pre-formatted; the
+// app never formats anything on the SD card). The board must be built with
+// `gosd build --usb-gadget` so its USB port is in peripheral mode (see
+// COMPATIBILITY.md for current per-board status). Without either volume it
+// logs what to do and idles rather than exiting; without a USB controller it
+// just serves.
 //
 // It demonstrates gadget.MassStorage (sharing a block device over USB) on top
-// of the emmc package (which reports the device backing its mount). The board
-// must be built with `gosd build --usb-gadget` so its USB port is in peripheral
-// mode, and must have onboard eMMC fitted and a USB gadget controller (see
-// COMPATIBILITY.md for current per-board status). Without eMMC it logs that
-// plainly and idles rather than exiting; without a USB controller it just
-// serves.
-//
-// The USB-vs-website decision is made once per boot: presenting the drive and
-// mounting it locally must never be live at the same time (the host writes raw
-// blocks with no knowledge of our filesystem), so the app either hands the
-// device to a connected computer or keeps it mounted to serve — never both.
+// of the emmc package and gosd-init's GOSD-DATA auto-mount. The
+// USB-vs-website decision is made once per boot: presenting the drive and
+// mounting it locally must never be live at the same time (the host writes
+// raw blocks with no knowledge of our filesystem), so the app either hands
+// the device to a connected computer or keeps it mounted to serve — never
+// both.
 //
 // A board whose eMMC already holds other content (a vendor image, a prior
 // project) needs explicit consent before this app claims it: set the
@@ -24,6 +29,8 @@
 // reformat that eMMC. Without consent it leaves the eMMC untouched, logs
 // what to do about it, and idles rather than exiting — gosd-init restarts
 // exited apps regardless of exit code, so exiting here would just crash-loop.
+// The GOSD-DATA path needs no such consent: that partition is created by
+// `gosd build` for app data, and this app only ever mounts and shares it.
 package main
 
 import (
@@ -40,9 +47,16 @@ import (
 )
 
 const (
-	label      = "WEBSITE"
-	mountpoint = "/storage"
-	httpAddr   = ":80"
+	emmcLabel      = "WEBSITE"
+	emmcMountpoint = "/storage"
+	httpAddr       = ":80"
+
+	// dataMountpoint is where gosd-init mounts the GOSD-DATA partition on
+	// every boot; bootMountpoint is where it mounts GOSD-BOOT (partition 1
+	// of the same disk), from which the data partition's device node can be
+	// derived when it isn't currently mounted.
+	dataMountpoint = "/data"
+	bootMountpoint = "/boot"
 
 	// wipeConsentEnv is the gosd.toml [env] var (see docs/runtime.md's "App
 	// environment variables") a user sets to let usbwebsite claim an eMMC
@@ -69,26 +83,30 @@ const (
 	readHeaderTimeout = 10 * time.Second
 )
 
-func main() {
-	destructive := wipeConsented()
-	res := <-emmc.FormatAndMount(label, mountpoint, destructive)
-	if res.Err != nil {
-		switch {
-		case errors.Is(res.Err, emmc.ErrNoEMMC):
-			fmt.Println("gosd usbwebsite: no onboard eMMC on this board; this example needs a board with eMMC fitted")
-			idleForever()
-		case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
-			fmt.Printf("gosd usbwebsite: %v\n", res.Err)
-			fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
-			idleForever()
-		default:
-			fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
-			os.Exit(1)
-		}
-	}
-	fmt.Printf("gosd usbwebsite: %s ready at %s (device %s)\n", label, res.MountPoint, res.BlockDevice)
+// storage is the volume this boot serves and shares: where its filesystem is
+// mounted, the block device behind it (handed raw to gadget.MassStorage),
+// and how to release and restore the mount when switching between the two —
+// which differs between the eMMC and GOSD-DATA backings.
+type storage struct {
+	mountpoint string
+	device     string
+	// source names the backing for log lines, e.g. "onboard eMMC".
+	source  string
+	unmount func() error
+	remount func() error
+}
 
-	if presentedAsDrive(res) {
+func main() {
+	st, ok := claimStorage()
+	if !ok {
+		// claimStorage has logged the outside action needed (consent, or a
+		// rebuild with --data-size); idle so gosd-init's restart-on-exit
+		// doesn't crash-loop us while we wait for it.
+		idleForever()
+	}
+	fmt.Printf("gosd usbwebsite: %s ready at %s (device %s)\n", st.source, st.mountpoint, st.device)
+
+	if presentedAsDrive(st) {
 		// A computer is editing the files; stay a drive until it is unplugged
 		// and the board reboots. Serving now would fight the host for the
 		// device.
@@ -97,7 +115,148 @@ func main() {
 		idleForever()
 	}
 
-	serveWebsite(res.MountPoint)
+	serveWebsite(st.mountpoint)
+}
+
+// claimStorage picks this boot's website volume: the onboard eMMC when the
+// board has one (formatted on first use, with the same consent gate as
+// before), otherwise the SD card's GOSD-DATA partition, which `gosd build
+// --data-size` creates pre-formatted and gosd-init mounts at /data. It
+// returns ok=false — after logging the action that would fix it — when the
+// board has neither volume or the eMMC needs consent the user hasn't given;
+// unexpected errors exit so gosd-init restarts (and thereby retries) the app.
+func claimStorage() (storage, bool) {
+	destructive := wipeConsented()
+	res := <-emmc.FormatAndMount(emmcLabel, emmcMountpoint, destructive)
+	switch {
+	case res.Err == nil:
+		return storage{
+			mountpoint: res.MountPoint,
+			device:     res.BlockDevice,
+			source:     "onboard eMMC (" + emmcLabel + ")",
+			unmount:    func() error { return emmc.Unmount(res.MountPoint) },
+			// FormatAndMount is idempotent here: it only remounts, never
+			// reformats, an eMMC that already carries this app's label.
+			remount: func() error {
+				r := <-emmc.FormatAndMount(emmcLabel, emmcMountpoint, false)
+				return r.Err
+			},
+		}, true
+	case errors.Is(res.Err, emmc.ErrNoEMMC):
+		return claimDataPartition()
+	case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
+		fmt.Printf("gosd usbwebsite: %v\n", res.Err)
+		fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
+		return storage{}, false
+	default:
+		fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
+		os.Exit(1)
+	}
+	return storage{}, false // unreachable: every case above returns or exits
+}
+
+// claimDataPartition claims the SD card's GOSD-DATA partition as the website
+// volume. gosd-init normally has it mounted at /data already; when it isn't
+// mounted but its device node exists (a mount raced or failed at boot, or a
+// warm restart after this app released it), the partition is mounted here.
+// Nothing on this path ever formats or relabels the partition — it was
+// created for app data by `gosd build`, and hosts only ever see the
+// filesystem it already carries.
+func claimDataPartition() (storage, bool) {
+	part, err := findDataPartition()
+	if err != nil {
+		fmt.Println("gosd usbwebsite: no onboard eMMC on this board, and no GOSD-DATA partition to fall back to")
+		fmt.Printf("gosd usbwebsite: %v\n", err)
+		fmt.Println("gosd usbwebsite: rebuild the image with `gosd build --usb-gadget --data-size 256MiB` (or larger) to give the website somewhere to live")
+		return storage{}, false
+	}
+	if !part.mounted {
+		if err := mountVFAT(part.device, dataMountpoint); err != nil {
+			fmt.Printf("gosd usbwebsite: the GOSD-DATA partition (%s) exists but could not be mounted: %v\n", part.device, err)
+			fmt.Println("gosd usbwebsite: its filesystem may be damaged — repair it on a computer, or reflash the image")
+			return storage{}, false
+		}
+	}
+	return storage{
+		mountpoint: dataMountpoint,
+		device:     part.device,
+		source:     "SD card GOSD-DATA partition",
+		unmount:    func() error { return unmountVFAT(dataMountpoint) },
+		remount:    func() error { return mountVFAT(part.device, dataMountpoint) },
+	}, true
+}
+
+// dataPartition locates the GOSD-DATA partition: the device node backing it
+// and whether it is currently mounted at dataMountpoint.
+type dataPartition struct {
+	device  string
+	mounted bool
+}
+
+// procMounts is the kernel's mount table, read to locate the GOSD-DATA
+// partition and whether gosd-init already mounted it.
+const procMounts = "/proc/mounts"
+
+// findDataPartition locates the GOSD-DATA partition on the booted disk and
+// reports whether it's currently mounted at dataMountpoint. An error means
+// there is none to use — the caller's cue that this image was built without
+// `--data-size`.
+func findDataPartition() (dataPartition, error) {
+	raw, err := os.ReadFile(procMounts)
+	if err != nil {
+		return dataPartition{}, fmt.Errorf("reading %s: %w", procMounts, err)
+	}
+	part, ok := dataPartitionFromMounts(string(raw))
+	if !ok {
+		return dataPartition{}, fmt.Errorf("nothing is mounted at %s and no boot disk shows in %s to derive it from", dataMountpoint, procMounts)
+	}
+	if !part.mounted {
+		if _, err := os.Stat(part.device); err != nil {
+			return dataPartition{}, fmt.Errorf("this image has no data partition (%s does not exist)", part.device)
+		}
+	}
+	return part, nil
+}
+
+// dataPartitionFromMounts finds the GOSD-DATA partition in a mount table
+// (/proc/mounts format): the block device mounted at dataMountpoint when
+// gosd-init mounted it at boot, otherwise the second partition of the disk
+// the boot partition mounted from — the same p1→p2 relationship gosd-init's
+// own candidate device lists encode. The read-only tmpfs gosd-init mounts
+// over /data when no partition mounted is not a block device and never
+// matches. Later mount entries win, matching the kernel's stacking order.
+func dataPartitionFromMounts(mounts string) (dataPartition, bool) {
+	var dataDevice, bootDevice string
+	for _, line := range strings.Split(mounts, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.HasPrefix(fields[0], "/dev/") {
+			continue
+		}
+		switch fields[1] {
+		case dataMountpoint:
+			dataDevice = fields[0]
+		case bootMountpoint:
+			bootDevice = fields[0]
+		}
+	}
+	if dataDevice != "" {
+		return dataPartition{device: dataDevice, mounted: true}, true
+	}
+	if sibling := secondPartition(bootDevice); sibling != "" {
+		return dataPartition{device: sibling}, true
+	}
+	return dataPartition{}, false
+}
+
+// secondPartition maps a boot-partition device node to its disk's second
+// partition — "/dev/mmcblk0p1" to "/dev/mmcblk0p2", "/dev/vda1" to
+// "/dev/vda2" — or "" when dev isn't a first-partition node.
+func secondPartition(dev string) string {
+	base, ok := strings.CutSuffix(dev, "1")
+	if !ok || base == "" {
+		return ""
+	}
+	return base + "2"
 }
 
 // wipeConsented reports whether the user has opted in, via wipeConsentEnv, to
@@ -130,13 +289,13 @@ func idleForever() {
 	}
 }
 
-// presentedAsDrive tries to hand the eMMC to a connected computer as a USB
-// mass-storage drive. It returns true only if a computer actually enumerated
-// and configured it. On every other outcome — no USB gadget controller, no
-// cable, a power-only supply, or a setup error — it leaves (or restores) the
-// eMMC mounted at res.MountPoint and returns false, so the caller serves the
-// website instead.
-func presentedAsDrive(res emmc.Result) bool {
+// presentedAsDrive tries to hand the storage volume to a connected computer
+// as a USB mass-storage drive. It returns true only if a computer actually
+// enumerated and configured it. On every other outcome — no USB gadget
+// controller, no cable, a power-only supply, or a setup error — it leaves
+// (or restores) the volume mounted at st.mountpoint and returns false, so
+// the caller serves the website instead.
+func presentedAsDrive(st storage) bool {
 	udc, err := firstUDC()
 	if err != nil {
 		fmt.Printf("gosd usbwebsite: not offering a USB drive (%v)\n", err)
@@ -150,8 +309,8 @@ func presentedAsDrive(res emmc.Result) bool {
 
 	// Give up our mount of the device before exposing it: a mass-storage LUN
 	// and a local mount of the same block device must never be live at once.
-	if err := emmc.Unmount(res.MountPoint); err != nil {
-		fmt.Printf("gosd usbwebsite: could not release %s to share it (%v); serving instead\n", res.MountPoint, err)
+	if err := st.unmount(); err != nil {
+		fmt.Printf("gosd usbwebsite: could not release %s to share it (%v); serving instead\n", st.mountpoint, err)
 		return false
 	}
 
@@ -162,12 +321,12 @@ func presentedAsDrive(res emmc.Result) bool {
 		Product:      "GoSD Website Storage",
 		Serial:       "usbwebsite-example",
 		Functions: []gadget.Function{
-			gadget.MassStorage{Path: res.BlockDevice, Removable: true},
+			gadget.MassStorage{Path: st.device, Removable: true},
 		},
 	}
 	if err := g.Apply(); err != nil {
 		fmt.Printf("gosd usbwebsite: presenting the USB drive failed (%v); serving instead\n", err)
-		remount()
+		remount(st)
 		return false
 	}
 
@@ -179,12 +338,12 @@ func presentedAsDrive(res emmc.Result) bool {
 	// drive back down, remount, and serve.
 	fmt.Println("gosd usbwebsite: no computer enumerated the drive; serving the website instead")
 	_ = g.Close()
-	remount()
+	remount(st)
 	return false
 }
 
-// serveWebsite serves dir as a static site forever. A freshly formatted eMMC
-// has no index.html, so it drops in a starter page first.
+// serveWebsite serves dir as a static site forever. A brand-new volume has no
+// index.html, so it drops in a starter page first.
 func serveWebsite(dir string) {
 	ensureStarterPage(dir)
 	fmt.Printf("gosd usbwebsite: serving %s on %s\n", dir, httpAddr)
@@ -210,10 +369,11 @@ func ensureStarterPage(dir string) {
 	const starter = `<!doctype html>
 <title>GoSD usbwebsite</title>
 <h1>It works!</h1>
-<p>This page is served by a GoSD board from its onboard eMMC.</p>
+<p>This page is served by a GoSD board from its website storage.</p>
 <p>Plug the board into a computer over USB and it appears as a removable drive
-labelled WEBSITE. Replace this index.html (and add whatever else you like),
-eject the drive, then power the board on its own again to serve your site.</p>
+(labelled WEBSITE when backed by onboard eMMC, GOSD-DATA when backed by the SD
+card). Replace this index.html (and add whatever else you like), eject the
+drive, then power the board on its own again to serve your site.</p>
 `
 	if err := os.WriteFile(index, []byte(starter), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "gosd usbwebsite: could not write the starter page: %v\n", err)
@@ -256,11 +416,10 @@ func awaitConfigured(udc string, timeout time.Duration) bool {
 	return false
 }
 
-// remount restores the eMMC mount after the drive is torn down. It is
-// idempotent: FormatAndMount only remounts, never reformats, an eMMC that
-// already carries this app's label.
-func remount() {
-	if res := <-emmc.FormatAndMount(label, mountpoint, false); res.Err != nil {
-		fmt.Fprintf(os.Stderr, "gosd usbwebsite: remounting %s failed: %v\n", mountpoint, res.Err)
+// remount restores the volume's local mount after the drive is torn down, so
+// the fall-back-to-serving path has a filesystem to serve.
+func remount(st storage) {
+	if err := st.remount(); err != nil {
+		fmt.Fprintf(os.Stderr, "gosd usbwebsite: remounting %s failed: %v\n", st.mountpoint, err)
 	}
 }

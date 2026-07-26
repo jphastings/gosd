@@ -582,11 +582,13 @@ all) is planned for later.
   the same time; expose or mount, not both. It needs
   `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
   COMPATIBILITY.md's USB gadget footnote for per-board status.
-- See `examples/usbwebsite` for a worked example that combines it with the
-  `emmc` package: it serves the onboard eMMC as a static website, but presents
-  that same eMMC as a USB drive when plugged into a computer so the site can be
-  edited. `emmc.FormatAndMount` returns the device backing the mount, and
-  `emmc.Unmount` releases it so `gadget.MassStorage` can take it exclusively.
+- See `examples/usbwebsite` for a worked example: it serves a storage volume
+  as a static website, but presents that same volume as a USB drive when
+  plugged into a computer so the site can be edited. The volume is the
+  onboard eMMC where one is fitted (`emmc.FormatAndMount` returns the device
+  backing the mount, and `emmc.Unmount` releases it so `gadget.MassStorage`
+  can take it exclusively) and otherwise the SD card's `GOSD-DATA` partition
+  (build with `--data-size`), which is how the eMMC-less Pi Zeros run it.
 
 ## Serial console baud rate (`--console-baud`)
 
