@@ -1,7 +1,7 @@
 ---
 # gosd-6nl2
 title: 'pi-zero-w WiFi: nl80211 CONNECT rejected with EINVAL — 43430 firmware-supplicant capability suspected'
-status: in-progress
+status: completed
 type: bug
 created_at: 2026-07-26T04:10:40Z
 updated_at: 2026-07-26T05:21:15Z
@@ -100,3 +100,15 @@ Bench validation still pending (next zero-w session):
 - [ ] CONNECT accepted → association with the bench AP
 - [ ] hello.local resolves over WiFi
 - [ ] Then the usual artifacts-release batching for the fragment changes
+
+
+## Bench validation (2026-07-26 morning) — FIX PROVEN, bean complete
+
+Rebuilt kernel (SDHCI_IPROC=y, hwsim off, verified in emitted config; dma-
+ranges patch intact). Boot: brcmfmac dmesg present for the first time on
+this board (`Firmware: BCM43430/1 wl0 ... 7.45.98 (TOB)` — and the TOB blob
+DID do the offloaded handshake, settling the verification caveat), real
+radio as plain wlan0, `connect accepted` → lease → mDNS → hello.local
+HTTP 200. The Zero W is on WiFi with GoSD's stock stack. Artifacts-release
+batching carries the fragment changes to real builds (gosd-36yy/gosd-7wv9
+window), same as gosd-md4w and gosd-1ey5.

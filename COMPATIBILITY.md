@@ -200,6 +200,11 @@ see `beans list` for what's in flight.
     from upstream's Cypress-branded `cyfmac43430-sdio.*`, per bean
     `gosd-06kj`'s findings) plus its board-specific alias names, flattened
     into `/lib/firmware/brcm` the same way pi-zero-2w's are.
+    Hardware-verified 2026-07-26 (bean `gosd-qltr`): WPA2-PSK join via the
+    firmware-offloaded handshake, DHCP, mDNS and HTTP all work on a real
+    Zero W — after three kernel fixes found during bring-up (`gosd-md4w`
+    console, `gosd-1ey5` SD DMA, `gosd-6nl2` phantom-radio/SDIO-controller),
+    which reach released artifacts at the next artifacts version.
 
 [^no-radio]: The Radxa Zero 3E has no WiFi radio — its kernel build carries
     no `cfg80211`/`brcmfmac`-equivalent driver, and its board profile
