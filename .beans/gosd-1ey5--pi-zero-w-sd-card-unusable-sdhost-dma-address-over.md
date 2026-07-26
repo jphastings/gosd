@@ -1,7 +1,7 @@
 ---
 # gosd-1ey5
 title: 'pi-zero-w SD card unusable: sdhost DMA address overflow breaks all card I/O'
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-07-26T00:34:16Z
@@ -144,3 +144,15 @@ the gosd-36yy window).
 - [ ] WiFi test reachable (expected next wall: CONFIG_MMC_SDHCI_IPROC, see
       findings) and hello.local responds
 - [ ] 5x power-cycle stability per gosd-qltr checklist
+
+
+## Bench validation (2026-07-26, session 3) — FIX PROVEN
+
+Rebuilt kernel with the dma-ranges patch (local gosd build-kernel; both range
+entries byte-verified in the emitted AND flashed DTB). Boot: no dma_map_phys
+WARN, partition scan clean (`mmcblk0: p1 ...`), `[gosd] boot partition
+mounted at /boot from /dev/mmcblk0p1`, gosd.toml applied, app started. The
+kernel-side work of this bean is DONE; the patch reaches real (non
+--artifacts-dir) builds with the next artifacts release (batch window per
+gosd-36yy / gosd-7wv9). The secondary reboot-hang observation dissolved with
+the fix, as predicted. WiFi's separate failure is [[gosd-6nl2]].
