@@ -20,6 +20,8 @@ say so in the bean rather than silently diverging.
 - `beans update` applies only the LAST `--body-replace-old/--body-replace-new`
   pair per invocation (the GraphQL path differs). Do one replacement per call,
   and check off todos one at a time.
+- `beans create` takes the title as a POSITIONAL argument
+  (`beans create "Title" -t bug`) — there is no `--title` flag.
 - `beans create --json` returns the new id at `.bean.id`, NOT `.id` —
   `jq -r .id` silently yields `null`, which then cascades into confusing
   "parent bean not found: null" errors.
@@ -113,7 +115,14 @@ say so in the bean rather than silently diverging.
   buildable until its board profile is registered — `RegisterInternal` is
   enough (keeps it out of default all-boards builds, like qemu-virt), so the
   board-profile bean's registration is a de-facto prerequisite of the kernel
-  bean's build even when the plan sequences them the other way. Adding a
+  bean's build even when the plan sequences them the other way. The reverse
+  transition (internal → public) happens in ONE activation PR together with
+  the `artifacts.Version` bump, only after the board's first artifacts
+  release is published (pattern proven by gosd-7wv9; the pi-zero-w
+  activation once went public before its tag existed and turned CI red).
+  Pre-merge-test a new board's artifacts CI job by `workflow_dispatch`-ing
+  `build-artifacts.yml` on the PR branch — the tag run must not be the job's
+  first execution. Adding a
   `kernelspec` entry also means updating the board-enumerating test lists in
   `internal/kernelspec/kernelspec_test.go` (the board-count list, the Rockchip
   DTS-patch allowlist, and the kernelspec-outputs-vs-Artifacts board map).
@@ -139,7 +148,9 @@ say so in the bean rather than silently diverging.
   `internal/artifacts.Version` in the same PR — bumping to an unpublished tag
   turns the qemu boot-to-HTTP CI job red. JP pushes the tag; then a separate
   follow-up PR bumps `Version` and verifies against the real release. Full
-  procedure in `docs/artifacts.md`.
+  procedure in `docs/artifacts.md`. Releases are cheap — cut an interim one
+  rather than queueing bench-blocking fixes for a planned window (v0.7.0 and
+  v0.8.0 shipped hours apart, 2026-07-26).
 - **Verify an artifact bump three ways, recorded in the bean:** clean-machine
   build (fresh `HOME`, no `--board`/`--artifacts-dir` → all public images from
   a real download), offline re-run (dead proxy → succeeds entirely from cache),
@@ -152,9 +163,35 @@ say so in the bean rather than silently diverging.
   accepted compatible for SPI) — NOT a runtime overlay, because our pinned
   U-Boots lack `OF_LIBFDT_OVERLAY`. Confirm each patch applies against the
   pinned kernel tag; a Rockchip DTS/config change triggers the release dance
-  above.
-- All boards pin the SAME kernel tag ("the fleet tag") — bump them together,
-  never one board in isolation. Kernel/U-Boot Docker builds take 20-60 min:
+  above. That no-overlay constraint is **Rockchip-only**: Pi firmware
+  applies overlays natively, and when a Pi feature needs one (e.g.
+  `--usb-gadget` ships `overlays/dwc2.dtbo`, bean gosd-spjt) the `.dtbo` is
+  pinned in the board manifest from the same raspberrypi/firmware commit as
+  the GPU boot files — never assume the rule transfers between families.
+- **Audit what a Pi defconfig hands you — three hardware-found traps in one
+  week (2026-07):** bcmrpi/bcm2711 defconfigs ship `=m` drivers that the
+  no-modules build promotes to `=y`, smuggling in unwanted built-ins
+  (`mac80211_hwsim`'s phantom wlan0/wlan1 radios stole wifiup's interface
+  pick — gosd-6nl2; the legacy gadget zoo claimed the only UDC as "Gadget
+  Zero" before any configfs gadget could — gosd-spjt), and ship values that
+  silently assume Pi-firmware cmdline injection
+  (`SERIAL_8250_RUNTIME_UARTS=0` left the Zero W with no console at all —
+  gosd-md4w). When adding a Pi board or touching its fragment, grep the
+  recorded kernel.config for surprises and disable explicitly.
+- **Know a Pi DTB's lineage before trusting driver bindings:** the pinned
+  rpi tree builds both mainline-style DTBs (`bcm2835-*`) and downstream-style
+  ones (`bcm2710-*`) with different compatibles and conventions. The
+  downstream kernel's DMA path needs the downstream soc `dma-ranges`
+  (gosd-1ey5 patches it into the Zero W's mainline-style DTB), and a usb
+  node's compatible decides `dwc_otg` (downstream, host-only in practice)
+  vs `dwc2` (mainline, gadget-capable) — opposite gadget outcomes
+  (gosd-spjt). Check which driver a node's compatible binds at the pin.
+- Kernel pins are **per-family**, bumped family-wide, never one board alone:
+  the Rockchip boards + qemu-virt share one mainline stable tag
+  (`internal/kernelspec`'s `fleetKernelTag`), while the Pi boards share one
+  raspberrypi/linux **commit** pin (`piZeroCommitRef` — a DOWNSTREAM-tree
+  pin, not mainline; assuming the Pis ran mainline sent gosd-anyp's research
+  down a dead end for a day). Kernel/U-Boot Docker builds take 20-60 min:
   run them backgrounded and poll the log, never in a foreground shell.
 
 ## Quality gates — run ALL of these before every commit/PR
@@ -178,6 +215,13 @@ say so in the bean rather than silently diverging.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
 - Comments only where code can't explain itself; docstrings on exported API.
 - Board or feature status changes must update COMPATIBILITY.md in the same PR.
+- Raw netlink via `mdlayher/netlink` MUST OR `netlink.Request` into
+  Execute/Send flags — the library does not add it, and the kernel silently
+  SKIPS non-Request messages while still returning a success ack when
+  `NLM_F_ACK` is set (a no-op dressed as success; with neither flag the call
+  hangs forever). Two bench days went to this (gosd-anyp);
+  `wifiup/connect_linux_test.go` pins the pattern — mirror it for any new
+  raw-netlink call.
 - gosd-init runtime code follows one shape: pure logic behind a small interface
   seam with fake-driven tests that pass on macOS; real syscalls isolated in
   `platform_linux.go` (`//go:build linux`) with `platform_other.go` stubs. New
