@@ -4,3 +4,6 @@
 
 # nix build's output symlink
 /result
+
+# Don't track any built images
+*.img
