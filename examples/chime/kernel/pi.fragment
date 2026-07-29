@@ -1,0 +1,60 @@
+# examples/chime overlay fragment for the Raspberry Pi boards: bring back the
+# ALSA core GoSD's stock kernels cut, with *only* the VideoCore firmware audio
+# driver (snd_bcm2835) compiled in. That driver routes PCM to HDMI (and, on
+# boards that have one, the analog jack) through the mailbox/VCHIQ firmware
+# interface, so audio needs no DRM and no ASoC here — merged after
+# build/boards/<board>/kernel.fragment (overlay wins).
+#
+# CONFIG_BCM2835_VCHIQ and CONFIG_RASPBERRYPI_FIRMWARE are already =y in every
+# stock GoSD Pi kernel, so this fragment adds the sound core and nothing else.
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_BCM2835=y
+
+# snd_bcm2835 creates its "bcm2835 Headphones" card unconditionally, but only
+# asks the firmware which HDMI outputs are live (and so only creates
+# "bcm2835 HDMI 1"/"HDMI 2" cards) when its enable_hdmi module parameter is
+# set — see snd_bcm2835_alsa_probe() in
+# drivers/staging/vc04_services/bcm2835-audio/bcm2835.c. GoSD kernels are
+# monolithic, so that parameter has to arrive on the kernel command line as
+# snd_bcm2835.enable_hdmi=1, and an example cannot edit the board's
+# cmdline.txt (the board package renders it). CONFIG_CMDLINE_EXTEND appends
+# our string to whatever the Pi firmware passes, which is the one lever a
+# Kconfig fragment has over the command line. CONFIG_CMDLINE is REPLACED, not
+# extended: the bcmrpi defconfig ships a stock
+# "console=ttyAMA0,115200 ... root=/dev/mmcblk0p2 rootfstype=ext4 rootwait"
+# in it, and appending *that* to GoSD's real cmdline would fight the console
+# and root settings gosd-init depends on.
+CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"
+CONFIG_CMDLINE_EXTEND=y
+# CONFIG_CMDLINE_FROM_BOOTLOADER is not set
+# CONFIG_CMDLINE_FORCE is not set
+
+# Everything below is a deny-list, and it is the load-bearing half of this
+# file. The raspberrypi defconfigs ship the whole Pi audio ecosystem as =m,
+# and GoSD kernels are monolithic (CONFIG_MODULES is always off), so
+# `make olddefconfig` promotes every one of those to =y the moment
+# CONFIG_SND=y appears. Left unstated, a three-line "enable sound" fragment
+# silently compiles in ~60 HAT machine drivers (HiFiBerry, IQaudio, JustBoom,
+# Allo, AudioInjector, Pisound...), every ASoC codec they reference, USB
+# audio, the MIDI sequencer and OSS emulation - measured on the sattrack
+# fragment, whose comment claiming "no codec, machine, or USB audio drivers
+# come with it" is simply wrong (bean gosd-mo5q records the numbers).
+#
+# ASoC is the big one: SND_SOC gates every codec and machine driver above,
+# and snd_bcm2835 is a plain ALSA driver that does not need it.
+# CONFIG_SND_SOC is not set
+
+# Generic ALSA driver menus: dummy/loopback/MIDI-interface cards we have no
+# hardware for.
+# CONFIG_SND_DRIVERS is not set
+# CONFIG_SND_ARM is not set
+# CONFIG_SND_SPI is not set
+# CONFIG_SND_USB is not set
+
+# No MIDI, no sequencer, no OSS emulation, no high-res-timer sound clock:
+# this appliance plays PCM out of one device node.
+# CONFIG_SND_SEQUENCER is not set
+# CONFIG_SND_OSSEMUL is not set
+# CONFIG_SND_HRTIMER is not set
+# CONFIG_SND_SUPPORT_OLD_API is not set

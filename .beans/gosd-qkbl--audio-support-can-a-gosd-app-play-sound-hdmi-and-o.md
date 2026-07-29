@@ -1,0 +1,256 @@
+---
+# gosd-qkbl
+title: 'Audio support: can a GoSD app play sound (HDMI and otherwise)?'
+status: in-progress
+type: epic
+priority: normal
+created_at: 2026-07-29T21:45:08Z
+updated_at: 2026-07-29T21:45:44Z
+---
+
+JP asked, verbatim:
+
+> Does gosd support playing audio? (Particularly over the HDMI port, if there
+> is one; but also over other audio devices)
+
+**Today: no.** Every board's stock kernel carries `# CONFIG_SOUND is not set`
+(`build/boards/{pi-zero-w,pi-zero-2w,pi-3b}/kernel.fragment` state it
+explicitly; the Rockchip boards' recorded `kernel.config`s have it unset too),
+there is no audio code anywhere in the tree, and no doc mentions sound. So a
+GoSD app has no `/dev/snd/*` to open — exactly the position display was in
+before `examples/sattrack`.
+
+It is, however, cheap to add per-app, and on the Pi boards HDMI audio needs
+**no DRM at all** — which was the open question. This epic records the
+research, the measured size numbers, and the one decision that is JP's:
+whether sound stays an opt-in custom-kernel recipe (Route A) or goes into the
+stock released kernels (Route B).
+
+## Three layers, and where each one bites
+
+1. **Kernel**: the ALSA core plus a driver for the specific audio path. Cut
+   from every stock kernel today.
+2. **Device plumbing**: does the driver bind without a DT change? Does it need
+   a module parameter? On the Pi the answers are surprising (below).
+3. **Userspace**: ALSA's `libasound` is C, and GoSD images have no userspace
+   at all — no `/usr/lib`, no `libasound.so.2`, no `/usr/share/alsa`. Playback
+   has to talk the kernel PCM ioctl ABI directly from Go.
+
+## Per-board audio hardware (verified against vendor docs)
+
+| Board | HDMI (audio-capable?) | Analog out | Codec | I2S/other |
+|---|---|---|---|---|
+| pi-zero-w | mini-HDMI, carries audio | **none** (no jack) | — | PCM on GPIO18-21 (pins 12/35/38/40) |
+| pi-zero-2w | mini-HDMI, carries audio | **none** (no jack) | — | same PCM pins |
+| pi-3b | full-size HDMI, carries audio | **yes** — 4-pole 3.5mm jack, PWM-driven from the SoC (not a DAC) | — (PWM) | same PCM pins |
+| radxa-zero-3e | micro-HDMI 2.0, carries audio | none — Radxa: "due to space constraint, Radxa Zero does not have a 3.5mm headphone jack" | none onboard | I2S3 (+I2S1/2 alt) on the 40-pin header |
+| nanopi-zero2 | **no HDMI connector at all** — headless by design | none | none | 2x I2S + SPDIF-Tx on the 30-pin FPC header |
+| rock-4se | full-size HDMI 2.0 (CEC, 4Kp60), carries audio | **yes** — 4-ring 3.5mm jack, drives 32R headphones, doubles as mic in | **ES8316** (ALSA card `rockchip-es8316`) | I2S1 + 2x SPDIF_TX (header pins 15, 32) |
+| qemu-virt | n/a | n/a | n/a | no audio device by default; `-device virtio-sound-pci` (needs `CONFIG_SND_VIRTIO`) or `intel-hda`+`hda-output` over the PCIe root complex |
+
+Sources: raspberrypi.com product pages + Zero 2 W product brief (RP-008359-DS-1)
+for the three Pis; docs.radxa.com `zero/zero3/hardware-design/hardware-interface`
+and `wiki.radxa.com/Zero/hardware/audio` for the 3E; docs.radxa.com
+`rock4/rock4ab-se/...` (its headphone-jack page's own asset is named
+`rock-4se-headphoneJack.webp`) for the 4SE; BCM2835 ARM Peripherals §6.2 for the
+PCM pin mux; qemu docs `system/arm/virt.rst` + `system/devices/virtio/virtio-snd.html`.
+
+**nanopi-zero2 caveat:** FriendlyElec's wiki returns HTTP 403 to automated
+fetches, so "no HDMI" rests on CNX Software's write-up quoting FriendlyElec's
+spec sheet plus reseller listings of the same spec line, and on mainline having
+no RK3528 display stack to speak of. Strongly corroborated, not
+primary-verified — treat the "no HDMI, I2S/SPDIF only" row as the working
+assumption and confirm on the bench.
+
+## Kernel enablement, per family
+
+### Raspberry Pi — HDMI audio without DRM (the good news)
+
+The path is `snd_bcm2835`, the VideoCore firmware audio driver
+(`drivers/staging/vc04_services/bcm2835-audio`, pinned commit
+`63598c83153e19b1f99067ab6df7409de2c111f8`). Three facts, each read from the
+pinned source rather than assumed:
+
+- **Kconfig:** `depends on (ARCH_BCM2835 || COMPILE_TEST) && SND`,
+  `select SND_PCM`, `select BCM2835_VCHIQ if HAS_DMA`. **No `SND_SOC`
+  dependency** — no ASoC, no codec drivers, no DRM. `CONFIG_BCM2835_VCHIQ=y`
+  and `CONFIG_RASPBERRYPI_FIRMWARE=y` are already in every stock GoSD Pi
+  kernel, so the sound core is the only thing missing.
+- **No device tree needed.** `snd_bcm2835_alsa_probe(struct vchiq_device *)`
+  is a **VCHIQ bus** driver, not an OF/platform driver, and
+  `vchiq_arm.c` calls `vchiq_device_register(&pdev->dev, "bcm2835-audio")`
+  unconditionally. So `dtparam=audio=on` is *not* required at this commit, and
+  no DTS patch is needed — which matters most for pi-zero-w, whose
+  mainline-style `bcm2835-rpi-zero-w.dts` chain has no `audio` node and no
+  `__overrides__` block for the firmware's `dtparam` mechanism to patch (the
+  same lineage trap CLAUDE.md records for DMA and USB).
+- **HDMI needs one module parameter.** `probe()` only calls
+  `set_hdmi_enables()` — which asks the firmware
+  `FRAMEBUFFER_GET_NUM_DISPLAYS`/`GET_DISPLAY_ID` and enables the
+  `bcm2835 HDMI 1`/`HDMI 2` cards for display ids 2/7 — `if (enable_hdmi &&
+  !of_property_read_bool(dev->of_node, "brcm,disable-hdmi"))`. `enable_hdmi`
+  defaults to **false**; `enable_headphones` defaults to true. GoSD kernels are
+  monolithic, so the parameter has to arrive on the kernel command line as
+  `snd_bcm2835.enable_hdmi=1`, and an *example* cannot edit `cmdline.txt`
+  (the board package renders it). A Kconfig fragment can, via
+  `CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"` + `CONFIG_CMDLINE_EXTEND=y`
+  (replacing, not extending, the defconfig's stock `CONFIG_CMDLINE`, which
+  carries `console=`/`root=` values that would fight gosd-init's). See
+  gosd-mf3a for the missing general surface.
+
+Because the firmware — not the kernel — owns HDMI on GoSD Pi images (no
+`dtoverlay=vc4-kms-v3d`, DRM cut), this path is exactly the supported
+configuration: raspberrypi/linux commit `1a2b5dca0575` ("snd_bcm2835: disable
+HDMI audio when vc4 is used") adds `brcm,disable-hdmi` precisely so the
+firmware driver *stands down* when KMS is loaded, "things don't work too well
+when both the vc4 driver and the firmware driver are trying to control the same
+audio output". GoSD never loads KMS, so `snd_bcm2835` keeps HDMI. The
+corollary is a real constraint: an HDMI display must be **connected and
+detected at boot**, since card creation depends on the firmware's live display
+enumeration.
+
+Analog: `bcm2835 Headphones` appears unconditionally, but only the pi-3b has a
+jack wired to it. On pi-zero-w/2w it is a card that plays into nothing.
+
+Minimal fragment (three lines) plus a deny-list — see below for why the
+deny-list is the load-bearing half.
+
+### Rockchip — HDMI audio *does* need DRM
+
+HDMI audio on RK3399/RK3566 is a codec hanging off the Synopsys DesignWare
+HDMI bridge (`CONFIG_DRM_DW_HDMI_I2S_AUDIO`, under
+`drivers/gpu/drm/bridge/synopsys/`), driven through `SND_SOC` +
+`SND_SOC_HDMI_CODEC` and wired in the DT as an `hdmi-sound`/`hdmi_sound` graph
+node. That means the whole DRM subsystem plus ASoC plus a DTS patch (our pinned
+U-Boots have no `OF_LIBFDT_OVERLAY`, so runtime overlays are not an option —
+CLAUDE.md's Rockchip rule). The 4SE's **analog** ES8316 path needs ASoC +
+`SND_SOC_ES8316` + `SND_SOC_ROCKCHIP_I2S` + a simple-card/graph-card node, but
+**no DRM**. nanopi-zero2 (RK3528) has neither HDMI nor an analog jack, so its
+only audio is I2S/SPDIF off the FPC header. Scoped out of the first example and
+tracked as gosd-lrxz.
+
+## Measured size evidence (the crux of the fork)
+
+All numbers are real bytes from `gosd build-kernel` outputs in the
+content-addressed cache (`~/Library/Application Support/gosd/kernel-build/`),
+same pinned tree, same board, differing only in the overlay fragment.
+
+**pi-zero-w** (`kernel.img`, a self-compressing armv6 zImage — GoSD's
+smallest, most size-sensitive kernel):
+
+| Kernel | Bytes | Delta vs stock |
+|---|---|---|
+| stock (`# CONFIG_SOUND is not set`) | 16,484,032 | — |
+| `examples/sattrack` (DRM + vc4 + its "minimal" sound) | 17,760,952 | +1,276,920 (+7.7%) |
+| examples/chime (sound only, no DRM, deny-listed) | MEASURED_CHIME | MEASURED_CHIME_DELTA |
+
+For scale, the whole published `pi-zero-w.tar.zst` artifact is 16,497,070
+bytes (artifacts/v0.8.0) — the kernel *is* the artifact.
+
+**The sattrack number is a cautionary tale, not the cost of sound.** Its
+fragment enables `CONFIG_SOUND=y`/`SND=y`/`SND_SOC=y` to satisfy `DRM_VC4`'s
+hard dependency, with a comment claiming "no codec, machine, or USB audio
+drivers come with it". That is **false**: reading the built
+`kernel.config` out of the cache, that three-line re-enable silently compiled
+in the entire raspberrypi/linux audio ecosystem — ~60 HAT machine drivers
+(HiFiBerry x8, IQaudio, JustBoom, Allo x5, AudioInjector x3, Pisound, Cirrus,
+DionAudio, FE-Pi...), ~45 ASoC codec drivers, USB audio (`SND_USB_AUDIO`,
+UA101, Caiaq, 6fire, HiFace, Line6), the MIDI sequencer stack, OSS emulation,
+`SND_DUMMY`/`SND_ALOOP`, and `SND_BCM2835` itself. Cause: the raspberrypi
+defconfigs ship all of that as `=m`, and GoSD kernels are monolithic
+(`CONFIG_MODULES` always off), so `make olddefconfig` promotes every `=m` to
+`=y` the moment `CONFIG_SND=y` appears. Precisely CLAUDE.md's "audit what a Pi
+defconfig hands you" trap, hit a fourth time. Tracked as gosd-df57.
+
+So the honest comparison is stock vs a *deliberate* sound config: ALSA core +
+`snd_bcm2835` + an explicit deny-list (`# CONFIG_SND_SOC is not set` alone
+kills every codec and machine driver, since ASoC gates them all).
+
+## Pure-Go playback: chosen approach
+
+**Chosen: talk the kernel's ALSA PCM ioctl ABI directly**, in ~250 lines
+behind a small interface seam, using `golang.org/x/sys/unix` (already a
+dependency) and `unsafe` only for the ioctl argument pointers. The minimal
+blocking path is genuinely small: open `/dev/snd/pcmC<card>D<dev>p`, one
+`SNDRV_PCM_IOCTL_HW_PARAMS` (which runs the same refine step internally, so
+the separate `HW_REFINE` round-trip is optional), `SW_PARAMS`, `PREPARE`, then
+`WRITEI_FRAMES` in a loop — playback auto-starts once `start_threshold` frames
+are queued, so even `START` is unnecessary. `EPIPE` (xrun) recovery is a
+re-`PREPARE`. No mmap, no poll. ABI pinned at `SNDRV_PCM_VERSION` 2.0.18
+(`include/uapi/sound/asound.h`), which has been stable for over a decade.
+
+The one real portability trap: `snd_pcm_uframes_t` is `unsigned long`, so
+`snd_pcm_hw_params` is 608 bytes on arm64 and 604 on armv6 — **and the ioctl
+number encodes `sizeof(struct)`**, so a hardcoded command number is wrong on
+one of our two architectures. Fix: `uintptr` for every `*_t` field (Go's
+`uintptr` is the native word width) and derive the ioctl size from
+`unsafe.Sizeof`, so both `GOARCH=arm64` and `GOARCH=arm GOARM=6` are right by
+construction; a unit test asserts the struct sizes/offsets on both widths.
+
+**Rejected: `github.com/yobert/alsa`** (the only real pure-Go ALSA library —
+no cgo, ioctl-direct, per-arch `alsatype/types_arm{,64}.go`, 33 importers, MIT).
+It works and it was invaluable as a cross-check on the ABI, but: **no tagged
+release ever** (consumers pin `@master` or a pseudo-version), last commit
+2023-01-26, and its README self-discloses "makes syscalls with pointers to
+memory buffers that are in garbage collectible memory... I have a feeling this
+isn't safe, but it hasn't crashed on me yet". Same shape of dependency the disk
+work turned down, for a surface we need only a fraction of.
+
+**Rejected: OSS emulation** (`CONFIG_SND_PCM_OSS`, plain `write()` to
+`/dev/dsp`). Still in-tree and still buildable, and genuinely simpler at the
+call site — but it is a deprecated in-kernel translation shim doing
+format/rate conversion for us, it adds kernel size rather than removing Go
+code, and raspberrypi/linux has open issues about its interactions. Not worth
+trading the native ABI for.
+
+**Rejected: `ebitengine/oto` (formerly `hajimehoshi/oto`), `gen2brain/malgo`,
+`ecobee/goalsa` (formerly `cocoonlife`).** malgo and goalsa are cgo. oto v3 is
+subtler and worth recording: its Linux backend uses `purego` to `dlopen`
+`libasound.so.2`, so it *does* compile with `CGO_ENABLED=0` — and is still
+unusable here, because a GoSD image has no `libasound.so.2` on disk to open.
+The disqualifier is "needs alsa-lib at runtime", not "uses cgo".
+
+Decoding (MP3/Vorbis/FLAC) is deliberately out of scope: WAV/raw PCM is a
+`encoding/binary` header parse, whereas decoders mean third-party deps
+(`hajimehoshi/go-mp3` — pure Go but **archived** 2023, `jfreymuth/oggvorbis`,
+`mewkiz/flac`). Tracked as gosd-nxm4.
+
+## The fork — JP to choose
+
+**Route A — audio stays an opt-in `gosd build-kernel` recipe.** Exactly the
+precedent DRM set (`docs/custom-kernels.md`, `examples/sattrack`): the app that
+wants sound ships a fragment, builds a kernel once, and uses
+`gosd build --artifacts-dir`. No artifacts release, no size cost for the
+apps that don't want audio, strictly additive, reversible.
+
+**Route B — sound in the stock released kernels.** Any app gets `/dev/snd`
+with no custom kernel. Costs: every board's image grows (measured above), an
+`artifacts/vX.Y.Z` release plus the three-way verification dance in
+`docs/artifacts.md`, and per-family judgement calls — on the Pis it would also
+need `snd_bcm2835.enable_hdmi=1` baked into the boards' `cmdline.txt`
+templates, and on Rockchip HDMI audio would drag in the whole DRM subsystem,
+which is the very thing GoSD cut and put behind a recipe.
+
+**Recommendation: Route A**, and it is not a close call for Rockchip: their
+HDMI audio *requires* DRM, so a stock-kernel Route B either ships DRM for
+everyone (contradicting the sattrack precedent outright) or ships audio that
+works on Pi HDMI and Rockchip analog only — an inconsistent promise. On the
+Pis alone Route B is defensible, since `snd_bcm2835` is DRM-free and the delta
+is small; if JP wants it, the honest scope is "Pi boards get `snd_bcm2835` in
+stock kernels, Rockchip stays recipe-only", and the fragment written for
+gosd-y9hc is exactly what gets promoted into
+`build/boards/*/kernel.fragment` — plus the `cmdline.txt` template change.
+
+**Route B is JP's call, tracked as gosd-ette.** Route A needs no decision, so
+it ships first.
+
+## Children
+
+- gosd-y9hc — `examples/chime`: the example + Pi custom-kernel recipe (Route A). **Implemented first.**
+- gosd-ette — **JP to choose**: Route B, sound in the stock kernels.
+- gosd-df57 — bug: sattrack's fragment silently compiles in the whole Pi audio zoo, and says it doesn't.
+- gosd-lrxz — Rockchip audio coverage: rock-4se analog (ES8316) and Rockchip HDMI-over-DRM.
+- gosd-aptt — qemu-virt audio (virtio-sound) + a boot-to-sound CI smoke test.
+- gosd-mf3a — no surface for extra `config.txt` lines / kernel cmdline params in `gosd build`.
+- gosd-nxm4 — a public `audio/` package and decoders, if audio outgrows one example.
+- gosd-tjrw — audio capture (mic in on the 4SE jack, I2S mics).
