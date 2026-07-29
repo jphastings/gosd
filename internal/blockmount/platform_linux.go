@@ -10,13 +10,15 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 const (
-	sysBlockDir  = "/sys/block"
-	procMounts   = "/proc/mounts"
-	mountFSType  = "vfat"
-	mountOptions = "flush" // push writes to a journal-less FAT promptly
+	sysBlockDir      = "/sys/block"
+	procMounts       = "/proc/mounts"
+	procFilesystems  = "/proc/filesystems"
+	vfatMountOptions = "flush" // push writes to a journal-less FAT promptly
 )
 
 // mountEntry is one line of /proc/mounts: the device node and where it is
@@ -91,16 +93,54 @@ func Unmount(mountpoint string) error {
 	return nil
 }
 
-// MountVFAT mounts device read-write at mountpoint, creating the mountpoint if
-// it does not exist.
-func MountVFAT(device, mountpoint string) error {
+// Mount mounts device read-write at mountpoint as a filesystem of kind fs,
+// creating the mountpoint if it does not exist.
+func Mount(device, mountpoint string, fs diskfmt.FS) error {
+	fsType := fs.MountType()
+	if fsType == "" {
+		return fmt.Errorf("cannot mount %s: %q is not a filesystem GoSD knows how to mount", device, string(fs))
+	}
 	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return fmt.Errorf("creating mountpoint %s failed: %w", mountpoint, err)
 	}
-	if err := unix.Mount(device, mountpoint, mountFSType, unix.MS_NOSUID|unix.MS_NODEV, mountOptions); err != nil {
-		return fmt.Errorf("mount(%s, %s) failed: %w", device, mountpoint, err)
+	if err := unix.Mount(device, mountpoint, fsType, unix.MS_NOSUID|unix.MS_NODEV, mountData(fs)); err != nil {
+		return fmt.Errorf("mount(%s, %s, %s) failed: %w", device, mountpoint, fsType, err)
 	}
 	return nil
+}
+
+// mountData is the comma-separated option string for a filesystem. The options
+// are per-driver and mount(2) rejects one it does not know, so "flush" — which
+// only Linux's vfat driver has — must not reach exfat.
+func mountData(fs diskfmt.FS) string {
+	if fs == diskfmt.FAT32 {
+		return vfatMountOptions
+	}
+	return ""
+}
+
+// Mountable reports whether the running kernel can mount a filesystem of kind
+// fs. GoSD kernels are built without loadable modules, so every filesystem the
+// kernel will ever have is already listed in /proc/filesystems — which makes
+// this an exact answer rather than a guess, and lets a format be refused before
+// it destroys anything.
+func Mountable(fs diskfmt.FS) (bool, error) {
+	fsType := fs.MountType()
+	if fsType == "" {
+		return false, nil
+	}
+	raw, err := os.ReadFile(procFilesystems)
+	if err != nil {
+		return false, fmt.Errorf("reading %s to check for %s support failed: %w", procFilesystems, fs, err)
+	}
+	// Each line is an optional "nodev" marker then the filesystem name.
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[len(fields)-1] == fsType {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ReadBlockDevices enumerates every block device under /sys/block with the

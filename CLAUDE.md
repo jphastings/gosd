@@ -68,8 +68,12 @@ say so in the bean rather than silently diverging.
   attached mass storage — NVMe, USB drive, card reader). Everything else lives
   under `internal/`; `emmc` and `disk` share `internal/blockmount` (the
   format/mount orchestration, label rules and candidate selection) and
-  `internal/diskfmt` (pure-Go FAT32 inspect/format), so a change to one must
-  not silently change the other's semantics.
+  `internal/diskfmt` (pure-Go inspect/format — FAT32 via go-diskfs, exFAT
+  written directly from the Microsoft spec), so a change to one must not
+  silently change the other's semantics. `emmc` is FAT32-only by design;
+  exFAT is a `disk` option (bean `gosd-1ici`) and needs `CONFIG_EXFAT_FS`
+  in the board's kernel, checked against `/proc/filesystems` before any
+  write.
 - **gosd-init source location:** `gosd build` builds gosd-init from a local
   checkout when one's found (current directory's module, or the checkout gosd
   itself was compiled from), otherwise from `github.com/jphastings/gosd` at

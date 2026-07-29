@@ -37,6 +37,17 @@ CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
 CONFIG_TMPFS=y
 
+# --- exFAT: the `disk` package mounts an attached drive that arrived
+# exFAT-formatted (how most SSDs and USB sticks ship) rather than wiping it,
+# and formats one as exFAT when an app needs files above FAT32's 4 GiB
+# ceiling. Asserted here rather than inherited: the Pi defconfig happens to
+# set CONFIG_EXFAT_FS=y today, which is luck, not a promise. CONFIG_NLS_UTF8
+# is exFAT's own default iocharset (fs/exfat/Kconfig's
+# EXFAT_DEFAULT_IOCHARSET); the codepage/iso8859 NLS options above stay for
+# vfat. ---
+CONFIG_EXFAT_FS=y
+CONFIG_NLS_UTF8=y
+
 # --- Storage: MMC (BCM2835 SDHOST) ---
 CONFIG_MMC=y
 CONFIG_MMC_BLOCK=y

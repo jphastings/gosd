@@ -81,8 +81,8 @@ func TestInspectBlankDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if got.IsFAT || !got.Blank {
-		t.Errorf("Inspect of a zeroed device = %+v, want {IsFAT:false Blank:true}", got)
+	if got.FS != "" || !got.Blank {
+		t.Errorf("Inspect of a zeroed device = %+v, want no filesystem and Blank:true", got)
 	}
 }
 
@@ -96,16 +96,16 @@ func TestInspectForeignContentIsNotBlank(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if got.IsFAT || got.Blank {
-		t.Errorf("Inspect of foreign content = %+v, want {IsFAT:false Blank:false}", got)
+	if got.FS != "" || got.Blank {
+		t.Errorf("Inspect of foreign content = %+v, want no filesystem and Blank:false", got)
 	}
 }
 
-// TestInspectNamesExFATWithoutClaimingItIsMountable pins the compromise for a
-// disk already carrying exFAT (the realistic case for a big NVMe or USB drive):
-// it is named, so the refusal message can be specific, but it is still neither
-// FAT nor blank, so it is still refused without an explicit destructive opt-in.
-func TestInspectNamesExFATWithoutClaimingItIsMountable(t *testing.T) {
+// TestInspectNamesUnreadableExFATWithoutClaimingItIsMountable covers a device
+// whose boot sector announces exFAT but whose geometry does not parse: it is
+// named, so a refusal can be specific, but it is neither readable nor blank, so
+// it is still refused without an explicit destructive opt-in.
+func TestInspectNamesUnreadableExFATWithoutClaimingItIsMountable(t *testing.T) {
 	path := backingFile(t, 8*1024*1024)
 	scribble(t, path, 0, append([]byte{0xEB, 0x76, 0x90}, []byte("EXFAT   ")...))
 
@@ -113,8 +113,8 @@ func TestInspectNamesExFATWithoutClaimingItIsMountable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if got.OtherFS != "exFAT" || got.IsFAT || got.Blank {
-		t.Errorf("Inspect of an exFAT device = %+v, want {OtherFS:exFAT IsFAT:false Blank:false}", got)
+	if got.OtherFS != "exFAT" || got.FS != "" || got.Blank {
+		t.Errorf("Inspect of a broken exFAT device = %+v, want {OtherFS:exFAT} and nothing else", got)
 	}
 }
 
@@ -128,8 +128,8 @@ func TestInspectReportsFATLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if !got.IsFAT || got.Label != "APPDATA" {
-		t.Errorf("Inspect of formatted device = %+v, want {IsFAT:true Label:APPDATA}", got)
+	if got.FS != FAT32 || got.Label != "APPDATA" {
+		t.Errorf("Inspect of formatted device = %+v, want {FS:fat32 Label:APPDATA}", got)
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"errors"
 
 	"github.com/jphastings/gosd/internal/blockmount"
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 // ErrNoEMMC reports that the board has no onboard eMMC available to format and
@@ -65,7 +66,7 @@ var ErrRefusedFormat = blockmount.ErrRefusedFormat
 func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
 	out := make(chan Result, 1)
 	go func() {
-		device, err := blockmount.Run(storage(newPlatformDeps()), label, mountpoint, destructive)
+		device, err := blockmount.Run(storage(newPlatformDeps()), diskfmt.FAT32, label, mountpoint, destructive)
 		if err != nil {
 			out <- Result{Err: err}
 		} else {
