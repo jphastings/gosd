@@ -32,7 +32,7 @@ gosd build ./examples/chime --board pi-zero-2w \
 
 Kernel builds need Docker/Podman running (see `docs/custom-kernels.md`);
 everything else is plain Go. `pi-zero-w` and `pi-3b` work the same way — all
-three share one kernel fragment.
+three share one fragment and one patch.
 
 Flash `chime.img` (see `docs/flashing.md`), **connect the HDMI cable before
 powering up** (see below), and listen.
@@ -55,16 +55,37 @@ Two more consequences of that firmware-owned path, both good:
   the firmware's HDMI audio when vc4 is present, because both fighting over one
   HDMI output goes badly.
 - **No device tree change.** `snd_bcm2835` binds to a VCHIQ bus device that
-  `vchiq_arm` registers unconditionally, not to a DT node, so the recipe is a
-  Kconfig fragment with no DTS patch — which matters on pi-zero-w, whose
+  `vchiq_arm` registers unconditionally, not to a DT node, so the recipe needs
+  no device-tree patch at all — which matters on pi-zero-w, whose
   mainline-style DTB has no `audio` node and no `__overrides__` block for
   `dtparam=audio=on` to work through.
 
-What the fragment *does* need is a kernel command-line parameter:
-`snd_bcm2835`'s `enable_hdmi` module parameter defaults to off, and an example
-can't edit the board's `cmdline.txt`. So the fragment sets
-`CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"` with `CONFIG_CMDLINE_EXTEND=y`,
-which the Pi firmware's own cmdline is then appended to rather than replaced.
+What the recipe *does* need is a one-line patch, and the reason is worth
+knowing if you ever need to set a module parameter from a custom kernel.
+`snd_bcm2835`'s `enable_hdmi` parameter defaults to off, GoSD kernels are
+monolithic (so the only way to set a parameter is the kernel command line), and
+nothing available to a recipe can get it there on all three boards:
+
+- `dtparam=audio=on` in `config.txt` works on **pi-zero-2w and pi-3b** — their
+  downstream DTBs carry an `__overrides__` entry that rewrites `chosen`'s
+  `bootargs` to exactly `snd_bcm2835.enable_hdmi=1` — but an example can't add
+  lines to `config.txt` (bean `gosd-mf3a`), and pi-zero-w's mainline-style DTB
+  has no `__overrides__` node at all for it to work through.
+- `CONFIG_CMDLINE` + `CONFIG_CMDLINE_EXTEND` works on **pi-zero-w** and is
+  absent on arm64: `arch/arm64/Kconfig` offers only `CMDLINE_FROM_BOOTLOADER`
+  and `CMDLINE_FORCE`, and forcing would throw away the
+  `console=`/`init=`/`gosd.board=` arguments gosd-init needs. A first version
+  of this recipe used it and failed the pi-zero-2w build outright.
+
+So `kernel/patches/0001-default-hdmi-audio-on.patch` changes the driver's
+default instead, which behaves identically everywhere. It doesn't force a card
+into existence: the driver still asks the firmware which displays are live, so
+a board with nothing plugged in still gets no HDMI card. Pass
+`snd_bcm2835.enable_hdmi=0` to get the upstream default back.
+
+(Recipe patches are applied with a plain `patch -p1` at the kernel tree root,
+so they aren't limited to device trees despite `docs/custom-kernels.md`
+describing them that way.)
 
 ## Which output it picks
 
@@ -103,8 +124,8 @@ gosd-init's supervisor doesn't restart-churn it.
 
 - **pi-zero-w and pi-zero-2w: build-proven.** This exact fragment was built by
   `gosd build-kernel` against a real Docker daemon for both boards; the
-  resulting `kernel.config` carries `CONFIG_SND_BCM2835=y`,
-  `CONFIG_CMDLINE_EXTEND=y` and none of the denied symbols.
+  resulting `kernel.config` carries `CONFIG_SND_BCM2835=y` and none of the
+  denied symbols, and the HDMI-default patch applied cleanly.
 - **pi-3b: recipe only.** Same fragment, same defconfig as pi-zero-2w, same
   driver — but not compiled here.
 - **No board has been hardware-verified.** No GoSD board has had audio on a

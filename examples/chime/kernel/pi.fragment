@@ -5,44 +5,28 @@
 # interface, so audio needs no DRM and no ASoC here — merged after
 # build/boards/<board>/kernel.fragment (overlay wins).
 #
-# CONFIG_BCM2835_VCHIQ and CONFIG_RASPBERRYPI_FIRMWARE are already =y in every
-# stock GoSD Pi kernel, so this fragment adds the sound core and nothing else.
+# CONFIG_BCM2835_VCHIQ and CONFIG_RASPBERRYPI_FIRMWARE are already enabled in
+# every stock GoSD Pi kernel, so this fragment adds the sound core and nothing
+# else. The recipe's DTS-style patch (patches/) defaults the driver's HDMI
+# audio device to on, which a Kconfig fragment cannot do portably — see the
+# patch's own header for why.
 CONFIG_SOUND=y
 CONFIG_SND=y
 CONFIG_SND_BCM2835=y
 
-# snd_bcm2835 creates its "bcm2835 Headphones" card unconditionally, but only
-# asks the firmware which HDMI outputs are live (and so only creates
-# "bcm2835 HDMI 1"/"HDMI 2" cards) when its enable_hdmi module parameter is
-# set — see snd_bcm2835_alsa_probe() in
-# drivers/staging/vc04_services/bcm2835-audio/bcm2835.c. GoSD kernels are
-# monolithic, so that parameter has to arrive on the kernel command line as
-# snd_bcm2835.enable_hdmi=1, and an example cannot edit the board's
-# cmdline.txt (the board package renders it). CONFIG_CMDLINE_EXTEND appends
-# our string to whatever the Pi firmware passes, which is the one lever a
-# Kconfig fragment has over the command line. CONFIG_CMDLINE is REPLACED, not
-# extended: the bcmrpi defconfig ships a stock
-# "console=ttyAMA0,115200 ... root=/dev/mmcblk0p2 rootfstype=ext4 rootwait"
-# in it, and appending *that* to GoSD's real cmdline would fight the console
-# and root settings gosd-init depends on.
-CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"
-CONFIG_CMDLINE_EXTEND=y
-# CONFIG_CMDLINE_FROM_BOOTLOADER is not set
-# CONFIG_CMDLINE_FORCE is not set
-
 # Everything below is a deny-list, and it is the load-bearing half of this
-# file. The raspberrypi defconfigs ship the whole Pi audio ecosystem as =m,
-# and GoSD kernels are monolithic (CONFIG_MODULES is always off), so
-# `make olddefconfig` promotes every one of those to =y the moment
-# CONFIG_SND=y appears. Left unstated, a three-line "enable sound" fragment
+# file. The raspberrypi defconfigs ship the whole Pi audio ecosystem as
+# modules, and GoSD kernels are monolithic (CONFIG_MODULES is always off), so
+# `make olddefconfig` promotes every one of those to built-in the moment
+# CONFIG_SND is enabled. Left unstated, a three-line "enable sound" fragment
 # silently compiles in ~60 HAT machine drivers (HiFiBerry, IQaudio, JustBoom,
-# Allo, AudioInjector, Pisound...), every ASoC codec they reference, USB
-# audio, the MIDI sequencer and OSS emulation - measured on the sattrack
-# fragment, whose comment claiming "no codec, machine, or USB audio drivers
-# come with it" is simply wrong (bean gosd-mo5q records the numbers).
+# Allo, AudioInjector, Pisound...), every ASoC codec they reference, USB audio,
+# the MIDI sequencer and OSS emulation — measured on the sattrack fragment,
+# whose comment claiming "no codec, machine, or USB audio drivers come with it"
+# is simply wrong (bean gosd-df57 records the numbers).
 #
-# ASoC is the big one: SND_SOC gates every codec and machine driver above,
-# and snd_bcm2835 is a plain ALSA driver that does not need it.
+# ASoC is the big one: SND_SOC gates every codec and machine driver above, and
+# snd_bcm2835 is a plain ALSA driver that does not need it.
 # CONFIG_SND_SOC is not set
 
 # Generic ALSA driver menus: dummy/loopback/MIDI-interface cards we have no
@@ -52,8 +36,8 @@ CONFIG_CMDLINE_EXTEND=y
 # CONFIG_SND_SPI is not set
 # CONFIG_SND_USB is not set
 
-# No MIDI, no sequencer, no OSS emulation, no high-res-timer sound clock:
-# this appliance plays PCM out of one device node.
+# No MIDI, no sequencer, no OSS emulation, no high-res-timer sound clock: this
+# appliance plays PCM out of one device node.
 # CONFIG_SND_SEQUENCER is not set
 # CONFIG_SND_OSSEMUL is not set
 # CONFIG_SND_HRTIMER is not set
@@ -62,12 +46,15 @@ CONFIG_CMDLINE_EXTEND=y
 # The two lines below are not about sound at all, and they are why a first
 # build of this fragment was thrown away. GoSD's stock Pi fragments enable the
 # USB gadget stack, and the defconfig's USB MIDI gadget function sits dormant
-# in there because it depends on SND_RAWMIDI, which cannot exist while
+# in there because it depends on the raw-MIDI core, which cannot exist while
 # CONFIG_SOUND is off. Turn sound on and the *legacy* MIDI gadget driver wakes
-# up with it (observed: CONFIG_USB_MIDI_GADGET=y, CONFIG_USB_F_MIDI=y,
-# CONFIG_SND_RAWMIDI=y, none of which appear in the stock kernel.config).
-# Legacy gadget drivers claim the board's only UDC at probe — that is exactly
-# how bean gosd-spjt's "Gadget Zero" bug stopped --usb-gadget working — so an
-# app that wants audio AND a USB gadget needs these off.
+# up with it, along with that raw-MIDI core — none of which appear in a stock
+# GoSD kernel.config. Legacy gadget drivers claim the board's only UDC at
+# probe, which is exactly how bean gosd-spjt's "Gadget Zero" bug stopped
+# --usb-gadget working, so an app that wants audio AND a USB gadget needs these
+# off. (Note for anyone editing this file: don't write a symbol name followed
+# by an equals sign in a comment here. merge_config.sh pattern-matches the
+# whole fragment, comments included, and reports the comment as a redefinition
+# — confusing, though it does pick the real line.)
 # CONFIG_USB_MIDI_GADGET is not set
 # CONFIG_USB_CONFIGFS_F_MIDI is not set

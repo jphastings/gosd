@@ -5,7 +5,7 @@ status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-29T21:45:08Z
-updated_at: 2026-07-29T21:45:44Z
+updated_at: 2026-07-29T22:20:12Z
 ---
 
 JP asked, verbatim:
@@ -92,11 +92,31 @@ pinned source rather than assumed:
   defaults to **false**; `enable_headphones` defaults to true. GoSD kernels are
   monolithic, so the parameter has to arrive on the kernel command line as
   `snd_bcm2835.enable_hdmi=1`, and an *example* cannot edit `cmdline.txt`
-  (the board package renders it). A Kconfig fragment can, via
-  `CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"` + `CONFIG_CMDLINE_EXTEND=y`
-  (replacing, not extending, the defconfig's stock `CONFIG_CMDLINE`, which
-  carries `console=`/`root=` values that would fight gosd-init's). See
-  gosd-mf3a for the missing general surface.
+  (the board package renders it). Three levers were tried; only the third
+  works on all three boards:
+    1. `dtparam=audio=on` in `config.txt`. This *is* how the downstream DTBs
+       implement it — `bcm2710-rpi-3-b.dts`'s `__overrides__` has
+       `audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_headphones=1
+       snd_bcm2835.enable_hdmi=1',...}"`, and the Zero 2 W's the same without
+       the headphones half. So it works on pi-zero-2w and pi-3b, but not on
+       pi-zero-w (no `__overrides__` at all), and no example can write to
+       `config.txt` anyway (gosd-mf3a).
+    2. `CONFIG_CMDLINE="snd_bcm2835.enable_hdmi=1"` + `CONFIG_CMDLINE_EXTEND=y`
+       in the fragment. Works on pi-zero-w and **does not exist on arm64**:
+       `arch/arm64/Kconfig`'s command-line choice offers only
+       `CMDLINE_FROM_BOOTLOADER` and `CMDLINE_FORCE` (no `EXTEND`), and forcing
+       would discard the `console=`/`init=`/`gosd.board=` arguments gosd-init
+       needs. The first version of gosd-y9hc's recipe used this and failed the
+       pi-zero-2w build outright with "CONFIG_CMDLINE_EXTEND=y did not survive
+       olddefconfig" — a useful reminder that a fragment which merges on one
+       Pi board can be invalid on another.
+    3. A one-line patch defaulting the driver's `enable_hdmi` to true. Behaves
+       identically on all three boards, and still creates no card unless the
+       firmware reports a live display. This is what shipped. Worth knowing:
+       `gosd-kernel.toml`'s `patches` are applied with a plain `patch -p1` at
+       the kernel tree root, so despite being documented as device-tree
+       patches they can carry any in-tree change — which is the only portable
+       way a recipe can set a module parameter in a monolithic kernel.
 
 Because the firmware — not the kernel — owns HDMI on GoSD Pi images (no
 `dtoverlay=vc4-kms-v3d`, DRM cut), this path is exactly the supported
@@ -141,8 +161,19 @@ smallest, most size-sensitive kernel):
 | Kernel | Bytes | Delta vs stock |
 |---|---|---|
 | stock (`# CONFIG_SOUND is not set`) | 16,484,032 | — |
+| **examples/chime** (sound only, no DRM, deny-listed) | 16,589,344 | **+105,312 (+0.64%)** |
+| chime's first build, before the USB-MIDI-gadget deny | 16,604,768 | +120,736 (+0.73%) |
 | `examples/sattrack` (DRM + vc4 + its "minimal" sound) | 17,760,952 | +1,276,920 (+7.7%) |
-| examples/chime (sound only, no DRM, deny-listed) | MEASURED_CHIME | MEASURED_CHIME_DELTA |
+
+The gap between the middle two rows is the surprise of the exercise and is not
+about sound at all: 15,424 bytes of *USB MIDI gadget*. `USB_MIDI_GADGET` and
+`USB_CONFIGFS_F_MIDI` depend on `SND_RAWMIDI`, which cannot exist while
+`CONFIG_SOUND` is off, so they sit dormant in every stock GoSD Pi kernel (the
+gadget stack itself is on) and wake up the moment sound appears. Legacy gadget
+drivers claim the board's only UDC at probe — precisely how "Gadget Zero" broke
+`--usb-gadget` in bean gosd-spjt — so any Pi board that gains sound must deny
+them explicitly or risk breaking USB gadget mode. Route B would have to carry
+that deny-list into `build/boards/*/kernel.fragment`.
 
 For scale, the whole published `pi-zero-w.tar.zst` artifact is 16,497,070
 bytes (artifacts/v0.8.0) — the kernel *is* the artifact.
@@ -231,15 +262,34 @@ need `snd_bcm2835.enable_hdmi=1` baked into the boards' `cmdline.txt`
 templates, and on Rockchip HDMI audio would drag in the whole DRM subsystem,
 which is the very thing GoSD cut and put behind a recipe.
 
-**Recommendation: Route A**, and it is not a close call for Rockchip: their
-HDMI audio *requires* DRM, so a stock-kernel Route B either ships DRM for
-everyone (contradicting the sattrack precedent outright) or ships audio that
-works on Pi HDMI and Rockchip analog only — an inconsistent promise. On the
-Pis alone Route B is defensible, since `snd_bcm2835` is DRM-free and the delta
-is small; if JP wants it, the honest scope is "Pi boards get `snd_bcm2835` in
-stock kernels, Rockchip stays recipe-only", and the fragment written for
-gosd-y9hc is exactly what gets promoted into
-`build/boards/*/kernel.fragment` — plus the `cmdline.txt` template change.
+**Recommendation: Route A** — but with the size argument conceded, because
+the measurement came out about ten times cheaper than the DRM precedent would
+suggest. 0.64% of the most size-sensitive kernel we ship is not a reason to
+say no to anything, and unlike DRM it buys a capability every board's hardware
+actually has. If the decision rested on size alone, Route B would win on the
+Pis.
+
+It does not rest on size. Two things keep me on A:
+
+1. **Rockchip makes Route B incoherent.** Their HDMI audio *requires* DRM, so
+   a stock-kernel Route B either ships the whole DRM subsystem to every board
+   — contradicting the decision that put DRM behind a recipe in the first
+   place — or ships "audio" that means HDMI on Pi, analog-only on ROCK 4SE,
+   nothing at all on radxa-zero-3e (HDMI-only hardware, so DRM or silence) and
+   nothing possible on nanopi-zero2. A feature row that needs four different
+   footnotes to explain what it means is worse than an opt-in recipe.
+2. **It is not just three Kconfig lines per board.** Route B on the Pis also
+   needs `snd_bcm2835.enable_hdmi=1` (or `dtparam=audio=on`, which is how the
+   downstream `bcm2710-*` DTBs implement exactly that) in the boards'
+   `cmdline.txt`/`config.txt` templates, the USB-MIDI-gadget deny-list above
+   or `--usb-gadget` breaks, and an artifacts release with the three-way
+   verification in `docs/artifacts.md`.
+
+If JP wants Route B anyway, the honest scope is "Pi boards get `snd_bcm2835`
+in stock kernels, Rockchip stays recipe-only", and the fragment written for
+gosd-y9hc is exactly what gets promoted into `build/boards/*/kernel.fragment`,
+plus the cmdline change. Nothing in Route A has to be undone for that: it is a
+promotion, not a rewrite.
 
 **Route B is JP's call, tracked as gosd-ette.** Route A needs no decision, so
 it ships first.
@@ -254,3 +304,12 @@ it ships first.
 - gosd-mf3a — no surface for extra `config.txt` lines / kernel cmdline params in `gosd build`.
 - gosd-nxm4 — a public `audio/` package and decoders, if audio outgrows one example.
 - gosd-tjrw — audio capture (mic in on the 4SE jack, I2S mics).
+
+## Found on the way, unrelated to audio
+
+- gosd-dkqb (bug, high) — pi-zero-w's shipped DTB has `spi@7e204000`
+  `status = "disabled"` and **no `__overrides__` node at all**, so
+  `dtparam=spi=on` in its `config.txt` is a silent no-op: `/dev/spidev0.*`
+  never appears and COMPATIBILITY.md's SPI ✅ for that board is wrong. Turned
+  up because the same missing `__overrides__` block is why `dtparam=audio=on`
+  could not have been the mechanism for audio on that board.
