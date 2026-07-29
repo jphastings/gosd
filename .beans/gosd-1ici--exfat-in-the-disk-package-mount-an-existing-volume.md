@@ -164,6 +164,31 @@ always sufficient because adding FAT sectors only reduces the cluster count.
 - [x] `docs/runtime.md` + `COMPATIBILITY.md`
 - [x] Behavioural tests, macOS-passing
 
+## Host verification (done, 2026-07-29)
+
+Apple's own exFAT implementation was used as an independent oracle against a
+256 MiB image `FormatExFAT` produced, attached with
+`hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount`:
+
+- `/sbin/fsck_exfat -n` passes every stage — main boot region, system files,
+  **upper case translation table**, file system hierarchy, active bitmap, and
+  the recheck of both boot regions: *"The volume BETAMIN appears to be OK."*
+  (Run it against the plain file instead of the attached device and it reports
+  the boot region invalid — that is fsck's own `ioctl` failing to get the block
+  count/size on a regular file, not a defect in the image.)
+- `diskutil info` identifies it as `File System Personality: ExFAT`,
+  `Volume Name: BETAMIN`.
+- macOS's `exfat.kext` **mounts it read-write**, creates `.fseventsd`, and
+  round-trips a file across unmount/remount.
+- `fsck_exfat` still passes *after* macOS has written to it, so the geometry we
+  hand a real driver is one it can extend correctly.
+- `diskfmt.Inspect` still reports `{FS:exFAT Label:BETAMIN}` after Apple's
+  driver rewrote the root directory — the reader is not just reading back its
+  own writer's layout.
+
+That covers "a filesystem macOS mounts". The Linux half is the bench list
+below; `CONFIG_EXFAT_FS` on the bench boards is what it needs.
+
 ## Bench validation (not yet done — needs hardware)
 
 - [ ] ROCK 4SE + the exFAT KIOXIA ("betamin"): `disk.FormatAndMount` with the
