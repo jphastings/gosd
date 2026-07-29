@@ -3,8 +3,9 @@
 title: 'exFAT in the disk package: mount an existing volume, format a new one'
 status: in-progress
 type: feature
+priority: normal
 created_at: 2026-07-29T16:13:42Z
-updated_at: 2026-07-29T16:13:42Z
+updated_at: 2026-07-29T17:39:51Z
 parent: gosd-jge2
 ---
 
@@ -111,12 +112,18 @@ unchanged.
 
 ### 5. A kernel that cannot mount it is caught before anything is written
 
-`disk.Supports(fs)` reads `/proc/filesystems` (authoritative on GoSD, which
-builds module-less kernels) and the shared orchestration checks it *before*
-formatting — so asking for exFAT on a board whose kernel lacks
-`CONFIG_EXFAT_FS` fails with "this board's kernel has no exFAT support" and an
-untouched disk, rather than a bare `mount: ENODEV` after a successful format.
-The same check catches an existing exFAT volume on a board that cannot mount it.
+The shared orchestration reads `/proc/filesystems` (authoritative on GoSD,
+which builds module-less kernels) *before* formatting, so asking for exFAT on a
+board whose kernel lacks `CONFIG_EXFAT_FS` fails with "this board's kernel has
+no exFAT support" and an untouched disk, rather than a bare `mount: ENODEV`
+after a successful format. The same check catches an existing exFAT volume on a
+board that cannot mount it.
+
+Shipped as **`disk.ErrUnsupportedFS` only**, not the `disk.Supports(fs)` probe
+originally sketched. Because the check runs before any write, the error *is*
+the probe: `errors.Is(res.Err, disk.ErrUnsupportedFS)` tells a caller to fall
+back to FAT32, knowing the disk is exactly as it was. A separate predicate
+would have been a second way to ask one question.
 
 ### 6. The up-case table is generated, not embedded
 
@@ -145,17 +152,17 @@ always sufficient because adding FAT sectors only reduces the cluster count.
 
 ## Todo
 
-- [ ] `internal/diskfmt`: exFAT boot-sector parse + root-directory walk for the
+- [x] `internal/diskfmt`: exFAT boot-sector parse + root-directory walk for the
       volume label; `Contents.FS` replaces `IsFAT`
-- [ ] `internal/blockmount`: mount type follows the filesystem found/created;
+- [x] `internal/blockmount`: mount type follows the filesystem found/created;
       kernel-support precheck
-- [ ] `internal/diskfmt`: pure-Go exFAT formatter (boot regions + checksum,
+- [x] `internal/diskfmt`: pure-Go exFAT formatter (boot regions + checksum,
       FAT, bitmap, up-case table, root directory)
-- [ ] `disk`: `Filesystem`, `Options`, `FormatAndMountWith`, `Supports`
-- [ ] Kernel fragments: assert exFAT on the Pi boards; decide for the Rockchip
+- [x] `disk`: `Filesystem`, `Options`, `FormatAndMountWith`, `ErrUnsupportedFS`
+- [x] Kernel fragments: assert exFAT on the Pi boards; decide for the Rockchip
       boards
-- [ ] `docs/runtime.md` + `COMPATIBILITY.md`
-- [ ] Behavioural tests, macOS-passing
+- [x] `docs/runtime.md` + `COMPATIBILITY.md`
+- [x] Behavioural tests, macOS-passing
 
 ## Bench validation (not yet done — needs hardware)
 
@@ -174,7 +181,88 @@ always sufficient because adding FAT sectors only reduces the cluster count.
 - [ ] A board whose kernel lacks `CONFIG_EXFAT_FS`: asking for exFAT fails with
       the "no exFAT support" error and the disk is untouched.
 
+## Follow-ups (deliberately not in this PR)
+
+- **exFAT on `qemu-virt`.** Its kernel has `# CONFIG_EXFAT_FS is not set`,
+  so CI cannot mount what the formatter writes. Enabling it plus a boot test
+  that formats a scratch virtio disk as exFAT and mounts it would be the
+  strongest possible verification short of the bench — but it is a CI test,
+  a fragment change and an artifacts release for an internal-only board, so
+  it belongs in its own bean rather than riding this one.
+- **4Kn devices.** The formatter fixes `BytesPerSectorShift = 9`, matching
+  the FAT32 path's `diskfs.SectorSize512`. A native-4K-sector NVMe would need
+  the shift derived from `BLKSSZGET`. No such device is in scope, and the
+  FAT32 path has the same assumption.
+- **go-diskfs sizes block devices with `unix.IoctlGetInt`**, which passes a
+  pointer to Go's `int` — 4 bytes on `GOARCH=arm` — to `BLKGETSIZE64`, which
+  writes 8. Noticed while reading its device-size path for the formatter.
+  It affects the existing FAT32 path on pi-zero-w identically, so it is not
+  a regression here, but it is worth a bean of its own.
+
 ## Quality gates
 
 `go test ./...`, `go vet ./...`, `gofmt -l .` (empty), both
 `golangci-lint run ./...` and `GOOS=linux golangci-lint run ./...`.
+
+## Summary of Changes
+
+Both phases landed. Stays in-progress pending the bench checklist above (no
+NVMe board on the bench this session).
+
+**Phase 1 — mount what is already there.** `internal/diskfmt` parses an exFAT
+boot sector's geometry and walks the root directory's cluster chain for its
+`0x83` volume-label entry, so `Contents` now reports *which* filesystem a disk
+carries (`Contents.IsFAT` became `Contents.FS`) rather than just "FAT or not".
+The shared orchestration mounts an existing volume as the filesystem it
+actually is whenever its label matches the app's, so the unchanged
+`disk.FormatAndMount("BETAMIN", …)` now mounts an exFAT drive labelled
+`BETAMIN` instead of refusing it — which is the whole point, since that data
+is why the drive was plugged in. `blockmount.MountVFAT` became
+`blockmount.Mount(device, mountpoint, fs)`, passing `exfat` or `vfat` to
+`mount(2)` and dropping the vfat-only `flush` option for exFAT, which would
+otherwise be rejected. exFAT is probed before go-diskfs is asked to guess,
+because a real exFAT boot sector carries the same `0xAA55` signature a FAT
+probe looks for.
+
+**Phase 2 — the formatter.** `FormatExFAT` writes main and backup boot regions
+(with the VBR checksum sector), the FAT, the allocation bitmap, a
+BMP-complete up-case table and a root directory carrying the volume label —
+whole-device, no partition table, so `Result.BlockDevice` stays directly
+shareable via `gadget.MassStorage` exactly as the FAT32 path is. Geometry
+follows Microsoft's cluster ladder (4 KiB / 32 KiB / 128 KiB by volume size)
+with 512-byte sectors and one FAT; `FatLength` is sized from an upper bound on
+the cluster count, which is always sufficient and avoids the circular
+dependency between the two fields.
+
+**Verification (no hardware yet).** Tests assert the properties a driver
+checks rather than mocking: the boot checksum recomputed over sectors 0-10
+matches the checksum sector, with offsets 106/107/112 excluded as the spec
+requires; the backup boot region is byte-identical to the main one; all eight
+extended boot sectors carry `0xAA550000`; the allocation bitmap agrees exactly
+with the clusters the FAT chains reach, in both directions; the up-case table's
+recorded checksum matches the bytes on disk, and decompressing it the way
+Linux's `exfat_load_upcase_table` does yields all 65,536 entries with correct
+ASCII/Latin/Greek/Cyrillic mappings. The label round-trips through `Inspect`
+across the whole cluster ladder (8 MiB, 1 GiB, 64 GiB). The reader is tested
+against hand-built fixtures rather than the formatter's own output, so the two
+halves are not marking each other's homework.
+
+**API.** `disk.FormatAndMountWith(label, mountpoint, disk.Options{…})` with
+`Options{Filesystem, Device, Destructive}`; `FormatAndMount` and
+`FormatAndMountDevice` are now one-line wrappers over it and are unchanged in
+signature and behaviour. `disk.Filesystem` is its own public type
+(`disk.FAT32`, `disk.ExFAT`) rather than an alias of the internal one. New
+sentinel `disk.ErrUnsupportedFS`. `emmc`'s public API is untouched and
+FAT32-only.
+
+**Kernels.** `CONFIG_EXFAT_FS` + `CONFIG_NLS_UTF8` asserted in the pi-zero-2w,
+pi-zero-w and pi-3b fragments (previously defconfig luck; compiled kernels
+unchanged, but they now appear in kernelspec's `RequiredY` so a trim cannot
+cut them silently), and newly enabled for radxa-zero-3e and nanopi-zero2 —
+both have USB host ports, and a per-board answer to "can this mount the drive
+I plugged in?" is a footgun app authors would have to carry. `RequiredY` for
+those two boards updated to match. No `artifacts.Version` bump: the two
+Rockchip kernels change, so this reaches real builds at the next artifacts
+release, which COMPATIBILITY.md's new "exFAT on attached disks" row states —
+✅ for the three Pi boards and the ROCK 4SE today, 🚧 for the two Rockchip
+boards until then.
