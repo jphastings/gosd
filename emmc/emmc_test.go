@@ -22,14 +22,15 @@ func fakeDeps(contents diskfmt.Contents, discErr error) blockmount.Deps {
 			}
 			return "/dev/mmcblk1", nil
 		},
-		Inspect: func(string) (diskfmt.Contents, error) { return contents, nil },
-		Format:  func(string, string) error { return nil },
-		Mount:   func(string, string) error { return nil },
+		Inspect:   func(string) (diskfmt.Contents, error) { return contents, nil },
+		Format:    func(string, string, diskfmt.FS) error { return nil },
+		Mount:     func(string, string, diskfmt.FS) error { return nil },
+		Mountable: func(diskfmt.FS) (bool, error) { return true, nil },
 	}
 }
 
 func TestFormatAndMountSurfacesErrNoEMMC(t *testing.T) {
-	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, ErrNoEMMC)), "APPDATA", "/storage", false)
+	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, ErrNoEMMC)), diskfmt.FAT32, "APPDATA", "/storage", false)
 
 	if !errors.Is(err, ErrNoEMMC) {
 		t.Fatalf("error = %v, want ErrNoEMMC", err)
@@ -37,9 +38,9 @@ func TestFormatAndMountSurfacesErrNoEMMC(t *testing.T) {
 }
 
 func TestFormatAndMountSurfacesErrRefusedFormat(t *testing.T) {
-	deps := fakeDeps(diskfmt.Contents{IsFAT: true, Label: "OTHERAPP"}, nil)
+	deps := fakeDeps(diskfmt.Contents{FS: diskfmt.FAT32, Label: "OTHERAPP"}, nil)
 
-	_, err := blockmount.Run(storage(deps), "APPDATA", "/storage", false)
+	_, err := blockmount.Run(storage(deps), diskfmt.FAT32, "APPDATA", "/storage", false)
 
 	if !errors.Is(err, ErrRefusedFormat) {
 		t.Fatalf("error = %v, want ErrRefusedFormat", err)
@@ -50,7 +51,7 @@ func TestFormatAndMountSurfacesErrRefusedFormat(t *testing.T) {
 }
 
 func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
-	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, nil)), "WAYTOOLONGFORFAT", "/storage", false)
+	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, nil)), diskfmt.FAT32, "WAYTOOLONGFORFAT", "/storage", false)
 
 	if err == nil || !strings.HasPrefix(err.Error(), "emmc: ") {
 		t.Fatalf("error = %v, want an emmc-prefixed label complaint", err)

@@ -16,8 +16,9 @@ func newPlatformDeps() blockmount.Deps {
 		MountedAt: blockmount.MountedAt,
 		Discover:  discover,
 		Inspect:   diskfmt.Inspect,
-		Format:    diskfmt.FormatFAT32,
-		Mount:     blockmount.MountVFAT,
+		Format:    diskfmt.Format,
+		Mount:     blockmount.Mount,
+		Mountable: blockmount.Mountable,
 	}
 }
 

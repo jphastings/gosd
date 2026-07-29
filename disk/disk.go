@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/jphastings/gosd/internal/blockmount"
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 // ErrNoDisk reports that no usable mass-storage disk was found: either nothing
@@ -34,13 +35,20 @@ import (
 // this with errors.Is and carry on.
 var ErrNoDisk = errors.New("no usable disk found")
 
-// ErrRefusedFormat reports that the disk already holds other content — a FAT
-// volume with a different label, or another filesystem — and destructive was
-// false, so FormatAndMount left it untouched instead of wiping it. Callers
-// that want to offer the user a way to consent (e.g. an app-env var read from
-// gosd.toml's [env] table) can match this with errors.Is and retry with
-// destructive=true once they have it.
+// ErrRefusedFormat reports that the disk already holds other content — a
+// volume with a different label, or a filesystem GoSD cannot read — and
+// destructive was false, so FormatAndMount left it untouched instead of wiping
+// it. Callers that want to offer the user a way to consent (e.g. an app-env var
+// read from gosd.toml's [env] table) can match this with errors.Is and retry
+// with destructive=true once they have it.
 var ErrRefusedFormat = blockmount.ErrRefusedFormat
+
+// ErrUnsupportedFS reports that the board's kernel cannot mount the filesystem
+// the work needed — either one the caller asked for, or the one the disk
+// already carries. Not every board's kernel has exFAT; this is reported before
+// anything is written, so a caller can match it with errors.Is and fall back to
+// FAT32 knowing the disk is untouched.
+var ErrUnsupportedFS = blockmount.ErrUnsupportedFS
 
 // FormatAndMount ensures an attached disk carries a FAT filesystem labelled
 // label and mounts it read-write at mountpoint, then reports the outcome on the
@@ -57,9 +65,11 @@ var ErrRefusedFormat = blockmount.ErrRefusedFormat
 //	// res.MountPoint is ready to use; res.BlockDevice is the node behind it.
 //
 // The disk is discovered automatically — see Devices for exactly which block
-// devices qualify and in what order they are preferred. A disk already
-// FAT-formatted with label is only mounted, never reformatted, which is how
-// re-runs of the same app avoid wiping their own data. A blank disk (no
+// devices qualify and in what order they are preferred. A disk already carrying
+// a volume with this label is only mounted, never reformatted, which is how
+// re-runs of the same app avoid wiping their own data; that holds for an exFAT
+// volume as much as a FAT one, so a drive that arrived exFAT-formatted with a
+// matching label is mounted as it is rather than converted. A blank disk (no
 // filesystem and an all-zero leading region) is always formatted.
 //
 // destructive governs only a disk that already holds *other* data: false makes
@@ -84,7 +94,7 @@ func formatAndMount(discover func() (string, error), label, mountpoint string, d
 	go func() {
 		deps := newPlatformDeps()
 		deps.Discover = discover
-		device, err := blockmount.Run(storage(deps), label, mountpoint, destructive)
+		device, err := blockmount.Run(storage(deps), diskfmt.FAT32, label, mountpoint, destructive)
 		if err != nil {
 			out <- Result{Err: err}
 		} else {
