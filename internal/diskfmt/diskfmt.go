@@ -7,8 +7,9 @@
 // on a device node auto-detects its size via ioctl(BLKGETSIZE64), and
 // CreateFilesystem with Partition 0 writes a whole-device FAT32 with no
 // partition table (which also avoids the BLKRRPART reread that needs
-// privileges). go-diskfs has no exFAT support at all, so exFAT is handled here
-// directly against the Microsoft exFAT specification — see exfat.go.
+// privileges). go-diskfs has no exFAT support at all, so exFAT is read and
+// written here directly against the Microsoft exFAT specification — see
+// exfat.go and exfatformat.go.
 package diskfmt
 
 import (
@@ -196,6 +197,8 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 	switch fs {
 	case FAT32:
 		return FormatFAT32(devicePath, volumeLabel)
+	case ExFAT:
+		return FormatExFAT(devicePath, volumeLabel)
 	default:
 		return fmt.Errorf("cannot format %s: %q is not a filesystem GoSD can create", devicePath, string(fs))
 	}

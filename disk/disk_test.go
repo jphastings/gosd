@@ -189,3 +189,43 @@ func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
 		t.Fatalf("error = %v, want a disk-prefixed label complaint", err)
 	}
 }
+
+// TestOptionsZeroValueIsTheFAT32Default pins the promise that adding the
+// filesystem choice did not change the common path: an empty Options is what
+// FormatAndMount has always done.
+func TestOptionsZeroValueIsTheFAT32Default(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts Options
+		want diskfmt.FS
+	}{
+		{"zero value", Options{}, diskfmt.FAT32},
+		{"FAT32 spelled out", Options{Filesystem: FAT32}, diskfmt.FAT32},
+		{"exFAT", Options{Filesystem: ExFAT}, diskfmt.ExFAT},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.opts.filesystem()
+			if err != nil {
+				t.Fatalf("filesystem(): %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("filesystem() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormatAndMountWithRejectsAnUnknownFilesystem proves the bad-option path
+// still honours the channel contract — exactly one Result, then closed — and
+// that it says which value was unusable.
+func TestFormatAndMountWithRejectsAnUnknownFilesystem(t *testing.T) {
+	ch := FormatAndMountWith("APPDATA", "/storage", Options{Filesystem: "ntfs"})
+
+	res := <-ch
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "ntfs") {
+		t.Fatalf("Err = %v, want it to name the unusable filesystem", res.Err)
+	}
+	if _, open := <-ch; open {
+		t.Error("the channel delivered more than one Result")
+	}
+}

@@ -5,19 +5,25 @@
 // It is the general-purpose sibling of the emmc package, which addresses one
 // specific device (a board's soldered-on eMMC); disk takes whatever suitable
 // mass storage it finds that the board did not boot from. The two have the same
-// shape, and the same consequences: FormatAndMount writes a whole-device FAT
+// shape, and the same consequences: FormatAndMount writes a whole-device
 // filesystem — no partition table — and is idempotent across runs, so once a
-// disk carries a FAT filesystem with the app's chosen label, later runs only
-// mount it. FAT is not power-loss-robust and has no unix permissions or
-// symlinks; write with the temp-file-then-rename pattern as for GOSD_DATA, and
-// note that no single file may exceed FAT32's 4 GiB ceiling however large the
-// disk is.
+// disk carries a volume with the app's chosen label, later runs only mount it.
+// Neither FAT32 nor exFAT is power-loss-robust, and neither has unix
+// permissions or symlinks; write with the temp-file-then-rename pattern as for
+// GOSD_DATA.
+//
+// FAT32 is the default, because every host mounts it and every GoSD board's
+// kernel can. Its cost is that no single file may exceed 4 GiB however large
+// the disk is; FormatAndMountWith takes Options{Filesystem: ExFAT} for apps
+// that need larger files, on the boards whose kernels can mount it. A disk that
+// already carries an exFAT volume with the app's label is mounted as it is
+// whichever option was passed — the realistic case for an SSD or USB drive,
+// which is exactly the data the app was pointed at.
 //
 // Formatting is destructive, so it is gated: FormatAndMount will format a blank
-// disk freely, but refuses to overwrite anything else (a FAT volume with a
-// different label, or another filesystem such as the exFAT a drive is likely to
-// arrive with) unless the caller explicitly opts in, returning an error
-// wrapping ErrRefusedFormat otherwise.
+// disk freely, but refuses to overwrite anything else (a volume with a
+// different label, or a filesystem GoSD cannot read) unless the caller
+// explicitly opts in, returning an error wrapping ErrRefusedFormat otherwise.
 package disk
 
 import (
@@ -77,7 +83,7 @@ var ErrUnsupportedFS = blockmount.ErrUnsupportedFS
 // wipes and reformats it. label is limited to 11 ASCII characters (the FAT
 // maximum).
 func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
-	return formatAndMount(discover, label, mountpoint, destructive)
+	return FormatAndMountWith(label, mountpoint, Options{Destructive: destructive})
 }
 
 // FormatAndMountDevice is FormatAndMount aimed at one named block device, e.g.
@@ -86,23 +92,88 @@ func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
 // a device that is currently in use — so naming the board's boot device by hand
 // cannot wipe the running system.
 func FormatAndMountDevice(device, label, mountpoint string, destructive bool) <-chan Result {
-	return formatAndMount(func() (string, error) { return verifyNamedDevice(device) }, label, mountpoint, destructive)
+	return FormatAndMountWith(label, mountpoint, Options{Device: device, Destructive: destructive})
 }
 
-func formatAndMount(discover func() (string, error), label, mountpoint string, destructive bool) <-chan Result {
+// Filesystem names an on-disk filesystem FormatAndMountWith can create.
+type Filesystem string
+
+const (
+	// FAT32 is the default, and what FormatAndMount always uses: every host
+	// mounts it and every GoSD board's kernel can. Its price is a hard 4 GiB
+	// ceiling on any single file, however large the disk.
+	FAT32 Filesystem = "fat32"
+	// ExFAT lifts that ceiling, at the cost of needing exFAT support in the
+	// board's kernel — see COMPATIBILITY.md for which boards have it. Asking
+	// for it on a board that lacks it fails with ErrUnsupportedFS before the
+	// disk is touched.
+	ExFAT Filesystem = "exfat"
+)
+
+// Options are the choices FormatAndMountWith makes available. Its zero value is
+// exactly what FormatAndMount does: format FAT32, discover the disk, and refuse
+// to overwrite anything already there.
+type Options struct {
+	// Filesystem is what to format the disk as if formatting is needed. The
+	// zero value is FAT32. It has no say over a disk that already carries a
+	// volume with the app's label: that is mounted as whatever it already is,
+	// never converted.
+	Filesystem Filesystem
+	// Device names one block device to use, e.g. "/dev/nvme0n1", for an app
+	// with more than one disk attached. The zero value discovers one. A named
+	// device that is in use is still refused.
+	Device string
+	// Destructive allows overwriting a disk that holds other content. The zero
+	// value refuses, wrapping ErrRefusedFormat. It has no bearing on a blank
+	// disk, which is always formatted.
+	Destructive bool
+}
+
+// FormatAndMountWith is FormatAndMount with the choices spelled out — the
+// filesystem to create, which disk to use, and whether other content may be
+// overwritten:
+//
+//	res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
+//		Filesystem:  disk.ExFAT,
+//		Destructive: true,
+//	})
+//
+// Everything else matches FormatAndMount, including returning immediately and
+// delivering exactly one Result before closing the channel.
+func FormatAndMountWith(label, mountpoint string, opts Options) <-chan Result {
 	out := make(chan Result, 1)
 	go func() {
-		deps := newPlatformDeps()
-		deps.Discover = discover
-		device, err := blockmount.Run(storage(deps), diskfmt.FAT32, label, mountpoint, destructive)
+		defer close(out)
+
+		fs, err := opts.filesystem()
 		if err != nil {
 			out <- Result{Err: err}
-		} else {
-			out <- Result{MountPoint: mountpoint, BlockDevice: device}
+			return
 		}
-		close(out)
+		deps := newPlatformDeps()
+		if opts.Device != "" {
+			deps.Discover = func() (string, error) { return verifyNamedDevice(opts.Device) }
+		}
+
+		device, err := blockmount.Run(storage(deps), fs, label, mountpoint, opts.Destructive)
+		if err != nil {
+			out <- Result{Err: err}
+			return
+		}
+		out <- Result{MountPoint: mountpoint, BlockDevice: device}
 	}()
 	return out
+}
+
+func (o Options) filesystem() (diskfmt.FS, error) {
+	switch o.Filesystem {
+	case "", FAT32:
+		return diskfmt.FAT32, nil
+	case ExFAT:
+		return diskfmt.ExFAT, nil
+	default:
+		return "", fmt.Errorf("disk: %q is not a filesystem GoSD can create; use disk.FAT32 or disk.ExFAT", string(o.Filesystem))
+	}
 }
 
 // Result is the outcome of a FormatAndMount, delivered once on its channel. On
