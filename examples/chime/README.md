@@ -16,7 +16,7 @@ Beyond the noise, this example demonstrates two things:
   raspberrypi defconfig's entire audio ecosystem coming along for the ride.
 - **A GoSD image has no userspace, so the kernel ABI is the API.** There is no
   `libasound.so.2` to link or `dlopen`, and no `/usr/share/alsa` config tree.
-  `pcm_linux.go` is the whole client: about 200 lines of `HW_PARAMS` →
+  `pcm_linux.go` is the whole client — the uapi structs, then `HW_PARAMS` →
   `SW_PARAMS` → `PREPARE` → `WRITEI_FRAMES`, which is all a blocking playback
   path actually needs.
 
