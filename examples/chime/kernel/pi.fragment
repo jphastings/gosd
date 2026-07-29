@@ -58,3 +58,16 @@ CONFIG_CMDLINE_EXTEND=y
 # CONFIG_SND_OSSEMUL is not set
 # CONFIG_SND_HRTIMER is not set
 # CONFIG_SND_SUPPORT_OLD_API is not set
+
+# The two lines below are not about sound at all, and they are why a first
+# build of this fragment was thrown away. GoSD's stock Pi fragments enable the
+# USB gadget stack, and the defconfig's USB MIDI gadget function sits dormant
+# in there because it depends on SND_RAWMIDI, which cannot exist while
+# CONFIG_SOUND is off. Turn sound on and the *legacy* MIDI gadget driver wakes
+# up with it (observed: CONFIG_USB_MIDI_GADGET=y, CONFIG_USB_F_MIDI=y,
+# CONFIG_SND_RAWMIDI=y, none of which appear in the stock kernel.config).
+# Legacy gadget drivers claim the board's only UDC at probe — that is exactly
+# how bean gosd-spjt's "Gadget Zero" bug stopped --usb-gadget working — so an
+# app that wants audio AND a USB gadget needs these off.
+# CONFIG_USB_MIDI_GADGET is not set
+# CONFIG_USB_CONFIGFS_F_MIDI is not set
