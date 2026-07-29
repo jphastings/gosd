@@ -57,6 +57,7 @@ see `beans list` for what's in flight.
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
 | Attached disk format/mount (`disk` package) | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] |
+| exFAT on attached disks | ✅ [^exfat] | ✅ [^exfat] | ✅ [^exfat] | 🚧 [^exfat] | 🚧 [^exfat] | ✅ [^exfat] |
 | USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ➖ [^pi3b-no-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
 | NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
@@ -170,11 +171,10 @@ see `beans list` for what's in flight.
     timeout logged with the slot empty was confirmed benign probing noise,
     not a real fault.) That bring-up mounted the drive by hand; the
     supported path is now the `disk` package (see [^disk]), which discovers
-    the SSD, formats it whole-device FAT32 and mounts it — an app only
-    needs `unix.Mount` directly if it wants a filesystem GoSD does not
-    write, exFAT included: the kernel can *mount* exFAT here, but nothing
-    in GoSD can create or read one, so `disk` refuses an exFAT drive rather
-    than wiping it unasked.
+    the SSD and formats/mounts it whole-device — FAT32 by default, exFAT on
+    request, and mounting an existing exFAT volume of the app's own rather
+    than wiping it (see [^exfat]). An app only needs `unix.Mount` directly
+    if it wants a filesystem GoSD does not write at all.
 
 [^pi3b-family]: **One `pi-3b` image covers the whole Pi 3B family — 3B and
     3B+** (JP's locked decision, epic `gosd-xhc3` / bean `gosd-oq0z`): the
@@ -424,10 +424,31 @@ see `beans list` for what's in flight.
     verification tracked separately — bean `gosd-yggd`'s bench checklist
     (rock-4se NVMe discover/format/mount/gadget-share, plus a USB drive on
     any board) is what confirms it on real hardware.
-    A disk arriving pre-formatted as exFAT (how most SSDs and USB drives
-    ship) is *recognised and refused* rather than silently wiped: GoSD
-    cannot mount exFAT, so the caller must pass `destructive=true` to
-    reformat it as FAT32.
+    FAT32 is what it formats by default; a disk arriving pre-formatted as
+    exFAT (how most SSDs and USB drives ship) is now mounted rather than
+    refused when its label matches the app's — see [^exfat].
+
+[^exfat]: `disk` reads, mounts and writes exFAT, not only FAT32 (bean
+    `gosd-1ici`), which is what lifts FAT32's hard 4 GiB per-file ceiling on
+    a large SSD. Two things use it: a drive that arrived exFAT-formatted and
+    carries the app's own label is mounted as it is instead of being wiped,
+    and `disk.FormatAndMountWith(…, disk.Options{Filesystem: disk.ExFAT})`
+    formats one deliberately. The formatter is pure Go, written against the
+    Microsoft exFAT specification (`internal/diskfmt`), since `go-diskfs` has
+    no exFAT support.
+    What varies by board is only the *kernel*, which must have
+    `CONFIG_EXFAT_FS`. Both Pi Zeros, the Pi 3B and the ROCK 4SE have it in
+    their **published** artifacts today, so exFAT works on those boards
+    now — for the Pi boards it was inherited from their defconfig rather
+    than asserted, which this bean fixes by pinning it in their fragments
+    (no change to the compiled kernel, only to what a future trim may cut).
+    The Radxa Zero 3E and NanoPi Zero2 published kernels have
+    `# CONFIG_EXFAT_FS is not set`; their fragments now enable it, so it
+    reaches released artifacts at the next artifacts version — until then
+    asking for exFAT on those two boards fails with `disk.ErrUnsupportedFS`
+    before the disk is touched, which is deliberate (see [^disk] for the
+    package, and `docs/runtime.md` for the API). Hardware verification of
+    the formatter is tracked in bean `gosd-1ici`'s bench checklist.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
     Zeros, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,

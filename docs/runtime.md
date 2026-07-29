@@ -344,9 +344,9 @@ if res.Err != nil {
 Everything `emmc` guarantees, `disk` guarantees identically: it returns
 immediately and the channel delivers exactly one `Result` before closing;
 formatting is idempotent and keyed on the label, so a disk already carrying a
-FAT filesystem with your label is only mounted; a blank disk is always
-formatted; `destructive` gates everything else; `label` is 11 ASCII
-characters, FAT's own limit.
+volume with your label is only mounted; a blank disk is always formatted;
+`destructive` gates everything else; `label` is 11 ASCII characters, FAT's own
+limit (and equally valid as an exFAT label).
 
 - **Discovery is an allowlist, and never picks the boot media.** Only
   `nvme*` (NVMe namespaces), `sd*` (SCSI/USB mass storage), `vd*` (virtio)
@@ -363,28 +363,62 @@ characters, FAT's own limit.
   that same order and `disk.FormatAndMountDevice("/dev/sda", …)` targets one.
   Naming a device explicitly still can't wipe a disk something is mounted
   from.
-- **It's a whole-device FAT32 filesystem** — the mount source is the raw
+- **It's a whole-device filesystem** — the mount source is the raw
   `/dev/nvme0n1`, not a partition on it. That is deliberate: it's what lets
   `Result.BlockDevice` be handed straight to `gadget.MassStorage` to share
   the same volume over USB (`disk.Unmount` first — expose or mount, never
   both), and it avoids the privileged partition-table reread. A host plugging
   in sees a drive with no partition table, which Windows, macOS and Linux all
-  mount happily. The FAT caveats from `/data` apply unchanged: no unix
-  permissions, ownership, symlinks or hard links, not power-loss-robust
-  (write with temp-file + `fsync` + `rename`), **and no single file larger
-  than 4 GiB**, however large the disk is.
-- **exFAT is recognised but not supported.** Most SSDs and USB drives ship
-  formatted exFAT, and the boards' kernels can mount it — but nothing in GoSD
-  can read or write an exFAT filesystem, so `FormatAndMount` reports such a
-  disk as holding "an exFAT filesystem, which GoSD cannot mount" and refuses
-  it unless you pass `destructive=true` to reformat it as FAT32 (which
-  destroys whatever was on it, and imposes the 4 GiB file limit). An app that
-  genuinely needs to *read* an existing exFAT disk must still mount it itself
-  with `unix.Mount`.
+  mount happily. The FAT caveats from `/data` apply unchanged to both
+  filesystems: no unix permissions, ownership, symlinks or hard links, and
+  not power-loss-robust (write with temp-file + `fsync` + `rename`).
 - **When nothing suitable is attached**, `FormatAndMount`'s channel yields
   `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
   here" rather than a fatal error, exactly as `examples/emmcstorage` does for
   `ErrNoEMMC`.
+
+### FAT32 or exFAT
+
+`FormatAndMount` writes **FAT32**, which every host mounts and every GoSD
+board's kernel can. Its price is a hard ceiling: **no single file may exceed
+4 GiB**, however large the disk. `FormatAndMountWith` takes the alternative:
+
+```go
+res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
+	Filesystem:  disk.ExFAT,
+	Destructive: true,
+})
+if errors.Is(res.Err, disk.ErrUnsupportedFS) {
+	// This board's kernel has no exFAT; fall back, disk untouched.
+	res = <-disk.FormatAndMount("APPDATA", "/storage", true)
+}
+```
+
+`Options`' zero value is exactly what `FormatAndMount` does — FAT32, discover
+the disk, refuse to overwrite — so it is the one call to reach for when you
+want to vary anything, including `Device` (which `FormatAndMountDevice` sets
+for you).
+
+Three things are worth knowing about exFAT here:
+
+- **An exFAT disk that already carries your label is mounted, not
+  reformatted** — whichever `Filesystem` you asked for. Most SSDs and USB
+  drives ship exFAT, and if such a drive already holds your app's volume then
+  that data is the reason it was plugged in. Converting it would destroy it,
+  so `disk` never does. (A volume with somebody *else's* label is still
+  refused without `destructive=true`, as always.)
+- **Not every board's kernel can mount it.** `CONFIG_EXFAT_FS` is required,
+  and `COMPATIBILITY.md`'s "exFAT on attached disks" row says which boards
+  have it in their published artifacts. Where it is missing, `disk` reports
+  `ErrUnsupportedFS` *before writing anything* — it reads `/proc/filesystems`
+  first — so a fallback like the one above always finds the disk intact. This
+  applies to reading too: an exFAT drive on a board whose kernel lacks the
+  driver reports the same error rather than a bare mount failure.
+- **The formatter is GoSD's own.** `go-diskfs`, which writes our FAT32, has no
+  exFAT support, so `internal/diskfmt` writes exFAT directly from the
+  Microsoft specification — pure Go, no `mkfs.exfat`, no root. It writes the
+  main and backup boot regions, the FAT, the allocation bitmap, a
+  BMP-complete up-case table and a root directory carrying the label.
 
 There is no `disk`-specific example yet; `examples/emmcstorage` is the shape
 to copy — the only difference is the import and the sentinel you check for.
