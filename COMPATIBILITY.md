@@ -63,12 +63,42 @@ see `beans list` for what's in flight.
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
 | SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] | ✅ [^spi] |
+| Audio out (custom kernel) | ✅ [^audio] | ✅ [^audio] | ✅ [^audio] | 🚧 [^audio] | ➖ [^audio] | 🚧 [^audio] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
 (no matching hardware) · ❌ not supported (with a reason below).
 
 ## Footnotes
+
+[^audio]: Sound is deliberately absent from every published GoSD kernel
+    (`# CONFIG_SOUND is not set`), so this row is about a `gosd build-kernel`
+    recipe, not the stock image — the same stance as display/DRM, which has no
+    row here at all. `examples/chime` is the worked example: it plays a chime
+    and a test tone by talking the kernel's ALSA PCM ioctl interface directly
+    (a GoSD image has no `libasound.so.2` to link or `dlopen`), and ships one
+    Kconfig fragment covering all three Pi boards. Pi audio needs neither DRM
+    nor ASoC — `snd_bcm2835` talks to the VideoCore firmware over VCHIQ and
+    binds to a VCHIQ bus device, so there is no DTS patch either — and costs
+    about 120 KB on the Pi Zero W's kernel image (+0.7%), measured against a
+    stock build. That fragment was built by `gosd build-kernel` against a real
+    Docker daemon for **pi-zero-w and pi-zero-2w** (`CONFIG_SND_BCM2835=y` and
+    the HDMI module parameter confirmed in the resulting `kernel.config`);
+    pi-3b shares the fragment, the defconfig and the driver but was not
+    compiled. **No board has been hardware-verified — nothing here has
+    actually been heard**, and on the Pi the HDMI ALSA card only exists if the
+    firmware sees a display at probe time, so the cable must be connected
+    before power-up. Per-board hardware differs: the Pi Zeros have HDMI and no
+    jack; the Pi 3B adds a PWM-driven 4-pole jack; the Radxa Zero 3E is
+    HDMI-only (no jack, no codec); the ROCK 4SE has HDMI plus a 4-ring jack on
+    an ES8316 codec; the **NanoPi Zero2 has no HDMI connector at all** and no
+    I2S/HDMI controller node in mainline, leaving only header I2S/SPDIF pins,
+    hence ➖. The two Rockchip 🚧 cells are bean `gosd-lrxz`: their HDMI audio
+    is a codec on the DRM dw-hdmi bridge, so it needs the whole DRM subsystem
+    plus ASoC plus a DTS patch, while the 4SE's analog path needs ASoC but no
+    DRM. Epic `gosd-qkbl` records the research, the measurements, and the open
+    question of whether sound should move into the stock kernels (bean
+    `gosd-ette`).
 
 [^custom-kernel]: `gosd build-kernel` (see `docs/custom-kernels.md`) is
     code-complete: it drives a local Docker/Podman daemon to cross-compile a
