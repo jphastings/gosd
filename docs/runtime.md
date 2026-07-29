@@ -685,8 +685,8 @@ creates one ALSA card per HDMI output it finds, at probe time only. Plug the
 monitor in later and there is no card to play to until the next boot. The
 upside of that firmware-owned path is that Pi audio needs neither DRM nor
 ASoC, so it costs very little: a deliberate, deny-listed sound config adds
-about 120 KB to the Pi Zero W's kernel image (0.7%), against 1.2 MB for
-`examples/sattrack`'s display recipe.
+104 KB to the Pi Zero W's kernel image and 401 KB to the Zero 2 W's (0.63% and
+0.71%), against 1.2 MB (7.7%) for `examples/sattrack`'s display recipe.
 
 **Beware what enabling `CONFIG_SND` drags in.** The raspberrypi defconfigs
 ship the whole Pi audio ecosystem as `=m`, and GoSD kernels are monolithic, so

@@ -5,7 +5,7 @@ status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-29T21:45:08Z
-updated_at: 2026-07-29T22:20:12Z
+updated_at: 2026-07-29T23:04:26Z
 ---
 
 JP asked, verbatim:
@@ -151,47 +151,67 @@ tracked as gosd-lrxz.
 
 ## Measured size evidence (the crux of the fork)
 
-All numbers are real bytes from `gosd build-kernel` outputs in the
-content-addressed cache (`~/Library/Application Support/gosd/kernel-build/`),
-same pinned tree, same board, differing only in the overlay fragment.
+All numbers are real bytes. The "stock" column is the **published**
+`artifacts/v0.8.0` kernel — literally what `gosd build` puts on a card today —
+and the "with audio" column is a local `gosd build-kernel` run of
+gosd-y9hc's recipe against a real Docker daemon.
 
-**pi-zero-w** (`kernel.img`, a self-compressing armv6 zImage — GoSD's
-smallest, most size-sensitive kernel):
+| Board | Stock (v0.8.0) | With audio | Delta |
+|---|---|---|---|
+| pi-zero-w (`kernel.img`, armv6 zImage) | 16,484,560 | 16,588,808 | **+104,248 (+0.63%)** |
+| pi-zero-2w (`kernel8.img`, uncompressed arm64 Image) | 56,150,528 | 56,551,936 | **+401,408 (+0.71%)** |
 
-| Kernel | Bytes | Delta vs stock |
+The two agree at about two thirds of one percent; the absolute figures differ
+because the Pi's armv6 `kernel.img` is a self-compressing zImage while arm64's
+`kernel8.img` is an uncompressed Image. For scale, the whole published
+`pi-zero-w.tar.zst` is 16,497,070 bytes — on that board the kernel *is* the
+artifact.
+
+Two comparisons that put that in context:
+
+| Also measured, pi-zero-w | Bytes | vs stock |
 |---|---|---|
-| stock (`# CONFIG_SOUND is not set`) | 16,484,032 | — |
-| **examples/chime** (sound only, no DRM, deny-listed) | 16,589,344 | **+105,312 (+0.64%)** |
-| chime's first build, before the USB-MIDI-gadget deny | 16,604,768 | +120,736 (+0.73%) |
-| `examples/sattrack` (DRM + vc4 + its "minimal" sound) | 17,760,952 | +1,276,920 (+7.7%) |
+| this recipe before the USB-MIDI-gadget deny-list | +15,424 on top | +119,672 |
+| `examples/sattrack` (DRM + vc4 + its "minimal" sound) | 17,760,952 | +1,276,392 (+7.7%) |
 
-The gap between the middle two rows is the surprise of the exercise and is not
-about sound at all: 15,424 bytes of *USB MIDI gadget*. `USB_MIDI_GADGET` and
-`USB_CONFIGFS_F_MIDI` depend on `SND_RAWMIDI`, which cannot exist while
+The 15,424 bytes are the surprise of the exercise, and are not about sound at
+all: they are the *USB MIDI gadget*. `USB_MIDI_GADGET` and
+`USB_CONFIGFS_F_MIDI` depend on the raw-MIDI core, which cannot exist while
 `CONFIG_SOUND` is off, so they sit dormant in every stock GoSD Pi kernel (the
 gadget stack itself is on) and wake up the moment sound appears. Legacy gadget
 drivers claim the board's only UDC at probe — precisely how "Gadget Zero" broke
-`--usb-gadget` in bean gosd-spjt — so any Pi board that gains sound must deny
-them explicitly or risk breaking USB gadget mode. Route B would have to carry
-that deny-list into `build/boards/*/kernel.fragment`.
+`--usb-gadget` in bean gosd-spjt — so any Pi kernel that gains sound must deny
+them or risk breaking USB gadget mode. Route B would have to carry that
+deny-list into `build/boards/*/kernel.fragment`.
 
-For scale, the whole published `pi-zero-w.tar.zst` artifact is 16,497,070
-bytes (artifacts/v0.8.0) — the kernel *is* the artifact.
+**A measurement trap worth recording:** the `gosd build-kernel` cache holds
+outputs from months of bring-up work, and an old cache entry for a board is
+*not* a valid stock baseline — the first attempt at this comparison used a
+cached pi-zero-2w kernel that was 6.2 MB larger than the shipped one, which
+would have made audio look like it *shrank* the kernel by 10%. Compare against
+the published artifact, or build stock from current `main` yourself.
 
 **The sattrack number is a cautionary tale, not the cost of sound.** Its
 fragment enables `CONFIG_SOUND=y`/`SND=y`/`SND_SOC=y` to satisfy `DRM_VC4`'s
 hard dependency, with a comment claiming "no codec, machine, or USB audio
-drivers come with it". That is **false**: reading the built
-`kernel.config` out of the cache, that three-line re-enable silently compiled
-in the entire raspberrypi/linux audio ecosystem — ~60 HAT machine drivers
-(HiFiBerry x8, IQaudio, JustBoom, Allo x5, AudioInjector x3, Pisound, Cirrus,
-DionAudio, FE-Pi...), ~45 ASoC codec drivers, USB audio (`SND_USB_AUDIO`,
-UA101, Caiaq, 6fire, HiFace, Line6), the MIDI sequencer stack, OSS emulation,
+drivers come with it". That is **false**: reading the built `kernel.config` out
+of the cache, that three-line re-enable silently compiled in the entire
+raspberrypi/linux audio ecosystem — ~60 HAT machine drivers (HiFiBerry x8,
+IQaudio, JustBoom, Allo x5, AudioInjector x3, Pisound, Cirrus, DionAudio,
+FE-Pi...), ~45 ASoC codec drivers, USB audio (`SND_USB_AUDIO`, UA101, Caiaq,
+6fire, HiFace, Line6), the MIDI sequencer stack, OSS emulation,
 `SND_DUMMY`/`SND_ALOOP`, and `SND_BCM2835` itself. Cause: the raspberrypi
-defconfigs ship all of that as `=m`, and GoSD kernels are monolithic
+defconfigs ship all of that as `=m` — 75 `CONFIG_SND*` lines in
+`bcmrpi_defconfig`, 79 in `bcm2711_defconfig` — and GoSD kernels are monolithic
 (`CONFIG_MODULES` always off), so `make olddefconfig` promotes every `=m` to
 `=y` the moment `CONFIG_SND=y` appears. Precisely CLAUDE.md's "audit what a Pi
 defconfig hands you" trap, hit a fourth time. Tracked as gosd-df57.
+
+By contrast this recipe's built config carries exactly **ten** `CONFIG_SND*=y`
+symbols on each board: the core (`SND`, `SND_TIMER`, `SND_PCM`,
+`SND_PCM_TIMER`, `SND_DYNAMIC_MINORS`, `SND_PROC_FS`, `SND_VERBOSE_PROCFS`,
+`SND_CTL_FAST_LOOKUP`), `SND_BCM2835`, and one empty menu symbol
+(`SND_PCI` on arm64, with no PCI sound driver under it).
 
 So the honest comparison is stock vs a *deliberate* sound config: ALSA core +
 `snd_bcm2835` + an explicit deny-list (`# CONFIG_SND_SOC is not set` alone

@@ -79,13 +79,14 @@ see `beans list` for what's in flight.
     (a GoSD image has no `libasound.so.2` to link or `dlopen`), and ships one
     Kconfig fragment covering all three Pi boards. Pi audio needs neither DRM
     nor ASoC — `snd_bcm2835` talks to the VideoCore firmware over VCHIQ and
-    binds to a VCHIQ bus device, so there is no DTS patch either — and costs
-    about 120 KB on the Pi Zero W's kernel image (+0.7%), measured against a
-    stock build. That fragment was built by `gosd build-kernel` against a real
-    Docker daemon for **pi-zero-w and pi-zero-2w** (`CONFIG_SND_BCM2835=y` and
-    the HDMI module parameter confirmed in the resulting `kernel.config`);
-    pi-3b shares the fragment, the defconfig and the driver but was not
-    compiled. **No board has been hardware-verified — nothing here has
+    binds to a VCHIQ bus device, so there is no device-tree patch either — and
+    costs +104,248 bytes on the Pi Zero W's kernel image and +401,408 on the
+    Zero 2 W's (+0.63% and +0.71%), measured against the published
+    `artifacts/v0.8.0` kernels. The recipe was built by `gosd build-kernel`
+    against a real Docker daemon for **pi-zero-w and pi-zero-2w** (ten
+    `CONFIG_SND*=y` symbols, `CONFIG_SND_BCM2835=y`, and every denied symbol
+    absent in each resulting `kernel.config`); pi-3b shares the fragment, the
+    patch, the defconfig and the driver but was not compiled. **No board has been hardware-verified — nothing here has
     actually been heard**, and on the Pi the HDMI ALSA card only exists if the
     firmware sees a display at probe time, so the cable must be connected
     before power-up. Per-board hardware differs: the Pi Zeros have HDMI and no
