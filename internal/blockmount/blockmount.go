@@ -117,7 +117,7 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 	if mountable, err := s.Deps.Mountable(fs); err != nil {
 		return "", err
 	} else if !mountable {
-		return "", fmt.Errorf("the %s at %s needs %s, but this board's kernel has no %s support: %w — rebuild the kernel with it (see docs/custom-kernels.md) or use %s instead", s.Noun, device, fs, fs, ErrUnsupportedFS, diskfmt.FAT32)
+		return "", fmt.Errorf("the %s at %s needs %s, but this board's kernel has no %s support: %w — %s", s.Noun, device, fs, fs, ErrUnsupportedFS, remedyFor(fs))
 	}
 
 	if format {
@@ -130,6 +130,16 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 		return "", fmt.Errorf("mounting the %s at %s onto %s failed: %w", s.Noun, device, mountpoint, err)
 	}
 	return device, nil
+}
+
+// remedyFor is the actionable half of the unsupported-filesystem error. FAT32
+// is every board's baseline, so it is worth suggesting for anything else — but
+// suggesting it in place of itself would be nonsense.
+func remedyFor(fs diskfmt.FS) string {
+	if fs == diskfmt.FAT32 {
+		return "rebuild the board's kernel with it (see docs/custom-kernels.md)"
+	}
+	return fmt.Sprintf("rebuild the board's kernel with it (see docs/custom-kernels.md), or use %s instead", diskfmt.FAT32)
 }
 
 // describe renders what is on the device for the "refusing to reformat" error.
