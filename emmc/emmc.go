@@ -15,16 +15,15 @@
 // different label, or non-FAT content such as a partition table) unless the
 // caller explicitly opts in, returning an error wrapping ErrRefusedFormat
 // otherwise.
+//
+// For any other mass storage — an NVMe SSD, a USB drive, an SD card in a reader
+// — see the sibling disk package, which has the same shape.
 package emmc
 
 import (
 	"errors"
-	"fmt"
-	"sort"
-	"strings"
-	"unicode"
 
-	"github.com/jphastings/gosd/internal/emmcfmt"
+	"github.com/jphastings/gosd/internal/blockmount"
 )
 
 // ErrNoEMMC reports that the board has no onboard eMMC available to format and
@@ -38,12 +37,7 @@ var ErrNoEMMC = errors.New("no onboard eMMC found")
 // that want to offer the user a way to consent (e.g. an app-env var read from
 // gosd.toml's [env] table) can match this with errors.Is and retry with
 // destructive=true once they have it.
-var ErrRefusedFormat = errors.New("refusing to reformat")
-
-// maxFATLabelLen is the FAT volume-label limit (11 bytes). FAT also stores
-// labels upper-cased; FormatAndMount matches them case-insensitively so the
-// label a caller passes round-trips regardless.
-const maxFATLabelLen = 11
+var ErrRefusedFormat = blockmount.ErrRefusedFormat
 
 // FormatAndMount ensures the board's onboard eMMC carries a FAT filesystem
 // labelled label and mounts it read-write at mountpoint, then reports the
@@ -71,7 +65,7 @@ const maxFATLabelLen = 11
 func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
 	out := make(chan Result, 1)
 	go func() {
-		device, err := run(newPlatformDeps(), label, mountpoint, destructive)
+		device, err := blockmount.Run(storage(newPlatformDeps()), label, mountpoint, destructive)
 		if err != nil {
 			out <- Result{Err: err}
 		} else {
@@ -102,104 +96,9 @@ type Result struct {
 	Err error
 }
 
-// deps are the side-effecting operations run needs, injected so the
-// orchestration can be tested without a real eMMC. The real implementations are
-// assembled by newPlatformDeps in platform_linux.go.
-type deps struct {
-	// mountedAt reports whether something is already mounted at mountpoint,
-	// and if so the device node backing it (so a warm restart can report the
-	// eMMC's device without re-discovering it — discovery deliberately skips
-	// mounted devices).
-	mountedAt func(mountpoint string) (device string, mounted bool, err error)
-	// discover returns the device node of the onboard eMMC, or ErrNoEMMC.
-	discover func() (string, error)
-	// inspect reports what already occupies the device.
-	inspect func(device string) (emmcfmt.Contents, error)
-	// format writes a whole-device FAT filesystem labelled label to device.
-	format func(device, label string) error
-	// mount mounts device read-write at mountpoint.
-	mount func(device, mountpoint string) error
-}
-
-// run is the pure orchestration behind FormatAndMount: decide, from what is
-// already present, whether to mount-only, format, or refuse. It returns the
-// device node backing the mounted filesystem on success.
-func run(d deps, label, mountpoint string, destructive bool) (string, error) {
-	if err := validateLabel(label); err != nil {
-		return "", err
-	}
-
-	// Warm restart (app relaunched without a reboot): the eMMC is still
-	// mounted, so there is nothing to do but report the device behind it.
-	if device, mounted, err := d.mountedAt(mountpoint); err != nil {
-		return "", err
-	} else if mounted {
-		return device, nil
-	}
-
-	device, err := d.discover()
-	if err != nil {
-		return "", err
-	}
-
-	contents, err := d.inspect(device)
-	if err != nil {
-		return "", fmt.Errorf("inspecting the eMMC at %s failed: %w", device, err)
-	}
-
-	switch {
-	case contents.IsFAT && strings.EqualFold(contents.Label, label):
-		// Already provisioned by an earlier run — mount only.
-	case contents.Blank:
-		if err := d.format(device, label); err != nil {
-			return "", fmt.Errorf("formatting the blank eMMC at %s failed: %w", device, err)
-		}
-	case !destructive:
-		return "", fmt.Errorf("the eMMC at %s already holds %s; %w it as %q without permission — pass destructive=true to wipe it", device, describe(contents), ErrRefusedFormat, label)
-	default:
-		if err := d.format(device, label); err != nil {
-			return "", fmt.Errorf("reformatting the eMMC at %s failed: %w", device, err)
-		}
-	}
-
-	if err := d.mount(device, mountpoint); err != nil {
-		return "", fmt.Errorf("mounting the eMMC at %s onto %s failed: %w", device, mountpoint, err)
-	}
-	return device, nil
-}
-
-// describe renders what is on the eMMC for the "refusing to reformat" error.
-func describe(c emmcfmt.Contents) string {
-	if c.IsFAT {
-		return fmt.Sprintf("a FAT volume labelled %q", c.Label)
-	}
-	return "non-FAT content"
-}
-
-func validateLabel(label string) error {
-	if label == "" {
-		return errors.New("emmc: the volume label must not be empty")
-	}
-	if len(label) > maxFATLabelLen {
-		return fmt.Errorf("emmc: volume label %q is %d characters; FAT labels are at most %d", label, len(label), maxFATLabelLen)
-	}
-	for _, r := range label {
-		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
-			return fmt.Errorf("emmc: volume label %q must be printable ASCII", label)
-		}
-	}
-	return nil
-}
-
-// blockDevice is one entry under /sys/block that chooseEMMC weighs.
-type blockDevice struct {
-	// name is the kernel device name, e.g. "mmcblk0".
-	name string
-	// kind is /sys/block/<name>/device/type — "MMC" for eMMC, "SD" for a
-	// card, "" if the attribute is absent.
-	kind string
-	// partitions are the device's partition node names, e.g. "mmcblk0p1".
-	partitions []string
+// storage describes the onboard eMMC to the shared orchestration.
+func storage(d blockmount.Deps) blockmount.Storage {
+	return blockmount.Storage{Pkg: "emmc", Noun: "eMMC", Deps: d}
 }
 
 // chooseEMMC picks the onboard eMMC from the block devices present. It selects
@@ -209,31 +108,7 @@ type blockDevice struct {
 // never a format target. mountedSources holds the device nodes currently
 // mounted (e.g. "/dev/mmcblk1p1"), so booting from the eMMC safely yields
 // ErrNoEMMC rather than a wiped system.
-func chooseEMMC(devices []blockDevice, mountedSources map[string]bool) (string, error) {
-	var candidates []string
-	for _, dev := range devices {
-		if dev.kind != "MMC" || inUse(dev, mountedSources) {
-			continue
-		}
-		candidates = append(candidates, dev.name)
-	}
-	if len(candidates) == 0 {
-		return "", ErrNoEMMC
-	}
-	sort.Strings(candidates)
-	return "/dev/" + candidates[0], nil
-}
-
-// inUse reports whether the whole device or any of its partitions is currently
-// mounted.
-func inUse(dev blockDevice, mountedSources map[string]bool) bool {
-	if mountedSources["/dev/"+dev.name] {
-		return true
-	}
-	for _, part := range dev.partitions {
-		if mountedSources["/dev/"+part] {
-			return true
-		}
-	}
-	return false
+func chooseEMMC(devices []blockmount.Device, mountedSources map[string]bool) (string, error) {
+	rank := func(dev blockmount.Device) (int, bool) { return 0, dev.Kind == "MMC" }
+	return blockmount.Choose(devices, mountedSources, rank, ErrNoEMMC)
 }
