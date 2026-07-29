@@ -64,8 +64,12 @@ say so in the bean rather than silently diverging.
 - **Default hostname:** the sanitized basename of the app's main package,
   overridable via `--hostname` and `gosd.toml`.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
-  library, v0.3), `device/` (app-facing runtime helpers, v0.3). Everything else
-  lives under `internal/`.
+  library), `emmc/` (onboard-eMMC format/mount) and `disk/` (the same for any
+  attached mass storage — NVMe, USB drive, card reader). Everything else lives
+  under `internal/`; `emmc` and `disk` share `internal/blockmount` (the
+  format/mount orchestration, label rules and candidate selection) and
+  `internal/diskfmt` (pure-Go FAT32 inspect/format), so a change to one must
+  not silently change the other's semantics.
 - **gosd-init source location:** `gosd build` builds gosd-init from a local
   checkout when one's found (current directory's module, or the checkout gosd
   itself was compiled from), otherwise from `github.com/jphastings/gosd` at

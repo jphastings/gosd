@@ -282,7 +282,8 @@ For a worked example, `examples/hello` persists a boot counter to
 The two Rockchip boards, the Radxa Zero 3E and the NanoPi Zero2, also have a
 soldered-on eMMC in addition to the microSD card they boot from — the Pi
 boards have no such thing. The public `emmc` package lets your app format
-and mount it:
+and mount it. (For any *attached* mass storage — an NVMe SSD, a USB drive —
+see "Attached disk storage" below, which has the same shape.)
 
 ```go
 if err := <-emmc.FormatAndMount("APPDATA", "/storage", false); err != nil {
@@ -325,6 +326,68 @@ once your app actually needs the storage.
 `/storage`, degrades gracefully (logs and exits cleanly) when `ErrNoEMMC`
 comes back, and otherwise writes a small file and reads it back to
 demonstrate persistence.
+
+## Attached disk storage (`disk` package)
+
+The public `disk` package is the general-purpose sibling of `emmc`: where
+`emmc` addresses one specific device (a board's soldered-on eMMC), `disk`
+takes whatever mass storage it finds attached — an M.2 NVMe SSD, a USB
+drive, an SD card in a USB reader. The call is the same shape:
+
+```go
+res := <-disk.FormatAndMount("APPDATA", "/storage", false)
+if res.Err != nil {
+	log.Printf("no bulk storage: %v", res.Err)
+}
+```
+
+Everything `emmc` guarantees, `disk` guarantees identically: it returns
+immediately and the channel delivers exactly one `Result` before closing;
+formatting is idempotent and keyed on the label, so a disk already carrying a
+FAT filesystem with your label is only mounted; a blank disk is always
+formatted; `destructive` gates everything else; `label` is 11 ASCII
+characters, FAT's own limit.
+
+- **Discovery is an allowlist, and never picks the boot media.** Only
+  `nvme*` (NVMe namespaces), `sd*` (SCSI/USB mass storage), `vd*` (virtio)
+  and `mmcblk*` (SD/eMMC) can be chosen, and only if nothing is mounted from
+  them. `/sys/block` is full of nodes that would be catastrophic or pointless
+  to format — `loop*`, `ram*`, `zram*`, `zd*`, `dm-*`, `md*`, `sr*`, `nbd*`,
+  `mtdblock*`, `ubiblock*`, and an eMMC's `boot0`/`boot1`/`rpmb` hardware
+  partitions — and none of them is ever a candidate. A device reporting no
+  medium (an empty card-reader slot) or write protection is skipped too.
+- **When several disks qualify, the order is fixed**: NVMe, then USB/SCSI,
+  then virtio, then MMC, and alphabetically within each class — so the choice
+  never depends on which device the kernel happened to enumerate first. To
+  pick deliberately, `disk.Devices()` lists the qualifying device nodes in
+  that same order and `disk.FormatAndMountDevice("/dev/sda", …)` targets one.
+  Naming a device explicitly still can't wipe a disk something is mounted
+  from.
+- **It's a whole-device FAT32 filesystem** — the mount source is the raw
+  `/dev/nvme0n1`, not a partition on it. That is deliberate: it's what lets
+  `Result.BlockDevice` be handed straight to `gadget.MassStorage` to share
+  the same volume over USB (`disk.Unmount` first — expose or mount, never
+  both), and it avoids the privileged partition-table reread. A host plugging
+  in sees a drive with no partition table, which Windows, macOS and Linux all
+  mount happily. The FAT caveats from `/data` apply unchanged: no unix
+  permissions, ownership, symlinks or hard links, not power-loss-robust
+  (write with temp-file + `fsync` + `rename`), **and no single file larger
+  than 4 GiB**, however large the disk is.
+- **exFAT is recognised but not supported.** Most SSDs and USB drives ship
+  formatted exFAT, and the boards' kernels can mount it — but nothing in GoSD
+  can read or write an exFAT filesystem, so `FormatAndMount` reports such a
+  disk as holding "an exFAT filesystem, which GoSD cannot mount" and refuses
+  it unless you pass `destructive=true` to reformat it as FAT32 (which
+  destroys whatever was on it, and imposes the 4 GiB file limit). An app that
+  genuinely needs to *read* an existing exFAT disk must still mount it itself
+  with `unix.Mount`.
+- **When nothing suitable is attached**, `FormatAndMount`'s channel yields
+  `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
+  here" rather than a fatal error, exactly as `examples/emmcstorage` does for
+  `ErrNoEMMC`.
+
+There is no `disk`-specific example yet; `examples/emmcstorage` is the shape
+to copy — the only difference is the import and the sentinel you check for.
 
 ## Logging
 
@@ -592,6 +655,8 @@ all) is planned for later.
   backing the mount, and `emmc.Unmount` releases it so `gadget.MassStorage`
   can take it exclusively) and otherwise the SD card's `GOSD-DATA` partition
   (build with `--data-size`), which is how the eMMC-less Pi Zeros run it.
+  The `disk` package pairs with `gadget.MassStorage` the same way, for an
+  app that wants to share an attached SSD or USB drive instead.
 
 ## Serial console baud rate (`--console-baud`)
 

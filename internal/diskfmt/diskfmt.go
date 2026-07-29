@@ -1,24 +1,16 @@
-// Package emmcfmt is the spike (bean gosd-0s0m) proving that GoSD can format
-// the onboard eMMC on the Rockchip boards on-device, in pure Go
-// (CGO_ENABLED=0), with no external mkfs and no root beyond write access to
-// the device node.
+// Package diskfmt inspects and FAT32-formats whole block devices on-device, in
+// pure Go (CGO_ENABLED=0), with no external mkfs and no root beyond write
+// access to the device node. It backs the public emmc and disk packages.
 //
-// The kernels on the Radxa Zero 3E and NanoPi Zero2 are VFAT-only, and the
-// eMMC is soldered so it cannot be formatted on another machine, so a blank
-// eMMC is unusable unless we can lay down a FAT filesystem here. This package
-// shows that github.com/diskfs/go-diskfs — already used to build image files
-// in internal/image — can instead target a real block device: diskfs.Open on
-// a device node auto-detects its size via ioctl(BLKGETSIZE64), and
-// CreateFilesystem with Partition 0 writes a whole-device FAT32 with no
-// partition table (which also avoids the BLKRRPART reread that needs
-// privileges).
-//
-// It is deliberately minimal. The production surface (format-if-blank + mount)
-// belongs to the device package under bean gosd-tdcc; this package exists only
-// to de-risk that work and will be folded into it.
-package emmcfmt
+// github.com/diskfs/go-diskfs — already used to build image files in
+// internal/image — can target a real block device: diskfs.Open on a device node
+// auto-detects its size via ioctl(BLKGETSIZE64), and CreateFilesystem with
+// Partition 0 writes a whole-device FAT32 with no partition table (which also
+// avoids the BLKRRPART reread that needs privileges).
+package diskfmt
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -35,8 +27,8 @@ import (
 // so any existing partition table or filesystem leaves a non-zero byte in it.
 const blankProbeBytes = 1 << 20 // 1 MiB
 
-// Contents describes what already occupies an eMMC device, which is all
-// FormatAndMount's mount-only / format / refuse decision depends on.
+// Contents describes what already occupies a block device, which is all the
+// mount-only / format / refuse decision depends on.
 type Contents struct {
 	// IsFAT is true when the device carries a readable FAT filesystem
 	// (FAT12/16/32).
@@ -51,6 +43,11 @@ type Contents struct {
 	// format even without an explicit destructive opt-in. Meaningful only
 	// when IsFAT is false.
 	Blank bool
+
+	// OtherFS names a non-FAT filesystem recognised on the device, e.g.
+	// "exFAT", so a refusal to overwrite it can say what it is. Empty when the
+	// content is unrecognised. Meaningful only when IsFAT is false.
+	OtherFS string
 }
 
 // Inspect reports what occupies the block device (or image file) at devicePath.
@@ -62,11 +59,25 @@ func Inspect(devicePath string) (Contents, error) {
 		return fat, nil
 	}
 
-	blank, err := leadingRegionIsZero(devicePath)
+	head, err := readLeadingRegion(devicePath)
 	if err != nil {
 		return Contents{}, err
 	}
-	return Contents{Blank: blank}, nil
+	if isExFAT(head) {
+		return Contents{OtherFS: "exFAT"}, nil
+	}
+	return Contents{Blank: isAllZero(head)}, nil
+}
+
+// isExFAT reports whether a device's leading bytes are an exFAT boot sector.
+// exFAT writes "EXFAT   " at offset 3, where FAT and NTFS put their own OEM
+// name. Recognising it is enough to name the filesystem in an error; reading
+// its volume label would need the root directory walked (the label lives in a
+// 0x83 directory entry, not the boot sector), which diskfmt does not do.
+func isExFAT(head []byte) bool {
+	const offset = 3
+	magic := []byte("EXFAT   ")
+	return len(head) >= offset+len(magic) && bytes.Equal(head[offset:offset+len(magic)], magic)
 }
 
 // inspectFAT reports whether devicePath holds a FAT filesystem and, if so, its
@@ -97,12 +108,12 @@ func trimLabel(label string) string {
 	return strings.TrimRight(label, " \x00")
 }
 
-// leadingRegionIsZero reports whether the first blankProbeBytes of devicePath
-// (or all of it, if shorter) are entirely zero.
-func leadingRegionIsZero(devicePath string) (bool, error) {
+// readLeadingRegion returns the first blankProbeBytes of devicePath, or all of
+// it if shorter.
+func readLeadingRegion(devicePath string) ([]byte, error) {
 	f, err := os.Open(devicePath)
 	if err != nil {
-		return false, fmt.Errorf("opening %s to check if it is blank failed: %w", devicePath, err)
+		return nil, fmt.Errorf("opening %s to check what it holds failed: %w", devicePath, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -111,14 +122,18 @@ func leadingRegionIsZero(devicePath string) (bool, error) {
 	switch err {
 	case nil, io.EOF, io.ErrUnexpectedEOF:
 	default:
-		return false, fmt.Errorf("reading the start of %s to check if it is blank failed: %w", devicePath, err)
+		return nil, fmt.Errorf("reading the start of %s to check what it holds failed: %w", devicePath, err)
 	}
-	for _, b := range buf[:n] {
+	return buf[:n], nil
+}
+
+func isAllZero(data []byte) bool {
+	for _, b := range data {
 		if b != 0 {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // FormatFAT32 formats the block device (or image file) at devicePath as a

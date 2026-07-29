@@ -2,157 +2,67 @@ package emmc
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
-	"github.com/jphastings/gosd/internal/emmcfmt"
+	"github.com/jphastings/gosd/internal/blockmount"
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
-// fakeDeps records what run did and scripts what each dependency returns, so
-// the orchestration can be exercised without a real eMMC.
-type fakeDeps struct {
-	mounted   bool
-	contents  emmcfmt.Contents
-	discErr   error
-	inspErr   error
-	formatErr error
-	mountErr  error
-
-	formatted   bool
-	formatLabel string
-	didMount    bool
-	mountDevice string
-	mountTarget string
-}
-
-func (f *fakeDeps) deps() deps {
-	return deps{
-		mountedAt: func(string) (string, bool, error) {
-			if f.mounted {
-				return "/dev/mmcblk0", true, nil
+// fakeDeps scripts the platform operations so the package's own wiring — its
+// noun, its label-error prefix and its sentinels — can be exercised without a
+// real eMMC. The mount-only / format / refuse decision itself is shared and
+// tested in internal/blockmount.
+func fakeDeps(contents diskfmt.Contents, discErr error) blockmount.Deps {
+	return blockmount.Deps{
+		MountedAt: func(string) (string, bool, error) { return "", false, nil },
+		Discover: func() (string, error) {
+			if discErr != nil {
+				return "", discErr
 			}
-			return "", false, nil
+			return "/dev/mmcblk1", nil
 		},
-		discover: func() (string, error) {
-			if f.discErr != nil {
-				return "", f.discErr
-			}
-			return "/dev/mmcblk0", nil
-		},
-		inspect: func(string) (emmcfmt.Contents, error) { return f.contents, f.inspErr },
-		format: func(_, label string) error {
-			f.formatted, f.formatLabel = true, label
-			return f.formatErr
-		},
-		mount: func(device, mountpoint string) error {
-			f.didMount, f.mountDevice, f.mountTarget = true, device, mountpoint
-			return f.mountErr
-		},
+		Inspect: func(string) (diskfmt.Contents, error) { return contents, nil },
+		Format:  func(string, string) error { return nil },
+		Mount:   func(string, string) error { return nil },
 	}
 }
 
-func TestRunMountsOnlyWhenLabelAlreadyMatches(t *testing.T) {
-	// A previous run of the same app already formatted the eMMC, so this run
-	// must mount it without reformatting (which would wipe the data).
-	f := &fakeDeps{contents: emmcfmt.Contents{IsFAT: true, Label: "APPDATA"}}
+func TestFormatAndMountSurfacesErrNoEMMC(t *testing.T) {
+	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, ErrNoEMMC)), "APPDATA", "/storage", false)
 
-	device, err := run(f.deps(), "appdata", "/storage", false)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if device != "/dev/mmcblk0" {
-		t.Errorf("run device = %q, want /dev/mmcblk0", device)
-	}
-	if f.formatted {
-		t.Error("reformatted an eMMC that already had the app's label")
-	}
-	if !f.didMount || f.mountTarget != "/storage" {
-		t.Errorf("mount = (%v, %q), want mounted at /storage", f.didMount, f.mountTarget)
-	}
-}
-
-func TestRunFormatsBlankWithoutDestructive(t *testing.T) {
-	// A blank eMMC never needs consent, even without destructive=true — this
-	// pins the other side of ErrRefusedFormat's contract alongside
-	// TestRunRefusesForeignContentWithoutDestructive below: run only ever
-	// wraps ErrRefusedFormat when the eMMC holds *other* content, never for
-	// blank media.
-	f := &fakeDeps{contents: emmcfmt.Contents{Blank: true}}
-
-	if _, err := run(f.deps(), "APPDATA", "/storage", false); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !f.formatted || f.formatLabel != "APPDATA" {
-		t.Errorf("format = (%v, %q), want formatted with APPDATA", f.formatted, f.formatLabel)
-	}
-	if !f.didMount {
-		t.Error("did not mount after formatting a blank eMMC")
-	}
-}
-
-func TestRunRefusesForeignContentWithoutDestructive(t *testing.T) {
-	f := &fakeDeps{contents: emmcfmt.Contents{IsFAT: true, Label: "OTHERAPP"}}
-
-	_, err := run(f.deps(), "APPDATA", "/storage", false)
-	if !errors.Is(err, ErrRefusedFormat) {
-		t.Fatalf("run error = %v, want ErrRefusedFormat", err)
-	}
-	if f.formatted || f.didMount {
-		t.Errorf("touched the device (formatted=%v mounted=%v) when it should have refused", f.formatted, f.didMount)
-	}
-}
-
-func TestRunReformatsForeignContentWhenDestructive(t *testing.T) {
-	f := &fakeDeps{contents: emmcfmt.Contents{Blank: false}} // non-FAT foreign content
-
-	if _, err := run(f.deps(), "APPDATA", "/storage", true); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !f.formatted || !f.didMount {
-		t.Errorf("formatted=%v mounted=%v, want both true under destructive=true", f.formatted, f.didMount)
-	}
-}
-
-func TestRunIsIdempotentWhenAlreadyMounted(t *testing.T) {
-	f := &fakeDeps{mounted: true, contents: emmcfmt.Contents{Blank: true}}
-
-	device, err := run(f.deps(), "APPDATA", "/storage", false)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if device != "/dev/mmcblk0" {
-		t.Errorf("run device = %q, want the already-mounted device reported back", device)
-	}
-	if f.formatted || f.didMount {
-		t.Error("did work despite the storage already being mounted")
-	}
-}
-
-func TestRunSurfacesNoEMMC(t *testing.T) {
-	f := &fakeDeps{discErr: ErrNoEMMC}
-
-	_, err := run(f.deps(), "APPDATA", "/storage", false)
 	if !errors.Is(err, ErrNoEMMC) {
-		t.Fatalf("run error = %v, want ErrNoEMMC", err)
+		t.Fatalf("error = %v, want ErrNoEMMC", err)
 	}
 }
 
-func TestRunRejectsBadLabelBeforeTouchingDevice(t *testing.T) {
-	f := &fakeDeps{}
+func TestFormatAndMountSurfacesErrRefusedFormat(t *testing.T) {
+	deps := fakeDeps(diskfmt.Contents{IsFAT: true, Label: "OTHERAPP"}, nil)
 
-	if _, err := run(f.deps(), "waytoolongforfat", "/storage", true); err == nil {
-		t.Fatal("run accepted a 16-character label")
+	_, err := blockmount.Run(storage(deps), "APPDATA", "/storage", false)
+
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Fatalf("error = %v, want ErrRefusedFormat", err)
 	}
-	if f.formatted || f.didMount {
-		t.Error("did device work despite an invalid label")
+	if !strings.Contains(err.Error(), "the eMMC at /dev/mmcblk1") {
+		t.Errorf("error = %q, want it to name the eMMC and its device node", err)
+	}
+}
+
+func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
+	_, err := blockmount.Run(storage(fakeDeps(diskfmt.Contents{}, nil)), "WAYTOOLONGFORFAT", "/storage", false)
+
+	if err == nil || !strings.HasPrefix(err.Error(), "emmc: ") {
+		t.Fatalf("error = %v, want an emmc-prefixed label complaint", err)
 	}
 }
 
 func TestChooseEMMCPrefersUnmountedMMCRegardlessOfNumber(t *testing.T) {
 	// The eMMC is mmcblk1 here and the booted SD is mmcblk0, proving selection
 	// is by type + not-in-use, not by device number.
-	devices := []blockDevice{
-		{name: "mmcblk0", kind: "SD", partitions: []string{"mmcblk0p1", "mmcblk0p2"}},
-		{name: "mmcblk1", kind: "MMC"},
+	devices := []blockmount.Device{
+		{Name: "mmcblk0", Kind: "SD", Partitions: []string{"mmcblk0p1", "mmcblk0p2"}},
+		{Name: "mmcblk1", Kind: "MMC"},
 	}
 	mounted := map[string]bool{"/dev/mmcblk0p1": true, "/dev/mmcblk0p2": true}
 
@@ -168,8 +78,8 @@ func TestChooseEMMCPrefersUnmountedMMCRegardlessOfNumber(t *testing.T) {
 func TestChooseEMMCSkipsTheBootDevice(t *testing.T) {
 	// Booting from the eMMC: its partitions are mounted, so it must be off
 	// limits and discovery must report no eMMC rather than a wiped system.
-	devices := []blockDevice{
-		{name: "mmcblk0", kind: "MMC", partitions: []string{"mmcblk0p1", "mmcblk0p2"}},
+	devices := []blockmount.Device{
+		{Name: "mmcblk0", Kind: "MMC", Partitions: []string{"mmcblk0p1", "mmcblk0p2"}},
 	}
 	mounted := map[string]bool{"/dev/mmcblk0p1": true, "/dev/mmcblk0p2": true}
 
@@ -178,25 +88,16 @@ func TestChooseEMMCSkipsTheBootDevice(t *testing.T) {
 	}
 }
 
-func TestChooseEMMCReportsNoEMMCWhenOnlySDPresent(t *testing.T) {
-	devices := []blockDevice{{name: "mmcblk0", kind: "SD", partitions: []string{"mmcblk0p1"}}}
+func TestChooseEMMCIgnoresNonMMCStorage(t *testing.T) {
+	// An SD card, an NVMe SSD and a USB drive are all mass storage, but none of
+	// them is the onboard eMMC — they belong to the disk package.
+	devices := []blockmount.Device{
+		{Name: "mmcblk0", Kind: "SD", Partitions: []string{"mmcblk0p1"}},
+		{Name: "nvme0n1"},
+		{Name: "sda"},
+	}
 
 	if _, err := chooseEMMC(devices, nil); !errors.Is(err, ErrNoEMMC) {
 		t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
-	}
-}
-
-func TestValidateLabel(t *testing.T) {
-	valid := []string{"A", "APPDATA", "ELEVENCHARS"}
-	for _, label := range valid {
-		if err := validateLabel(label); err != nil {
-			t.Errorf("validateLabel(%q) = %v, want nil", label, err)
-		}
-	}
-	invalid := []string{"", "TWELVECHARSX", "café"}
-	for _, label := range invalid {
-		if err := validateLabel(label); err == nil {
-			t.Errorf("validateLabel(%q) = nil, want an error", label)
-		}
 	}
 }

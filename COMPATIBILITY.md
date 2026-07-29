@@ -56,6 +56,7 @@ see `beans list` for what's in flight.
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
+| Attached disk format/mount (`disk` package) | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] |
 | USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ➖ [^pi3b-no-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
 | NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
@@ -159,15 +160,21 @@ see `beans list` for what's in flight.
 
 [^rock4se-nvme]: The ROCK 4SE's stock kernel enables the RK3399 PCIe host,
     its PHY, the NVMe block driver, and the exFAT filesystem (+UTF-8 NLS),
-    all asserted by the board's kernel fragment — so an M.2 NVMe SSD
-    formatted exFAT (host-native for USB mass-storage sharing) is mountable
-    by an app via `unix.Mount`. **Hardware-verified** during bring-up (bean
+    all asserted by the board's kernel fragment — so an M.2 NVMe SSD is
+    usable from an app. **Hardware-verified** during bring-up (bean
     `gosd-sz6p`, 2026-07-23) with the actual target SSD (KIOXIA
     XG7000-512): the previously flagged RK3399 PCIe link-training risk
-    didn't manifest — the drive enumerated immediately, sustained 256 MiB
-    @ 840 MB/s sequential read, and exFAT mounted via `unix.Mount` with
-    data surviving unmount/remount. (The link-training timeout logged with
-    the slot empty was confirmed benign probing noise, not a real fault.)
+    didn't manifest — the drive enumerated immediately as `/dev/nvme0n1`,
+    sustained 256 MiB @ 840 MB/s sequential read, and exFAT mounted via
+    `unix.Mount` with data surviving unmount/remount. (The link-training
+    timeout logged with the slot empty was confirmed benign probing noise,
+    not a real fault.) That bring-up mounted the drive by hand; the
+    supported path is now the `disk` package (see [^disk]), which discovers
+    the SSD, formats it whole-device FAT32 and mounts it — an app only
+    needs `unix.Mount` directly if it wants a filesystem GoSD does not
+    write, exFAT included: the kernel can *mount* exFAT here, but nothing
+    in GoSD can create or read one, so `disk` refuses an exFAT drive rather
+    than wiping it unasked.
 
 [^pi3b-family]: **One `pi-3b` image covers the whole Pi 3B family — 3B and
     3B+** (JP's locked decision, epic `gosd-xhc3` / bean `gosd-oq0z`): the
@@ -404,6 +411,22 @@ see `beans list` for what's in flight.
     so its bring-up exercised the same `ErrNoEMMC` branch (bean
     `gosd-nlzf`) — the format/mount path remains code-complete-only
     everywhere except the NanoPi Zero2.
+
+[^disk]: The `disk` package (public API, see `docs/runtime.md`'s "Attached
+    disk storage" section, bean `gosd-yggd`) is the general-purpose sibling
+    of `emmc`: it discovers whatever mass storage is attached and is *not*
+    the media the board booted from — an NVMe SSD, a USB drive, an SD card
+    in a reader — and formats/mounts it under the same whole-device-FAT,
+    label-keyed, idempotent rules. Every board in this table has a USB host
+    port, so the USB-drive case applies to all of them; NVMe applies only to
+    the ROCK 4SE (see [^rock4se-nvme]). Marked 🚧 rather than ✅ because the
+    package is **code-complete but not yet hardware-verified** — the bench
+    checklist on bean `gosd-yggd` (rock-4se NVMe discover/format/mount/
+    gadget-share, plus a USB drive on any board) flips this row to ✅.
+    A disk arriving pre-formatted as exFAT (how most SSDs and USB drives
+    ship) is *recognised and refused* rather than silently wiped: GoSD
+    cannot mount exFAT, so the caller must pass `destructive=true` to
+    reformat it as FAT32.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
     Zeros, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,

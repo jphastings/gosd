@@ -1,4 +1,4 @@
-package emmcfmt
+package diskfmt
 
 import (
 	"io"
@@ -10,14 +10,14 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem"
 )
 
-// backingFile stands in for the eMMC block device: a sparse regular file of a
+// backingFile stands in for a real block device: a sparse regular file of a
 // realistic size. go-diskfs sizes a regular file from its Stat size and a real
 // block device from ioctl(BLKGETSIZE64); the FAT32 formatting path downstream
 // is identical, so this exercises everything except the ioctl itself (which
 // needs real hardware/root and is a documented follow-up).
 func backingFile(t *testing.T, sizeBytes int64) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "emmc.img")
+	path := filepath.Join(t.TempDir(), "device.img")
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("creating backing file: %v", err)
@@ -98,6 +98,23 @@ func TestInspectForeignContentIsNotBlank(t *testing.T) {
 	}
 	if got.IsFAT || got.Blank {
 		t.Errorf("Inspect of foreign content = %+v, want {IsFAT:false Blank:false}", got)
+	}
+}
+
+// TestInspectNamesExFATWithoutClaimingItIsMountable pins the compromise for a
+// disk already carrying exFAT (the realistic case for a big NVMe or USB drive):
+// it is named, so the refusal message can be specific, but it is still neither
+// FAT nor blank, so it is still refused without an explicit destructive opt-in.
+func TestInspectNamesExFATWithoutClaimingItIsMountable(t *testing.T) {
+	path := backingFile(t, 8*1024*1024)
+	scribble(t, path, 0, append([]byte{0xEB, 0x76, 0x90}, []byte("EXFAT   ")...))
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.OtherFS != "exFAT" || got.IsFAT || got.Blank {
+		t.Errorf("Inspect of an exFAT device = %+v, want {OtherFS:exFAT IsFAT:false Blank:false}", got)
 	}
 }
 
