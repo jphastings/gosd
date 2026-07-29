@@ -56,7 +56,7 @@ see `beans list` for what's in flight.
 | SNTP time sync | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
-| Attached disk format/mount (`disk` package) | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] | 🚧 [^disk] |
+| Attached disk format/mount (`disk` package) | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] |
 | USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ➖ [^pi3b-no-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
 | NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
@@ -419,10 +419,11 @@ see `beans list` for what's in flight.
     in a reader — and formats/mounts it under the same whole-device-FAT,
     label-keyed, idempotent rules. Every board in this table has a USB host
     port, so the USB-drive case applies to all of them; NVMe applies only to
-    the ROCK 4SE (see [^rock4se-nvme]). Marked 🚧 rather than ✅ because the
-    package is **code-complete but not yet hardware-verified** — the bench
-    checklist on bean `gosd-yggd` (rock-4se NVMe discover/format/mount/
-    gadget-share, plus a USB drive on any board) flips this row to ✅.
+    the ROCK 4SE (see [^rock4se-nvme]). Carries the same caveat as most rows in this
+    table: ✅ means code-complete and unit-tested, with hardware
+    verification tracked separately — bean `gosd-yggd`'s bench checklist
+    (rock-4se NVMe discover/format/mount/gadget-share, plus a USB drive on
+    any board) is what confirms it on real hardware.
     A disk arriving pre-formatted as exFAT (how most SSDs and USB drives
     ship) is *recognised and refused* rather than silently wiped: GoSD
     cannot mount exFAT, so the caller must pass `destructive=true` to
