@@ -5,7 +5,7 @@ status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-29T21:45:08Z
-updated_at: 2026-07-29T23:13:19Z
+updated_at: 2026-07-29T23:13:45Z
 ---
 
 JP asked, verbatim:
@@ -284,7 +284,7 @@ which is the very thing GoSD cut and put behind a recipe.
 
 **Recommendation: Route A** — but with the size argument conceded, because
 the measurement came out about ten times cheaper than the DRM precedent would
-suggest. 0.64% of the most size-sensitive kernel we ship is not a reason to
+suggest. 0.63% of the most size-sensitive kernel we ship (0.71% on arm64) is not a reason to
 say no to anything, and unlike DRM it buys a capability every board's hardware
 actually has. If the decision rested on size alone, Route B would win on the
 Pis.
