@@ -6,6 +6,10 @@
 #
 # Usage: scripts/boot-and-grep.sh <path-to-image.img> <serial-log> <expected-string>...
 #
+# BOOT_WAIT_FOR=<string> waits for that string on the serial console instead
+# of an HTTP response — for boots that deliberately never reach the app,
+# like the corrupt-data-partition halt.
+#
 # Written for CI's qemu-expand-data job: booting the same image twice with
 # different expected strings proves first-boot work happened exactly once
 # and survived the (abrupt, power-cut-like) end of the previous boot.
@@ -28,12 +32,18 @@ runner_pid=$!
 # not an expectation (an arm64 host boots in seconds).
 booted=0
 for _ in $(seq 1 240); do
-  if ! kill -0 "$runner_pid" 2>/dev/null; then
-    echo "qemu exited before the app ever answered HTTP" >&2
+  if [ -n "${BOOT_WAIT_FOR:-}" ]; then
+    if grep -qF -- "$BOOT_WAIT_FOR" "$LOG" 2>/dev/null; then
+      sleep 2 # let the lines after the awaited one land in the log too
+      booted=1
+      break
+    fi
+  elif [ -n "$(curl -s -m 2 http://localhost:8080/ || true)" ]; then
+    booted=1
     break
   fi
-  if [ -n "$(curl -s -m 2 http://localhost:8080/ || true)" ]; then
-    booted=1
+  if ! kill -0 "$runner_pid" 2>/dev/null; then
+    echo "qemu exited before the boot got anywhere" >&2
     break
   fi
   sleep 1
@@ -52,7 +62,7 @@ fail() {
 }
 
 if [ "$booted" -ne 1 ]; then
-  fail "the app never answered on http://localhost:8080 within 240s"
+  fail "the boot never reached ${BOOT_WAIT_FOR:-an HTTP response on http://localhost:8080} within 240s"
 fi
 for want in "$@"; do
   if ! grep -qF -- "$want" "$LOG"; then

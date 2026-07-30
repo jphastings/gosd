@@ -26,6 +26,7 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		},
 		Inspect:     func(string) (diskfmt.Contents, error) { return diskfmt.Contents{}, errUnsupportedPlatform },
 		FormatFAT32: func(string, string) error { return errUnsupportedPlatform },
+		SyncDevice:  func(string) error { return errUnsupportedPlatform },
 		PathExists:  func(string) bool { return false },
 		Sleep:       time.Sleep,
 		Now:         time.Now,

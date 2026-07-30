@@ -273,3 +273,17 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
             "data partition already present" \
             "data partition mounted read-write at /data"
+      - name: "Corrupted established partition: halts instead of repairing"
+        run: |
+          # Zero the filesystem out from under the established partition
+          # (2048 sectors from its locked 272MiB start). The boot must
+          # refuse to touch it, record boot-failure.log, and halt — the
+          # app must never start.
+          dd if=/dev/zero of=dist/hello-qemu-virt.img bs=512 seek=557056 count=2048 conv=notrunc
+          BOOT_WAIT_FOR="halting" ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img corrupt.log \
+            "fatal: the data partition is corrupt" \
+            "halting (details in boot-failure.log on the boot partition)"
+          if grep -q "host=" corrupt.log; then
+            echo "the app started despite a corrupt data partition" >&2
+            exit 1
+          fi

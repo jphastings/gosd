@@ -24,6 +24,7 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		AddKernelPartition: addKernelPartition,
 		Inspect:            diskfmt.Inspect,
 		FormatFAT32:        diskfmt.FormatFAT32,
+		SyncDevice:         syncDevice,
 		PathExists: func(path string) bool {
 			_, err := os.Stat(path)
 			return err == nil
@@ -60,6 +61,22 @@ func writeMBR(device string, sector []byte) (err error) {
 	if _, err := f.WriteAt(sector, 0); err != nil {
 		return err
 	}
+	return f.Sync()
+}
+
+// syncDevice fsyncs the device node, flushing its page-cache-buffered
+// writes (a freshly written format) to the medium. The partition node's
+// pages are its own — a sync of the whole-disk node would not cover them.
+func syncDevice(device string) (err error) {
+	f, err := os.OpenFile(device, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	return f.Sync()
 }
 

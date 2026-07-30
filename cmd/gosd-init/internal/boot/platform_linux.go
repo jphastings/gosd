@@ -3,10 +3,12 @@
 package boot
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 
@@ -25,6 +27,7 @@ func NewPlatform() *Platform {
 		Rebooter:              linuxRebooter{},
 		OpenConsole:           openConsole,
 		IgnoreShutdownSignals: ignoreShutdownSignals,
+		WriteBootFailure:      writeBootFailure,
 	}
 }
 
@@ -51,6 +54,42 @@ func (linuxRebooter) Sync() { unix.Sync() }
 func (linuxRebooter) Reboot() {
 	// Best-effort: if this fails there is nothing more gosd-init can do.
 	_ = unix.Reboot(unix.LINUX_REBOOT_CMD_RESTART)
+}
+
+func (linuxRebooter) Halt() {
+	// The kernel reads the command as a u32 bit pattern, but unix.Reboot
+	// takes an int: on 32-bit ARM (pi-zero-w) CMD_HALT's high bit overflows
+	// a direct int conversion, so reinterpret it through uint32→int32.
+	cmd := uint32(unix.LINUX_REBOOT_CMD_HALT)
+	// Best-effort, same as Reboot.
+	_ = unix.Reboot(int(int32(cmd)))
+}
+
+// writeBootFailure records msg as boot-failure.log at the root of the
+// (normally read-only) GOSD-BOOT partition mounted at target: remount
+// read-write, overwrite the file, sync it, and remount read-only again.
+// Overwriting is deliberate — the file always describes the latest run's
+// fatal issue, which is the one whoever collects the device needs. The
+// restoring remount is best-effort: every caller halts the machine next.
+func writeBootFailure(target, msg string) error {
+	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_NOSUID, ""); err != nil {
+		return fmt.Errorf("remounting %s read-write: %w", target, err)
+	}
+	defer func() { _ = unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, "") }()
+
+	f, err := os.OpenFile(filepath.Join(target, "boot-failure.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(msg); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func openConsole() (io.WriteCloser, error) {

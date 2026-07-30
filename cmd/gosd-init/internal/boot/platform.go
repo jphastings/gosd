@@ -18,4 +18,9 @@ type Platform struct {
 	// IgnoreShutdownSignals makes SIGTERM/SIGINT no-ops: PID 1 must not
 	// die from them.
 	IgnoreShutdownSignals func()
+
+	// WriteBootFailure records a fatal failure as boot-failure.log at the
+	// root of the GOSD-BOOT partition mounted (read-only) at target,
+	// briefly remounting it read-write to do so.
+	WriteBootFailure func(target, msg string) error
 }

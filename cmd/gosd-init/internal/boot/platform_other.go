@@ -26,6 +26,7 @@ func NewPlatform() *Platform {
 		Rebooter:              unsupportedPlatform{},
 		OpenConsole:           func() (io.WriteCloser, error) { return nil, errUnsupportedPlatform },
 		IgnoreShutdownSignals: func() {},
+		WriteBootFailure:      func(string, string) error { return errUnsupportedPlatform },
 	}
 }
 
@@ -48,3 +49,5 @@ func (unsupportedPlatform) Wait(int) (int, error) { return 0, errUnsupportedPlat
 func (unsupportedPlatform) Sync() {}
 
 func (unsupportedPlatform) Reboot() {}
+
+func (unsupportedPlatform) Halt() {}

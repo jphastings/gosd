@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-30T20:10:06Z
-updated_at: 2026-07-30T20:43:49Z
+updated_at: 2026-07-30T21:14:14Z
 ---
 
 Ship-small, fill-on-first-boot data partitions: `gosd build --data-size=expand` produces an image with NO data partition (image stays 272MiB, exactly today's `--data-size=0` layout), plus a flag in the baked `/etc/gosd/config.json` telling gosd-init to create and format `GOSD-DATA` spanning the rest of the physical card on first boot.
@@ -22,7 +22,7 @@ Ship-small, fill-on-first-boot data partitions: `gosd build --data-size=expand` 
   3. Write MBR entry 2: type 0x0C, start 272MiB, end = device end (LBA count capped at uint32; align size down to a 4MiB boundary for flash friendliness). A single 512-byte sector write — no go-diskfs needed for this part.
   4. BLKRRPART (or BLKPG_ADD_PARTITION as fallback) so /dev/…p2 appears, then format it FAT32 labelled GOSD-DATA via `internal/diskfmt`.
   5. Continue the normal boot sequence — `mountData` works unchanged.
-- **Idempotency / crash-safety:** the MBR itself is the marker. p2 present + FAT32 labelled GOSD-DATA → never touch (protects user data every later boot). p2 present but not a labelled FAT32 → power died between MBR write and format → reformat. p2 absent → do the expansion.
+- **Idempotency / crash-safety (revised by JP, 2026-07-30 — LOCKED):** the MBR entry is the *commit record*, written only after the formatted filesystem has been synced to the card. Three cases cover every boot: (1) no entry → (re)do the whole creation — kernel BLKPG registration, format, device sync, then the entry; power loss anywhere mid-creation lands back here, with no user data at stake. (2) entry + mountable FAT32 labelled GOSD-DATA → done; touch nothing. (3) entry + anything else → an *established* partition, possibly holding app data, has been damaged: record the failure to `boot-failure.log` on GOSD-BOOT and **halt** (`dataexpand.ErrDataCorrupt` → `boot.haltForDataCorruption`) — never reformat, never reboot-loop, never start the app around it. The original reformat-on-invalid idea is dead: with the old MBR-first ordering it couldn't distinguish an interrupted first boot from real corruption, and reformatting real corruption destroys data. Halting (vs degrading to read-only /data and keeping serving) was weighed and chosen deliberately: unattended appliances should fail loudly with data preserved, and boot-failure.log is the diagnosis vehicle (standardizing it across all fatal paths is bean gosd-pun9).
 - **No room to expand** (card no bigger than the image; qemu-virt, where disk == image): log clearly, skip, /data gets today's read-only EROFS fallback. Not an error.
 
 ## Landmines / considerations

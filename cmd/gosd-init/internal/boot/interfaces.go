@@ -46,10 +46,14 @@ type Reaper interface {
 	Wait(pid int) (status int, err error)
 }
 
-// Rebooter performs the fatal-error shutdown path: flush disks and restart
-// the machine. The 5s pause between them is a plain time.Sleep, injected
-// separately (see Deps.Sleep) so it can be faked in tests.
+// Rebooter performs the fatal-error shutdown paths: flush disks, then
+// either restart the machine (transient failures, where a retry may
+// succeed) or halt it (states no retry can improve, like a corrupt data
+// partition — see Deps.WriteBootFailure). The 5s pause before a reboot is
+// a plain time.Sleep, injected separately (see Deps.Sleep) so it can be
+// faked in tests.
 type Rebooter interface {
 	Sync()
 	Reboot()
+	Halt()
 }

@@ -254,9 +254,18 @@ specific to expand:
 - **First boot takes a few extra seconds** while the partition is created
   and formatted; the serial console narrates it. Every later boot finds the
   partition present and does nothing.
-- **Power loss during first boot is safe**: the partition table is synced
-  to the card before anything depends on it, and an interrupted format is
-  detected and redone on the next boot.
+- **Power loss during first boot is safe**: the partition-table entry is
+  written last, as a commit record, only once the formatted filesystem is
+  durable on the card — so a power cut anywhere mid-creation leaves no
+  entry, and the next boot simply redoes the whole thing from scratch.
+- **An established data partition is never "repaired" away.** If a later
+  boot finds the partition entry in place but the `GOSD-DATA` filesystem
+  gone (a failing card, say), the device writes what happened to
+  `boot-failure.log` at the root of the `GOSD-BOOT` partition — readable on
+  any computer the card is plugged into — and **halts**, so whatever data
+  survives can still be salvaged. To recover: save what you need from the
+  partition, then either reformat it as FAT32 labelled `GOSD-DATA` or
+  delete partition 2 entirely and let the next boot recreate it, empty.
 - **A card with no meaningful room** (less than ~64MiB beyond the image —
   including `gosd run`'s qemu disk, which is exactly image-sized) gets no
   partition, and `/data` behaves like a `--data-size=0` image: read-only,
