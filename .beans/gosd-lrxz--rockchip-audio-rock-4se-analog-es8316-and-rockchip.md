@@ -234,5 +234,5 @@ public package and the doc that make it usable anywhere.
   (Rockchip), ➖ = no hardware path (nanopi-zero2). No board has been heard.
 - **CLAUDE.md** — `sound/` added to the public-API bullet.
 
-Stacked on PR #132 (`gosd-y9hc`), which this branches from; must be retargeted
-to `main` once #132 and #133 land.
+Branched from `gosd-y9hc`'s work, which merged as PR #132 while this was being
+written, so it rebased onto `main` and targets `main` directly — no stack.
