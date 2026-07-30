@@ -3,13 +3,14 @@
 // the device node. It backs the public emmc and disk packages.
 //
 // FAT32 comes from github.com/diskfs/go-diskfs — already used to build image
-// files in internal/image — which can target a real block device: diskfs.Open
-// on a device node auto-detects its size via ioctl(BLKGETSIZE64), and
+// files in internal/image — which can target a real block device:
 // CreateFilesystem with Partition 0 writes a whole-device FAT32 with no
 // partition table (which also avoids the BLKRRPART reread that needs
-// privileges). go-diskfs has no exFAT support at all, so exFAT is read and
-// written here directly against the Microsoft exFAT specification — see
-// exfat.go and exfatformat.go.
+// privileges). Devices are opened and sized here (see openDisk) rather than
+// by diskfs.Open, whose BLKGETSIZE64 sizing is broken on 32-bit ARM.
+// go-diskfs has no exFAT support at all, so exFAT is read and written here
+// directly against the Microsoft exFAT specification — see exfat.go and
+// exfatformat.go.
 package diskfmt
 
 import (
@@ -19,10 +20,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
 )
+
+// sectorSizeBytes is the logical sector size every filesystem here is laid
+// out with. SD cards, eMMC and USB-attached media universally present
+// 512-byte logical sectors, and FormatExFAT already fixes its own layout at
+// 512 (see exFATFormatSectorShift).
+const sectorSizeBytes = 512
 
 // FS names a filesystem diskfmt can identify, create and mount.
 type FS string
@@ -138,7 +145,7 @@ func inspectExFAT(devicePath string) Contents {
 // label. ok is false (with a nil error) when the device simply isn't FAT; a
 // non-nil error means the device could not be read at all.
 func inspectFAT(devicePath string) (contents Contents, ok bool, err error) {
-	d, err := diskfs.Open(devicePath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	d, err := openDisk(devicePath, true)
 	if err != nil {
 		return Contents{}, false, fmt.Errorf("opening %s to inspect it failed: %w", devicePath, err)
 	}
@@ -208,17 +215,13 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 // single whole-device FAT32 filesystem labelled volumeLabel, discarding any
 // existing contents.
 //
-// It opens the device read-write without O_EXCL (diskfs' default open mode is
-// exclusive, which fails when the kernel already holds a block device) and
-// formats the whole device with no partition table, so no partition-table
-// reread — the one step that needs privileges on real hardware — is performed.
-// On a real Linux block device the size is detected automatically; the caller
-// need not supply it.
+// It opens the device read-write without O_EXCL (which would fail when the
+// kernel already holds a block device) and formats the whole device with no
+// partition table, so no partition-table reread — the one step that needs
+// privileges on real hardware — is performed. The device's size is detected
+// automatically; the caller need not supply it.
 func FormatFAT32(devicePath, volumeLabel string) (err error) {
-	d, err := diskfs.Open(devicePath,
-		diskfs.WithOpenMode(diskfs.ReadWrite),
-		diskfs.WithSectorSize(diskfs.SectorSize512),
-	)
+	d, err := openDisk(devicePath, false)
 	if err != nil {
 		return fmt.Errorf("opening %s for formatting failed: %w", devicePath, err)
 	}
@@ -236,4 +239,35 @@ func FormatFAT32(devicePath, volumeLabel string) (err error) {
 		return fmt.Errorf("writing a FAT32 filesystem to %s failed: %w", devicePath, err)
 	}
 	return nil
+}
+
+// openDisk opens the block device (or image file) at devicePath as a
+// go-diskfs disk, finding its size by seeking to its end rather than via
+// diskfs.Open's ioctl(BLKGETSIZE64). That ioctl reads the kernel's u64 answer
+// into a Go int, which on 32-bit ARM (pi-zero-w) is 4 bytes: adjacent stack
+// memory is corrupted and any device of 4GiB or more reports a truncated size
+// (bean gosd-fjio). lseek's offset is 64-bit on every Linux architecture Go
+// supports, works on block devices and regular files alike, and so keeps the
+// image-file test path identical to the real-device one.
+func openDisk(devicePath string, readOnly bool) (*disk.Disk, error) {
+	flag := os.O_RDWR
+	if readOnly {
+		flag = os.O_RDONLY
+	}
+	f, err := os.OpenFile(devicePath, flag, 0)
+	if err != nil {
+		return nil, err
+	}
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("finding the size of %s failed: %w", devicePath, err)
+	}
+	return &disk.Disk{
+		Backend:           file.New(f, readOnly),
+		Size:              size,
+		LogicalBlocksize:  sectorSizeBytes,
+		PhysicalBlocksize: sectorSizeBytes,
+		DefaultBlocks:     true,
+	}, nil
 }

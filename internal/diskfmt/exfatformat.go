@@ -10,13 +10,11 @@ import (
 	"slices"
 	"unicode"
 	"unicode/utf16"
-
-	"github.com/diskfs/go-diskfs"
 )
 
 const (
 	// exFATFormatSectorShift fixes the sector size FormatExFAT writes at 512
-	// bytes, matching the FAT32 path's diskfs.SectorSize512. Every board GoSD
+	// bytes, matching the FAT32 path's sectorSizeBytes. Every board GoSD
 	// targets presents its media with 512-byte logical sectors.
 	exFATFormatSectorShift = 9
 	exFATFormatSectorSize  = 1 << exFATFormatSectorShift
@@ -66,14 +64,11 @@ type exFATLayout struct {
 //
 // It writes no partition table, exactly as FormatFAT32 does, so the whole-device
 // node stays directly shareable over USB mass storage and no privileged
-// partition-table reread is needed. go-diskfs has no exFAT support, so only its
-// device-size detection is used here; the filesystem itself is written from the
-// Microsoft exFAT specification.
+// partition-table reread is needed. go-diskfs has no exFAT support at all, so
+// the filesystem is written from the Microsoft exFAT specification; the device
+// is opened and sized by the same openDisk helper FormatFAT32 uses.
 func FormatExFAT(devicePath, volumeLabel string) (err error) {
-	d, err := diskfs.Open(devicePath,
-		diskfs.WithOpenMode(diskfs.ReadWrite),
-		diskfs.WithSectorSize(diskfs.SectorSize512),
-	)
+	d, err := openDisk(devicePath, false)
 	if err != nil {
 		return fmt.Errorf("opening %s for formatting failed: %w", devicePath, err)
 	}
