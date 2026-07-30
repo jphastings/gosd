@@ -4,18 +4,20 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+
+	"github.com/jphastings/gosd/sound"
 )
 
-var testFormat = format{rate: 48000, channels: 2}
+var testFormat = sound.Format{Rate: 48000, Channels: 2}
 
 // samples decodes channel 0 out of interleaved S16_LE frames.
-func samples(t *testing.T, pcm []byte, f format) []int16 {
+func samples(t *testing.T, pcm []byte, f sound.Format) []int16 {
 	t.Helper()
-	if len(pcm)%f.frameBytes() != 0 {
-		t.Fatalf("%d bytes is not a whole number of %d-byte frames", len(pcm), f.frameBytes())
+	if len(pcm)%f.FrameBytes() != 0 {
+		t.Fatalf("%d bytes is not a whole number of %d-byte frames", len(pcm), f.FrameBytes())
 	}
-	out := make([]int16, 0, len(pcm)/f.frameBytes())
-	for i := 0; i < len(pcm); i += f.frameBytes() {
+	out := make([]int16, 0, len(pcm)/f.FrameBytes())
+	for i := 0; i < len(pcm); i += f.FrameBytes() {
 		out = append(out, int16(binary.LittleEndian.Uint16(pcm[i:])))
 	}
 	return out
@@ -46,13 +48,13 @@ func zeroCrossings(s []int16) int {
 
 func TestChimeIsTwoNotesThatDecay(t *testing.T) {
 	pcm := chime(testFormat)
-	notePerNote := int(chimeNote.Seconds() * float64(testFormat.rate))
-	if want := 2 * notePerNote * testFormat.frameBytes(); len(pcm) != want {
+	notePerNote := int(chimeNote.Seconds() * float64(testFormat.Rate))
+	if want := 2 * notePerNote * testFormat.FrameBytes(); len(pcm) != want {
 		t.Fatalf("chime is %d bytes, want %d (two %s notes)", len(pcm), want, chimeNote)
 	}
 
 	all := samples(t, pcm, testFormat)
-	window := testFormat.rate / 50 // 20ms
+	window := testFormat.Rate / 50 // 20ms
 	for note := 0; note < 2; note++ {
 		start := note * notePerNote
 		head := peak(all[start : start+window])
@@ -80,21 +82,21 @@ func TestChimeNotesRiseInPitch(t *testing.T) {
 
 func TestSweepRisesInPitchAndStartsAndEndsQuietly(t *testing.T) {
 	all := samples(t, sweep(testFormat), testFormat)
-	if want := int(sweepTone.Seconds() * float64(testFormat.rate)); len(all) != want {
+	if want := int(sweepTone.Seconds() * float64(testFormat.Rate)); len(all) != want {
 		t.Fatalf("sweep is %d frames, want %d", len(all), want)
 	}
 
-	window := testFormat.rate / 10 // 100ms
+	window := testFormat.Rate / 10 // 100ms
 	if head, tail := zeroCrossings(all[:window]), zeroCrossings(all[len(all)-window:]); tail <= head*2 {
 		t.Errorf("sweep has %d zero crossings in its first 100ms and %d in its last; it should climb several octaves", head, tail)
 	}
 	// The raised-cosine ramps exist so the tone doesn't click: the very first
 	// and last frames should be near silence.
 	quiet := int16(fullScale / 100)
-	if got := peak(all[:testFormat.rate/1000]); got > quiet {
+	if got := peak(all[:testFormat.Rate/1000]); got > quiet {
 		t.Errorf("sweep opens at amplitude %d, want under %d (a click)", got, quiet)
 	}
-	if got := peak(all[len(all)-testFormat.rate/1000:]); got > quiet {
+	if got := peak(all[len(all)-testFormat.Rate/1000:]); got > quiet {
 		t.Errorf("sweep closes at amplitude %d, want under %d (a click)", got, quiet)
 	}
 }
@@ -110,11 +112,11 @@ func TestNothingClips(t *testing.T) {
 
 func TestChannelsCarryTheSameSignal(t *testing.T) {
 	pcm := chime(testFormat)
-	for i := 0; i < len(pcm); i += testFormat.frameBytes() {
+	for i := 0; i < len(pcm); i += testFormat.FrameBytes() {
 		left := binary.LittleEndian.Uint16(pcm[i:])
 		right := binary.LittleEndian.Uint16(pcm[i+2:])
 		if left != right {
-			t.Fatalf("frame %d has %d left and %d right; the chime is mono in both channels", i/testFormat.frameBytes(), left, right)
+			t.Fatalf("frame %d has %d left and %d right; the chime is mono in both channels", i/testFormat.FrameBytes(), left, right)
 		}
 	}
 }
@@ -122,8 +124,8 @@ func TestChannelsCarryTheSameSignal(t *testing.T) {
 // A different rate must change the frame count but not the pitch, which is
 // the one thing a phase-accumulating oscillator can get wrong.
 func TestRateChangesLengthNotPitch(t *testing.T) {
-	slow := format{rate: 24000, channels: 1}
-	fast := format{rate: 48000, channels: 1}
+	slow := sound.Format{Rate: 24000, Channels: 1}
+	fast := sound.Format{Rate: 48000, Channels: 1}
 	slowTone := samples(t, sweep(slow), slow)
 	fastTone := samples(t, sweep(fast), fast)
 

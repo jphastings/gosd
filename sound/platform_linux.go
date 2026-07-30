@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package sound
 
 import (
 	"errors"
@@ -16,12 +16,10 @@ import (
 // This is the ALSA PCM kernel ABI, transcribed from
 // include/uapi/sound/asound.h, and the blocking playback path over it.
 //
-// GoSD images have no userspace: no libasound, no /usr/share/alsa, nothing to
-// dlopen. Playback therefore talks to /dev/snd/pcmC<card>D<device>p directly,
-// which is what alsa-lib's "hw:" plugin does underneath. The minimal path is
-// HW_PARAMS -> SW_PARAMS -> PREPARE -> WRITEI_FRAMES in a loop: playback
-// auto-starts once start_threshold frames are queued, so START is never
-// issued, and an underrun (EPIPE) is recovered by re-issuing PREPARE.
+// The minimal path is HW_PARAMS -> SW_PARAMS -> PREPARE -> WRITEI_FRAMES in a
+// loop: playback auto-starts once start_threshold frames are queued, so START
+// is never issued, and an underrun (EPIPE) is recovered by re-issuing PREPARE.
+// No mmap, no poll.
 
 // pcmVersion is SNDRV_PCM_VERSION, the PCM protocol version this code was
 // written against (2.0.18 — unchanged for over a decade). Only the major
@@ -197,31 +195,28 @@ func (p *pcmHWParams) bound(interval int, minVal, maxVal uint32) {
 // chosen reads back the single value the kernel settled on for an interval.
 func (p *pcmHWParams) chosen(interval int) uint32 { return p.intervals[interval].min }
 
-// rates are tried in order until the device accepts one. 48 kHz is what HDMI
-// carries natively; 44.1 kHz is the usual fallback.
-var rates = []int{48000, 44100}
-
-// device is an open playback PCM.
+// device is an open playback PCM: the Device implementation for Linux boards.
 type device struct {
 	file   *os.File
-	dev    pcmDevice
-	format format
+	pcm    pcm
+	format Format
 	period int // frames per period, as chosen by the kernel
 }
 
-// openSink finds a usable playback PCM and configures it. want, if non-empty,
-// forces one device path instead of searching.
-func openSink(want string) (sink, error) {
-	candidates, err := listDevices(want)
+// open resolves Options to a device and configures it, trying each candidate
+// in preference order so a board whose first choice is busy still gets sound.
+func open(opts Options) (Device, error) {
+	candidates, err := discover(opts)
 	if err != nil {
 		return nil, err
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("no playback PCM devices found under /dev/snd")
+		return nil, noDeviceError(false)
 	}
+	formats := opts.formats()
 	var lastErr error
 	for _, c := range candidates {
-		d, err := openDevice(c)
+		d, err := openPCM(c, formats)
 		if err != nil {
 			lastErr = err
 			continue
@@ -231,74 +226,79 @@ func openSink(want string) (sink, error) {
 	return nil, lastErr
 }
 
-// listDevices prefers /proc/asound/pcm, which names each PCM (the only way to
-// tell an HDMI sink from an analog one), and falls back to the /dev/snd node
-// names if /proc isn't mounted.
-func listDevices(want string) ([]pcmDevice, error) {
-	if want != "" {
-		var d pcmDevice
-		if _, err := fmt.Sscanf(filepath.Base(want), "pcmC%dD%dp", &d.card, &d.device); err != nil {
-			return nil, fmt.Errorf("CHIME_DEVICE=%q is not a /dev/snd/pcmC<card>D<device>p path", want)
+// discover lists the PCMs worth trying. /proc/asound/pcm comes first because
+// it names each PCM — the only way to tell an HDMI sink from an analog one —
+// and the /dev/snd node names are the fallback for a board whose /proc isn't
+// mounted.
+func discover(opts Options) ([]pcm, error) {
+	if opts.Path != "" {
+		p, err := parsePath(opts.Path)
+		if err != nil {
+			return nil, err
 		}
-		return []pcmDevice{d}, nil
+		return []pcm{p}, nil
 	}
 	if f, err := os.Open("/proc/asound/pcm"); err == nil {
 		defer func() { _ = f.Close() }()
 		if devices := parseProcPCM(f); len(devices) > 0 {
-			return rank(devices), nil
+			return rank(devices, opts.Prefer), nil
 		}
 	}
 	paths, err := filepath.Glob("/dev/snd/pcmC*D*p")
 	if err != nil {
-		return nil, fmt.Errorf("looking for PCM devices in /dev/snd: %w", err)
+		return nil, fmt.Errorf("looking for playback devices in /dev/snd: %w", err)
 	}
-	return rank(parseDevSnd(paths)), nil
+	if len(paths) == 0 {
+		_, statErr := os.Stat("/dev/snd")
+		return nil, noDeviceError(statErr == nil)
+	}
+	return rank(parseDevSnd(paths), opts.Prefer), nil
 }
 
-func openDevice(dev pcmDevice) (*device, error) {
-	file, err := os.OpenFile(dev.path(), unix.O_RDWR|unix.O_CLOEXEC, 0)
+func openPCM(p pcm, formats []Format) (*device, error) {
+	file, err := os.OpenFile(p.path(), unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", dev.path(), err)
+		return nil, fmt.Errorf("opening %s: %w", p.path(), err)
 	}
-	d := &device{file: file, dev: dev}
+	d := &device{file: file, pcm: p}
 
 	var version uint32
 	if err := d.ioctl(reqPVersion, unsafe.Pointer(&version)); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("reading the PCM protocol version of %s: %w", dev.path(), err)
+		return nil, fmt.Errorf("reading the PCM protocol version of %s: %w", p.path(), err)
 	}
 	if pcmVersionMajor(version) != pcmVersionMajor(pcmVersion) {
 		_ = file.Close()
 		return nil, fmt.Errorf("%s speaks PCM protocol %d.%d.%d, this build understands major %d only",
-			dev.path(), version>>16, (version>>8)&0xff, version&0xff, pcmVersionMajor(pcmVersion))
+			p.path(), version>>16, (version>>8)&0xff, version&0xff, pcmVersionMajor(pcmVersion))
 	}
 
 	var lastErr error
-	for _, rate := range rates {
-		if err := d.configure(format{rate: rate, channels: 2}, version); err != nil {
+	for _, f := range formats {
+		if err := d.configure(f, version); err != nil {
 			lastErr = err
 			continue
 		}
 		return d, nil
 	}
 	_ = file.Close()
-	return nil, fmt.Errorf("no supported format on %s: %w", dev.path(), lastErr)
+	return nil, fmt.Errorf("no supported format on %s: %w", p.path(), lastErr)
 }
 
 // configure commits hardware and software parameters and prepares the stream.
 // Rate, channel count, format and access are pinned; period and buffer sizes
 // are left as ranges so the kernel picks whatever the hardware likes within
 // sane latency bounds.
-func (d *device) configure(f format, version uint32) error {
+func (d *device) configure(f Format, version uint32) error {
 	hw := anyHWParams()
 	hw.pin(maskAccess, accessRWInterleaved)
 	hw.pin(maskFormat, formatS16LE)
-	hw.bound(intervalChannels, uint32(f.channels), uint32(f.channels))
-	hw.bound(intervalRate, uint32(f.rate), uint32(f.rate))
+	hw.bound(intervalChannels, uint32(f.Channels), uint32(f.Channels))
+	hw.bound(intervalRate, uint32(f.Rate), uint32(f.Rate))
 	hw.bound(intervalPeriodTime, 10_000, 100_000)
 	hw.bound(intervalBufferTime, 40_000, 400_000)
 	if err := d.ioctl(reqHWParams, unsafe.Pointer(hw)); err != nil {
-		return fmt.Errorf("setting %d Hz %d-channel S16_LE: %w", f.rate, f.channels, err)
+		return fmt.Errorf("setting %d Hz %d-channel S16_LE: %w", f.Rate, f.Channels, err)
 	}
 	period := hw.chosen(intervalPeriodSize)
 	buffer := hw.chosen(intervalBufferSize)
@@ -335,18 +335,18 @@ func (d *device) prepare() error {
 }
 
 // Play writes interleaved S16_LE frames and waits for them to finish playing.
-func (d *device) Play(pcm []byte) error {
-	frameBytes := d.format.frameBytes()
-	if len(pcm)%frameBytes != 0 {
-		return fmt.Errorf("%d bytes is not a whole number of %d-byte frames", len(pcm), frameBytes)
+func (d *device) Play(buf []byte) error {
+	frameBytes := d.format.FrameBytes()
+	if len(buf)%frameBytes != 0 {
+		return fmt.Errorf("%d bytes is not a whole number of %d-byte frames", len(buf), frameBytes)
 	}
-	for off := 0; off < len(pcm); {
+	for off := 0; off < len(buf); {
 		x := pcmXferI{
-			buf:    uintptr(unsafe.Pointer(&pcm[off])),
-			frames: uintptr((len(pcm) - off) / frameBytes),
+			buf:    uintptr(unsafe.Pointer(&buf[off])),
+			frames: uintptr((len(buf) - off) / frameBytes),
 		}
 		err := d.ioctl(reqWriteIFrm, unsafe.Pointer(&x))
-		runtime.KeepAlive(pcm)
+		runtime.KeepAlive(buf)
 		switch {
 		case errors.Is(err, unix.EPIPE):
 			// Underrun: the kernel stopped the stream. Re-prepare and
@@ -356,9 +356,9 @@ func (d *device) Play(pcm []byte) error {
 			}
 			continue
 		case err != nil:
-			return fmt.Errorf("writing %d frames: %w", x.frames, err)
+			return fmt.Errorf("writing %d frames to %s: %w", x.frames, d.pcm.path(), err)
 		case x.result <= 0:
-			return fmt.Errorf("wrote %d frames", x.result)
+			return fmt.Errorf("wrote %d frames to %s", x.result, d.pcm.path())
 		}
 		off += x.result * frameBytes
 	}
@@ -370,9 +370,9 @@ func (d *device) Play(pcm []byte) error {
 	return d.prepare()
 }
 
-func (d *device) Format() format { return d.format }
+func (d *device) Format() Format { return d.format }
 
-func (d *device) Name() string { return d.dev.String() }
+func (d *device) Name() string { return d.pcm.String() }
 
 func (d *device) Close() error { return d.file.Close() }
 

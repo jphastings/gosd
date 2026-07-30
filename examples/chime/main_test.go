@@ -4,10 +4,13 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jphastings/gosd/sound"
 )
 
-// fakeSink records what would have been played, and can be told to fail after
-// a given number of writes.
+// fakeSink is a sound.Device that records what would have been played, and can
+// be told to fail after a given number of writes. That the public interface can
+// be faked like this is the point of it being an interface.
 type fakeSink struct {
 	played   [][]byte
 	failAt   int
@@ -22,9 +25,9 @@ func (f *fakeSink) Play(pcm []byte) error {
 	return nil
 }
 
-func (f *fakeSink) Format() format { return testFormat }
-func (f *fakeSink) Name() string   { return "fake" }
-func (f *fakeSink) Close() error   { return nil }
+func (f *fakeSink) Format() sound.Format { return testFormat }
+func (f *fakeSink) Name() string         { return "fake" }
+func (f *fakeSink) Close() error         { return nil }
 
 func TestPlaySoundsTheChimeFirstThenTones(t *testing.T) {
 	boom := errors.New("device went away")
