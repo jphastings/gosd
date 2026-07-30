@@ -14,8 +14,11 @@
 //
 // FAT32 is the default, because every host mounts it and every GoSD board's
 // kernel can. Its cost is that no single file may exceed 4 GiB however large
-// the disk is; FormatAndMountWith takes Options{Filesystem: ExFAT} for apps
-// that need larger files, on the boards whose kernels can mount it. A disk that
+// the disk is, and that GoSD will only create a FAT32 volume up to 256 GiB —
+// a larger disk is refused before it is touched rather than formatted into a
+// filesystem that would be corrupt. FormatAndMountWith takes
+// Options{Filesystem: ExFAT} for apps that need either limit lifted, on the
+// boards whose kernels can mount it. A disk that
 // already carries an exFAT volume with the app's label is mounted as it is
 // whichever option was passed — the realistic case for an SSD or USB drive,
 // which is exactly the data the app was pointed at.
@@ -101,9 +104,11 @@ type Filesystem string
 const (
 	// FAT32 is the default, and what FormatAndMount always uses: every host
 	// mounts it and every GoSD board's kernel can. Its price is a hard 4 GiB
-	// ceiling on any single file, however large the disk.
+	// ceiling on any single file, however large the disk, and a 256 GiB
+	// ceiling on the volume GoSD will create — formatting a bigger disk fails
+	// with an error naming the limit, leaving the disk untouched.
 	FAT32 Filesystem = "fat32"
-	// ExFAT lifts that ceiling, at the cost of needing exFAT support in the
+	// ExFAT lifts both ceilings, at the cost of needing exFAT support in the
 	// board's kernel — see COMPATIBILITY.md for which boards have it. Asking
 	// for it on a board that lacks it fails with ErrUnsupportedFS before the
 	// disk is touched.

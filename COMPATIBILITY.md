@@ -485,7 +485,9 @@ see `beans list` for what's in flight.
 
 [^exfat]: `disk` reads, mounts and writes exFAT, not only FAT32 (bean
     `gosd-1ici`), which is what lifts FAT32's hard 4 GiB per-file ceiling on
-    a large SSD. Two things use it: a drive that arrived exFAT-formatted and
+    a large SSD — and its 256 GiB *volume* ceiling, above which GoSD refuses
+    to write FAT32 at all rather than lay out a corrupt one (bean
+    `gosd-8kdm`). Two things use it: a drive that arrived exFAT-formatted and
     carries the app's own label is mounted as it is instead of being wiped,
     and `disk.FormatAndMountWith(…, disk.Options{Filesystem: disk.ExFAT})`
     formats one deliberately. The formatter is pure Go, written against the

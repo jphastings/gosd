@@ -417,8 +417,13 @@ limit (and equally valid as an exFAT label).
 ### FAT32 or exFAT
 
 `FormatAndMount` writes **FAT32**, which every host mounts and every GoSD
-board's kernel can. Its price is a hard ceiling: **no single file may exceed
-4 GiB**, however large the disk. `FormatAndMountWith` takes the alternative:
+board's kernel can. Its price is two hard ceilings: **no single file may exceed
+4 GiB**, however large the disk, and **GoSD will only create a FAT32 volume up
+to 256 GiB** — point it at a 512 GB SSD and it refuses before touching the
+disk, naming the limit, because the FAT32 volume it would write past that size
+is corrupt (the pure-Go formatter counts the sectors in each file allocation
+table in 16 bits). exFAT has neither ceiling.
+`FormatAndMountWith` takes the alternative:
 
 ```go
 res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
