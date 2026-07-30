@@ -421,7 +421,11 @@ see `beans list` for what's in flight.
 
 [^data-opt-in]: The `GOSD-DATA` partition is opt-in at build time —
     `gosd build --data-size` defaults to `0` (no partition; `/data` mounts
-    read-only), so pass a size (e.g. `--data-size=1GiB`) to get writable
+    read-only), so pass a size (e.g. `--data-size=1GiB`) — or
+    `--data-size=expand`, which ships no partition in the image and has
+    gosd-init create one filling the rest of the card on first boot
+    (board-independent; QEMU-boot-tested via CI's `qemu-expand-data` job,
+    not yet exercised on real hardware) — to get writable
     persistence. The capability itself is unchanged and identical across all
     boards; see `docs/runtime.md`'s "Persistent storage: `/data`"
     section. Hardware-exercised on both Pi Zeros during the usbwebsite

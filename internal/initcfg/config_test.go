@@ -36,6 +36,11 @@ func TestParseConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "dataExpand marks an expand-on-first-boot image",
+			data: `{"hostname":"my-device","dataExpand":true}`,
+			want: Config{Hostname: "my-device", DataExpand: true},
+		},
+		{
 			name: "ntpServers overrides the default list",
 			data: `{"hostname":"my-device","ntpServers":["ntp1.example.com","ntp2.example.com"]}`,
 			want: Config{

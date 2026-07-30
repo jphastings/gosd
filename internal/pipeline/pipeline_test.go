@@ -134,6 +134,47 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 	}
 }
 
+func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	imgPath := filepath.Join(dir, "out.img")
+	err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: imgPath,
+		DataExpand: true,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	// The expand flag must not create an image-side partition: that's the
+	// point of it.
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d with DataExpand, want none in the image", part2.GetSize())
+	}
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(config), `"dataExpand":true`) {
+		t.Errorf("config.json = %s, want it to contain %q", config, `"dataExpand":true`)
+	}
+}
+
 func TestAssembleBakesEnvIntoConfigJSONAndGosdToml(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")

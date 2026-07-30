@@ -119,7 +119,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dataSizeBytes, err := parseDataSize(defaultDataSize)
+	dataSizeBytes, _, err := parseDataSize(defaultDataSize)
 	if err != nil {
 		return err
 	}

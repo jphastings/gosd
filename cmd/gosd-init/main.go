@@ -6,11 +6,13 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
@@ -88,6 +90,7 @@ func main() {
 		ReadProvisioning:     readProvisioning,
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
+		ExpandData:           expandData,
 		Sleep:                time.Sleep,
 		Now:                  time.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any)) {
@@ -195,6 +198,27 @@ func readProvisioning(log func(format string, args ...any)) provision.Result {
 // contain empty directories.
 func ensureDataMountpoint() error {
 	return os.MkdirAll(dataTarget, 0o755)
+}
+
+// dataNodeTimeout bounds how long expandData waits for the freshly-created
+// data partition's device node to appear: devtmpfs creates it almost
+// immediately, but there's no udev to synchronize on.
+const dataNodeTimeout = 5 * time.Second
+
+// expandData wires dataexpand's first-boot GOSD-DATA creation (images built
+// with --data-size=expand) against the real block-device syscalls, deriving
+// the whole disk and its partition-2 node from the partition the boot mount
+// actually used.
+func expandData(bootPartition string, log func(format string, args ...any)) error {
+	device, partition2, ok := dataexpand.DataPartitionFor(bootPartition)
+	if !ok {
+		return fmt.Errorf("cannot derive the disk behind boot partition %s", bootPartition)
+	}
+	return dataexpand.Run(dataexpand.NewDeps(log), dataexpand.Options{
+		Device:          device,
+		PartitionDevice: partition2,
+		NodeTimeout:     dataNodeTimeout,
+	})
 }
 
 // ensureDataMarker creates the .gosd-data marker file on the mounted data

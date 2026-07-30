@@ -252,20 +252,33 @@ func TestParseDataSize(t *testing.T) {
 		{" 8 MiB ", 8 * 1024 * 1024},
 	}
 	for _, c := range cases {
-		got, err := parseDataSize(c.in)
+		got, expand, err := parseDataSize(c.in)
 		if err != nil {
 			t.Errorf("parseDataSize(%q) error: %v", c.in, err)
 			continue
 		}
-		if got != c.want {
-			t.Errorf("parseDataSize(%q) = %d, want %d", c.in, got, c.want)
+		if got != c.want || expand {
+			t.Errorf("parseDataSize(%q) = (%d, expand=%v), want (%d, expand=false)", c.in, got, expand, c.want)
+		}
+	}
+}
+
+func TestParseDataSizeExpandKeyword(t *testing.T) {
+	for _, in := range []string{"expand", "Expand", "EXPAND", " expand "} {
+		bytes, expand, err := parseDataSize(in)
+		if err != nil {
+			t.Errorf("parseDataSize(%q) error: %v", in, err)
+			continue
+		}
+		if !expand || bytes != 0 {
+			t.Errorf("parseDataSize(%q) = (%d, expand=%v), want (0, expand=true)", in, bytes, expand)
 		}
 	}
 }
 
 func TestParseDataSizeRejectsInvalidValues(t *testing.T) {
-	for _, in := range []string{"", "-1", "-1GiB", "1GB", "lots", "1.5GiB"} {
-		if _, err := parseDataSize(in); err == nil {
+	for _, in := range []string{"", "-1", "-1GiB", "1GB", "lots", "1.5GiB", "expanded"} {
+		if _, _, err := parseDataSize(in); err == nil {
 			t.Errorf("parseDataSize(%q) succeeded, want an error", in)
 		}
 	}

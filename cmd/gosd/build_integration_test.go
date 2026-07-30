@@ -179,6 +179,49 @@ func TestBuildWithDataSizeZeroOmitsTheDataPartition(t *testing.T) {
 	}
 }
 
+// TestBuildWithDataSizeExpandShipsNoPartitionButFlagsConfig covers
+// --data-size=expand: the image itself keeps the single-partition layout
+// (staying small to flash), and config.json carries the dataExpand flag that
+// makes gosd-init create the partition on first boot.
+func TestBuildWithDataSizeExpandShipsNoPartitionButFlagsConfig(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-size", "expand",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d with --data-size=expand, want none in the image (it's created on-device)", part2.GetSize())
+	}
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(configJSON), `"dataExpand":true`) {
+		t.Errorf("config.json = %q, want it to contain %q", configJSON, `"dataExpand":true`)
+	}
+}
+
 // TestBuildWithExplicitDataSizeAddsTheDataPartition covers the opt-in path:
 // --data-size must produce a second FAT32 GOSD-DATA partition sized as
 // requested, starting immediately after GOSD-BOOT.

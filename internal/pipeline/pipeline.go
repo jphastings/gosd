@@ -94,6 +94,12 @@ type Options struct {
 	// partition, passed straight through to image.Spec.DataSizeBytes.
 	// Zero disables the partition.
 	DataSizeBytes int64
+
+	// DataExpand marks an image built with --data-size=expand: the image
+	// itself gets no data partition (DataSizeBytes stays 0), and
+	// config.json tells gosd-init to create one filling the rest of the
+	// card on first boot.
+	DataExpand bool
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -131,7 +137,8 @@ func Assemble(ctx context.Context, opts Options) error {
 			SSID:       opts.Config.WifiSSID,
 			Passphrase: opts.Config.WifiPassword,
 		},
-		Env: opts.Config.Env,
+		Env:        opts.Config.Env,
+		DataExpand: opts.DataExpand,
 	})
 	if err != nil {
 		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)

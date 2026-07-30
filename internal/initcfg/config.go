@@ -34,6 +34,14 @@ type Config struct {
 	// entry overrides the same key here. Optional: omitted entirely for
 	// every config.json baked before this field existed.
 	Env map[string]string `json:"env,omitempty"`
+
+	// DataExpand marks an image built with --data-size=expand: it ships
+	// with no GOSD-DATA partition, and gosd-init creates and formats one
+	// filling the rest of the card on first boot (see
+	// cmd/gosd-init/internal/dataexpand). Optional: absent — including
+	// every config.json baked before this field existed — means no
+	// expansion, exactly like --data-size=0.
+	DataExpand bool `json:"dataExpand,omitempty"`
 }
 
 // Wifi holds the baked-in WPA2-PSK or open network credentials. Both fields

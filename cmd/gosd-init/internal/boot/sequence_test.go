@@ -1052,6 +1052,110 @@ func testDepsForFatalPath(mounter Mounter, hostname HostnameSetter, rebooter Reb
 	}
 }
 
+// expandTestDeps builds the Deps for the --data-size=expand sequence tests:
+// a config whose dataExpand flag is set (or not), and an ExpandData hook
+// whose invocations are recorded through the returned pointers.
+func expandTestDeps(mounter *fakeMounter, clock *fakeClock, stop chan struct{}, dataExpand bool, expandErr error, expandedWith *[]string) Deps {
+	return Deps{
+		Mounter:  mounter,
+		Hostname: &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			close(stop)
+			return 1, nil
+		}),
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataExpand: dataExpand}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		ExpandData: func(bootDevice string, log func(format string, args ...any)) error {
+			*expandedWith = append(*expandedWith, bootDevice)
+			return expandErr
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+}
+
+func TestRunExpandsDataFromTheBootDeviceBeforeMountingIt(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+	var dataMountsAtExpand int
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true, nil, &expandedWith)
+	expand := deps.ExpandData
+	deps.ExpandData = func(bootDevice string, log func(format string, args ...any)) error {
+		dataMountsAtExpand = mounter.callsFor("/data")
+		return expand(bootDevice, log)
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	// The device passed is the one GOSD-BOOT actually mounted from, so only
+	// the disk the system truly booted from can ever be expanded.
+	if len(expandedWith) != 1 || expandedWith[0] != "/dev/mmcblk0p1" {
+		t.Errorf("ExpandData called with %v, want exactly [/dev/mmcblk0p1]", expandedWith)
+	}
+	if dataMountsAtExpand != 0 {
+		t.Error("the data partition was mounted before ExpandData had run")
+	}
+	if mounter.callsFor("/data") == 0 {
+		t.Error("data partition was never mounted after expansion")
+	}
+}
+
+func TestRunSkipsExpansionWithoutTheConfigFlag(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, false, nil, &expandedWith)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if len(expandedWith) != 0 {
+		t.Errorf("ExpandData called with %v though config.json has no dataExpand", expandedWith)
+	}
+}
+
+func TestRunContinuesToTheDataFallbackWhenExpansionFails(t *testing.T) {
+	// Expansion failing (no room misreported, node never appearing, a bad
+	// card) must behave exactly like any other missing data partition: boot
+	// proceeds, and /data gets the read-only placeholder.
+	mounter := &fakeMounter{fn: func(c mountCall) error {
+		if c.target == "/data" && c.fstype == "vfat" {
+			return fs.ErrNotExist
+		}
+		return nil
+	}}
+	stop := make(chan struct{})
+	var expandedWith []string
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true, errBoom, &expandedWith)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a failed expansion is never fatal)", err)
+	}
+	if len(expandedWith) != 1 {
+		t.Errorf("ExpandData called %d times, want once", len(expandedWith))
+	}
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].fstype != "tmpfs" || calls[len(calls)-1].flags&msRdOnly == 0 {
+		t.Errorf("final /data mount = %+v, want the read-only tmpfs fallback", calls)
+	}
+}
+
 func testOptions() Options {
 	return Options{
 		AppPath:     "/app",
