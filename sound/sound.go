@@ -49,6 +49,17 @@
 // level, Device.SetControl overrides any single element, and Device.Mixer
 // prints the lot when something is still not audible.
 //
+// # Virtual cards are never chosen
+//
+// snd-aloop (CONFIG_SND_ALOOP) and snd-dummy register a playback PCM that
+// accepts every format and discards every frame. snd-aloop in particular
+// usually lands on card 0, so it wins any search that starts at the lowest
+// card — and because it has no volume or mute, the audibility pass has nothing
+// to report either. A board with one plays perfect silence and looks healthy.
+// Open therefore leaves virtual cards out of the search entirely (naming them
+// through Options.Logf), and reports ErrNoDevice when they are all a board
+// has. Options.Path still opens one, for the app that means it.
+//
 // # Sound is not in the stock kernels
 //
 // Every GoSD board's released kernel is built with `# CONFIG_SOUND is not
@@ -155,6 +166,21 @@ type Options struct {
 	// floor rather than an exact setting: to attenuate deliberately, scale
 	// your samples, or set the control yourself with Device.SetControl.
 	Volume int
+	// Logf, when set, is called with a one-line notice for each choice Open
+	// made that its caller has no reason to suspect: a virtual card left out
+	// of the search, or a Prefer that could not be honoured. Pass
+	// log.Printf. Nothing is logged once the device is open, and nothing is
+	// logged when Open does exactly what was asked of it.
+	Logf func(format string, args ...any)
+}
+
+// logf sends one notice to Options.Logf, if the caller supplied one.
+//
+//nolint:unused // called by discover and open, which are linux-only.
+func (opts Options) logf(format string, args ...any) {
+	if opts.Logf != nil {
+		opts.Logf(format, args...)
+	}
 }
 
 // volume resolves Options.Volume to the percentage the audibility pass uses.
@@ -234,6 +260,59 @@ func (opts Options) formats() []Format {
 type pcm struct {
 	card, device int
 	id, name     string
+	// info is what /proc/asound/cards says about the card this PCM belongs
+	// to. An ASoC card's PCM is named after its DAI link
+	// ("ff8a0000.i2s-i2s-hifi"), which says nothing about where the sound
+	// comes out; the card is where "hdmi-sound" — and a virtual card's
+	// identity — is written down.
+	info cardInfo
+}
+
+// cardInfo is one card's entry in /proc/asound/cards: the identifiers its
+// driver registers itself with, rather than anything derived from the hardware
+// it found.
+type cardInfo struct {
+	// id is the card's short id, as in /dev/snd's by-id names ("hdmisound").
+	id string
+	// driver is the driver's own name for itself ("Loopback",
+	// "rockchip,es8316-codec"). It is a literal in the driver's source, so
+	// it is the most stable thing about a card.
+	driver string
+	// name is the card's short human name ("hdmi-sound", "Analog").
+	name string
+}
+
+// virtualCard is a sound card with no hardware behind it: its playback PCM
+// accepts every format and every frame, and plays none of them.
+type virtualCard struct {
+	// module is the kernel module that registers the card.
+	module string
+	// config is the Kconfig symbol that compiles that module in, which is
+	// what a hand-written kernel fragment has to deny.
+	config string
+}
+
+// virtualCards recognises those cards by driver identity, because the
+// user-visible strings are not stable: snd-aloop's longname counts its cards
+// ("Loopback 1", "Loopback 2") and its id can be overridden by a module
+// parameter, while card->driver is a literal in sound/drivers/aloop.c.
+//
+// snd-aloop is the one that bites: it registers early enough to take card 0,
+// so it wins any search that starts at the lowest card, and it has no volume
+// or mute for the audibility pass to notice. snd-dummy is here because it is
+// the same trap with a different name.
+var virtualCards = map[string]virtualCard{
+	"Loopback": {module: "snd-aloop", config: "CONFIG_SND_ALOOP"},
+	"Dummy":    {module: "snd-dummy", config: "CONFIG_SND_DUMMY"},
+}
+
+// virtual reports the virtual card this PCM belongs to, if it belongs to one.
+func (p pcm) virtual() (virtualCard, bool) {
+	if v, ok := virtualCards[p.info.driver]; ok {
+		return v, true
+	}
+	v, ok := virtualCards[p.info.id]
+	return v, ok
 }
 
 func (p pcm) path() string {
@@ -250,9 +329,10 @@ func (p pcm) String() string {
 // isHDMI reports whether this PCM looks like an HDMI or S/PDIF sink. The
 // kernel offers no machine-readable flag for it — drivers just name the device
 // descriptively ("bcm2835 HDMI 1", "hdmi-sound", "bcm2835 IEC958/HDMI") — so
-// the name is all there is to go on.
+// the names are all there is to go on. The card's names count too: a Rockchip
+// HDMI PCM is called after its I2S DAI link, and only its card says "hdmi".
 func (p pcm) isHDMI() bool {
-	s := strings.ToUpper(p.id + " " + p.name)
+	s := strings.ToUpper(strings.Join([]string{p.id, p.name, p.info.id, p.info.driver, p.info.name}, " "))
 	return strings.Contains(s, "HDMI") || strings.Contains(s, "IEC958")
 }
 
@@ -317,6 +397,43 @@ func parseProcPCM(r io.Reader) []pcm {
 	return out
 }
 
+// parseProcCards reads /proc/asound/cards, whose entries the kernel formats as
+// "%2i [%-15s]: %s - %s" — number, id, driver, short name — followed by an
+// indented line holding the long name, which nothing here needs.
+func parseProcCards(r io.Reader) map[int]cardInfo {
+	out := map[int]cardInfo{}
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := sc.Text()
+		idStart := strings.Index(line, " [")
+		idEnd := strings.Index(line, "]: ")
+		if idStart < 0 || idEnd < idStart {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimSpace(line[:idStart]))
+		if err != nil {
+			continue
+		}
+		driver, name, _ := strings.Cut(line[idEnd+len("]: "):], " - ")
+		out[number] = cardInfo{
+			id:     strings.TrimSpace(line[idStart+len(" [") : idEnd]),
+			driver: strings.TrimSpace(driver),
+			name:   strings.TrimSpace(name),
+		}
+	}
+	return out
+}
+
+// withCards joins each PCM to what /proc/asound/cards says about its card.
+func withCards(devices []pcm, cards map[int]cardInfo) []pcm {
+	out := make([]pcm, len(devices))
+	copy(out, devices)
+	for i := range out {
+		out[i].info = cards[out[i].card]
+	}
+	return out
+}
+
 // parseDevSnd is the fallback when /proc/asound isn't mounted: derive card and
 // device numbers from /dev/snd/pcmC<card>D<device>p names, with no idea what
 // any of them is called.
@@ -332,24 +449,41 @@ func parseDevSnd(paths []string) []pcm {
 	return out
 }
 
+// preferred reports whether p is the kind of output prefer asks for. Any is
+// satisfied by anything.
+func preferred(p pcm, prefer Output) bool {
+	switch prefer {
+	case HDMI:
+		return p.isHDMI()
+	case Analog:
+		return !p.isHDMI()
+	default:
+		return true
+	}
+}
+
+// playable splits the kernel's playback PCMs into the ones Open will try, best
+// first for prefer, and the ones on virtual cards, which are never a real
+// output and so are never tried at all.
+func playable(devices []pcm, prefer Output) (usable, virtual []pcm) {
+	for _, p := range devices {
+		if _, isVirtual := p.virtual(); isVirtual {
+			virtual = append(virtual, p)
+			continue
+		}
+		usable = append(usable, p)
+	}
+	return rank(usable, prefer), virtual
+}
+
 // rank orders candidates best-first for prefer, then by card and device number
 // so the choice is stable across boots.
 func rank(devices []pcm, prefer Output) []pcm {
 	out := make([]pcm, len(devices))
 	copy(out, devices)
-	first := func(p pcm) bool {
-		switch prefer {
-		case HDMI:
-			return p.isHDMI()
-		case Analog:
-			return !p.isHDMI()
-		default:
-			return false
-		}
-	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if first(out[i]) != first(out[j]) {
-			return first(out[i])
+		if a, b := preferred(out[i], prefer), preferred(out[j], prefer); a != b {
+			return a
 		}
 		if out[i].card != out[j].card {
 			return out[i].card < out[j].card
@@ -357,6 +491,67 @@ func rank(devices []pcm, prefer Output) []pcm {
 		return out[i].device < out[j].device
 	})
 	return out
+}
+
+// skippedNotes describes each virtual card left out of the search, for
+// Options.Logf. Silence is the symptom either way, so the app that ends up on
+// its second-choice output deserves to know why.
+func skippedNotes(virtual []pcm) []string {
+	notes := make([]string, 0, len(virtual))
+	for _, p := range virtual {
+		v, ok := p.virtual()
+		if !ok {
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("sound: ignoring %s: %s is a virtual card, which discards everything played to it", p, v.module))
+	}
+	return notes
+}
+
+// unexpectedNote explains an open device that is not what Options.Prefer asked
+// for, which otherwise looks exactly like success. It is empty when the choice
+// is unsurprising: no preference, or the preference honoured.
+func unexpectedNote(chosen pcm, candidates []pcm, prefer Output, failed []string) string {
+	if prefer == Any || preferred(chosen, prefer) {
+		return ""
+	}
+	existed := false
+	for _, c := range candidates {
+		if preferred(c, prefer) {
+			existed = true
+		}
+	}
+	if !existed {
+		return fmt.Sprintf("sound: this board exposes no %s playback device, so playing to %s instead", prefer, chosen)
+	}
+	return fmt.Sprintf("sound: no %s playback device would open (%s), so playing to %s instead",
+		prefer, strings.Join(failed, "; "), chosen)
+}
+
+// virtualOnlyError reports a board whose only playback devices are virtual.
+// Playing to one is silence dressed as success, so this is a no-device case:
+// the fix is a kernel that denies the module, or Options.Path to say the
+// silence was the point.
+func virtualOnlyError(virtual []pcm) error {
+	names := make([]string, 0, len(virtual))
+	fix := map[string]struct{}{}
+	for _, p := range virtual {
+		v, ok := p.virtual()
+		if !ok {
+			continue
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", p, v.module))
+		fix[fmt.Sprintf("# %s is not set", v.config)] = struct{}{}
+	}
+	denials := make([]string, 0, len(fix))
+	for d := range fix {
+		denials = append(denials, d)
+	}
+	sort.Strings(denials)
+	return fmt.Errorf("%w: this kernel's only playback device(s) are virtual — %s — and they discard every frame written to them; "+
+		"deny them in your kernel fragment (%s, as the recipes in docs/sound.md do) and enable a real codec or HDMI card, "+
+		"or set Options.Path to open one deliberately",
+		ErrNoDevice, strings.Join(names, ", "), strings.Join(denials, ", "))
 }
 
 // noDeviceError explains the two very different reasons a board has no

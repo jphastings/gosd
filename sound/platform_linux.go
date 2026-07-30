@@ -220,19 +220,25 @@ func open(opts Options) (Device, error) {
 		return nil, noDeviceError(false)
 	}
 	var lastErr error
+	var failed []string
 	for _, c := range candidates {
 		d, err := openPCM(c, opts)
 		if err != nil {
 			lastErr = err
+			failed = append(failed, fmt.Sprintf("%s: %v", c, err))
 			continue
+		}
+		if note := unexpectedNote(c, candidates, opts.Prefer, failed); note != "" {
+			opts.logf("%s", note)
 		}
 		return d, nil
 	}
 	return nil, lastErr
 }
 
-// discover lists the PCMs worth trying. /proc/asound/pcm comes first because
-// it names each PCM — the only way to tell an HDMI sink from an analog one —
+// discover lists the PCMs worth trying. /proc/asound comes first because it
+// names each PCM and each card — the only way to tell an HDMI sink from an
+// analog one, or either from a virtual card that swallows what it is given —
 // and the /dev/snd node names are the fallback for a board whose /proc isn't
 // mounted.
 func discover(opts Options) ([]pcm, error) {
@@ -243,11 +249,15 @@ func discover(opts Options) ([]pcm, error) {
 		}
 		return []pcm{p}, nil
 	}
-	if f, err := os.Open("/proc/asound/pcm"); err == nil {
-		defer func() { _ = f.Close() }()
-		if devices := parseProcPCM(f); len(devices) > 0 {
-			return rank(devices, opts.Prefer), nil
+	if devices := procDevices(); len(devices) > 0 {
+		usable, virtual := playable(devices, opts.Prefer)
+		for _, note := range skippedNotes(virtual) {
+			opts.logf("%s", note)
 		}
+		if len(usable) == 0 {
+			return nil, virtualOnlyError(virtual)
+		}
+		return usable, nil
 	}
 	paths, err := filepath.Glob("/dev/snd/pcmC*D*p")
 	if err != nil {
@@ -258,6 +268,28 @@ func discover(opts Options) ([]pcm, error) {
 		return nil, noDeviceError(statErr == nil)
 	}
 	return rank(parseDevSnd(paths), opts.Prefer), nil
+}
+
+// procDevices reads the kernel's own list of playback PCMs, each joined to
+// what /proc/asound/cards says about the card it belongs to. It returns
+// nothing at all when /proc/asound isn't mounted, which is what sends discover
+// to the /dev/snd nodes instead.
+func procDevices() []pcm {
+	f, err := os.Open("/proc/asound/pcm")
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	devices := parseProcPCM(f)
+	if len(devices) == 0 {
+		return nil
+	}
+	cf, err := os.Open("/proc/asound/cards")
+	if err != nil {
+		return devices
+	}
+	defer func() { _ = cf.Close() }()
+	return withCards(devices, parseProcCards(cf))
 }
 
 func openPCM(p pcm, opts Options) (*device, error) {

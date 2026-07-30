@@ -89,6 +89,161 @@ func TestRankKeepsCardOrderWithinAPreference(t *testing.T) {
 	}
 }
 
+// The ROCK 4SE that found this bug, as its /proc/asound reads: an snd-aloop
+// loopback at card 0, the ES8316 headphone jack at 1, HDMI at 2. Neither real
+// PCM names its own sink — an ASoC PCM is named after its DAI link — so the
+// card entries are the only place "hdmi-sound" is written down, and the only
+// place the loopback admits what it is.
+const (
+	rock4SEProcPCM = `00-00: Loopback PCM : Loopback PCM : playback 8 : capture 8
+00-01: Loopback PCM : Loopback PCM : playback 8 : capture 8
+01-00: ff880000.i2s-ES8316 HiFi ES8316 HiFi-0 :  : playback 1 : capture 1
+02-00: ff8a0000.i2s-i2s-hifi i2s-hifi-0 :  : playback 1
+`
+	rock4SEProcCards = ` 0 [Loopback       ]: Loopback - Loopback
+                      Loopback 1
+ 1 [Analog         ]: simple-audio-card - Analog
+                      Analog
+ 2 [hdmisound      ]: simple-audio-card - hdmi-sound
+                      hdmi-sound
+`
+)
+
+func rock4SE() []pcm {
+	return withCards(
+		parseProcPCM(strings.NewReader(rock4SEProcPCM)),
+		parseProcCards(strings.NewReader(rock4SEProcCards)),
+	)
+}
+
+func TestParseProcCardsReadsEachCardsOwnIdentity(t *testing.T) {
+	cards := parseProcCards(strings.NewReader(rock4SEProcCards))
+	if len(cards) != 3 {
+		t.Fatalf("parsed %d cards, want 3: %+v", len(cards), cards)
+	}
+	if got := cards[0]; got.id != "Loopback" || got.driver != "Loopback" {
+		t.Errorf("card 0 = %+v, want the snd-aloop id and driver", got)
+	}
+	if got := cards[2]; got.id != "hdmisound" || got.driver != "simple-audio-card" || got.name != "hdmi-sound" {
+		t.Errorf("card 2 = %+v, want id hdmisound, driver simple-audio-card, name hdmi-sound", got)
+	}
+}
+
+// The bug: a loopback card takes card 0, so it wins any search that starts at
+// the lowest card — and it discards everything played to it, silently.
+func TestPlayableNeverOffersALoopback(t *testing.T) {
+	for _, tc := range []struct {
+		prefer   Output
+		wantCard int
+	}{
+		{prefer: Any, wantCard: 1},    // sound.Open()
+		{prefer: HDMI, wantCard: 2},   // OpenWith(Options{Prefer: HDMI})
+		{prefer: Analog, wantCard: 1}, // OpenWith(Options{Prefer: Analog})
+	} {
+		usable, virtual := playable(rock4SE(), tc.prefer)
+		if len(usable) != 2 {
+			t.Fatalf("prefer %v left %d real devices, want the jack and HDMI: %+v", tc.prefer, len(usable), usable)
+		}
+		if usable[0].card != tc.wantCard {
+			t.Errorf("prefer %v chose card %d (%s), want card %d", tc.prefer, usable[0].card, usable[0], tc.wantCard)
+		}
+		for _, p := range usable {
+			if p.card == 0 {
+				t.Errorf("prefer %v kept the loopback %s as a candidate", tc.prefer, p)
+			}
+		}
+		if len(virtual) != 2 {
+			t.Errorf("prefer %v skipped %d virtual devices, want the loopback's two subdevices", tc.prefer, len(virtual))
+		}
+	}
+}
+
+// A Rockchip HDMI PCM is named after its I2S DAI link, so only its card says
+// "hdmi": Prefer HDMI has to read /proc/asound/cards to find it at all.
+func TestHDMIIsRecognisedFromItsCardWhenThePCMDoesNotSaySo(t *testing.T) {
+	devices := rock4SE()
+	bare := parseProcPCM(strings.NewReader(rock4SEProcPCM))
+	if bare[3].isHDMI() {
+		t.Errorf("%+v looked like HDMI from its PCM names alone", bare[3])
+	}
+	if !devices[3].isHDMI() {
+		t.Errorf("%+v is card 2 (hdmi-sound) and should be recognised as HDMI", devices[3])
+	}
+	if devices[2].isHDMI() {
+		t.Errorf("%+v is the ES8316 jack and should not be recognised as HDMI", devices[2])
+	}
+}
+
+// A board whose only playback device is virtual has no playback device: saying
+// so is the difference between "no sound" and hours of chasing silence.
+func TestAVirtualOnlyBoardReportsNoDevice(t *testing.T) {
+	const cards = ` 0 [Loopback       ]: Loopback - Loopback
+                      Loopback 1
+ 1 [Dummy          ]: Dummy - Dummy
+                      Dummy 1
+`
+	const pcms = `00-00: Loopback PCM : Loopback PCM : playback 8 : capture 8
+01-00: Dummy PCM : Dummy PCM : playback 8 : capture 8
+`
+	usable, virtual := playable(withCards(
+		parseProcPCM(strings.NewReader(pcms)),
+		parseProcCards(strings.NewReader(cards)),
+	), HDMI)
+	if len(usable) != 0 {
+		t.Fatalf("%d device(s) survived a board with nothing but virtual cards: %+v", len(usable), usable)
+	}
+
+	err := virtualOnlyError(virtual)
+	if !errors.Is(err, ErrNoDevice) {
+		t.Error("a virtual-only board should wrap ErrNoDevice, so an app can carry on without sound")
+	}
+	for _, want := range []string{"snd-aloop", "snd-dummy", "CONFIG_SND_ALOOP", "CONFIG_SND_DUMMY", "Options.Path", "docs/sound.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestSkippedNotesNameTheModuleAndThePath(t *testing.T) {
+	_, virtual := playable(rock4SE(), Any)
+	notes := skippedNotes(virtual)
+	if len(notes) != 2 {
+		t.Fatalf("got %d notes for two skipped subdevices: %v", len(notes), notes)
+	}
+	for _, want := range []string{"snd-aloop", "/dev/snd/pcmC0D0p", "Loopback PCM"} {
+		if !strings.Contains(notes[0], want) {
+			t.Errorf("note %q does not mention %q", notes[0], want)
+		}
+	}
+}
+
+// Landing on an output nobody asked for looks exactly like success, so it has
+// to say why — but a device that is what was asked for says nothing at all.
+func TestUnexpectedNoteExplainsOnlyTheSurprises(t *testing.T) {
+	usable, _ := playable(rock4SE(), HDMI)
+	hdmi, analog := usable[0], usable[1]
+
+	if note := unexpectedNote(hdmi, usable, HDMI, nil); note != "" {
+		t.Errorf("an honoured preference logged %q", note)
+	}
+	if note := unexpectedNote(analog, usable, Any, nil); note != "" {
+		t.Errorf("Options.Prefer was Any, but choosing %s logged %q", analog, note)
+	}
+
+	failed := []string{hdmi.String() + ": no supported format"}
+	note := unexpectedNote(analog, usable, HDMI, failed)
+	for _, want := range []string{"HDMI", "no supported format", analog.String()} {
+		if !strings.Contains(note, want) {
+			t.Errorf("fallback note %q does not mention %q", note, want)
+		}
+	}
+
+	jackOnly := []pcm{analog}
+	if note := unexpectedNote(analog, jackOnly, HDMI, nil); !strings.Contains(note, "no HDMI playback device") {
+		t.Errorf("a board with no HDMI at all logged %q", note)
+	}
+}
+
 func TestParsePathRejectsAnythingButAPlaybackPCM(t *testing.T) {
 	got, err := parsePath("/dev/snd/pcmC1D2p")
 	if err != nil {

@@ -124,6 +124,38 @@ HDMI PCM on those boards (`sound.Options{Prefer: sound.HDMI}`, which is what
 here). The pi-3b's 4-pole jack is real, but it is PWM-driven straight from the
 SoC rather than a DAC, so it is noisy by design.
 
+### A virtual loopback card swallows the audio (`CONFIG_SND_ALOOP`)
+
+`snd-aloop` registers an entirely ordinary-looking playback PCM that feeds
+whatever you write to it back to a *capture* stream — so it plays nothing. It
+usually lands on **card 0**, which wins any search that starts at the lowest
+card, and it has no volume or mute for `Open`'s audibility pass to touch, so
+nothing looks wrong anywhere:
+
+```
+playing to Loopback PCM (/dev/snd/pcmC0D0p) at 48000 Hz, 2 channels
+card 0: the audibility pass changed nothing
+```
+
+That cost a bench session on a ROCK 4SE (bean `gosd-qfgl`), and it swallowed
+mpv's `--ao=alsa` output on the same board too — ALSA's `default` device is
+also card 0.
+
+The `sound` package now recognises a virtual card by the driver identity in
+`/proc/asound/cards` (`snd-aloop`, `snd-dummy`) rather than by any
+user-visible name, and never selects one: `Open` leaves them out of the
+search, names each one it skipped through `Options.Logf`, and returns an error
+wrapping `ErrNoDevice` — naming the Kconfig symbol to deny — when they are all
+a board has. Every fragment in this repo already carries
+`# CONFIG_SND_ALOOP is not set`, so a by-the-book image is safe; a hand-written
+recipe is how one gets in (see [the deny-list
+trap](#the-deny-list-is-the-load-bearing-half)).
+
+**The escape hatch is `Options.Path`.** It opens exactly the PCM you name,
+virtual or not, and skips discovery entirely —
+`CHIME_DEVICE=/dev/snd/pcmC2D0p` is what unblocked that session, and it is the
+quickest way to prove which card is which when a board has several.
+
 ### The deny-list is the load-bearing half
 
 Enabling `CONFIG_SND` does not add "sound": it un-hides every audio driver the
@@ -203,6 +235,13 @@ That is the whole API surface: `Open`/`OpenWith`, and a `Device` you `Play`
 to, ask the `Format` and `Name` of, and `Close`. `Options` lets you force one
 device path, prefer HDMI or analog on a board that has both, and ask for a
 specific rate or channel count.
+
+**Pass `Options.Logf: log.Printf`.** Choosing a playback device is a heuristic
+over the names in `/proc/asound`, and the failure mode is silence rather than
+an error. `Logf` gets a line for each choice you would not expect — a virtual
+card skipped, a preferred output that did not exist or would not open — and
+nothing at all when `Open` did exactly what you asked. `examples/chime` sets
+it.
 
 **Handle "no audio device" as a normal state.** It is the overwhelmingly
 common case — a stock kernel has no `/dev/snd` — so `Open` returns an error
