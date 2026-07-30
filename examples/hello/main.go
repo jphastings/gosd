@@ -74,11 +74,11 @@ func greetingSuffix(greeting string) string {
 const dataDir = "/data"
 
 // bumpBootCounter demonstrates GoSD's persistent storage: it increments a
-// counter file on the GOSD-DATA partition every boot, using the
-// write-to-temp + fsync + rename pattern docs/runtime.md recommends for
-// FAT32's weak crash-safety. When the image has no data partition, /data is
-// read-only and the write fails with EROFS; hello reports that instead of
-// treating it as an error.
+// counter file on the GOSD-DATA partition every boot, using the durable-write
+// sequence docs/runtime.md recommends for FAT32's weak crash-safety, so the
+// count survives a power cut immediately after the write. When the image has
+// no data partition, /data is read-only and the write fails with EROFS; hello
+// reports that instead of treating it as an error.
 func bumpBootCounter() string {
 	counterPath := filepath.Join(dataDir, "hello-boots")
 
@@ -103,7 +103,7 @@ func bumpBootCounter() string {
 // are on the card by the time it returns: write a temp file, fsync it,
 // rename it over the real name, then fsync the renamed file and its
 // directory. The two syncs after the rename are what FAT needs — see
-// docs/runtime.md's "Persistent storage: /data".
+// docs/runtime.md's "Making a write durable".
 func writeFileDurably(path string, data []byte) error {
 	tmp := path + ".tmp"
 
