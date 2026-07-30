@@ -524,8 +524,8 @@ func unexpectedNote(chosen pcm, candidates []pcm, prefer Output, failed []string
 	if !existed {
 		return fmt.Sprintf("sound: this board exposes no %s playback device, so playing to %s instead", prefer, chosen)
 	}
-	return fmt.Sprintf("sound: no %s playback device would open (%s), so playing to %s instead",
-		prefer, strings.Join(failed, "; "), chosen)
+	return fmt.Sprintf("sound: no %s playback device would open, so playing to %s instead; what failed: %s",
+		prefer, chosen, strings.Join(failed, "; "))
 }
 
 // virtualOnlyError reports a board whose only playback devices are virtual.
