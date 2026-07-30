@@ -1,6 +1,7 @@
 package diskfmt
 
 import (
+	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,10 +12,8 @@ import (
 )
 
 // backingFile stands in for a real block device: a sparse regular file of a
-// realistic size. go-diskfs sizes a regular file from its Stat size and a real
-// block device from ioctl(BLKGETSIZE64); the FAT32 formatting path downstream
-// is identical, so this exercises everything except the ioctl itself (which
-// needs real hardware/root and is a documented follow-up).
+// realistic size. openDisk sizes both the same way — lseek to the end — so
+// everything from the open onward is exactly the path a real device takes.
 func backingFile(t *testing.T, sizeBytes int64) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "device.img")
@@ -130,6 +129,43 @@ func TestInspectReportsFATLabel(t *testing.T) {
 	}
 	if got.FS != FAT32 || got.Label != "APPDATA" {
 		t.Errorf("Inspect of formatted device = %+v, want {FS:fat32 Label:APPDATA}", got)
+	}
+}
+
+// TestFormatFAT32SpansADevicePast4GiB pins the gosd-fjio fix. go-diskfs's own
+// block-device sizing reads BLKGETSIZE64's u64 into a Go int — 4 bytes on
+// 32-bit ARM — so a >= 4GiB device used to be laid out for a truncated
+// fraction of itself. Sizing now comes from lseek, shared by files and
+// devices, so the resulting geometry must span the whole device.
+func TestFormatFAT32SpansADevicePast4GiB(t *testing.T) {
+	const size = 5 << 30 // past every 32-bit truncation boundary
+	path := backingFile(t, size)
+
+	if err := FormatFAT32(path, "BIGDATA"); err != nil {
+		t.Fatalf("FormatFAT32: %v", err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("reopening formatted device: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	sector := make([]byte, 512)
+	if _, err := io.ReadFull(f, sector); err != nil {
+		t.Fatalf("reading boot sector back: %v", err)
+	}
+	// TotSec32, the FAT32 total-sector count, at offset 32 of the boot sector.
+	if got, want := binary.LittleEndian.Uint32(sector[32:36]), uint32(size/512); got != want {
+		t.Errorf("boot sector total sectors = %d (%.1f GiB), want %d (the whole device)",
+			got, float64(got)*512/(1<<30), want)
+	}
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.FS != FAT32 || got.Label != "BIGDATA" {
+		t.Errorf("Inspect of formatted device = %+v, want {FS:fat32 Label:BIGDATA}", got)
 	}
 }
 
