@@ -1,0 +1,228 @@
+# examples/chime overlay fragment for the Radxa Zero 3E: HDMI audio, which is
+# the only audio output that board has - Radxa left the 3.5 mm jack off "due to
+# space constraint". Merged after
+# build/boards/radxa-zero-3e/kernel/kernel-fragment.config (overlay wins).
+#
+# Same shape as rock-4se-hdmi.fragment, with two RK3566-specific differences,
+# both read from the pinned kernel tree rather than assumed:
+#
+#   1. The I2S controller is a different driver. rk356x-base.dtsi's
+#      `i2s0_8ch` is compatible = "rockchip,rk3568-i2s-tdm", which binds
+#      rockchip_i2s_tdm.c => CONFIG_SND_SOC_ROCKCHIP_I2S_TDM, not the
+#      CONFIG_SND_SOC_ROCKCHIP_I2S the RK3399 boards use.
+#   2. The display controller is VOP2 (RK3568-and-later), not the classic VOP.
+#
+# The HDMI bridge itself is the same classic Synopsys dw-hdmi family
+# ("rockchip,rk3568-dw-hdmi"), NOT the "QP" variant RK3588 uses, so
+# DRM_DW_HDMI_I2S_AUDIO is still the right audio interface. And as on the ROCK
+# 4SE, no device-tree patch is needed: rk3566-radxa-zero-3.dtsi already sets
+# `&hdmi`, `&hdmi_sound` and `&i2s0_8ch` to "okay".
+
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_SOC=y
+
+# CPU DAI + the generic card driver rk356x-base.dtsi's `hdmi_sound` node
+# declares ("simple-audio-card"). There is no analog codec on this board, so
+# ES8316 and the audio-graph card driver are denied below.
+CONFIG_SND_SOC_ROCKCHIP_I2S_TDM=y
+CONFIG_SND_SIMPLE_CARD=y
+# CONFIG_SND_SOC_ES8316 is not set
+# CONFIG_SND_AUDIO_GRAPH_CARD is not set
+
+# The DRM side; see rock-4se-hdmi.fragment. ROCKCHIP_VOP2 replaces
+# ROCKCHIP_VOP for RK3566.
+CONFIG_DRM=y
+CONFIG_DRM_ROCKCHIP=y
+CONFIG_ROCKCHIP_VOP2=y
+CONFIG_ROCKCHIP_DW_HDMI=y
+CONFIG_DRM_DW_HDMI_I2S_AUDIO=y
+
+# Audio, not a display.
+# CONFIG_DRM_FBDEV_EMULATION is not set
+# CONFIG_FRAMEBUFFER_CONSOLE is not set
+# CONFIG_LOGO is not set
+# CONFIG_DRM_DW_HDMI_CEC is not set
+# CONFIG_DRM_DW_HDMI_AHB_AUDIO is not set
+# CONFIG_DRM_DW_HDMI_GP_AUDIO is not set
+
+# Everything below is a deny-list, and on a Rockchip board it is most of the
+# file. The arm64 defconfig is multiplatform: it ships every SoC vendor's ASoC
+# platform drivers and about twenty codecs as modules, and GoSD kernels are
+# monolithic (CONFIG_MODULES is always off), so `make olddefconfig` promotes
+# every one of them to built-in the moment CONFIG_SND_SOC is enabled. Unlike
+# the Pi's pi.fragment, `# CONFIG_SND_SOC is not set` cannot do the work here -
+# ASoC is exactly what this board's codec needs.
+#
+# Every line below denies a symbol the pinned defconfig really sets, so the
+# list can be regenerated rather than guessed:
+#
+#   curl -s https://raw.githubusercontent.com/gregkh/linux/v6.18.37/arch/arm64/configs/defconfig \
+#     | grep -E '^CONFIG_(SND|SOUND)'
+#
+# This is a size trim, not a correctness gate: the device tree decides which
+# machine driver binds, so a stray vendor driver costs bytes, not behaviour.
+
+# Freescale/NXP i.MX:
+# CONFIG_SND_IMX_SOC is not set
+# CONFIG_SND_SOC_FSL_ASOC_CARD is not set
+# CONFIG_SND_SOC_FSL_ASRC is not set
+# CONFIG_SND_SOC_FSL_EASRC is not set
+# CONFIG_SND_SOC_FSL_MICFIL is not set
+# CONFIG_SND_SOC_IMX_AUDMIX is not set
+# CONFIG_SND_SOC_IMX_SGTL5000 is not set
+
+# MediaTek:
+# CONFIG_SND_SOC_MT8183 is not set
+# CONFIG_SND_SOC_MT8183_DA7219_MAX98357A is not set
+# CONFIG_SND_SOC_MT8183_MT6358_TS3A227E_MAX98357A is not set
+# CONFIG_SND_SOC_MT8188 is not set
+# CONFIG_SND_SOC_MT8188_MT6359 is not set
+# CONFIG_SND_SOC_MT8192 is not set
+# CONFIG_SND_SOC_MT8192_MT6359_RT1015_RT5682 is not set
+# CONFIG_SND_SOC_MT8195 is not set
+# CONFIG_SND_SOC_MT8195_MT6359 is not set
+# CONFIG_SND_SOC_MT8365 is not set
+# CONFIG_SND_SOC_MT8365_MT6357 is not set
+# CONFIG_SND_SOC_SOF_MT8186 is not set
+# CONFIG_SND_SOC_SOF_MT8195 is not set
+
+# Amlogic Meson:
+# CONFIG_SND_MESON_AXG_SOUND_CARD is not set
+# CONFIG_SND_MESON_GX_SOUND_CARD is not set
+
+# Qualcomm (the QDSP6/LPASS stack is the single biggest family here):
+# CONFIG_SND_SOC_APQ8016_SBC is not set
+# CONFIG_SND_SOC_LPASS_RX_MACRO is not set
+# CONFIG_SND_SOC_LPASS_TX_MACRO is not set
+# CONFIG_SND_SOC_LPASS_VA_MACRO is not set
+# CONFIG_SND_SOC_LPASS_WSA_MACRO is not set
+# CONFIG_SND_SOC_MSM8916_WCD_ANALOG is not set
+# CONFIG_SND_SOC_MSM8916_WCD_DIGITAL is not set
+# CONFIG_SND_SOC_MSM8996 is not set
+# CONFIG_SND_SOC_QCOM is not set
+# CONFIG_SND_SOC_SC7180 is not set
+# CONFIG_SND_SOC_SC7280 is not set
+# CONFIG_SND_SOC_SC8280XP is not set
+# CONFIG_SND_SOC_SDM845 is not set
+# CONFIG_SND_SOC_SM8250 is not set
+# CONFIG_SND_SOC_WCD9335 is not set
+# CONFIG_SND_SOC_WCD934X is not set
+# CONFIG_SND_SOC_WCD939X_SDW is not set
+# CONFIG_SND_SOC_WSA881X is not set
+# CONFIG_SND_SOC_WSA883X is not set
+# CONFIG_SND_SOC_WSA884X is not set
+# CONFIG_SND_SOC_X1E80100 is not set
+# CONFIG_SOUNDWIRE_QCOM is not set
+
+# Renesas:
+# CONFIG_SND_SOC_AK4613 is not set
+# CONFIG_SND_SOC_AK4619 is not set
+# CONFIG_SND_SOC_MSIOF is not set
+# CONFIG_SND_SOC_RCAR is not set
+# CONFIG_SND_SOC_RZ is not set
+
+# Samsung Exynos:
+# CONFIG_SND_SOC_SAMSUNG is not set
+
+# Sound Open Firmware (an Xtensa DSP firmware loader, for none of our SoCs):
+# CONFIG_SND_SOC_SOF_MTK_TOPLEVEL is not set
+# CONFIG_SND_SOC_SOF_OF is not set
+# CONFIG_SND_SOC_SOF_TOPLEVEL is not set
+
+# Allwinner sunxi:
+# CONFIG_SND_SUN4I_I2S is not set
+# CONFIG_SND_SUN4I_SPDIF is not set
+# CONFIG_SND_SUN50I_CODEC_ANALOG is not set
+# CONFIG_SND_SUN8I_CODEC is not set
+# CONFIG_SND_SUN8I_CODEC_ANALOG is not set
+
+# NVIDIA Tegra:
+# CONFIG_SND_HDA_TEGRA is not set
+# CONFIG_SND_SOC_TEGRA is not set
+# CONFIG_SND_SOC_TEGRA186_ASRC is not set
+# CONFIG_SND_SOC_TEGRA186_DSPK is not set
+# CONFIG_SND_SOC_TEGRA210_ADMAIF is not set
+# CONFIG_SND_SOC_TEGRA210_ADX is not set
+# CONFIG_SND_SOC_TEGRA210_AHUB is not set
+# CONFIG_SND_SOC_TEGRA210_AMX is not set
+# CONFIG_SND_SOC_TEGRA210_DMIC is not set
+# CONFIG_SND_SOC_TEGRA210_I2S is not set
+# CONFIG_SND_SOC_TEGRA210_MIXER is not set
+# CONFIG_SND_SOC_TEGRA210_MVC is not set
+# CONFIG_SND_SOC_TEGRA210_OPE is not set
+# CONFIG_SND_SOC_TEGRA210_SFC is not set
+# CONFIG_SND_SOC_TEGRA_AUDIO_GRAPH_CARD is not set
+
+# Texas Instruments:
+# CONFIG_SND_SOC_DAVINCI_MCASP is not set
+# CONFIG_SND_SOC_J721E_EVM is not set
+# CONFIG_SND_SOC_TLV320AIC32X4_I2C is not set
+# CONFIG_SND_SOC_TLV320AIC3X_I2C is not set
+
+# Broadcom: snd_bcm2835 is the Pi boards' driver (examples/chime's pi.fragment), wrong SoC here:
+# CONFIG_SND_BCM2835 is not set
+# CONFIG_SND_BCM2835_SOC_I2S is not set
+
+# Rockchip drivers for other Rockchip SoCs and boards. RK3399_GRU_SOUND and
+# ROCKCHIP_RT5645 are machine drivers that would bind nothing on this board, but
+# they each select a pile of codecs, so they are the ones worth denying by name:
+# CONFIG_SND_SOC_RK3308 is not set
+# CONFIG_SND_SOC_RK3399_GRU_SOUND is not set
+# CONFIG_SND_SOC_RK817 is not set
+# CONFIG_SND_SOC_ROCKCHIP_RT5645 is not set
+# CONFIG_SND_SOC_ROCKCHIP_SAI is not set
+# CONFIG_SND_SOC_ROCKCHIP_SPDIF is not set
+
+# Codecs for chips this board does not have:
+# CONFIG_SND_ALOOP is not set
+# CONFIG_SND_AUDIO_GRAPH_CARD2 is not set
+# CONFIG_SND_HDA_CODEC_HDMI is not set
+# CONFIG_SND_SOC_DA7213 is not set
+# CONFIG_SND_SOC_ES7134 is not set
+# CONFIG_SND_SOC_ES7241 is not set
+# CONFIG_SND_SOC_ES8328_I2C is not set
+# CONFIG_SND_SOC_GTM601 is not set
+# CONFIG_SND_SOC_NAU8822 is not set
+# CONFIG_SND_SOC_PCM3168A_I2C is not set
+# CONFIG_SND_SOC_RT5640 is not set
+# CONFIG_SND_SOC_RT5659 is not set
+# CONFIG_SND_SOC_SIMPLE_AMPLIFIER is not set
+# CONFIG_SND_SOC_SIMPLE_MUX is not set
+# CONFIG_SND_SOC_TAS2552 is not set
+# CONFIG_SND_SOC_TAS571X is not set
+# CONFIG_SND_SOC_WM8524 is not set
+# CONFIG_SND_SOC_WM8904 is not set
+# CONFIG_SND_SOC_WM8960 is not set
+# CONFIG_SND_SOC_WM8962 is not set
+# CONFIG_SND_SOC_WM8978 is not set
+# CONFIG_SOUNDWIRE is not set
+
+# Menus the kernel turns on by default the moment CONFIG_SND appears, none of
+# which a GoSD appliance has hardware or a use for. SND_PCI matters here: this
+# board's kernel enables PCI for its NVMe slot, so the whole HD-audio stack
+# would otherwise become reachable.
+# CONFIG_SND_DRIVERS is not set
+# CONFIG_SND_PCI is not set
+# CONFIG_SND_USB is not set
+# CONFIG_SND_SPI is not set
+# CONFIG_SND_VIRTIO is not set
+
+# No MIDI, no sequencer, no OSS emulation, no high-res-timer sound clock: this
+# appliance plays PCM out of one device node.
+# CONFIG_SND_SEQUENCER is not set
+# CONFIG_SND_OSSEMUL is not set
+# CONFIG_SND_HRTIMER is not set
+# CONFIG_SND_SUPPORT_OLD_API is not set
+
+# The three lines below are not about sound at all. GoSD's stock Rockchip
+# fragments enable the USB gadget stack, and the kernel's legacy USB MIDI
+# gadget depends on the raw-MIDI core, which cannot exist while CONFIG_SOUND is
+# off. Legacy gadget drivers claim the board's only UDC at probe, which is
+# exactly how bean gosd-spjt's "Gadget Zero" bug stopped --usb-gadget working
+# on a Pi. The arm64 defconfig does not ship these (the raspberrypi ones do),
+# so they are already off - pinned here so a future defconfig cannot surprise
+# an app that wants audio and a USB gadget at once.
+# CONFIG_USB_MIDI_GADGET is not set
+# CONFIG_USB_CONFIGFS_F_MIDI is not set
+# CONFIG_USB_CONFIGFS_F_MIDI2 is not set

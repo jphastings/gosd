@@ -1,0 +1,24 @@
+# examples/chime's HDMI-audio recipe for the Rockchip boards — the expensive
+# variant, kept separate so an app that only wants the ROCK 4SE's headphone
+# jack does not pay for DRM:
+#
+#   gosd build-kernel --board rock-4se --config examples/chime/kernel/hdmi.toml
+#
+# On RK3399 and RK3566, HDMI audio is a codec hanging off the Synopsys
+# DesignWare HDMI bridge, and that bridge is a component of the Rockchip DRM
+# driver — so HDMI sound compiles in the whole DRM subsystem GoSD's stock
+# kernels cut. Both fragments here therefore enable DRM; see their headers for
+# what each board needs and why, and docs/sound.md for the trade-off.
+#
+# The Pi boards are absent on purpose: snd_bcm2835 reaches HDMI through the
+# VideoCore firmware with no DRM at all, so their one recipe
+# (gosd-kernel.toml) already covers HDMI. nanopi-zero2 is absent because its
+# SoC has no i2s/hdmi nodes in the pinned kernel's device tree.
+
+# rock-4se: HDMI *and* the analog jack in one kernel.
+[kernel.rock-4se]
+fragment = "rock-4se-hdmi.fragment"
+
+# radxa-zero-3e: HDMI only — Radxa left the 3.5 mm jack off this board.
+[kernel.radxa-zero-3e]
+fragment = "radxa-zero-3e-hdmi.fragment"
