@@ -10,8 +10,10 @@ import (
 // (v1.9.3's fat32.Create). FATSz32 is a 32-bit field on disk, so the narrowing
 // is an implementation slip rather than a FAT32 limit — but past 65535 sectors
 // per FAT it silently truncates, laying out FATs far too small to address the
-// volume's clusters, and writes the corrupt result without complaint.
-// go-diskfs's own Fat32MaxSize (2 TiB) does not catch it.
+// volume's clusters, and writes the corrupt result without complaint. Higher
+// still, around 512 GiB, the same expression's uint32 numerator wraps and
+// Create panics on a zero-length FAT instead. go-diskfs's own Fat32MaxSize
+// (2 TiB) catches neither.
 //
 // The arithmetic is mirrored here so oversized media is refused before a byte
 // is written. It works out at just over 256 GiB — which is why

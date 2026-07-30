@@ -80,9 +80,9 @@ exFAT", COMPATIBILITY.md's exFAT footnote.
 ## Other callers audited
 
 - **`emmc`** reaches `FormatFAT32` through the same `internal/blockmount` path,
-  so it was exposed in principle — but only in principle: the largest eMMC parts
-  manufactured are 256 GB (238 GiB) and GoSD's boards carry 8-64 GB, all below
-  the limit. It is guarded anyway. (The error's exFAT suggestion does not apply
+  so it was exposed in principle — but only in principle: eMMC parts top out
+  around 256 GB (238 GiB), under the limit, and GoSD's boards carry 8-64 GB. It
+  is guarded anyway. (The error's exFAT suggestion does not apply
   to `emmc`, which is FAT32-only by design — but no real eMMC can reach it.)
 - **`cmd/gosd-init/internal/dataexpand`** already caps a grown partition at
   256 GiB (`maxPartitionBytes`) with a logged notice, so it cannot reach the
