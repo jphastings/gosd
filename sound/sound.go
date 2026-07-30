@@ -21,6 +21,34 @@
 // synthesise your samples, or parse a WAV header yourself and hand over its
 // PCM payload.
 //
+// # Open unmutes the card, because nothing else will
+//
+// An ALSA codec powers up muted, with its volumes at zero and its output
+// mixer disconnected from the DAC; on a desktop, alsactl restores a saved
+// state file at boot and alsamixer is there when it doesn't. A GoSD image has
+// neither, and no interactive surface to add one — so a card that plays
+// perfect silence is indistinguishable from broken hardware. Open therefore
+// runs an audibility pass over the card's control elements before returning:
+//
+//   - it only touches elements on the MIXER interface, and never one whose
+//     name mentions the input path (Capture, Mic, ADC, ALC, boost, loopback);
+//   - it turns on a Switch whose name says Playback, or that names both a
+//     digital source and an output stage — that second shape is a DAPM output
+//     mixer's DAC input, like the ES8316's "Left Headphone Mixer Left DAC
+//     Switch", which is exactly what leaves a ROCK 4SE silent;
+//   - it raises a playback Volume to at least Options.Volume percent of its
+//     range, and never lowers one, because a percentage of a raw range is a
+//     blunt instrument and some drivers already power up at 0 dB;
+//   - it points an output mux at a DAC choice where the mux offers one, and
+//     honours Options.Prefer against an enumerated routing control.
+//
+// It is a heuristic over control *names*, because names are all the kernel
+// offers — there is no machine-readable "this is the mute" flag — so it is
+// deliberately narrow and would rather leave a control alone than flip a DSP
+// feature. Options.SkipMixer turns it off entirely, Options.Volume sets the
+// level, Device.SetControl overrides any single element, and Device.Mixer
+// prints the lot when something is still not audible.
+//
 // # Sound is not in the stock kernels
 //
 // Every GoSD board's released kernel is built with `# CONFIG_SOUND is not
@@ -90,17 +118,56 @@ const (
 	Analog
 )
 
+func (o Output) String() string {
+	switch o {
+	case HDMI:
+		return "HDMI"
+	case Analog:
+		return "analog"
+	default:
+		return "any"
+	}
+}
+
 // Options tunes what Open picks and how it configures it. The zero value is
-// what Open uses: any device, 48 kHz stereo, falling back to 44.1 kHz.
+// what Open uses: any device, 48 kHz stereo falling back to 44.1 kHz, and the
+// audibility pass at DefaultVolume.
 type Options struct {
 	// Path opens exactly one device, e.g. "/dev/snd/pcmC0D1p", instead of
 	// searching. Useful when an app is configured for known hardware.
 	Path string
-	// Prefer breaks the tie on a board with more than one output.
+	// Prefer breaks the tie on a board with more than one output. On a card
+	// whose outputs are one PCM behind a routing control rather than
+	// separate PCMs, it also sets that control — see Device.Mixer.
 	Prefer Output
 	// Format requests a stream shape. Its zero value asks for 48 kHz
 	// stereo and then 44.1 kHz stereo, taking whichever the device accepts.
 	Format Format
+	// SkipMixer leaves every one of the card's control elements exactly as
+	// the driver left it. The default is not to: ALSA codecs power up muted
+	// with their volumes at zero and their output mixers disconnected, and
+	// a GoSD image has no alsamixer and no alsactl state file to fix that,
+	// so Open does it — see [Device.Mixer] and docs/sound.md.
+	SkipMixer bool
+	// Volume is the playback level the audibility pass sets, as a
+	// percentage (1-100) of each playback control's range. Zero means
+	// DefaultVolume. The pass never turns a control *down*, so this is a
+	// floor rather than an exact setting: to attenuate deliberately, scale
+	// your samples, or set the control yourself with Device.SetControl.
+	Volume int
+}
+
+// volume resolves Options.Volume to the percentage the audibility pass uses.
+func (opts Options) volume() (int, error) {
+	switch {
+	case opts.Volume == 0:
+		return DefaultVolume, nil
+	case opts.Volume < 0 || opts.Volume > 100:
+		return 0, fmt.Errorf("Options.Volume is %d, but it is a percentage of each control's range: use 1-100, or 0 for the default of %d",
+			opts.Volume, DefaultVolume)
+	default:
+		return opts.Volume, nil
+	}
 }
 
 // Device is an open playback PCM. It is an interface because the
@@ -118,6 +185,16 @@ type Device interface {
 	// Name identifies the device for logs — the kernel's name for it where
 	// there is one, its /dev/snd path otherwise.
 	Name() string
+	// Mixer reads every control element on the device's card, and reports
+	// what Open's audibility pass changed to make the card audible. Print
+	// it when a board plays silence: it is the difference between "a
+	// control we did not set" and "the hardware is not wired up".
+	Mixer() (Mixer, error)
+	// SetControl sets one control element by name — the escape hatch for
+	// hardware the audibility pass gets wrong, and for an app that wants a
+	// specific level. Values are one per channel: 0 or 1 for a switch, the
+	// raw value for a volume, an index into Control.Items for an enum.
+	SetControl(name string, values ...int) error
 	// Close releases the device.
 	Close() error
 }
@@ -128,9 +205,14 @@ type Device interface {
 // device — the usual case, since GoSD's stock kernels have no sound.
 func Open() (Device, error) { return OpenWith(Options{}) }
 
-// OpenWith is Open with a choice of device, preferred output and stream
-// format.
-func OpenWith(opts Options) (Device, error) { return open(opts) }
+// OpenWith is Open with a choice of device, preferred output, stream format
+// and mixer behaviour.
+func OpenWith(opts Options) (Device, error) {
+	if _, err := opts.volume(); err != nil {
+		return nil, err
+	}
+	return open(opts)
+}
 
 // formats returns the stream shapes to try, in order: the caller's if it named
 // one, otherwise stereo at the two rates every sink here supports.

@@ -201,6 +201,12 @@ type device struct {
 	pcm    pcm
 	format Format
 	period int // frames per period, as chosen by the kernel
+
+	// changed and mixerErr record the audibility pass, so Mixer can report
+	// both what it did and why it stopped. A card whose mixer cannot be
+	// opened still gets a working PCM, so neither is fatal to Open.
+	changed  []Change
+	mixerErr error
 }
 
 // open resolves Options to a device and configures it, trying each candidate
@@ -213,10 +219,9 @@ func open(opts Options) (Device, error) {
 	if len(candidates) == 0 {
 		return nil, noDeviceError(false)
 	}
-	formats := opts.formats()
 	var lastErr error
 	for _, c := range candidates {
-		d, err := openPCM(c, formats)
+		d, err := openPCM(c, opts)
 		if err != nil {
 			lastErr = err
 			continue
@@ -255,7 +260,7 @@ func discover(opts Options) ([]pcm, error) {
 	return rank(parseDevSnd(paths), opts.Prefer), nil
 }
 
-func openPCM(p pcm, formats []Format) (*device, error) {
+func openPCM(p pcm, opts Options) (*device, error) {
 	file, err := os.OpenFile(p.path(), unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", p.path(), err)
@@ -274,15 +279,70 @@ func openPCM(p pcm, formats []Format) (*device, error) {
 	}
 
 	var lastErr error
-	for _, f := range formats {
+	for _, f := range opts.formats() {
 		if err := d.configure(f, version); err != nil {
 			lastErr = err
 			continue
 		}
+		d.unmute(opts)
 		return d, nil
 	}
 	_ = file.Close()
 	return nil, fmt.Errorf("no supported format on %s: %w", p.path(), lastErr)
+}
+
+// unmute runs the audibility pass over the card the PCM belongs to. A failure
+// here is recorded rather than returned: the PCM is open and may well be
+// audible already, and reporting "no audio device" for a mixer that would not
+// open would send the caller after entirely the wrong problem.
+func (d *device) unmute(opts Options) {
+	if opts.SkipMixer {
+		return
+	}
+	volume, err := opts.volume()
+	if err != nil {
+		d.mixerErr = err
+		return
+	}
+	d.changed, d.mixerErr = applyAudibility(d.pcm.card, volume, opts.Prefer)
+}
+
+// Mixer reads the card's control elements and reports what Open changed.
+func (d *device) Mixer() (Mixer, error) {
+	m := Mixer{Card: d.pcm.card, Changed: d.changed}
+	c, err := openControl(d.pcm.card)
+	if err != nil {
+		return m, errors.Join(d.mixerErr, err)
+	}
+	defer func() { _ = c.Close() }()
+	m.Elements, err = c.elements()
+	return m, errors.Join(d.mixerErr, err)
+}
+
+// SetControl sets one of the card's control elements by name.
+func (d *device) SetControl(name string, values ...int) error {
+	c, err := openControl(d.pcm.card)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	elements, err := c.elements()
+	if err != nil {
+		return err
+	}
+	for _, e := range elements {
+		if e.Name != name || e.Index != 0 {
+			continue
+		}
+		if !e.Writable {
+			return fmt.Errorf("control %q on card %d is read-only", name, d.pcm.card)
+		}
+		if len(values) != len(e.Values) {
+			return fmt.Errorf("control %q on card %d takes %d values, not %d", name, d.pcm.card, len(e.Values), len(values))
+		}
+		return c.write(uint32(e.Numid), e.Type, values)
+	}
+	return fmt.Errorf("card %d has no control named %q; Device.Mixer lists the %d it does have", d.pcm.card, name, len(elements))
 }
 
 // configure commits hardware and software parameters and prepares the stream.

@@ -44,6 +44,13 @@ func main() {
 	}
 	opts := sound.Options{Path: os.Getenv("CHIME_DEVICE"), Prefer: prefer}
 
+	// The card's control elements are dumped by default while GoSD's audio
+	// support is still being proven on hardware: a silent board and a
+	// working one look identical otherwise, and the dump names whichever
+	// control is still holding the output down. Set CHIME_DUMP_CONTROLS=no
+	// once you'd rather have a quiet log.
+	dumpControls := os.Getenv("CHIME_DUMP_CONTROLS") != "no"
+
 	log.Printf("chime: boot chime, then a test tone every %s (override with CHIME_EVERY)", every)
 
 	for {
@@ -54,6 +61,9 @@ func main() {
 			continue
 		}
 		log.Printf("playing to %s at %s", dev.Name(), dev.Format())
+		if dumpControls {
+			dumpMixer(dev)
+		}
 		if err := play(dev, every); err != nil {
 			log.Printf("playback failed (%v); reopening the audio device", err)
 		}
@@ -104,6 +114,33 @@ func play(dev sound.Device, every time.Duration) error {
 // device, because the fix for each is completely different. sound.Open's own
 // error already covers "this kernel has no sound"; permissions it cannot know
 // about.
+// dumpMixer logs every control element on the device's card, and what Open's
+// audibility pass wrote. This is the evidence a silent board can't otherwise
+// give: the elements show whether a mute or a zero level survived, and the
+// changes show what the heuristic recognised — a control that needed setting
+// but isn't listed is a gap in the heuristic, not a broken codec.
+func dumpMixer(dev sound.Device) {
+	mixer, err := dev.Mixer()
+	if err != nil {
+		log.Printf("reading the card's controls failed: %v (playback continues; the tone may be silent if something is muted)", err)
+		return
+	}
+
+	if len(mixer.Changed) == 0 {
+		log.Printf("card %d: the audibility pass changed nothing", mixer.Card)
+	} else {
+		log.Printf("card %d: the audibility pass made %d change(s):", mixer.Card, len(mixer.Changed))
+		for _, c := range mixer.Changed {
+			log.Printf("  %s", c)
+		}
+	}
+
+	log.Printf("card %d: %d control element(s), after the pass:", mixer.Card, len(mixer.Elements))
+	for _, e := range mixer.Elements {
+		log.Printf("  %s", e)
+	}
+}
+
 func logNoAudio(err error) {
 	if errors.Is(err, os.ErrPermission) {
 		log.Printf("no usable audio device: %v - the app needs read/write access to /dev/snd/pcm*; retrying every %s", err, retryEvery)
