@@ -168,11 +168,12 @@ func firstUDC(fsys writableFS) (string, error) {
 	return entries[0].Name(), nil
 }
 
-// Close unbinds the UDC and removes every directory/symlink Apply created.
-// It's safe to call on a Gadget that was never applied (a no-op), matching
-// io.Closer convention. If a removal step fails, Close still attempts every
-// remaining step rather than stopping early, so a partial failure doesn't
-// strand extra configfs state; it returns the first error encountered.
+// Close unbinds the UDC and removes every user-created directory/symlink
+// Apply created. It's safe to call on a Gadget that was never applied (a
+// no-op), matching io.Closer convention. If a removal step fails, Close
+// still attempts every remaining step rather than stopping early, so a
+// partial failure doesn't strand extra configfs state; it returns the first
+// error encountered.
 func (g *Gadget) Close() error {
 	if g.fs == nil {
 		return nil
@@ -190,24 +191,23 @@ func (g *Gadget) Close() error {
 	// bound gadget's functions/configs out from under it.
 	fail(fsys.WriteFile(gadgetRoot+"/UDC", []byte("\n"), 0o644))
 
-	// Every directory removed below mirrors one materialize() created via
-	// MkdirAll, in reverse (leaves first): MkdirAll silently creates
-	// intermediate directories too (e.g. "configs" and "configs/c.1/
-	// strings" alongside "configs/c.1/strings/0x409"), and each still has
-	// to be rmdir'd individually.
+	// This is the canonical configfs gadget teardown sequence (see
+	// Documentation/usb/gadget_configfs.rst): it removes only the nodes
+	// materialize() itself created. "configs", "functions" and "strings"
+	// under the gadget, and "strings" under a config, are configfs
+	// "default groups" the kernel's gadget driver creates alongside their
+	// parent, not nodes materialize()'s MkdirAll put there — configfs
+	// refuses a direct rmdir on a default group (EPERM), and removing its
+	// parent tears it down for free, so none of the four are rmdir'd here.
 	for _, fn := range g.Functions {
 		fail(fsys.Remove(gadgetRoot + "/configs/c.1/" + fn.Name()))
 	}
 	fail(fsys.Remove(gadgetRoot + "/configs/c.1/strings/0x409"))
-	fail(fsys.Remove(gadgetRoot + "/configs/c.1/strings"))
 	fail(fsys.Remove(gadgetRoot + "/configs/c.1"))
-	fail(fsys.Remove(gadgetRoot + "/configs"))
 	for _, fn := range g.Functions {
 		fail(fsys.Remove(gadgetRoot + "/functions/" + fn.Name()))
 	}
-	fail(fsys.Remove(gadgetRoot + "/functions"))
 	fail(fsys.Remove(gadgetRoot + "/strings/0x409"))
-	fail(fsys.Remove(gadgetRoot + "/strings"))
 	fail(fsys.Remove(gadgetRoot))
 
 	g.fs, g.udc = nil, ""
