@@ -42,7 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	opts := sound.Options{Path: os.Getenv("CHIME_DEVICE"), Prefer: prefer}
+	opts := sound.Options{Path: os.Getenv("CHIME_DEVICE"), Prefer: prefer, Logf: log.Printf}
 
 	// The card's control elements are dumped by default while GoSD's audio
 	// support is still being proven on hardware: a silent board and a

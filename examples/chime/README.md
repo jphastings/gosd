@@ -121,7 +121,10 @@ describing them that way.)
 ## Which output it picks
 
 Boards can expose more than one PCM. The `sound` package reads
-`/proc/asound/pcm` and ranks the playback devices; this app asks for
+`/proc/asound/pcm` and `/proc/asound/cards`, drops the virtual cards (an
+`snd-aloop` loopback plays into nothing, and usually holds card 0 — see
+[the gotcha](../../docs/sound.md#a-virtual-loopback-card-swallows-the-audio-config_snd_aloop)),
+and ranks what is left; this app asks for
 `sound.Options{Prefer: sound.HDMI}` by default (`CHIME_OUTPUT` overrides it)
 and logs what it got:
 
@@ -137,6 +140,10 @@ unplug HDMI (and reboot) to hear it there instead. On a ROCK 4SE built with the
 analog-only recipe there is no HDMI PCM to find, so the preference costs
 nothing and it lands on the jack. Force a specific device with
 `CHIME_DEVICE=/dev/snd/pcmC1D0p`.
+
+It passes `sound.Options{Logf: log.Printf}` too, so anything surprising about
+that choice — a skipped loopback, a preference that could not be honoured —
+is a line in the log rather than something to deduce from silence.
 
 ## Configuration
 
