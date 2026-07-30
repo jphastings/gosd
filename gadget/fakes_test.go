@@ -24,10 +24,13 @@ type fakeOp struct {
 // directly contains, but fails if a child directory or symlink is still
 // present: that's a genuine ordering bug, not something configfs papers
 // over. The one child-directory exception is configfs "default groups",
-// which the kernel creates and removes alongside their parent
-// (f_mass_storage's lun.0 is the only one modeled here): those are created
-// by MkdirAll on the function directory, refused by a direct Remove, and
-// cascade-removed with their parent.
+// which the kernel creates and removes alongside their parent, never via a
+// direct Remove (EPERM in production, modeled here as fs.ErrPermission):
+// gadgetRoot's "strings", "configs" and "functions", a config's "strings"
+// (e.g. "configs/c.1/strings"), and f_mass_storage's "lun.0" under its
+// function directory. MkdirAll marks these as already-present the moment
+// their owning parent is created, matching the kernel; they're
+// cascade-removed once their parent's user-created content is gone.
 type fakeFS struct {
 	dirs          map[string]bool
 	files         map[string][]byte
@@ -49,13 +52,31 @@ func (f *fakeFS) MkdirAll(path string, _ fs.FileMode) error {
 	f.calls = append(f.calls, fakeOp{"mkdir", path})
 	for p := path; p != "" && p != "/"; p = parentOf(p) {
 		f.dirs[p] = true
+		// Every configfs "config" group (configs/c.<n>) gets its own
+		// "strings" default group the moment it's created.
+		if baseOf(parentOf(p)) == "configs" && strings.HasPrefix(baseOf(p), "c.") {
+			f.markDefaultGroup(p + "/strings")
+		}
+	}
+	// Creating the gadget itself auto-populates its "strings", "configs"
+	// and "functions" default groups.
+	if path == gadgetRoot {
+		f.markDefaultGroup(path + "/strings")
+		f.markDefaultGroup(path + "/configs")
+		f.markDefaultGroup(path + "/functions")
 	}
 	if strings.HasPrefix(baseOf(path), "mass_storage.") && baseOf(parentOf(path)) == "functions" {
-		lun := path + "/lun.0"
-		f.dirs[lun] = true
-		f.defaultGroups[lun] = true
+		f.markDefaultGroup(path + "/lun.0")
 	}
 	return nil
+}
+
+// markDefaultGroup records path as already existing and kernel-owned: it
+// was created alongside its parent, not by our own MkdirAll, so a direct
+// Remove on it must fail (see Remove below).
+func (f *fakeFS) markDefaultGroup(path string) {
+	f.dirs[path] = true
+	f.defaultGroups[path] = true
 }
 
 func (f *fakeFS) WriteFile(path string, data []byte, _ fs.FileMode) error {

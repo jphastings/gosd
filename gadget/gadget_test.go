@@ -221,6 +221,43 @@ func TestCloseRemovesEverythingApplyCreated(t *testing.T) {
 	}
 }
 
+// configs/, functions/ and strings/ under the gadget, and strings/ under a
+// config, are configfs default groups the kernel creates alongside their
+// parent — a direct rmdir on one fails (EPERM in production). Close must
+// remove only the user-created nodes, in the canonical teardown order, and
+// let removing each default group's parent tear it down for free
+// (gosd-cjs2).
+func TestCloseRemovesOnlyUserCreatedNodesInCanonicalOrder(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	g := testGadget(ACM{})
+	if err := applyWithFake(t, g, f); err != nil {
+		t.Fatalf("Apply() = %v, want nil", err)
+	}
+
+	if err := g.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	want := []string{
+		gadgetRoot + "/configs/c.1/acm.usb0",
+		gadgetRoot + "/configs/c.1/strings/0x409",
+		gadgetRoot + "/configs/c.1",
+		gadgetRoot + "/functions/acm.usb0",
+		gadgetRoot + "/strings/0x409",
+		gadgetRoot,
+	}
+	got := f.callsOfKind("remove")
+	if len(got) != len(want) {
+		t.Fatalf("Close() issued removes %v, want %v", got, want)
+	}
+	for i, path := range want {
+		if got[i] != path {
+			t.Errorf("remove[%d] = %s, want %s", i, got[i], path)
+		}
+	}
+}
+
 func TestCloseThenApplyRoundTrips(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")

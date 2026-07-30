@@ -1,11 +1,11 @@
 ---
 # gosd-cjs2
 title: gadget.Close() returns EPERM trying to rmdir configfs default groups
-status: todo
+status: completed
 type: bug
 priority: normal
 created_at: 2026-07-30T07:44:22Z
-updated_at: 2026-07-30T07:44:22Z
+updated_at: 2026-07-30T22:08:18Z
 ---
 
 ## Symptom
@@ -73,8 +73,57 @@ so the final `rmdir <gadget>` still runs and the gadget does come down. But:
 
 ## Acceptance
 
-- `Close()` returns nil after a normal apply/close cycle on real hardware.
-- No configfs state is stranded under `/sys/kernel/config/usb_gadget/gosd`
+- [ ] `Close()` returns nil after a normal apply/close cycle on real hardware.
+- [ ] No configfs state is stranded under `/sys/kernel/config/usb_gadget/gosd`
   after close (verify on a board; betamin's repeated apply/close on every
   playback boot is a convenient exerciser).
-- `go test ./...` covers the nil-error case with a fake.
+- [x] `go test ./...` covers the nil-error case with a fake.
+
+
+
+## Summary of Changes
+
+`gadget/gadget.go`'s `Close()` now implements the canonical configfs gadget
+teardown sequence instead of walking every directory `materialize()`'s
+`MkdirAll` calls touched: unbind UDC, remove each function's symlink from
+`configs/c.1/`, `rmdir configs/c.1/strings/0x409`, `rmdir configs/c.1`,
+`rmdir functions/<fn>` per function, `rmdir strings/0x409`, `rmdir
+<gadget>`. It no longer attempts `rmdir` on `configs`, `functions`, `strings`
+(under the gadget) or `configs/c.1/strings` — those are kernel-created
+configfs default groups, torn down automatically when their parent
+(`configs/c.1` or the gadget root) is removed.
+
+`gadget/fakes_test.go`'s `fakeFS` previously only modeled `lun.0`
+(f_mass_storage's default group) as kernel-owned; it now also marks
+`strings`, `configs` and `functions` as default groups the instant the
+gadget root is created, and a config's `strings` the instant `configs/c.<n>`
+is created — matching the real kernel's behavior (a direct `Remove` on any
+of them now fails with `fs.ErrPermission`, just like real configfs). Without
+this fake fix the old (buggy) `Close()` code passed its own tests, because
+the fake didn't model the EPERM the bug depends on.
+
+`gadget/gadget_test.go` gained
+`TestCloseRemovesOnlyUserCreatedNodesInCanonicalOrder`, which asserts the
+exact ordered sequence of `Remove` calls `Close()` issues and that it
+returns nil — confirmed to fail against the pre-fix `Close()` (5 existing
+tests also failed once the fake alone was corrected, before the production
+fix was reapplied).
+
+**Open question 1 (does the final `rmdir <gadget>` succeed?) — answered from
+the code path:** by the time `Close()` reaches `rmdir <gadget>`, every
+user-created descendant has already been removed (function symlinks, each
+config's `strings/0x409`, `configs/c.1` itself, each `functions/<fn>`, and
+the gadget's own `strings/0x409`), so `configs`, `functions` and `strings`
+under the gadget are themselves empty default groups at that point and
+`rmdir <gadget>` cascades them away for free — this is a code-path
+determination, not a hardware measurement.
+
+**Open question 2 (could configfs state strand across a mode switch?) — NOT
+settled from code**, so left as an open bench item below rather than
+asserted: `Close()`'s continue-past-errors design means if an *earlier*
+removal step in the sequence itself fails for a real reason (not the
+default-group EPERM this bean fixes), later steps that depend on that node
+being gone (e.g. `rmdir configs/c.1` while a function symlink still lingers
+inside it) would also fail, and the final `rmdir <gadget>` would then fail
+too — genuinely stranding state. This can only be assessed by exercising a
+real failure mode on hardware, so it stays unconfirmed.
