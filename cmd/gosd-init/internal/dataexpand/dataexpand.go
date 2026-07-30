@@ -1,27 +1,40 @@
 // Package dataexpand creates the GOSD-DATA partition on first boot for
 // images built with --data-size=expand. Such an image ships with no
 // partition 2 at all (staying 272MiB); this package grows the card into one
-// by writing an MBR entry spanning the rest of the device, telling the
-// running kernel about it, and formatting it FAT32 — all before the normal
+// by telling the running kernel about the partition, formatting it FAT32,
+// and only then writing its MBR entry — all before the normal
 // data-partition mount runs.
 //
-// The MBR itself is the only state. Partition 2 present and carrying a FAT32
-// filesystem labelled GOSD-DATA means the work is done (every boot after the
-// first); present but carrying anything else means power was lost between
-// the MBR write and the format, so the format is safely retried; absent
-// means this is the first boot. Nothing here is ever fatal: any failure is
-// reported to the caller, which logs it and falls back to the read-only
-// /data placeholder for this boot.
+// The MBR entry is the commit record of a completed first boot, written
+// only after the formatted filesystem is durable on the card. Three states
+// therefore cover every boot: no entry means first-boot work is (re)done
+// from scratch — power loss anywhere mid-creation lands back here, with no
+// user data at stake; an entry over a mountable GOSD-DATA filesystem means
+// everything already happened, and nothing is touched; an entry over
+// anything else means an established partition — possibly carrying app
+// data — has been corrupted, reported as ErrDataCorrupt so the caller can
+// halt the device rather than let anything destroy what might be
+// recoverable. Every other failure is ordinary and non-fatal: the caller
+// logs it and falls back to the read-only /data placeholder for this boot.
 package dataexpand
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
 )
+
+// ErrDataCorrupt reports the one state Run refuses to repair: the partition
+// table says the data partition is established (its entry is only ever
+// written after a completed, synced format), but what it holds is not the
+// GOSD-DATA filesystem that format left. App data may be at stake, so
+// callers are expected to halt the device rather than mount around it —
+// see boot.Run's handling.
+var ErrDataCorrupt = errors.New("the data partition is corrupt")
 
 const (
 	sectorSize = 512
@@ -85,6 +98,9 @@ type Deps struct {
 	// FormatFAT32 writes a FAT32 filesystem labelled label onto the
 	// partition node.
 	FormatFAT32 func(partitionDevice, label string) error
+	// SyncDevice flushes a device node's dirty pages to the medium, making
+	// a just-written format durable before the MBR entry commits to it.
+	SyncDevice func(device string) error
 	// PathExists reports whether a device node exists yet.
 	PathExists func(path string) bool
 
@@ -121,7 +137,7 @@ func Run(deps Deps, opts Options) error {
 	}
 
 	if partType, _, _ := readEntry(mbr, dataPartitionNumber); partType != 0 {
-		return ensureFormatted(deps, opts)
+		return verifyEstablished(deps, opts)
 	}
 
 	deviceBytes, err := deps.DeviceSizeBytes(opts.Device)
@@ -137,10 +153,13 @@ func Run(deps Deps, opts Options) error {
 		deps.Log("%s", note)
 	}
 
-	writeDataEntry(mbr, dataPartitionStartLBA, uint32(sizeSectors))
-	if err := deps.WriteMBR(opts.Device, mbr); err != nil {
-		return fmt.Errorf("writing the new partition table to %s: %w", opts.Device, err)
-	}
+	// Creation order is the crash-safety contract: the kernel learns of the
+	// partition (in-memory state only), the filesystem is written and made
+	// durable, and only then does the MBR entry — the on-disk commit record
+	// — go in. Power loss anywhere before that final write leaves no entry,
+	// so the next boot redoes everything from scratch; an entry therefore
+	// always means a completed format, which is what lets verifyEstablished
+	// treat anything else under one as real corruption.
 	if err := deps.AddKernelPartition(opts.Device, dataPartitionNumber,
 		dataPartitionStartLBA*sectorSize, sizeSectors*sectorSize); err != nil {
 		return err
@@ -148,42 +167,57 @@ func Run(deps Deps, opts Options) error {
 	if err := waitForNode(deps, opts.PartitionDevice, opts.NodeTimeout); err != nil {
 		return err
 	}
-
 	deps.Log("formatting %s as %s (%s) — one-time first-boot setup", opts.PartitionDevice, Label, sizeString(sizeSectors*sectorSize))
 	if err := deps.FormatFAT32(opts.PartitionDevice, Label); err != nil {
 		return err
+	}
+	if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
+		return fmt.Errorf("flushing the new filesystem to %s: %w", opts.PartitionDevice, err)
+	}
+
+	writeDataEntry(mbr, dataPartitionStartLBA, uint32(sizeSectors))
+	if err := deps.WriteMBR(opts.Device, mbr); err != nil {
+		return fmt.Errorf("writing the new partition table to %s: %w", opts.Device, err)
 	}
 	deps.Log("data partition created, filling the card")
 	return nil
 }
 
-// ensureFormatted handles a boot where the MBR already lists partition 2.
-// Under --data-size=expand the image never ships one and flashing rewrites
-// the MBR, so a present entry is always this package's own earlier work:
-// carrying the GOSD-DATA filesystem it should (done), or not (power was lost
-// between the MBR write and the format — format it now). A partition whose
-// filesystem no longer parses at all is reformatted by the same rule; with
-// no fsck on board, that trades an unrecoverable volume for a working empty
-// one.
-func ensureFormatted(deps Deps, opts Options) error {
+// verifyEstablished handles a boot where the MBR already lists partition 2.
+// The entry is only ever written after a completed, synced format (see Run),
+// and flashing an image rewrites the MBR without one, so an entry means an
+// established partition that may hold app data. Either it still carries its
+// GOSD-DATA filesystem (the every-later-boot happy path: nothing to do), or
+// something has gone genuinely wrong with data possibly at stake — reported
+// as ErrDataCorrupt, never repaired here.
+func verifyEstablished(deps Deps, opts Options) error {
 	if !deps.PathExists(opts.PartitionDevice) {
-		return fmt.Errorf("the partition table lists a data partition but %s never appeared", opts.PartitionDevice)
+		return fmt.Errorf("%w: the partition table lists it, but its device node %s never appeared", ErrDataCorrupt, opts.PartitionDevice)
 	}
 	contents, err := deps.Inspect(opts.PartitionDevice)
 	if err != nil {
-		return fmt.Errorf("checking what %s holds: %w", opts.PartitionDevice, err)
+		return fmt.Errorf("%w: reading %s failed: %v", ErrDataCorrupt, opts.PartitionDevice, err)
 	}
 	if contents.FS == diskfmt.FAT32 && contents.Label == Label {
 		deps.Log("data partition already present on %s", opts.PartitionDevice)
 		return nil
 	}
+	return fmt.Errorf("%w: %s holds %s where a FAT32 filesystem labelled %s should be", ErrDataCorrupt, opts.PartitionDevice, describeContents(contents), Label)
+}
 
-	deps.Log("data partition %s holds no %s filesystem (interrupted first boot?); formatting it", opts.PartitionDevice, Label)
-	if err := deps.FormatFAT32(opts.PartitionDevice, Label); err != nil {
-		return err
+// describeContents names what Inspect found, for the corruption report a
+// person will eventually read off the card.
+func describeContents(c diskfmt.Contents) string {
+	switch {
+	case c.FS != "":
+		return fmt.Sprintf("a %s filesystem labelled %q", c.FS, c.Label)
+	case c.OtherFS != "":
+		return "an unreadable " + c.OtherFS + " filesystem"
+	case c.Blank:
+		return "nothing (blank space)"
+	default:
+		return "unrecognisable content"
 	}
-	deps.Log("data partition formatted")
-	return nil
 }
 
 // partitionSectors decides the size, in sectors, of the partition to create

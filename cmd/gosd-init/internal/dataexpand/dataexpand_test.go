@@ -2,6 +2,7 @@ package dataexpand
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -64,6 +65,7 @@ func (c *fakeCard) deps() Deps {
 		},
 		Inspect:     func(string) (diskfmt.Contents, error) { return c.contents, nil },
 		FormatFAT32: func(_, label string) error { c.actions = append(c.actions, "format-"+label); return nil },
+		SyncDevice:  func(string) error { c.actions = append(c.actions, "sync-partition"); return nil },
 		PathExists:  func(string) bool { return c.nodeExists },
 		Sleep: func(d time.Duration) {
 			clock.mu.Lock()
@@ -124,9 +126,11 @@ func TestRunCreatesTheDataPartitionOnFirstBoot(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	// Crash safety hangs on this exact order: the MBR is durable before the
-	// kernel learns of the partition, and both precede the format.
-	wantActions := []string{"write-mbr", "add-partition-2", "format-" + Label}
+	// Crash safety hangs on this exact order: the MBR entry is the commit
+	// record, written only after the formatted filesystem is durable, so
+	// power loss at any earlier point leaves no entry and the next boot
+	// redoes everything.
+	wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-mbr"}
 	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 		t.Fatalf("actions = %v, want %v", card.actions, wantActions)
 	}
@@ -178,19 +182,46 @@ func TestRunLeavesAHealthyDataPartitionAlone(t *testing.T) {
 	}
 }
 
-func TestRunFormatsAfterAnInterruptedFirstBoot(t *testing.T) {
-	// Power was lost between the MBR write and the format: the entry exists,
-	// the partition holds nothing. Only the format is redone — the MBR and
-	// the kernel's view (from its own boot-time scan) are already right.
-	card := newFakeCard(withDataEntry(1<<21), 8<<30)
-	card.nodeExists = true
-	card.contents = diskfmt.Contents{Blank: true}
-
-	if err := Run(card.deps(), testOptions()); err != nil {
-		t.Fatalf("Run() = %v, want nil", err)
+func TestRunReportsCorruptionInsteadOfTouchingAnEstablishedPartition(t *testing.T) {
+	// The entry is only ever written after a completed, synced format, so an
+	// entry over anything but the GOSD-DATA filesystem means an established
+	// partition — possibly holding app data — has been damaged. Nothing may
+	// repair, reformat, or otherwise touch it.
+	cases := []struct {
+		name     string
+		contents diskfmt.Contents
+	}{
+		{"blank space", diskfmt.Contents{Blank: true}},
+		{"a foreign volume", diskfmt.Contents{FS: diskfmt.FAT32, Label: "HOLIDAY"}},
+		{"unreadable content", diskfmt.Contents{OtherFS: "exFAT"}},
 	}
-	if got := strings.Join(card.actions, ","); got != "format-"+Label {
-		t.Errorf("actions = %v, want only the format", card.actions)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			card := newFakeCard(withDataEntry(1<<21), 8<<30)
+			card.nodeExists = true
+			card.contents = c.contents
+
+			err := Run(card.deps(), testOptions())
+			if !errors.Is(err, ErrDataCorrupt) {
+				t.Fatalf("Run() = %v, want ErrDataCorrupt", err)
+			}
+			if len(card.actions) != 0 {
+				t.Errorf("a corrupt partition saw %v, want nothing", card.actions)
+			}
+		})
+	}
+}
+
+func TestRunReportsCorruptionWhenTheEstablishedNodeIsMissing(t *testing.T) {
+	card := newFakeCard(withDataEntry(1<<21), 8<<30)
+	card.nodeExists = false
+
+	err := Run(card.deps(), testOptions())
+	if !errors.Is(err, ErrDataCorrupt) {
+		t.Fatalf("Run() = %v, want ErrDataCorrupt", err)
+	}
+	if len(card.actions) != 0 {
+		t.Errorf("actions = %v, want nothing", card.actions)
 	}
 }
 
@@ -247,10 +278,13 @@ func TestRunReportsANodeThatNeverAppears(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "did not appear") {
 		t.Fatalf("Run() = %v, want a node-timeout error", err)
 	}
-	for _, a := range card.actions {
-		if strings.HasPrefix(a, "format") {
-			t.Error("format ran though the partition node never appeared")
-		}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("a node timeout during creation is a transient failure, not corruption")
+	}
+	// Nothing further may happen — in particular no MBR entry, which would
+	// falsely commit a format that never ran.
+	if got := strings.Join(card.actions, ","); got != "add-partition-2" {
+		t.Errorf("actions = %v, want only the kernel registration", card.actions)
 	}
 }
 

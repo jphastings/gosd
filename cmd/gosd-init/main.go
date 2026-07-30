@@ -91,8 +91,11 @@ func main() {
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
-		Sleep:                time.Sleep,
-		Now:                  time.Now,
+		WriteBootFailure: func(msg string) error {
+			return platform.WriteBootFailure(bootTarget, msg)
+		},
+		Sleep: time.Sleep,
+		Now:   time.Now,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS

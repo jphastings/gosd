@@ -129,6 +129,7 @@ type fakeRebooter struct {
 	mu        sync.Mutex
 	syncCalls int
 	rebooted  bool
+	halted    bool
 }
 
 func (r *fakeRebooter) Sync() {
@@ -140,6 +141,12 @@ func (r *fakeRebooter) Sync() {
 func (r *fakeRebooter) Reboot() {
 	r.mu.Lock()
 	r.rebooted = true
+	r.mu.Unlock()
+}
+
+func (r *fakeRebooter) Halt() {
+	r.mu.Lock()
+	r.halted = true
 	r.mu.Unlock()
 }
 

@@ -3,12 +3,14 @@ package boot
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
@@ -1153,6 +1155,53 @@ func TestRunContinuesToTheDataFallbackWhenExpansionFails(t *testing.T) {
 	calls := mounter.recordedCalls("/data")
 	if len(calls) == 0 || calls[len(calls)-1].fstype != "tmpfs" || calls[len(calls)-1].flags&msRdOnly == 0 {
 		t.Errorf("final /data mount = %+v, want the read-only tmpfs fallback", calls)
+	}
+}
+
+func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
+	// An established expand partition whose filesystem is gone may still
+	// hold recoverable app data: the device must record what happened to
+	// boot-failure.log and halt — not reboot-loop, not reformat, and above
+	// all not start the app against a read-only fallback as if nothing were
+	// wrong.
+	mounter := &fakeMounter{}
+	rebooter := &fakeRebooter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+	var recorded string
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true,
+		fmt.Errorf("%w: /dev/mmcblk0p2 holds nothing (blank space)", dataexpand.ErrDataCorrupt), &expandedWith)
+	deps.Rebooter = rebooter
+	deps.AppStarter = funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		t.Error("the app was started despite a corrupt data partition")
+		close(stop)
+		return 1, nil
+	})
+	deps.WriteBootFailure = func(msg string) error { recorded = msg; return nil }
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	err := Run(deps, opts)
+	if err == nil || !errors.Is(err, dataexpand.ErrDataCorrupt) {
+		t.Fatalf("Run() = %v, want the corruption error", err)
+	}
+	if !rebooter.halted {
+		t.Error("the device was not halted")
+	}
+	if rebooter.rebooted {
+		t.Error("the device rebooted; corruption must halt, not reboot-loop")
+	}
+	if rebooter.syncCalls == 0 {
+		t.Error("no sync before halting")
+	}
+	for _, want := range []string{"/dev/mmcblk0p2", "salvage", "GOSD-DATA"} {
+		if !strings.Contains(recorded, want) {
+			t.Errorf("boot-failure.log content %q is missing %q", recorded, want)
+		}
+	}
+	if mounter.callsFor("/data") != 0 {
+		t.Error("/data was mounted despite the halt")
 	}
 }
 

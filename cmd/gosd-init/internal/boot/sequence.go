@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
@@ -96,9 +97,20 @@ type Deps struct {
 	// device the GOSD-BOOT mount actually used, so only the disk the
 	// system truly booted from is ever touched — the same reasoning that
 	// makes MountBootPartition's sentinel check necessary. Nil-checked
-	// like the other optional deps; a failure is logged and boot proceeds
-	// to the read-only /data fallback, never fatal.
+	// like the other optional deps. An ordinary failure is logged and boot
+	// proceeds to the read-only /data fallback; dataexpand.ErrDataCorrupt
+	// — an established partition whose filesystem is gone, app data
+	// possibly at stake — instead records the failure via WriteBootFailure
+	// and halts the device.
 	ExpandData func(bootPartitionDevice string, log func(format string, args ...any)) error
+
+	// WriteBootFailure records a fatal, human-actionable failure as
+	// boot-failure.log at the root of the GOSD-BOOT partition (briefly
+	// remounting it read-write), so whoever collects an unattended device
+	// can read the latest run's fatal issue by plugging the card into any
+	// computer. The file is overwritten each time. Nil-checked; adopting
+	// this across every fatal path is bean gosd-pun9.
+	WriteBootFailure func(msg string) error
 
 	Sleep func(time.Duration)
 	Now   func() time.Time
@@ -268,7 +280,9 @@ func Run(deps Deps, opts Options) error {
 		"GOSD_HOSTNAME=" + cfg.Hostname,
 	}
 	if cfg.DataExpand && deps.ExpandData != nil {
-		if err := deps.ExpandData(bootDevice, log); err != nil {
+		if err := deps.ExpandData(bootDevice, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
+			return haltForDataCorruption(deps, log, err)
+		} else if err != nil {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
 	}
@@ -403,6 +417,34 @@ func describeEnvSources(fromGosdToml, fromBaked []string) string {
 		parts = append(parts, strings.Join(fromBaked, ", ")+" (baked)")
 	}
 	return strings.Join(parts, "; ")
+}
+
+// haltForDataCorruption is the unattended-device version of a refusal: the
+// established data partition no longer holds the filesystem a completed
+// first boot left, and anything that "fixed" it would destroy whatever the
+// app had stored. The failure is recorded to boot-failure.log on the
+// GOSD-BOOT partition — readable on any computer the card is plugged into —
+// and the device halts rather than rebooting, because no retry can improve
+// a corrupt filesystem and a reboot loop would only mask it. Like fatal, it
+// returns the wrapped error for callers and tests; in production the
+// machine has halted before that matters.
+func haltForDataCorruption(deps Deps, log func(format string, args ...any), cause error) error {
+	log("fatal: %v; halting (details in boot-failure.log on the boot partition)", cause)
+	if deps.WriteBootFailure != nil {
+		msg := fmt.Sprintf(`gosd-init could not start the app because %v.
+
+The device was halted to protect whatever data is still on that partition.
+To recover: plug the card into a computer, salvage what you need from the
+GOSD-DATA partition, then either reformat it as FAT32 labelled GOSD-DATA or
+delete partition 2 entirely — the next boot will recreate it, empty.
+`, cause)
+		if err := deps.WriteBootFailure(msg); err != nil {
+			log("recording the failure to boot-failure.log also failed: %v", err)
+		}
+	}
+	deps.Rebooter.Sync()
+	deps.Rebooter.Halt()
+	return fmt.Errorf("data partition corrupt: %w", cause)
 }
 
 // fatal implements step 8 of the boot sequence: log, sync, sleep 5s, then
