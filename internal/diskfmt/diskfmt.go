@@ -231,6 +231,11 @@ func FormatFAT32(devicePath, volumeLabel string) (err error) {
 		}
 	}()
 
+	// Before anything is written, so an oversized device is left untouched.
+	if err := checkFAT32Size(devicePath, d.Size); err != nil {
+		return err
+	}
+
 	if _, err := d.CreateFilesystem(disk.FilesystemSpec{
 		Partition:   0, // 0 = whole device, no partition table
 		FSType:      filesystem.TypeFat32,
