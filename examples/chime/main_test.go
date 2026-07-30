@@ -29,6 +29,9 @@ func (f *fakeSink) Format() sound.Format { return testFormat }
 func (f *fakeSink) Name() string         { return "fake" }
 func (f *fakeSink) Close() error         { return nil }
 
+func (f *fakeSink) Mixer() (sound.Mixer, error)     { return sound.Mixer{}, nil }
+func (f *fakeSink) SetControl(string, ...int) error { return nil }
+
 func TestPlaySoundsTheChimeFirstThenTones(t *testing.T) {
 	boom := errors.New("device went away")
 	s := &fakeSink{failAt: 3, failWith: boom}

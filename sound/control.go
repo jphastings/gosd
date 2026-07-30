@@ -320,7 +320,8 @@ func switchChange(c Control, name []string) (Change, bool) {
 	if function(name) != "switch" {
 		return Change{}, false
 	}
-	if !hasWord(name, "playback") && !(hasWord(name, digitalWords...) && hasWord(name, outputWords...)) {
+	playbackPath := hasWord(name, digitalWords...) && hasWord(name, outputWords...)
+	if !hasWord(name, "playback") && !playbackPath {
 		return Change{}, false
 	}
 	return raise(c, func(int) int { return 1 }, "unmute the playback path")
