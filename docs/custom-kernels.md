@@ -9,6 +9,12 @@ you compile a custom kernel with exactly the extra driver(s) you need,
 without touching GoSD's own trimming decisions or slowing down everyone
 else's build.
 
+**Looking for sound?** [docs/sound.md](sound.md) is the per-board guide —
+ready-made recipes in `examples/chime/kernel/`, what each board's outputs
+physically are, and the traps (a bare "enable sound" fragment quietly compiles
+in every audio driver the defconfig ships as a module). Come back here for the
+mechanism and the host requirements.
+
 ## Two tiers
 
 - **Stock artifacts (the default, zero Docker).** `gosd build` downloads

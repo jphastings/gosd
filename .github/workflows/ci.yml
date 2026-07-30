@@ -88,10 +88,12 @@ jobs:
       # examples/i2cscan, examples/gpioinfo, and examples/spiloopback are
       # included here too (beans gosd-85pt, gosd-nyad, gosd-fnza): all three
       # must build for every board, including the 32-bit pi-zero-w.
-      # examples/chime (bean gosd-y9hc) is here for a sharper reason: it
-      # transcribes the ALSA PCM ioctl structs, whose sizes the ioctl request
-      # numbers embed and which differ between 32- and 64-bit. Its
-      # compile-time size assertions only get checked for armv6 by this step.
+      # examples/chime (beans gosd-y9hc, gosd-lrxz) is here for a sharper
+      # reason: it pulls in the public sound package, which transcribes the
+      # ALSA PCM ioctl structs, whose sizes the ioctl request numbers embed
+      # and which differ between 32- and 64-bit. That package's compile-time
+      # size assertions only get checked for armv6 by this step, so don't
+      # drop chime from the list without adding ./sound in its place.
       - name: Cross-compile armv6 targets (CGO disabled)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./examples/hello ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/usbwebsite ./examples/chime
       - name: Build gosd CLI for host

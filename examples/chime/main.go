@@ -1,31 +1,22 @@
 // Command chime plays a boot chime and then a periodic test tone out of a
 // GoSD board's audio output — HDMI where the board has it, the analog jack
-// where it has one — by talking the kernel's ALSA PCM ioctl interface
-// directly. There is no alsa-lib in a GoSD image to talk to.
+// where it has one — using the gosd sound package, which talks the kernel's
+// ALSA PCM interface directly. There is no alsa-lib in a GoSD image.
 //
 // GoSD's stock kernels have no sound at all, so this example ships the
-// `gosd build-kernel` recipe that compiles it back in: see README.md and
-// docs/custom-kernels.md.
+// `gosd build-kernel` recipes that compile it back in: see README.md and
+// docs/sound.md.
 package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"time"
-)
 
-// sink is one configured audio output. The seam exists so the timing and
-// degradation logic below is testable on a machine with no /dev/snd (i.e. the
-// one this was written on).
-type sink interface {
-	// Play writes interleaved S16_LE frames and returns once they have
-	// finished playing.
-	Play(pcm []byte) error
-	Format() format
-	Name() string
-	Close() error
-}
+	"github.com/jphastings/gosd/sound"
+)
 
 const (
 	// retryEvery is how often to look for an audio device again when there
@@ -47,25 +38,45 @@ func main() {
 		}
 		every = d
 	}
-	want := os.Getenv("CHIME_DEVICE")
+	prefer, err := preferredOutput(os.Getenv("CHIME_OUTPUT"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	opts := sound.Options{Path: os.Getenv("CHIME_DEVICE"), Prefer: prefer}
 
 	log.Printf("chime: boot chime, then a test tone every %s (override with CHIME_EVERY)", every)
 
 	for {
-		s, err := openSink(want)
+		dev, err := sound.OpenWith(opts)
 		if err != nil {
 			logNoAudio(err)
 			time.Sleep(retryEvery)
 			continue
 		}
-		f := s.Format()
-		log.Printf("playing to %s at %d Hz, %d channels", s.Name(), f.rate, f.channels)
-		if err := play(s, every); err != nil {
+		log.Printf("playing to %s at %s", dev.Name(), dev.Format())
+		if err := play(dev, every); err != nil {
 			log.Printf("playback failed (%v); reopening the audio device", err)
 		}
-		if err := s.Close(); err != nil {
+		if err := dev.Close(); err != nil {
 			log.Printf("closing the audio device: %v", err)
 		}
+	}
+}
+
+// preferredOutput reads CHIME_OUTPUT. The default prefers HDMI, which is the
+// output every GoSD board with any audio hardware at all can reach; a ROCK 4SE
+// built with the analog-only kernel recipe has no HDMI PCM to find, so it lands
+// on its jack without being told to.
+func preferredOutput(raw string) (sound.Output, error) {
+	switch raw {
+	case "", "hdmi":
+		return sound.HDMI, nil
+	case "analog":
+		return sound.Analog, nil
+	case "any":
+		return sound.Any, nil
+	default:
+		return sound.Any, fmt.Errorf("CHIME_OUTPUT=%q is not one of hdmi, analog or any", raw)
 	}
 }
 
@@ -73,16 +84,16 @@ func main() {
 // wrong. It returns rather than exiting so main can reopen the device: this
 // app deliberately never exits, so gosd-init's supervisor has nothing to
 // restart-churn.
-func play(s sink, every time.Duration) error {
-	f := s.Format()
-	if err := s.Play(chime(f)); err != nil {
+func play(dev sound.Device, every time.Duration) error {
+	f := dev.Format()
+	if err := dev.Play(chime(f)); err != nil {
 		return err
 	}
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	tone := sweep(f)
 	for range tick.C {
-		if err := s.Play(tone); err != nil {
+		if err := dev.Play(tone); err != nil {
 			return err
 		}
 	}
@@ -90,11 +101,13 @@ func play(s sink, every time.Duration) error {
 }
 
 // logNoAudio explains the two very different reasons there might be no audio
-// device, because the fix for each is completely different.
+// device, because the fix for each is completely different. sound.Open's own
+// error already covers "this kernel has no sound"; permissions it cannot know
+// about.
 func logNoAudio(err error) {
 	if errors.Is(err, os.ErrPermission) {
 		log.Printf("no usable audio device: %v - the app needs read/write access to /dev/snd/pcm*; retrying every %s", err, retryEvery)
 		return
 	}
-	log.Printf("no usable audio device (%v) - GoSD's stock kernels have no sound support; build this example's custom kernel (see examples/chime/README.md and docs/custom-kernels.md), and remember HDMI audio only appears when a display is connected at boot; retrying every %s", err, retryEvery)
+	log.Printf("no usable audio device: %v - see examples/chime/README.md; retrying every %s", err, retryEvery)
 }

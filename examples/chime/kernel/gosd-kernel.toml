@@ -1,12 +1,21 @@
-# Custom-kernel recipe for examples/chime (see docs/custom-kernels.md): the
-# stock GoSD kernels set `# CONFIG_SOUND is not set`, so playing audio needs
+# Custom-kernel recipe for examples/chime (see docs/sound.md): the stock GoSD
+# kernels set `# CONFIG_SOUND is not set`, so playing audio needs
 # `gosd build-kernel` once per board, then `gosd build --artifacts-dir`.
 #
-# All three Pi boards share one fragment and one patch: the VideoCore firmware
-# audio driver (snd_bcm2835) is the same on BCM2835 and BCM2837, and it reaches
-# HDMI without dragging in DRM. The Rockchip boards are not here yet — their
-# HDMI audio codec hangs off the DRM dw-hdmi bridge, so it needs the whole DRM
-# subsystem plus ASoC plus a DTS patch (bean gosd-lrxz).
+# This is the cheap recipe — no DRM on any board:
+#
+#   * The three Pi boards share one fragment and one patch. The VideoCore
+#     firmware audio driver (snd_bcm2835) is the same on BCM2835 and BCM2837,
+#     and it reaches HDMI (and the analog jack, on the pi-3b) without ASoC or
+#     DRM.
+#   * rock-4se gets its 3.5 mm headphone jack — an ES8316 codec on I2C1, which
+#     needs ASoC but no DRM either.
+#
+# HDMI audio on a Rockchip board is a codec on the DRM dw-hdmi bridge, so it
+# drags in the whole DRM subsystem: that lives in hdmi.toml next to this file,
+# for the apps that want it. radxa-zero-3e has no analog output at all, so
+# hdmi.toml is its only option; nanopi-zero2's SoC has no audio path in the
+# kernel at all (see docs/sound.md).
 
 [kernel.pi-zero-2w]
 fragment = "pi.fragment"
@@ -19,3 +28,9 @@ patches = ["patches/0001-default-hdmi-audio-on.patch"]
 [kernel.pi-3b]
 fragment = "pi.fragment"
 patches = ["patches/0001-default-hdmi-audio-on.patch"]
+
+# No patches: mainline's rk3399-rock-pi-4.dtsi (included by
+# rk3399-rock-4se.dts) already enables i2c1's `codec@11`, i2s0, and the
+# `audio-graph-card` that joins them.
+[kernel.rock-4se]
+fragment = "rock-4se-analog.fragment"

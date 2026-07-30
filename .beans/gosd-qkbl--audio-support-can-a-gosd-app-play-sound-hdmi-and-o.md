@@ -149,6 +149,22 @@ CLAUDE.md's Rockchip rule). The 4SE's **analog** ES8316 path needs ASoC +
 only audio is I2S/SPDIF off the FPC header. Scoped out of the first example and
 tracked as gosd-lrxz.
 
+> **Correction from gosd-lrxz (2026-07-30): no DTS patch is needed on either
+> Rockchip board.** Mainline already wires both paths up. The 4SE's
+> `rk3399-rock-4se.dts` includes `rk3399-rock-pi-4.dtsi`, which enables `i2c1`
+> with `es8316: codec@11`, enables `i2s0` with the matching audio-graph
+> endpoint, declares `sound { compatible = "audio-graph-card"; label =
+> "Analog"; }`, and sets `&hdmi`, `&hdmi_sound` and `&i2s2` to `"okay"`;
+> `rk3566-radxa-zero-3.dtsi` does the equivalent for the Zero 3E. So Rockchip
+> audio is **Kconfig-only**, which is why its recipe lives in the example and
+> needs no artifacts release. Two further corrections: `SND_SOC_ROCKCHIP` is no
+> longer a symbol at v6.18.37 (a plain `menu`, though the defconfig still
+> carries a stale `=m` line for it), and the two SoCs need *different* I2S
+> drivers — `SND_SOC_ROCKCHIP_I2S` for RK3399's `rockchip,rk3399-i2s` versus
+> `SND_SOC_ROCKCHIP_I2S_TDM` for RK3566's `rockchip,rk3568-i2s-tdm`. The 4SE's
+> SPDIF *is* still patch-territory: `rk3399-rock-pi-4.dtsi` declares a
+> `sound-dit` card but never sets `&spdif` to `"okay"`.
+
 ## Measured size evidence (the crux of the fork)
 
 All numbers are real bytes. The "stock" column is the **published**
@@ -319,7 +335,7 @@ it ships first.
 - gosd-y9hc — `examples/chime`: the example + Pi custom-kernel recipe (Route A). **Implemented first.**
 - gosd-ette — **JP to choose**: Route B, sound in the stock kernels.
 - gosd-df57 — bug: sattrack's fragment silently compiles in the whole Pi audio zoo, and says it doesn't.
-- gosd-lrxz — Rockchip audio coverage: rock-4se analog (ES8316) and Rockchip HDMI-over-DRM.
+- gosd-lrxz — Rockchip audio coverage: rock-4se analog (ES8316) and Rockchip HDMI-over-DRM. **Implemented second**, and it also promoted the playback code to the public `sound/` package and wrote `docs/sound.md` (see its Summary of Changes; the Rockchip recipes are written but not yet compiled).
 - gosd-aptt — qemu-virt audio (virtio-sound) + a boot-to-sound CI smoke test.
 - gosd-mf3a — no surface for extra `config.txt` lines / kernel cmdline params in `gosd build`.
 - gosd-nxm4 — a public `audio/` package and decoders, if audio outgrows one example.

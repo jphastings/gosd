@@ -648,54 +648,40 @@ end-to-end before you wire up a real device; without it, a mismatch is the
 expected (not erroneous) result. For anything past that self-test, reach for
 `periph.io` rather than hand-rolling ioctls the way the example does.
 
-## Audio is not in the stock kernels
+## Audio — the `sound` package, and a kernel that has sound in it
 
 Every published GoSD kernel is built with `# CONFIG_SOUND is not set`, so a
 stock image has no `/dev/snd` and no app can make a noise. Audio is in the
 same position as display: an opt-in `gosd build-kernel` recipe rather than a
-base-image feature (see `docs/custom-kernels.md`).
+base-image feature.
 
-`examples/chime` is the worked example — a boot chime and a periodic test
-tone, played by talking the kernel's ALSA PCM ioctl interface directly,
-because a GoSD image has no `libasound.so.2` to link or `dlopen` and no
-`/usr/share/alsa` config tree. Its `kernel/pi.fragment` is the recipe for all
-three Pi boards; read `examples/chime/README.md` before reaching for it,
-because two things about Pi audio are surprising.
+The `sound` package plays interleaved S16_LE frames out of whatever playback
+device the board has, talking the kernel's ALSA PCM interface directly (a GoSD
+image has no `libasound.so.2` to link or `dlopen`, and no `/usr/share/alsa`
+config tree):
 
-**What each board can actually play through:**
+```go
+dev, err := sound.Open() // or OpenWith(sound.Options{Prefer: sound.Analog})
+if err != nil {
+	// Wraps sound.ErrNoDevice, and the message names the fix.
+	log.Printf("no audio: %v", err)
+	return
+}
+defer func() { _ = dev.Close() }()
+err = dev.Play(frames) // len(frames) % dev.Format().FrameBytes() == 0
+```
 
-| Board | HDMI | Analog | Other |
-|---|---|---|---|
-| Raspberry Pi Zero 2 W | mini-HDMI, carries audio | none — no jack on the board | I2S/PCM on header pins 12/35/38/40 |
-| Raspberry Pi Zero W | mini-HDMI, carries audio | none — no jack on the board | Same I2S/PCM pins |
-| Raspberry Pi 3B (and 3B+) | full-size HDMI | 4-pole 3.5mm jack, PWM-driven from the SoC | Same I2S/PCM pins |
-| Radxa Zero 3E | micro-HDMI, carries audio | none — Radxa omitted the jack for space | I2S3 on the 40-pin header |
-| NanoPi Zero2 | **none** — the board has no HDMI connector | none | 2× I2S + SPDIF-Tx on the 30-pin FPC |
-| Radxa ROCK 4SE | full-size HDMI | 4-ring 3.5mm jack via an ES8316 codec (also mic in) | I2S1 + 2× SPDIF_TX (header pins 15, 32) |
+**[docs/sound.md](sound.md) is the full guide**: which recipe each board needs,
+what each output physically is, what the kernel grows by, and the gotchas —
+HDMI audio only exists if the display was connected *before* power-up, the Pi
+Zeros have no analog jack at all, enabling `CONFIG_SND` drags in every audio
+driver the defconfig ships as a module (including a USB MIDI gadget that can
+claim the only UDC and break `--usb-gadget`), and the NanoPi Zero2 has no audio
+path in the pinned kernel whatsoever.
 
-Only the Pi boards have a recipe today. On Rockchip, HDMI audio is a codec
-hanging off the DRM dw-hdmi bridge, so it drags in the whole DRM subsystem
-plus ASoC plus a device-tree patch (our pinned U-Boots can't apply runtime
-overlays); the ROCK 4SE's analog output needs ASoC but no DRM. Both are
-tracked in bean `gosd-lrxz`.
-
-**On the Pi, HDMI audio needs the display connected before you power up.** The
-driver (`snd_bcm2835`) asks the VideoCore firmware which displays are live and
-creates one ALSA card per HDMI output it finds, at probe time only. Plug the
-monitor in later and there is no card to play to until the next boot. The
-upside of that firmware-owned path is that Pi audio needs neither DRM nor
-ASoC, so it costs very little: a deliberate, deny-listed sound config adds
-104 KB to the Pi Zero W's kernel image and 401 KB to the Zero 2 W's (0.63% and
-0.71%), against 1.2 MB (7.7%) for `examples/sattrack`'s display recipe.
-
-**Beware what enabling `CONFIG_SND` drags in.** The raspberrypi defconfigs
-ship the whole Pi audio ecosystem as `=m`, and GoSD kernels are monolithic, so
-`make olddefconfig` promotes every one of those to `=y` the moment sound
-appears: ~60 HAT machine drivers, ~45 codecs, USB audio, the MIDI sequencer,
-OSS emulation — and the USB MIDI *gadget* function, a legacy gadget driver
-that will claim the board's only UDC and break `--usb-gadget`. The example's
-fragment is mostly deny-list for this reason; copy it rather than writing a
-three-line "enable sound" fragment of your own.
+`examples/chime` is the worked example — a boot chime and a periodic test tone,
+plus the kernel recipes for the Pi boards, the ROCK 4SE's headphone jack, and
+HDMI audio on the two Rockchip boards that have it.
 
 ## USB gadget mode
 

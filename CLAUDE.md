@@ -64,8 +64,10 @@ say so in the bean rather than silently diverging.
 - **Default hostname:** the sanitized basename of the app's main package,
   overridable via `--hostname` and `gosd.toml`.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
-  library), `emmc/` (onboard-eMMC format/mount) and `disk/` (the same for any
-  attached mass storage — NVMe, USB drive, card reader). Everything else lives
+  library), `emmc/` (onboard-eMMC format/mount), `disk/` (the same for any
+  attached mass storage — NVMe, USB drive, card reader) and `sound/` (ALSA PCM
+  playback: `Open`/`OpenWith`, a `Device` to `Play` frames to; needs a
+  `gosd build-kernel` kernel, see `docs/sound.md`). Everything else lives
   under `internal/`; `emmc` and `disk` share `internal/blockmount` (the
   format/mount orchestration, label rules and candidate selection) and
   `internal/diskfmt` (pure-Go inspect/format — FAT32 via go-diskfs, exFAT

@@ -3,6 +3,8 @@ package main
 import (
 	"math"
 	"time"
+
+	"github.com/jphastings/gosd/sound"
 )
 
 // Everything this example plays is synthesised here: a chime is a couple of
@@ -25,16 +27,16 @@ type frequency func(t, total float64) float64
 // render synthesises one sound as interleaved S16_LE frames, accumulating
 // phase so a changing frequency stays continuous (a naive sin(2*pi*f(t)*t)
 // audibly clicks and sweeps at twice the intended rate).
-func render(f format, dur time.Duration, freq frequency, env envelope) []byte {
+func render(f sound.Format, dur time.Duration, freq frequency, env envelope) []byte {
 	total := dur.Seconds()
-	frames := int(float64(f.rate) * total)
-	out := make([]byte, 0, frames*f.frameBytes())
+	frames := int(float64(f.Rate) * total)
+	out := make([]byte, 0, frames*f.FrameBytes())
 	phase := 0.0
 	for i := 0; i < frames; i++ {
-		t := float64(i) / float64(f.rate)
-		phase += 2 * math.Pi * freq(t, total) / float64(f.rate)
+		t := float64(i) / float64(f.Rate)
+		phase += 2 * math.Pi * freq(t, total) / float64(f.Rate)
 		sample := int16(math.Round(env(t, total) * math.Sin(phase) * fullScale))
-		for c := 0; c < f.channels; c++ {
+		for c := 0; c < f.Channels; c++ {
 			out = append(out, byte(uint16(sample)), byte(uint16(sample)>>8))
 		}
 	}
@@ -86,7 +88,7 @@ const (
 )
 
 // chime renders the boot chime.
-func chime(f format) []byte {
+func chime(f sound.Format) []byte {
 	var out []byte
 	for _, hz := range chimeNotes {
 		out = append(out, render(f, chimeNote, fixed(hz), pluck(0.12))...)
@@ -96,6 +98,6 @@ func chime(f format) []byte {
 
 // sweep renders the periodic test tone: four octaves of rising sine, which
 // makes a dead tweeter or a resampling problem obvious by ear.
-func sweep(f format) []byte {
+func sweep(f sound.Format) []byte {
 	return render(f, sweepTone, glide(220, 3520), fade(0.03))
 }
