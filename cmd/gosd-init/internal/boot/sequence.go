@@ -88,6 +88,18 @@ type Deps struct {
 	// first boot). Only called after the data partition mounts.
 	EnsureDataMarker func() error
 
+	// ExpandData creates the GOSD-DATA partition for images built with
+	// --data-size=expand (config.json's dataExpand): the image ships with
+	// no partition 2, and this fills the rest of the card with one on
+	// first boot, before the data mount runs (see
+	// cmd/gosd-init/internal/dataexpand). It is passed the boot-partition
+	// device the GOSD-BOOT mount actually used, so only the disk the
+	// system truly booted from is ever touched — the same reasoning that
+	// makes MountBootPartition's sentinel check necessary. Nil-checked
+	// like the other optional deps; a failure is logged and boot proceeds
+	// to the read-only /data fallback, never fatal.
+	ExpandData func(bootPartitionDevice string, log func(format string, args ...any)) error
+
 	Sleep func(time.Duration)
 	Now   func() time.Time
 
@@ -254,6 +266,11 @@ func Run(deps Deps, opts Options) error {
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
+	}
+	if cfg.DataExpand && deps.ExpandData != nil {
+		if err := deps.ExpandData(bootDevice, log); err != nil {
+			log("expanding the data partition failed; continuing without it: %v", err)
+		}
 	}
 	mountData(deps, opts, log)
 	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)

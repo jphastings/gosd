@@ -240,6 +240,34 @@ mounts it read-write at the fixed path `/data`. Data written there survives
 reboots and power cycles. There's no environment variable to consult —
 `/data` is always the path; just write to it.
 
+`--data-size=expand` is the fill-the-card variant: the image ships with no
+data partition at all (staying 272MiB to download and flash), and the
+device creates one itself, exactly once, on its first boot — an MBR entry
+covering the rest of the card, formatted FAT32, labelled `GOSD-DATA`, and
+mounted at `/data` like any other data partition from then on. Points
+specific to expand:
+
+- **Only the disk the device actually booted from is ever touched** — the
+  same verified device the `GOSD-BOOT` mount used — and only when its
+  partition table is exactly the one a GoSD image ships (boot partition in
+  place, no partition 2). Anything else is left alone, loudly.
+- **First boot takes a few extra seconds** while the partition is created
+  and formatted; the serial console narrates it. Every later boot finds the
+  partition present and does nothing.
+- **Power loss during first boot is safe**: the partition table is synced
+  to the card before anything depends on it, and an interrupted format is
+  detected and redone on the next boot.
+- **A card with no meaningful room** (less than ~64MiB beyond the image —
+  including `gosd run`'s qemu disk, which is exactly image-sized) gets no
+  partition, and `/data` behaves like a `--data-size=0` image: read-only,
+  writes fail with `EROFS`.
+- **The partition is capped at 256GiB** for now (a FAT32-formatter
+  limitation, bean `gosd-8kdm`); a bigger card's remainder stays unused,
+  with a log line saying so.
+- **Reflashing resets the cycle**: the freshly-flashed image again has no
+  partition 2, so the next first boot re-creates `/data` from scratch —
+  reflashing wipes `/data` exactly as it does for fixed-size images.
+
 Rules of engagement:
 
 - **When there's no partition, `/data` is read-only.** If the image was built

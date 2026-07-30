@@ -34,7 +34,11 @@ an oversight:
   `GOSD-DATA` partition (bean `gosd-xelb`) is untouched by app-slot updates:
   app data survives an over-the-network update. Only a full reflash
   recreates (wipes) it — `docs/runtime.md`'s persistence section documents
-  that from the app's point of view.
+  that from the app's point of view. (The one partition-table write that
+  exists anywhere in GoSD — `--data-size=expand`'s first-boot creation of
+  `GOSD-DATA`, bean `gosd-6sac` — happens on a device's very first boot and
+  is complete long before any update could run; it doesn't weaken this
+  invariant.)
 
 This scope cut is what makes a single, board-agnostic scheme possible: the
 previous recommendation needed per-board mechanisms specifically because the

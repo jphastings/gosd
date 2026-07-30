@@ -96,7 +96,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy)")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
-		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB); default 0 omits the partition entirely, so persistent /data is opt-in")
+		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
@@ -167,7 +167,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dataSizeBytes, err := parseDataSize(dataSize)
+	dataSizeBytes, dataExpand, err := parseDataSize(dataSize)
 	if err != nil {
 		return err
 	}
@@ -222,6 +222,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			CacheDir:         cacheDir,
 			OutputPath:       outputs[b.Name()],
 			DataSizeBytes:    dataSizeBytes,
+			DataExpand:       dataExpand,
 			ExtraFirmware:    extraFirmware,
 			ExtraExecutables: extraExecutables,
 		}
@@ -266,10 +267,16 @@ var dataSizeUnits = map[string]int64{
 }
 
 // parseDataSize parses a --data-size value like "512MiB", "2G", or "0" into
-// bytes. A bare number is bytes; 0 (with or without a unit) disables the
-// data partition.
-func parseDataSize(s string) (int64, error) {
+// bytes, or the keyword "expand" (ship no data partition in the image and
+// have gosd-init create one filling the rest of the card on first boot). A
+// bare number is bytes; 0 (with or without a unit) disables the data
+// partition.
+func parseDataSize(s string) (bytes int64, expand bool, err error) {
 	trimmed := strings.TrimSpace(s)
+	if strings.EqualFold(trimmed, "expand") {
+		return 0, true, nil
+	}
+
 	numPart := trimmed
 	var multiplier int64 = 1
 	for suffix, mult := range dataSizeUnits {
@@ -281,12 +288,12 @@ func parseDataSize(s string) (int64, error) {
 
 	n, err := strconv.ParseInt(numPart, 10, 64)
 	if err != nil || n < 0 {
-		return 0, fmt.Errorf("--data-size %q is not a valid size; use a number with a binary unit (e.g. 512MiB, 1GiB) or 0 to disable the data partition", s)
+		return 0, false, fmt.Errorf("--data-size %q is not a valid size; use a number with a binary unit (e.g. 512MiB, 1GiB), 'expand' to fill the card on first boot, or 0 to disable the data partition", s)
 	}
 	if multiplier > 1 && n > math.MaxInt64/multiplier {
-		return 0, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
+		return 0, false, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
 	}
-	return n * multiplier, nil
+	return n * multiplier, false, nil
 }
 
 // envKeyPattern is the shape a --env KEY must match: a POSIX-ish environment

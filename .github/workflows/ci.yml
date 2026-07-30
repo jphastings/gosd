@@ -227,3 +227,49 @@ jobs:
             echo "hello never responded with '$expected' on http://localhost:8080 within 180s" >&2
             exit 1
           fi
+
+  # Proves --data-size=expand end-to-end on the real boot path: the image
+  # ships with no data partition, the "card" (the raw image file, enlarged
+  # after the build, exactly as flashing onto a bigger SD card leaves it)
+  # gains a GOSD-DATA partition on first boot, and the second boot finds it
+  # and leaves it alone. Killing qemu after the first boot doubles as a
+  # power-cut: everything the second boot depends on must already be durable.
+  qemu-expand-data:
+    name: qemu first-boot data-partition expansion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache downloaded board artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gosd/artifacts
+          key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
+      - name: Install qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+      - name: gosd build ./examples/hello --data-size=expand, onto a bigger "card"
+        run: |
+          mkdir -p dist
+          go run ./cmd/gosd build ./examples/hello \
+            --board=qemu-virt \
+            --hostname ci-qemu-expand \
+            --data-size=expand \
+            -o dist/hello-qemu-virt.img
+          # The image is 272MiB; a real card is bigger. truncate models
+          # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
+          truncate -s +1G dist/hello-qemu-virt.img
+      - name: "First boot: creates, formats and mounts the data partition"
+        run: |
+          ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
+            "data partition created, filling the card" \
+            "data partition mounted read-write at /data"
+      - name: "Second boot: finds the partition and leaves it alone"
+        run: |
+          ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
+            "data partition already present" \
+            "data partition mounted read-write at /data"
