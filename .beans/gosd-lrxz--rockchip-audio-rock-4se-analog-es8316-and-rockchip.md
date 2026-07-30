@@ -164,20 +164,34 @@ both messages.
       from recipe-only (Rockchip)
 - [x] All quality gates: `go test ./...`, `go vet ./...`, `gofmt -l .`,
       `golangci-lint run ./...` for darwin and linux
-- [ ] **Build `gosd build-kernel --board rock-4se` with the analog recipe** and
-      record the byte size vs the published `artifacts/v0.8.0` kernel
-- [ ] **Build the HDMI variant** (`--config .../hdmi.toml`) for rock-4se and
-      record its delta — the DRM cost is the number JP will judge the variant
-      split by
+- [x] **Build `gosd build-kernel --board rock-4se` with the analog recipe** and
+      record the byte size vs the published `artifacts/v0.8.0` kernel —
+      **built 2026-07-30: 69,474,816 B vs stock 68,327,936 B = +1,146,880 B
+      (+1.68%), and `# CONFIG_DRM is not set` in the result**
+- [x] **Build the HDMI variant** (`--config .../hdmi.toml`) for rock-4se and
+      record its delta — **built 2026-07-30: 76,282,368 B = +7,954,432 B
+      (+11.64%). The variant split is vindicated: 7x the analog cost for the
+      same audible result on a different connector.**
 - [ ] Build `--board radxa-zero-3e --config .../hdmi.toml`
-- [ ] Verify each resulting `kernel.config`: `SND_SOC_ES8316=y`,
-      `SND_SOC_ROCKCHIP_I2S=y` (or `_I2S_TDM` on RK3566),
-      `SND_AUDIO_GRAPH_CARD=y`, `SND_SIMPLE_CARD` only in the HDMI variants,
-      `DRM=y` only in the HDMI variants, and the denied symbols absent
-- [ ] Put the measured numbers in `docs/sound.md`'s table (it currently says
-      "not measured") and in this bean
+- [x] Verify each resulting `kernel.config` — **both rock-4se variants pass
+      (2026-07-30)**: analog has `SND_SOC_ES8316=y`, `SND_SOC_ROCKCHIP_I2S=y`,
+      `SND_AUDIO_GRAPH_CARD=y`, `# CONFIG_SND_SIMPLE_CARD is not set`,
+      `# CONFIG_DRM is not set`, 61 `CONFIG_SND*=y` symbols (vs 254 un-denied);
+      HDMI adds `DRM=y`, `ROCKCHIP_DW_HDMI=y`, `DRM_DW_HDMI_I2S_AUDIO=y`,
+      `SND_SIMPLE_CARD=y`. Denied symbols absent in both, including
+      `USB_MIDI_GADGET` (the UDC-stealing trap from gosd-spjt).
+      radxa-zero-3e still unverified — not built.
+- [x] Put the measured numbers in `docs/sound.md`'s table and in this bean
 
-### Why the builds aren't done in this PR
+### Build status update (2026-07-30)
+
+Both rock-4se recipes have since been **built and verified** (numbers above):
+the fragments compile, produce the intended symbols, and the analog variant is
+genuinely DRM-free. The container runtime was available after all — the earlier
+session's `lima not found` was an environment artifact, not a missing daemon.
+Only `radxa-zero-3e` remains unbuilt, and no board has been heard on hardware.
+
+### Why the builds weren't done in the original PR
 
 The session that wrote it had **no container runtime available**: `docker`
 resolves but no daemon socket exists, Docker Desktop and OrbStack are not

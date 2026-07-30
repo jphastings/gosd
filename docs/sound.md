@@ -21,13 +21,20 @@ test tone, plus the kernel recipes both halves of this page describe.
 | pi-zero-w | mini-HDMI ✅ | **none** (no jack) | `examples/chime/kernel/gosd-kernel.toml` → `pi.fragment` + patch | no | +104,248 B (+0.63%) |
 | pi-zero-2w | mini-HDMI ✅ | **none** (no jack) | same | no | +401,408 B (+0.71%) |
 | pi-3b | HDMI ✅ | 3.5 mm jack (PWM from the SoC) | same | no | not measured; same fragment |
-| rock-4se | HDMI ✅ (needs DRM) | 3.5 mm jack via an ES8316 codec | `gosd-kernel.toml` → `rock-4se-analog.fragment` (jack only), or `hdmi.toml` → `rock-4se-hdmi.fragment` (jack + HDMI) | analog: **no**; HDMI: **yes** | not measured |
-| radxa-zero-3e | micro-HDMI ✅ (needs DRM) | none — Radxa omitted the jack | `hdmi.toml` → `radxa-zero-3e-hdmi.fragment` | yes | not measured |
+| rock-4se | HDMI ✅ (needs DRM) | 3.5 mm jack via an ES8316 codec | `gosd-kernel.toml` → `rock-4se-analog.fragment` (jack only), or `hdmi.toml` → `rock-4se-hdmi.fragment` (jack + HDMI) | analog: **no**; HDMI: **yes** | analog: +1,146,880 B (+1.68%); HDMI: +7,954,432 B (+11.64%) |
+| radxa-zero-3e | micro-HDMI ✅ (needs DRM) | none — Radxa omitted the jack | `hdmi.toml` → `radxa-zero-3e-hdmi.fragment` | yes | not measured (expect the rock-4se HDMI order of magnitude) |
 | nanopi-zero2 | **no HDMI connector** | none | — | — | — |
 
-The two Pi figures are real bytes, measured against the published
-`artifacts/v0.8.0` kernels; see [Measuring it yourself](#measuring-the-cost-yourself)
-for the Rockchip rows, which nobody has built yet.
+Every figure above is real bytes, measured against the published
+`artifacts/v0.8.0` kernel for that board — except radxa-zero-3e, which nobody
+has built yet (see [Measuring it yourself](#measuring-the-cost-yourself)).
+
+**The ROCK 4SE's two variants are why HDMI is a separate recipe.** Its
+headphone jack costs 1.68% and no DRM at all (`# CONFIG_DRM is not set` in the
+built config); adding HDMI audio costs 11.64%, because
+`DRM_DW_HDMI_I2S_AUDIO` depends on `DRM_DW_HDMI` and so drags in the whole DRM
+subsystem. That is a 7x difference for the same audible result on a different
+connector, so an app that only wants the jack should not pay for it.
 
 **nanopi-zero2 has no audio path.** Its RK3528 has I2S and SPDIF pins on the
 30-pin FPC header, but at the pinned kernel tag `arch/arm64/boot/dts/rockchip/rk3528.dtsi`
