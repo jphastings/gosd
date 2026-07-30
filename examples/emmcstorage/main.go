@@ -58,10 +58,12 @@ func writeAndReadBack() error {
 }
 
 // writeFileDurably writes data to path so that a power cut leaves either the
-// old contents or the new, never a torn mix: write a temp file, fsync it,
-// then rename it over the real name. The eMMC's whole-device FAT filesystem
-// has the same weak crash-safety as GOSD_DATA, so the same pattern applies —
-// see docs/runtime.md.
+// old contents or the new, never a torn mix, and so that the new contents are
+// on the device by the time it returns: write a temp file, fsync it, rename it
+// over the real name, then fsync the renamed file and its directory. The
+// eMMC's whole-device FAT filesystem has the same weak crash-safety as
+// GOSD_DATA, so the same pattern applies — see docs/runtime.md's "Making a
+// write durable".
 func writeFileDurably(path string, data []byte) error {
 	tmp := path + ".tmp"
 
@@ -77,8 +79,34 @@ func writeFileDurably(path string, data []byte) error {
 		_ = f.Close()
 		return err
 	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// A FAT rename only dirties directory blocks, which otherwise wait for
+	// writeback expiry (~30s). Syncing the still-open file writes its new
+	// directory entry with the real start cluster and size; syncing the
+	// directory writes the entry the rename added and the one it removed.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory itself, so directory entries added or removed in
+// it reach the device rather than waiting for writeback.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }

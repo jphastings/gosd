@@ -295,10 +295,9 @@ Rules of engagement:
 - **It is not power-loss-robust.** FAT has no journal. The partition is
   mounted with the `flush` option so data reaches the card promptly, but a
   power cut mid-write can still corrupt the file being written (and, less
-  commonly, the filesystem). Write durable state the boring, robust way:
-  write to a temporary name, `fsync` the file, then `rename` it over the
-  real name — readers then always see either the old version or the new
-  one. Never rewrite your only copy of something in place.
+  commonly, the filesystem). Never rewrite your only copy of something in
+  place — write durable state the boring, robust way, described in full
+  under "Making a write durable" below.
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
   first time the partition mounts; leave it alone, and don't be surprised
   by it when listing `/data`.
@@ -310,9 +309,58 @@ Rules of engagement:
   updates will leave `GOSD-DATA` intact — it's a full reflash, and only a
   full reflash, that wipes it.
 
-For a worked example, `examples/hello` persists a boot counter to
-`/data` using exactly the write-rename-fsync pattern above, and reports
-"no-data-partition" when the write comes back `EROFS`.
+### Making a write durable
+
+Write to a temporary name, then rename it over the real one — with two
+extra syncs after the rename that FAT specifically needs:
+
+```go
+f, err := os.OpenFile(path+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+// ... write, handle errors ...
+f.Sync()                  // 1. the new contents are on the card
+os.Rename(path+".tmp", path) // 2. the name flips, atomically for readers
+f.Sync()                  // 3. the renamed file's directory entry
+f.Close()
+d, _ := os.Open(filepath.Dir(path)) // 4. the directory's own entries
+d.Sync()
+d.Close()
+```
+
+What each half buys you:
+
+- **Steps 1-2 give crash *consistency*.** A reader — this boot, or after any
+  power cut — sees either the whole old version or the whole new one, never a
+  torn mix. If that's all you need (the write is a cache, or a fresh one
+  happens every few seconds anyway), stop there.
+- **Steps 3-4 give *durability*: the new contents survive a power cut that
+  happens immediately.** Without them there's a window of up to ~30s in
+  which the file silently reverts to its old contents, because a `rename`
+  only dirties directory blocks, and dirty FAT directory blocks wait for
+  the kernel's normal writeback expiry (`dirty_expire_centisecs`, 30s) to be
+  written. The `flush` mount option doesn't cover this: it flushes a file's
+  data and metadata on `close(2)`, and a rename involves no close. This bit
+  us for real — `examples/hello`'s boot counter never survived a power cut
+  less than ~30s after boot (bean `gosd-0nk4`).
+- **Step 3 is not optional, and is the surprising one.** The rename writes
+  the new directory entry with a zero start cluster and size; only the
+  *file's* own `fsync` (or, eventually, writeback) fills those in. `fsync`
+  the directory alone and a power cut can leave the new name on the card as
+  an **empty** file — worse than losing the rename. Sync the file first,
+  then the directory.
+
+`fsync` on a FAT file *and* on a FAT directory both end with a cache-flush
+command to the card, so "durable" here means durable against the card's own
+volatile write cache too, not just the kernel's.
+
+The price is real but small: each durable write costs a few extra small
+writes to the card. Don't do this in a tight loop on data you'd be happy to
+lose — batch it, or accept steps 1-2 only.
+
+For a worked example, `examples/hello` persists a boot counter to `/data`
+with exactly this sequence (`writeFileDurably` in its `main.go`), and
+reports "no-data-partition" when the write comes back `EROFS`. CI's
+qemu data-partition job kills the machine seconds after that write and
+asserts the counter still comes back incremented on the next boot.
 
 ## Onboard eMMC storage (Rockchip boards)
 
@@ -350,9 +398,9 @@ once your app actually needs the storage.
 - **It's a whole-device FAT filesystem** — the mount source is the raw
   `/dev/mmcblkN` device, not a partition on it — with the same limits as
   `/data`: no unix permissions, ownership, symlinks, or hard links, and it is
-  not power-loss-robust. Write durable state with the same temp-file,
-  `fsync`, then `rename` pattern described under "Persistent storage: `/data`"
-  above.
+  not power-loss-robust. Write durable state with the same sequence
+  described under "Making a write durable" above — including the two syncs
+  after the rename, which FAT needs wherever it's mounted.
 - **On a board with no onboard eMMC** (the Pi boards, or a Rockchip board
   whose only eMMC turns out to be the boot device), `FormatAndMount`'s
   channel yields `emmc.ErrNoEMMC` — check for it with `errors.Is` and treat
@@ -408,7 +456,8 @@ limit (and equally valid as an exFAT label).
   in sees a drive with no partition table, which Windows, macOS and Linux all
   mount happily. The FAT caveats from `/data` apply unchanged to both
   filesystems: no unix permissions, ownership, symlinks or hard links, and
-  not power-loss-robust (write with temp-file + `fsync` + `rename`).
+  not power-loss-robust (write with the sequence under "Making a write
+  durable" above).
 - **When nothing suitable is attached**, `FormatAndMount`'s channel yields
   `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
   here" rather than a fatal error, exactly as `examples/emmcstorage` does for

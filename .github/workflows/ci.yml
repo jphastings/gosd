@@ -268,11 +268,16 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
             "data partition created, filling the card" \
             "data partition mounted read-write at /data"
-      - name: "Second boot: finds the partition and leaves it alone"
+      # boots=2 is the durability assertion (bean gosd-0nk4): the first
+      # boot's counter write was seconds old when qemu was killed, so it
+      # only reads back here if hello's write-fsync-rename really reached
+      # the card instead of waiting for writeback expiry.
+      - name: "Second boot: finds the partition, and last boot's write survived"
         run: |
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
             "data partition already present" \
-            "data partition mounted read-write at /data"
+            "data partition mounted read-write at /data" \
+            "boots=2"
       - name: "Corrupted established partition: halts instead of repairing"
         run: |
           # Zero the filesystem out from under the established partition
