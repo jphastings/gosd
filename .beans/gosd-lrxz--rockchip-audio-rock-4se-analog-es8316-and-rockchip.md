@@ -250,3 +250,5 @@ public package and the doc that make it usable anywhere.
 
 Branched from `gosd-y9hc`'s work, which merged as PR #132 while this was being
 written, so it rebased onto `main` and targets `main` directly — no stack.
+
+**Bench update 2026-07-30**: the analog path is hardware-verified — a tone from `examples/chime` was heard from the ROCK 4SE's 3.5 mm jack, after the audibility pass added in [[gosd-cfkd]] unmuted the ES8316 (both playback volumes were at 0 and the DAC->headphone mixer switches were off). HDMI variant still unheard.

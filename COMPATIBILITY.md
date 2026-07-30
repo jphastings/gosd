@@ -63,13 +63,26 @@ see `beans list` for what's in flight.
 | I2C | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c] | ✅ [^i2c][^nanopi-fpc] | ✅ [^i2c] |
 | GPIO | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio] | ✅ [^gpio][^nanopi-fpc] | ✅ [^gpio] |
 | SPI | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi] | ✅ [^spi][^nanopi-fpc] | ✅ [^spi] |
-| Audio out (custom kernel) | ✅ [^audio] | ✅ [^audio] | ✅ [^audio] | 🚧 [^audio] | ➖ [^audio] | 🚧 [^audio] |
+| Audio out (custom kernel) | ✅ [^audio] | ✅ [^audio] | ✅ [^audio] | 🚧 [^audio] | ➖ [^audio] | ✅ [^audio][^rock4se-audio] |
 | OTA app updates | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] | 🚧 [^ota] |
 
 **Legend:** ✅ implemented · 🚧 planned or in-progress · ➖ not applicable
 (no matching hardware) · ❌ not supported (with a reason below).
 
 ## Footnotes
+
+[^rock4se-audio]: **Hardware-verified 2026-07-30** (bean `gosd-cfkd`): a
+    tone from `examples/chime` was *heard* out of the ROCK 4SE's 3.5 mm jack —
+    the only board on this row where sound has been confirmed by ear rather
+    than by compiling. The path is the analog recipe (ES8316 codec on i2c1,
+    i2s0, no DRM: +1,146,880 bytes / +1.68%). It needed the `sound` package's
+    audibility pass, because the codec powers up silent in two separate ways:
+    `DAC Playback Volume` and `Headphone Mixer Volume` both sat at 0, and the
+    `Left`/`Right Headphone Mixer ... DAC Switch` elements were off, so DAPM
+    never powered the output stage. The pass raised the two volumes and set
+    the two switches, and left the capture-side `Differential Mux` alone. The
+    board's HDMI audio path (the other recipe variant, which costs DRM) is
+    still unheard.
 
 [^audio]: Sound is deliberately absent from every published GoSD kernel
     (`# CONFIG_SOUND is not set`), so this row is about a `gosd build-kernel`
