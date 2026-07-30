@@ -129,6 +129,12 @@ compiles a custom kernel from a `gosd-kernel.toml` you declare in your
 project, without slowing down the default zero-Docker path for everyone
 else — see [`docs/custom-kernels.md`](docs/custom-kernels.md).
 
+Want your app to make a noise? Sound is one of those cut drivers, so it needs
+such a kernel — and then the `sound` package plays PCM out of HDMI or a board's
+headphone jack with no cgo and no alsa-lib. Ready-made recipes per board, and
+the traps, are in [`docs/sound.md`](docs/sound.md); `examples/chime` is the
+worked example.
+
 Need a companion binary that isn't pure Go (a hardware-accelerated video
 player, a vendor CLI)? `gosd build-external` is the same kind of opt-in,
 Docker/Podman-driven command, cross-compiling one from a
