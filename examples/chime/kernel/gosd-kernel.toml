@@ -1,0 +1,21 @@
+# Custom-kernel recipe for examples/chime (see docs/custom-kernels.md): the
+# stock GoSD kernels set `# CONFIG_SOUND is not set`, so playing audio needs
+# `gosd build-kernel` once per board, then `gosd build --artifacts-dir`.
+#
+# All three Pi boards share one fragment and one patch: the VideoCore firmware
+# audio driver (snd_bcm2835) is the same on BCM2835 and BCM2837, and it reaches
+# HDMI without dragging in DRM. The Rockchip boards are not here yet — their
+# HDMI audio codec hangs off the DRM dw-hdmi bridge, so it needs the whole DRM
+# subsystem plus ASoC plus a DTS patch (bean gosd-lrxz).
+
+[kernel.pi-zero-2w]
+fragment = "pi.fragment"
+patches = ["patches/0001-default-hdmi-audio-on.patch"]
+
+[kernel.pi-zero-w]
+fragment = "pi.fragment"
+patches = ["patches/0001-default-hdmi-audio-on.patch"]
+
+[kernel.pi-3b]
+fragment = "pi.fragment"
+patches = ["patches/0001-default-hdmi-audio-on.patch"]

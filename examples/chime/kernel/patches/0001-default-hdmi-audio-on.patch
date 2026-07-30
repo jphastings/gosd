@@ -1,0 +1,44 @@
+GoSD examples/chime: default snd_bcm2835's HDMI audio device to enabled.
+
+The driver only asks the VideoCore firmware which displays are live - and so
+only creates the "bcm2835 HDMI 1"/"HDMI 2" ALSA cards - when its enable_hdmi
+module parameter is set, and that parameter defaults to off:
+
+    if (enable_hdmi && !of_property_read_bool(dev->of_node, "brcm,disable-hdmi"))
+            set_hdmi_enables(dev);
+
+GoSD kernels are monolithic, so the only way to set a module parameter is the
+kernel command line, and nothing in a `gosd build-kernel` recipe can put it
+there on every board:
+
+  - `dtparam=audio=on` would do it on pi-zero-2w and pi-3b, whose downstream
+    DTBs carry an __overrides__ entry that rewrites chosen's bootargs - but an
+    example cannot add lines to the board's config.txt (see bean gosd-mf3a),
+    and pi-zero-w's mainline-style DTB has no __overrides__ node at all.
+  - CONFIG_CMDLINE + CONFIG_CMDLINE_EXTEND works on arch/arm (pi-zero-w) and
+    is simply absent on arch/arm64: that Kconfig offers only
+    CMDLINE_FROM_BOOTLOADER and CMDLINE_FORCE, and forcing would throw away
+    the console=/init=/gosd.board= arguments gosd-init needs.
+
+Changing the default is therefore the one lever that behaves identically on
+all three Pi boards. It only affects which cards are *offered*:
+set_hdmi_enables() still asks the firmware, so a board with no display
+attached still gets no HDMI card. An app that wants the old behaviour can pass
+snd_bcm2835.enable_hdmi=0.
+
+--- a/drivers/staging/vc04_services/bcm2835-audio/bcm2835.c
++++ b/drivers/staging/vc04_services/bcm2835-audio/bcm2835.c
+@@ -11,7 +11,12 @@
+ #include "bcm2835.h"
+ #include <soc/bcm2835/raspberrypi-firmware.h>
+ 
+-static bool enable_hdmi, enable_hdmi0, enable_hdmi1;
++/*
++ * GoSD examples/chime: HDMI audio on by default, because a monolithic kernel
++ * has no way to pass a module parameter that works on every Pi board.
++ */
++static bool enable_hdmi = true;
++static bool enable_hdmi0, enable_hdmi1;
+ static bool enable_headphones = true;
+ static int num_channels = MAX_SUBSTREAMS;
+ 
