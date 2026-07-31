@@ -2,40 +2,38 @@
 
 GoSD's published kernels are trimmed hard — no sound, no DRM/video/fb, no
 camera, no filesystems beyond FAT/tmpfs — to keep boot fast and the image
-small. Most apps never need anything the stock kernel lacks. When yours
-does (a USB DVB-T tuner, a niche I2C/SPI sensor with its own kernel driver,
-anything gated behind a Kconfig symbol GoSD cut), `gosd build-kernel` lets
-you compile a custom kernel with exactly the extra driver(s) you need,
-without touching GoSD's own trimming decisions or slowing down everyone
-else's build.
+small. When your app needs something the stock kernel lacks (a USB DVB-T
+tuner, a niche I2C/SPI sensor, anything gated behind a Kconfig symbol GoSD
+cut), `gosd build-kernel` compiles a kernel with exactly that driver added,
+without touching GoSD's own trimming decisions or slowing down anyone else's
+build.
 
-**Looking for sound?** [docs/sound.md](sound.md) is the per-board guide —
-ready-made recipes in `examples/chime/kernel/`, what each board's outputs
-physically are, and the traps (a bare "enable sound" fragment quietly compiles
-in every audio driver the defconfig ships as a module). Come back here for the
-mechanism and the host requirements.
+**Looking for sound?** [docs/sound.md](sound.md) has the per-board recipes,
+outputs, and traps. This page is the mechanism and reference those recipes
+build on: the two tiers, the quickstart, `gosd-kernel.toml`, caching, and host
+requirements.
 
 ## Two tiers
 
 - **Stock artifacts (the default, zero Docker).** `gosd build` downloads
   GoSD's own prebuilt, pinned kernels and bootloaders from a GitHub
   `artifacts/vX.Y.Z` release (see `docs/artifacts.md`) and assembles your
-  image. This never requires a container runtime, root, or Linux — it works
-  on a bare `go install` on macOS or Linux with no other tooling. Nearly
-  every GoSD app stays on this path forever.
-- **Custom kernel (opt-in, Docker/Podman required).** Declare your extra
-  Kconfig fragment and/or device-tree patches in a `gosd-kernel.toml` in
-  your project, run `gosd build-kernel` once to produce a kernel with them
-  compiled in, and point `gosd build --artifacts-dir` at the result. This is
-  an explicit, opt-in exception to GoSD's usual "no build step needs
-  Docker" rule (see `CLAUDE.md`'s locked decisions) — `gosd build` itself
-  still never requires a container runtime; only `gosd build-kernel` and
-  `gosd build-external` (see `docs/externals.md`) do, and each says so in
-  its own `--help` text and errors.
+  image. No container runtime, root, or Linux required — a bare
+  `go install` on macOS or Linux is enough. Nearly every GoSD app stays on
+  this path forever.
+- **Custom kernel (opt-in, Docker/Podman required).** Declare a Kconfig
+  fragment and/or device-tree patches in a `gosd-kernel.toml`, run
+  `gosd build-kernel` once to compile a kernel with them, and point
+  `gosd build --artifacts-dir` at the result. This is the one explicit,
+  opt-in exception to GoSD's "no build step needs Docker" rule (see
+  `CLAUDE.md`'s locked decisions): `gosd build` itself still never requires
+  a container runtime; only `gosd build-kernel` and `gosd build-external`
+  (see `docs/externals.md`) do, and each says so in its own `--help` text
+  and errors.
 
 Both tiers produce an ordinary flat artifact directory
 (`kernel8.img`/`Image`, a DTB where the board has one, `kernel.config`,
-`source.json`) — `gosd build --artifacts-dir <dir>` doesn't know or care
+`source.json`). `gosd build --artifacts-dir <dir>` doesn't know or care
 whether that directory came from a GitHub release download or a local
 `gosd build-kernel` run.
 
@@ -49,16 +47,15 @@ gosd build-kernel --board=pi-zero-2w -o ./gosd-artifacts
 gosd build . --board pi-zero-2w --artifacts-dir ./gosd-artifacts -o hello.img
 ```
 
-`gosd build-kernel` requires a local Docker or Podman daemon running
-(Docker Desktop, [colima](https://colima.run/) in its default docker-runtime
-mode, or podman); it
-drives it directly (`internal/container`), auto-detecting whichever one it
-finds unless `--builder` or `gosd-kernel.toml`'s `[kernel].builder` says
+`gosd build-kernel` requires a local Docker or Podman daemon (Docker Desktop,
+[colima](https://colima.run/) in its default docker-runtime mode, or podman)
+and drives it directly (`internal/container`), auto-detecting whichever one
+it finds unless `--builder` or `gosd-kernel.toml`'s `[kernel].builder` says
 otherwise. A kernel build takes 20–120 minutes depending on the board and
 your machine; run it backgrounded and let it finish rather than babysitting
 a foreground shell.
 
-## Worked example: a USB DVB-T tuner on the Pi Zero 2W (proven)
+## Worked example: a USB DVB-T tuner on the Pi Zero 2W
 
 The Pi Zero 2W's stock kernel fragment
 (`build/boards/pi-zero-2w/kernel.fragment`) disables the whole media
@@ -119,11 +116,11 @@ actually want CSI camera support alongside your driver.
 **This exact fragment was built end to end** via `gosd build-kernel
 --board=pi-zero-2w` against a real Docker daemon: the build completed
 cleanly, and the resulting `kernel.config` carries every symbol above as
-`=y`, with both `VIDEO_RP1_CFE*` symbols confirmed absent. Like every board
-in GoSD today, it has not been booted on physical Pi Zero 2W hardware yet
-(no board has — see `COMPATIBILITY.md`); it has only been verified as a
-container build producing a well-formed `kernel.config` and kernel image,
-not booted or exercised against a real DVB-T stick.
+`=y`, with both `VIDEO_RP1_CFE*` symbols confirmed absent. It has not been
+booted on physical Pi Zero 2W hardware or exercised against a real DVB-T
+stick — verified so far only as a container build producing a well-formed
+`kernel.config` and kernel image. See COMPATIBILITY.md's `gosd build-kernel`
+row (and its footnote) for current, board-by-board bring-up status.
 
 ### Runtime: firmware and the resulting device node
 
@@ -149,11 +146,11 @@ sourced the blob (e.g. the `linux-firmware` project) and pin its hash.
 
 At runtime, plugging the stick into the Pi Zero 2W's USB OTG port (in host
 mode) should bring up `/dev/dvb/adapter0/` with `frontend0`, `demux0`, and
-`dvr0` nodes, the same as on any other Linux DVB stack. This runtime
-behavior has not been hardware-verified (no GoSD board has had any hardware
-bring-up yet); it follows directly from the kernel driver and firmware
-being present and matches upstream `dvb-usb-rtl28xxu` behavior on any other
-Linux kernel with these same options.
+`dvr0` nodes, the same as on any other Linux DVB stack. This has not been
+hardware-verified — no DVB-T stick has been plugged into a Pi Zero 2W
+running this kernel — but it follows directly from the kernel driver and
+firmware being present, and matches upstream `dvb-usb-rtl28xxu` behavior on
+any other Linux kernel with these same options.
 
 ## `gosd-kernel.toml` reference
 
@@ -200,13 +197,15 @@ patches. The mechanism is a plain `patch -p1` at the root of the kernel tree,
 so `patches` is not actually limited to device trees — `examples/chime` uses a
 one-line driver patch to change a module parameter's default, because a
 monolithic kernel has no other portable way to set one (see that example's
-README). Device trees are simply what needs patching most of the time. A single `make olddefconfig` runs once, after both fragments are
-merged and both patch sets applied — then GoSD's own required-`=y`
-assertions for that board are checked against the *result*: you can add to
-or override individual options, but you cannot silently drop a symbol GoSD
-requires (the build fails, naming the missing symbol) — see
-`build/boards/*/kernel.fragment` and the Rockchip boards' `RequiredY` lists
-in `internal/kernelspec` for what's asserted per board.
+README). Device trees are simply what needs patching most of the time.
+
+A single `make olddefconfig` runs once, after both fragments are merged and
+both patch sets applied — then GoSD's own required-`=y` assertions for that
+board are checked against the *result*: you can add to or override
+individual options, but you cannot silently drop a symbol GoSD requires (the
+build fails, naming the missing symbol) — see `build/boards/*/kernel.fragment`
+and the Rockchip boards' `RequiredY` lists in `internal/kernelspec` for
+what's asserted per board.
 
 ### Caching
 
@@ -238,5 +237,5 @@ macOS and Linux (amd64/arm64) — with Docker Desktop, colima (docker-runtime
 mode; its containerd/nerdctl mode has no docker socket and is not supported),
 or Podman installed and its daemon/machine running. All three share the
 user's home directory with their VMs, which the build relies on for its bind
-mounts. Windows is untested, matching the
-rest of the CLI's "best-effort, don't break gratuitously" stance.
+mounts. Windows is untested, matching the rest of the CLI's "best-effort,
+don't break gratuitously" stance.

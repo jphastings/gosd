@@ -1,9 +1,11 @@
 # Putting an app onto your Raspberry Pi
 
-This guide walks you through copying an app onto a memory card ("SD card")
-using a program called **Raspberry Pi Imager**, so a small computer — a
-Raspberry Pi — can run it. You don't need to use a terminal or type any
-commands. You'll need:
+This guide walks you through copying an app onto a memory card (an "SD
+card") using a free program called **Raspberry Pi Imager**. Once the card
+is in your Raspberry Pi — a small, inexpensive computer — the app will run
+on its own. You don't need to use a terminal or type any commands.
+
+You'll need:
 
 - A Raspberry Pi Zero 2 W (or another board your app's developer told you
   it supports)
@@ -15,7 +17,7 @@ commands. You'll need:
 
 If your board connects with a network cable instead of WiFi (check with
 whoever gave you the app if you're not sure), you can skip the WiFi step
-below and just plug the cable in before you power it on.
+below. Just plug the cable in before you power the device on.
 
 ## 1. Install Raspberry Pi Imager
 
@@ -23,7 +25,7 @@ Download and install [Raspberry Pi Imager](https://www.raspberrypi.com/software/
 — it's free, and available for Windows, Mac, and Linux. Open it once it's
 installed.
 
-## 2. Open the app options
+## 2. Open App Options
 
 In the bottom-left corner of the window, click the button labeled **APP
 OPTIONS**.
@@ -37,7 +39,7 @@ click the **EDIT** button next to it.
 
 ![The App Options window, showing a Content Repository row with an EDIT button](images/flashing/02-app-options-dialog.png)
 
-## 4. Enter the link you were given
+## 4. Paste in your app's link
 
 Choose **Use custom URL**, then paste the link your app's developer gave
 you into the box underneath. Click **APPLY & RESTART**.
@@ -53,8 +55,8 @@ click **NEXT**.
 ![The device selection screen, with "Raspberry Pi Zero 2 W" highlighted in a list of Raspberry Pi models](images/flashing/04-choose-device.png)
 
 If your board isn't a Raspberry Pi (for example, a Radxa Zero 3E), it won't
-be in this list by name — scroll to the bottom and choose **No filtering**
-instead, which shows every available app regardless of device.
+be in this list by name. Scroll to the bottom and choose **No filtering**
+instead — this shows every available app, regardless of device.
 
 ## 6. Choose the app
 
@@ -67,21 +69,21 @@ click **NEXT**.
 Don't pick **Use custom** here — that's for loading a file straight from
 your computer, and it skips the setup wizard in the next two steps.
 
-## 7. Choose a name for your device
+## 7. Name your device
 
 You'll be asked to give your device a name (a "hostname"). This is the name
-you'll use to find it later, once it's up and running — pick something
+you'll use to find it later, once it's up and running, so pick something
 short and memorable, using only letters, numbers, and hyphens.
 
 ![The "Choose hostname" customisation screen, with a text box containing the placeholder name "your-device"](images/flashing/06-choose-name.png)
 
-## 8. Enter your WiFi details
+## 8. Add your WiFi details
 
 If your device connects over WiFi, enter your network's name and password
-here (skip this step if you're using a network cable instead). Imager saves
-these details onto the memory card, so your device will reconnect to this
-network automatically every time it's turned on — you won't need to enter
-this again unless you change WiFi networks later.
+here (skip this step if you're using a network cable instead). Imager
+saves these details onto the memory card. Your device will then reconnect
+to this network automatically every time it's turned on — you won't need
+to enter this again unless you change WiFi networks later.
 
 ![The "Choose Wi-Fi" customisation screen, with fields for network name and password](images/flashing/07-choose-wifi.png)
 
@@ -89,7 +91,7 @@ this again unless you change WiFi networks later.
 
 Continue through the remaining steps (Imager may ask which memory card to
 use, if you have more than one plugged in) and click through to **Write**.
-This copies the app onto your memory card — it can take a few minutes,
+This copies the app onto your memory card. It can take a few minutes,
 depending on the size of the app and the speed of your card. Don't remove
 the card while this is happening; Imager will tell you when it's safe to do
 so.
@@ -123,7 +125,7 @@ the note under that step above.
 **`http://<name>.local` doesn't load.** Give it another minute — it can
 take a little while to join the network the first time. If it still
 doesn't work, open your WiFi router's admin page (check its manual, or the
-label on the router itself) and look for a list of connected devices; your
+label on the router itself) and look for a list of connected devices. Your
 device should appear there by name, along with a numeric address you can
 use instead (e.g. `http://192.168.1.42`).
 

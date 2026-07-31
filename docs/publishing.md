@@ -1,14 +1,16 @@
 # Publishing: getting a GoSD image into Raspberry Pi Imager's customization wizard
 
-This is the flagship end-user flashing path (locked decision, see
-`CLAUDE.md` and `docs/provisioning-formats.md`): a Raspberry Pi Imager
-custom-repository catalog entry. It's the only supported way to get
-Imager's WiFi/hostname customization wizard to appear for a GoSD image —
-Imager's plain "Use custom image" file picker disables customization
-entirely, regardless of the image (see §0 of
-`docs/provisioning-formats.md`). Hand-editing `gosd.toml` on the flashed
-boot partition remains the always-present fallback for anyone not using
-this flow.
+GoSD's flagship end-user flashing path is a Raspberry Pi Imager
+custom-repository catalog entry (locked decision — see `CLAUDE.md` and
+`docs/provisioning-formats.md`). It's the only way to get Imager's
+WiFi/hostname customization wizard for a GoSD image: the plain "Use custom
+image" file picker disables customization entirely, regardless of the
+image (see §0 of `docs/provisioning-formats.md`). Hand-editing `gosd.toml`
+on the flashed boot partition is the always-present fallback for anyone not
+using this flow.
+
+The recipe: build with `--catalog`, host the resulting files, send users
+the `os_list.json` URL.
 
 ## 1. Build with `--catalog`
 
@@ -20,15 +22,15 @@ This builds the image(s) exactly as a normal `gosd build` would, then
 additionally writes, next to each image:
 
 - `<image>.os_list.json` — a catalog fragment containing just that image's
-  entry (useful if you want to host boards separately, or link one
-  board's fragment directly as another catalog's `subitems_url`).
+  entry (useful for hosting boards separately, or linking one board's
+  fragment directly as another catalog's `subitems_url`).
 - `os_list.json` — a combined catalog listing every image built in this
   invocation.
 
 `--publish-base-url` is required whenever `--catalog` is given — gosd
 refuses to guess where you're going to host the files, since every entry's
-`url` field is `--publish-base-url` joined with the image's filename. If
-you omit it, `gosd build` fails immediately, before doing any building, with
+`url` field is `--publish-base-url` joined with the image's filename.
+Omitting it fails the build immediately, before any building happens, with
 an error telling you to pass one.
 
 Every entry declares `"init_format": "cloudinit"` — the only format
@@ -48,9 +50,9 @@ plain web server, etc.), since Imager only ever does plain HTTPS `GET`
 requests for both the catalog JSON and the image. Two things matter:
 
 - The `.img` files must be reachable at exactly `--publish-base-url` +
-  filename (this is what `os_list.json`'s `url` fields already point at, so
-  as long as you upload the files gosd wrote to the location you passed as
-  `--publish-base-url`, this is automatic).
+  filename. This is automatic: it's what `os_list.json`'s `url` fields
+  already point at, as long as you upload the files gosd wrote to the
+  location you passed as `--publish-base-url`.
 - `os_list.json` itself needs to be reachable at some URL too — it doesn't
   have to live at `--publish-base-url`; that flag only controls the
   *image* download links. Put `os_list.json` wherever's convenient (often
@@ -77,7 +79,7 @@ requests for both the catalog JSON and the image. Two things matter:
    `extract_sha256` before writing it, refusing to write on a mismatch
    (protecting against a corrupted download or a stale cache).
 
-Sending this URL to non-technical end users? Send them to
+Sending this URL to non-technical end users? Point them at
 [`docs/flashing.md`](flashing.md) instead of this page — it walks through
 the same steps above with screenshots and no jargon, and includes a
 copy-paste snippet for your own README.

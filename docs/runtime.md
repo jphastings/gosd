@@ -5,48 +5,67 @@ behaves well on a GoSD image. It describes what actually exists on `main`
 today; where something is planned but not yet built, that's called out
 explicitly rather than described as if it worked.
 
-Your app is compiled with `CGO_ENABLED=0` for `linux/arm64` (see
-`internal/build`) and copied into the image as `/app`. There is no other
-userspace: no shell, no init system beyond `gosd-init` itself, no package
-manager, no SSH. Whatever your Go binary does is the whole system.
+Your app is cross-compiled with `CGO_ENABLED=0` for `GOOS=linux` —
+`GOARCH` (and `GOARM`, where it applies) is chosen per board, see
+`internal/build` and `internal/boards.Arch` — and copied into the image
+as `/app`. There is no other userspace: no shell, no init system beyond
+`gosd-init` itself, no package manager, no SSH. Whatever your Go binary
+does is the whole system.
+
+## At a glance
+
+- **One process.** `gosd-init` is PID 1; it starts and supervises `/app`
+  forever. Nothing else on the image is interactive: no shell, SSH, or
+  remote debug access exists anywhere.
+- **Networking, WiFi, DNS, and the clock all come up *after* `/app`
+  starts**, asynchronously. Never assume connectivity or a correct clock
+  at process start — retry instead of treating an early failure as fatal.
+- **The root filesystem is RAM-backed and gone on reboot.** Of the image
+  itself, only `/data` (opt-in, FAT32, a fixed path) survives power loss —
+  plus whatever you store via the `emmc`/`disk` packages.
+- **Logging is stdout/stderr to the serial console**, nothing else. No
+  syslog, no log files, no remote shipping.
+- **HTTPS needs a manual CA bundle** — the image ships no root store; see
+  "HTTPS calls need a CA bundle your app supplies" below.
 
 ## Supervision
 
 `gosd-init` runs as PID 1. After early setup (mounting `/dev`, `/proc`,
-`/sys`, `/run`, setting the hostname, mounting the boot partition) it starts
-`/app` and supervises it for the rest of the device's life:
+`/sys`, `/run`, setting the hostname, mounting the boot partition) it
+starts `/app` and supervises it for the rest of the device's life:
 
-- If `/app` exits, `gosd-init` restarts it automatically. Restarts back off
-  (a capped exponential delay) so a fast crash loop doesn't spin the CPU or
-  flood the serial console; running stably for a while resets the backoff.
-  See `cmd/gosd-init/internal/boot/supervisor.go` and `backoff.go` for the
-  exact policy if you need it.
-- There's no supervisor-level restart limit — your app is expected to run
-  forever, or to be restarted forever if it can't.
+- If `/app` exits, `gosd-init` restarts it automatically, with a capped
+  exponential backoff so a fast crash loop doesn't spin the CPU or flood
+  the serial console; running stably for a while resets the backoff. See
+  `cmd/gosd-init/internal/boot/supervisor.go` and `backoff.go` for the
+  exact policy.
+- There's no restart limit — your app is expected to run forever, or to
+  be restarted forever if it can't.
 - `/app`'s stdout and stderr are connected directly to the serial console
-  (see Logging below); `gosd-init`'s own log lines go to the same console,
-  each prefixed `[gosd] ` so the two are easy to tell apart.
+  (see "Logging" below); `gosd-init`'s own log lines go to the same
+  console, each prefixed `[gosd] ` so the two are easy to tell apart.
 - If something in early boot fails fatally (e.g. the boot partition never
-  mounts), `gosd-init` logs the error, syncs, and reboots the device. Your
-  app is never left running with a boot sequence half-completed.
+  mounts), `gosd-init` logs the error, syncs, and reboots the device —
+  your app is never left running with a boot sequence half-completed.
 
 ## Environment variables
 
-`gosd-init` sets these environment variables before starting `/app`
-(see `cmd/gosd-init/internal/boot/sequence.go`):
+`gosd-init` sets two environment variables before starting `/app` (see
+`cmd/gosd-init/internal/boot/sequence.go`):
 
-- `GOSD_BOARD` — the board ID the image was built for (e.g. `pi-zero-2w`),
-  as recorded in `config.json` (and overridable at boot via the `gosd.board=`
-  kernel command-line parameter).
-- `GOSD_HOSTNAME` — the hostname `gosd-init` just applied via `sethostname(2)`.
+| Variable | Value |
+|---|---|
+| `GOSD_BOARD` | The board ID the image was built for (e.g. `pi-zero-2w`), from `config.json` — overridable at boot via the `gosd.board=` kernel command-line parameter. |
+| `GOSD_HOSTNAME` | The hostname `gosd-init` just applied via `sethostname(2)`. |
 
-There's deliberately no `GOSD_DATA`: persistent storage always lives at the
-fixed path `/data` (see "Persistent storage" below), so there's nothing to
-communicate — write there directly. There is likewise no `GOSD_IP` or similar. Networking comes up
-asynchronously after `/app` has already started (see below), so no address
-is known at the time `/app` launches. If your app needs its own address,
-discover it at runtime with `net.InterfaceAddrs()` / `net.Interfaces()`
-rather than expecting it to be handed to you.
+There's deliberately no `GOSD_DATA`: persistent storage always lives at
+the fixed path `/data` (see "Storage" below), so there's nothing to
+communicate — write there directly. There's likewise no `GOSD_IP` or
+similar: networking comes up asynchronously after `/app` has already
+started (see below), so no address is known at the time `/app` launches.
+If your app needs its own address, discover it at runtime with
+`net.InterfaceAddrs()` / `net.Interfaces()` rather than expecting it to
+be handed to you.
 
 ## App environment variables (`gosd.toml [env]`)
 
@@ -56,75 +75,74 @@ key/value settings its deployment needs — read them the normal way, with
 GoSD-specific part is where the values come from. `examples/hello` reads
 an optional `GREETING` var this way (see its `main.go`).
 
-There are two sources, and `gosd-init` merges them **per key** (not as a
-whole-map replace) before starting `/app` — see `mergeUserEnv` in
+`gosd-init` merges two sources **per key** (not as a whole-map replace)
+before starting `/app` — see `mergeUserEnv` in
 `cmd/gosd-init/internal/boot/sequence.go`:
 
-1. **`gosd.toml`'s `[env]` table** — the hand-editable fallback on the
-   `GOSD-BOOT` partition (see "Provisioning" below). This wins per key.
-2. **Baked defaults** from `gosd build --env KEY=VALUE` (repeatable),
-   recorded in `config.json`. These are also pre-filled into the card's
-   `gosd.toml [env]` section at build time, so whoever holds the card can
-   see the developer's defaults and override any of them without needing
-   to know the rest.
+| Source | Wins per key? | Where it lives |
+|---|---|---|
+| `gosd.toml`'s `[env]` table | Yes | Hand-editable fallback on the `GOSD-BOOT` partition (see "Provisioning" below). |
+| Baked defaults (`gosd build --env KEY=VALUE`, repeatable) | No | Recorded in `config.json`, and also pre-filled into the card's `gosd.toml [env]` section at build time, so whoever holds the card can see the developer's defaults and override any of them without needing to know the rest. |
 
 Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
 `API_URL`, and a baked default set both, your app gets the card's
-`LOG_LEVEL` alongside the baked `API_URL` — not one source or the other in
-its entirety.
+`LOG_LEVEL` alongside the baked `API_URL` — not one source or the other
+in its entirety.
 
 Your app's environment is otherwise a clean slate: it gets exactly the
-`GOSD_*` vars above plus this merged user env, not a copy of `gosd-init`'s
-own environment (`os.Environ()`).
+`GOSD_*` vars above plus this merged user env, not a copy of
+`gosd-init`'s own environment (`os.Environ()`).
 
-**Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace (`GOSD_BOARD`,
-`GOSD_HOSTNAME`, and any future `GOSD_*` var) can never be set
-this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
+**Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace
+(`GOSD_BOARD`, `GOSD_HOSTNAME`, and any future `GOSD_*` var) can never be
+set this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
 actionable error, before it ever reaches an image. A `GOSD_*` key
-hand-written into a card's `gosd.toml [env]` is logged and ignored at boot
-instead — your app always gets `gosd-init`'s real value for those, never
-whatever a card tried to override them with.
+hand-written into a card's `gosd.toml [env]` is logged and ignored at
+boot instead — your app always gets `gosd-init`'s real value for those,
+never whatever a card tried to override them with.
 
-**Missing or empty is fine.** No `--env` flags at build time and no `[env]`
-table on the card is a normal, unremarkable boot: your app just gets none
-of these vars (plus the `GOSD_*` ones above), and nothing errors either way.
+**Missing or empty is fine.** No `--env` flags at build time and no
+`[env]` table on the card is a normal, unremarkable boot: your app just
+gets none of these vars (plus the `GOSD_*` ones above), and nothing
+errors either way.
 
 **Quote your values.** Write `gosd.toml [env]` entries as quoted TOML
-strings, e.g. `PORT = "8080"`. A bare scalar (`PORT = 8080`, `DEBUG = true`)
-is coerced to its string form and still applied, but logs a one-line
-warning at boot; an array, inline table, or datetime under `[env]` is
-dropped entirely (also warned, never silently). Quoting up front avoids
-relying on that coercion.
+strings, e.g. `PORT = "8080"`. A bare scalar (`PORT = 8080`, `DEBUG =
+true`) is coerced to its string form and still applied, but logs a
+one-line warning at boot; an array, inline table, or datetime under
+`[env]` is dropped entirely (also warned, never silently). Quoting up
+front avoids relying on that coercion.
 
 **Security note.** Like the WiFi passphrase stored in the same file,
-`gosd.toml [env]` values sit in plaintext on the `GOSD-BOOT` FAT partition —
-anyone with physical access to the card, or who mounts the image, can read
-them. There's no encryption today; don't put anything there you wouldn't
-want exposed to whoever holds the card.
+`gosd.toml [env]` values sit in plaintext on the `GOSD-BOOT` FAT
+partition — anyone with physical access to the card, or who mounts the
+image, can read them. There's no encryption today; don't put anything
+there you wouldn't want exposed to whoever holds the card.
 
 ## Networking comes up after your app does
 
 `gosd-init` never blocks `/app`'s startup on networking. Network bring-up
-(link up, DHCP, DNS, and reacting to a cable being pulled/replugged) runs in
-its own goroutine, started just before `/app` is launched, not before.
+(link up, DHCP, DNS, and reacting to a cable being pulled/replugged) runs
+in its own goroutine, started just before `/app` is launched, not before.
 
 Practical implications for your app:
 
 - **Never assume connectivity at startup.** Retry any network operation
-  (dialing out, listening for inbound connections that depend on routing,
-  etc.) rather than treating a failure at process start as fatal.
-- **`/run/gosd/network-up`** is an empty marker file `gosd-init` creates once
-  an interface has a usable address, and removes if that link later goes
-  down (see `cmd/gosd-init/internal/netup/resolvconf.go`). Polling for its
-  existence is a reasonable way to gate work that specifically needs an
-  address, but plain retry-on-failure works too and doesn't need you to poll
-  the filesystem.
-- **DNS** is written to `/etc/resolv.conf` from the DHCP lease once one is
-  obtained; it's simply absent before then.
+  (dialing out, listening for inbound connections that depend on
+  routing, etc.) rather than treating a failure at process start as
+  fatal.
+- **`/run/gosd/network-up`** is an empty marker file `gosd-init` creates
+  once an interface has a usable address, and removes if that link later
+  goes down (see `cmd/gosd-init/internal/netup/resolvconf.go`). Polling
+  for its existence is a reasonable way to gate work that specifically
+  needs an address, but plain retry-on-failure works too and doesn't
+  need you to poll the filesystem.
+- **DNS** is written to `/etc/resolv.conf` from the DHCP lease once one
+  is obtained; it's simply absent before then.
 
 `gosd-init` brings up wired Ethernet (interfaces matching `eth*`, `end*`,
-`enp*` — see `cmd/gosd-init/internal/netup/netup.go`) and, if the board has
-WiFi hardware, associates to a single WPA2-PSK or open network (see
+`enp*` — see `cmd/gosd-init/internal/netup/netup.go`) and, if the board
+has WiFi hardware, associates to a single WPA2-PSK or open network (see
 `cmd/gosd-init/internal/wifiup`) using the same DHCP/DNS bring-up either
 way. WPA3/EAP networks are out of scope through v0.x; `gosd-init` logs
 clearly and skips WiFi bring-up rather than attempting to join one.
@@ -154,11 +172,11 @@ The fix is a blank import of the Mozilla root bundle into your app binary:
 import _ "golang.org/x/crypto/x509roots/fallback"
 ```
 
-Pure Go, no image change, and it costs only a modest amount of binary size.
-See `examples/sattrack/main.go` for the pattern in production use, calling a
-TLE API over HTTPS. Roots are pinned at your app's build time via that
-module's version in your `go.mod`; bump the dependency to pull in newer
-roots.
+Pure Go, no image change, and it costs only a modest amount of binary
+size. See `examples/sattrack/main.go` for the pattern in production use,
+calling a TLE API over HTTPS. Roots are pinned at your app's build time
+via that module's version in your `go.mod`; bump the dependency to pull
+in newer roots.
 
 This is a separate concern from the clock (below): fixing the CA bundle
 doesn't help if the clock still reads 1970, since certificate validity
@@ -166,15 +184,15 @@ periods won't check out either — see "Clock" for that gotcha.
 
 ## Provisioning: hostname and WiFi from Raspberry Pi Imager
 
-Beyond `config.json` baked in at build time and `gosd.toml` hand-edited on
-the card, `gosd-init` also reads whatever Raspberry Pi Imager's
+Beyond `config.json` baked in at build time and `gosd.toml` hand-edited
+on the card, `gosd-init` also reads whatever Raspberry Pi Imager's
 customization wizard wrote to the `GOSD-BOOT` partition — cloud-init's
 `user-data` (hostname) and `network-config` (WiFi access points) — see
-`internal/provision` and `docs/provisioning-formats.md` for the full field
-mapping and precedence rationale. This is the flagship end-user flashing
-path: publish a custom-repository catalog entry for your image
-(`init_format: "cloudinit"`) and Imager's full WiFi/hostname wizard becomes
-available for anyone flashing it.
+`internal/provision` and `docs/provisioning-formats.md` for the full
+field mapping and precedence rationale. This is the flagship end-user
+flashing path: publish a custom-repository catalog entry for your image
+(`init_format: "cloudinit"`) and Imager's full WiFi/hostname wizard
+becomes available for anyone flashing it.
 
 Practical notes:
 
@@ -191,9 +209,9 @@ Practical notes:
 
 ## Clock: starts at 1970 until SNTP syncs
 
-Neither supported board has a battery-backed real-time clock. On boot, the
-system clock starts at the Unix epoch and only becomes correct once SNTP
-sync completes.
+No GoSD board has a battery-backed real-time clock. On boot, the system
+clock starts at the Unix epoch and only becomes correct once SNTP sync
+completes.
 
 `gosd-init` syncs the clock itself (`cmd/gosd-init/internal/timesync`) —
 your app doesn't need to do anything to make this happen:
@@ -205,71 +223,80 @@ your app doesn't need to do anything to make this happen:
 - The server list comes from `config.json`'s optional `ntpServers` field
   (baked in by `gosd build`); when it's absent — including every image
   built before this field existed — it defaults to `pool.ntp.org`.
-- **`/run/gosd/time-synced`** is an empty marker file `gosd-init` creates on
-  the first successful sync. Gate anything that checks certificate validity
-  periods (TLS handshakes, `crypto/x509` verification) on this file existing
-  — attempting those before the clock is correct fails, because the clock
-  may still read 1970. Polling for the marker or simply retrying
-  TLS-dependent operations on failure both work; either way, don't treat an
-  early failure as permanent, since the clock does become correct within
-  moments of the network coming up.
+- **`/run/gosd/time-synced`** is an empty marker file `gosd-init` creates
+  on the first successful sync. Gate anything that checks certificate
+  validity periods (TLS handshakes, `crypto/x509` verification) on this
+  file existing — attempting those before the clock is correct fails,
+  because the clock may still read 1970. Polling for the marker or
+  simply retrying TLS-dependent operations on failure both work; either
+  way, don't treat an early failure as permanent, since the clock does
+  become correct within moments of the network coming up.
 
-## Storage: RAM rootfs, `/boot` read-only, `/data` persistent
+## Storage
 
-GoSD's boot sequence never leaves the initramfs: there's no `pivot_root` or
-`switch_root` to a separate root filesystem. The root filesystem your app
-runs on is Linux's initramfs `rootfs` — a RAM-backed, writable filesystem —
-so:
+Three tiers, in increasing order of durability: a RAM-backed root
+filesystem that's wiped every reboot, a read-only `/boot`, and an
+opt-in, persistent `/data`.
+
+### Root filesystem: RAM, wiped every reboot
+
+GoSD's boot sequence never leaves the initramfs: there's no `pivot_root`
+or `switch_root` to a separate root filesystem. The root filesystem your
+app runs on is Linux's initramfs `rootfs` — a RAM-backed, writable
+filesystem — so:
 
 - Anything your app writes outside `/data` and `/boot` is writable at
   runtime, but **lives in RAM and is gone on reboot or power loss.** For
-  durable writes, use the `/data` partition (below).
-- `/boot` — the `GOSD-BOOT` FAT partition containing the kernel, initramfs,
-  and boot configuration — is mounted **read-only**. Don't expect to write
-  to it from your app.
-- Because the rootfs is RAM-resident, be mindful of memory: both supported
-  boards are small, memory-constrained devices, and anything you write to
-  the rootfs is really consuming RAM.
+  durable writes, use `/data` (below).
+- `/boot` — the `GOSD-BOOT` FAT partition containing the kernel,
+  initramfs, and boot configuration — is mounted **read-only**. Don't
+  expect to write to it from your app.
+- Because the rootfs is RAM-resident, be mindful of memory: GoSD targets
+  small, memory-constrained devices (see `COMPATIBILITY.md`), and
+  anything you write to the rootfs is really consuming RAM.
 
-## Persistent storage: `/data`
+### Persistent storage: `/data`
 
-Images are built with a second FAT32 partition, labelled `GOSD-DATA`, sized
-by `gosd build --data-size`. It's opt-in: the default is `0` (no partition
-at all), so pass a size (e.g. `--data-size=1GiB`) to get one. `gosd-init`
-mounts it read-write at the fixed path `/data`. Data written there survives
-reboots and power cycles. There's no environment variable to consult —
-`/data` is always the path; just write to it.
+Images are built with a second FAT32 partition, labelled `GOSD-DATA`,
+sized by `gosd build --data-size`. It's opt-in: the default is `0` (no
+partition at all), so pass a size (e.g. `--data-size=1GiB`) to get one.
+`gosd-init` mounts it read-write at the fixed path `/data`. Data written
+there survives reboots and power cycles. There's no environment variable
+to consult — `/data` is always the path; just write to it.
 
-`--data-size=expand` is the fill-the-card variant: the image ships with no
-data partition at all (staying 272MiB to download and flash), and the
-device creates one itself, exactly once, on its first boot — an MBR entry
-covering the rest of the card, formatted FAT32, labelled `GOSD-DATA`, and
-mounted at `/data` like any other data partition from then on. Points
-specific to expand:
+`--data-size=expand` is the fill-the-card variant: the image ships with
+no data partition at all (staying 272MiB to download and flash), and the
+device creates one itself, exactly once, on its first boot — an MBR
+entry covering the rest of the card, formatted FAT32, labelled
+`GOSD-DATA`, and mounted at `/data` like any other data partition from
+then on. Points specific to expand:
 
-- **Only the disk the device actually booted from is ever touched** — the
-  same verified device the `GOSD-BOOT` mount used — and only when its
-  partition table is exactly the one a GoSD image ships (boot partition in
-  place, no partition 2). Anything else is left alone, loudly.
-- **First boot takes a few extra seconds** while the partition is created
-  and formatted; the serial console narrates it. Every later boot finds the
-  partition present and does nothing.
+- **Only the disk the device actually booted from is ever touched** —
+  the same verified device the `GOSD-BOOT` mount used — and only when
+  its partition table is exactly the one a GoSD image ships (boot
+  partition in place, no partition 2). Anything else is left alone,
+  loudly.
+- **First boot takes a few extra seconds** while the partition is
+  created and formatted; the serial console narrates it. Every later
+  boot finds the partition present and does nothing.
 - **Power loss during first boot is safe**: the partition-table entry is
-  written last, as a commit record, only once the formatted filesystem is
-  durable on the card — so a power cut anywhere mid-creation leaves no
-  entry, and the next boot simply redoes the whole thing from scratch.
+  written last, as a commit record, only once the formatted filesystem
+  is durable on the card — so a power cut anywhere mid-creation leaves
+  no entry, and the next boot simply redoes the whole thing from
+  scratch.
 - **An established data partition is never "repaired" away.** If a later
   boot finds the partition entry in place but the `GOSD-DATA` filesystem
   gone (a failing card, say), the device writes what happened to
-  `boot-failure.log` at the root of the `GOSD-BOOT` partition — readable on
-  any computer the card is plugged into — and **halts**, so whatever data
-  survives can still be salvaged. To recover: save what you need from the
-  partition, then either reformat it as FAT32 labelled `GOSD-DATA` or
-  delete partition 2 entirely and let the next boot recreate it, empty.
-- **A card with no meaningful room** (less than ~64MiB beyond the image —
-  including `gosd run`'s qemu disk, which is exactly image-sized) gets no
-  partition, and `/data` behaves like a `--data-size=0` image: read-only,
-  writes fail with `EROFS`.
+  `boot-failure.log` at the root of the `GOSD-BOOT` partition — readable
+  on any computer the card is plugged into — and **halts**, so whatever
+  data survives can still be salvaged. To recover: save what you need
+  from the partition, then either reformat it as FAT32 labelled
+  `GOSD-DATA` or delete partition 2 entirely and let the next boot
+  recreate it, empty.
+- **A card with no meaningful room** (less than ~64MiB beyond the image
+  — including `gosd run`'s qemu disk, which is exactly image-sized) gets
+  no partition, and `/data` behaves like a `--data-size=0` image:
+  read-only, writes fail with `EROFS`.
 - **The partition is capped at 256GiB** for now (a FAT32-formatter
   limitation — see [How big the data partition can
   be](#how-big-the-data-partition-can-be)); a bigger card's remainder stays
@@ -280,19 +307,19 @@ specific to expand:
 
 Rules of engagement:
 
-- **When there's no partition, `/data` is read-only.** If the image was built
-  with the default `--data-size=0` (or no `--data-size` at all), or the
-  card's data partition can't be mounted (a bad card, say), `gosd-init`
-  mounts an empty **read-only** filesystem at `/data`
-  instead — boot still proceeds normally. A write then fails immediately with
-  `EROFS` rather than silently landing in RAM and vanishing on the next
-  reboot. This is deliberate: it turns "I thought I had persistence" into a
-  loud error at the write, not silent data loss. A well-behaved app treats an
-  `EROFS` write to `/data` as "no persistence available this boot" rather than
-  a fatal error.
-- **It's FAT32, with FAT32's limits.** No unix permissions, no ownership,
-  no symlinks or hard links, 4GiB max file size, coarse (2s) mtime
-  granularity. Don't design around any of those existing.
+- **When there's no partition, `/data` is read-only.** If the image was
+  built with the default `--data-size=0` (or no `--data-size` at all),
+  or the card's data partition can't be mounted (a bad card, say),
+  `gosd-init` mounts an empty **read-only** filesystem at `/data`
+  instead — boot still proceeds normally. A write then fails
+  immediately with `EROFS` rather than silently landing in RAM and
+  vanishing on the next reboot. This is deliberate: it turns "I thought
+  I had persistence" into a loud error at the write, not silent data
+  loss. A well-behaved app treats an `EROFS` write to `/data` as "no
+  persistence available this boot" rather than a fatal error.
+- **It's FAT32, with FAT32's limits.** No unix permissions, no
+  ownership, no symlinks or hard links, 4GiB max file size, coarse (2s)
+  mtime granularity. Don't design around any of those existing.
 - **It is not power-loss-robust.** FAT has no journal. The partition is
   mounted with the `flush` option so data reaches the card promptly, but a
   power cut mid-write can still corrupt the file being written (and, less
@@ -300,15 +327,15 @@ Rules of engagement:
   place — write durable state the boring, robust way, described in full
   under "Making a write durable" below.
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
-  first time the partition mounts; leave it alone, and don't be surprised
-  by it when listing `/data`.
+  first time the partition mounts; leave it alone, and don't be
+  surprised by it when listing `/data`.
 - **Reflashing wipes `/data`.** In v0.3, flashing a new image version
-  recreates the data partition from scratch — everything your app stored is
-  gone. This is deliberate for now. The planned app-slot update mechanism
-  (`docs/design/ab-updates.md`) changes only files inside `GOSD-BOOT` and
-  never touches the partition table, so once it lands, over-the-network app
-  updates will leave `GOSD-DATA` intact — it's a full reflash, and only a
-  full reflash, that wipes it.
+  recreates the data partition from scratch — everything your app
+  stored is gone. This is deliberate for now. The planned app-slot
+  update mechanism (`docs/design/ab-updates.md`) changes only files
+  inside `GOSD-BOOT` and never touches the partition table, so once it
+  lands, over-the-network app updates will leave `GOSD-DATA` intact —
+  it's a full reflash, and only a full reflash, that wipes it.
 
 ### Making a write durable
 
@@ -394,10 +421,13 @@ belongs on the drive holding it.
 
 ## Onboard eMMC storage (Rockchip boards)
 
-The two Rockchip boards, the Radxa Zero 3E and the NanoPi Zero2, also have a
-soldered-on eMMC in addition to the microSD card they boot from — the Pi
-boards have no such thing. The public `emmc` package lets your app format
-and mount it. (For any *attached* mass storage — an NVMe SSD, a USB drive —
+Some Rockchip boards also have an eMMC in addition to the microSD card
+they boot from — the Pi boards have no such thing. On the Radxa Zero 3E
+and NanoPi Zero2 it's soldered on; on the Radxa ROCK 4SE it's an optional
+plug-in module, so `emmc.FormatAndMount` reports "no eMMC" unless one is
+fitted (see `COMPATIBILITY.md`'s onboard-eMMC row for per-board status).
+The public `emmc` package lets your app format and mount whichever the
+board has. (For any *attached* mass storage — an NVMe SSD, a USB drive —
 see "Attached disk storage" below, which has the same shape.)
 
 ```go
@@ -406,48 +436,49 @@ if err := <-emmc.FormatAndMount("APPDATA", "/storage", false); err != nil {
 }
 ```
 
-`FormatAndMount` returns immediately; the formatting/mounting work runs in
-the background, and the returned channel receives exactly one value — `nil`
-once the mountpoint is ready, or an error — before closing. Block on it only
-once your app actually needs the storage.
+`FormatAndMount` returns immediately; the formatting/mounting work runs
+in the background, and the returned channel receives exactly one value —
+`nil` once the mountpoint is ready, or an error — before closing. Block
+on it only once your app actually needs the storage.
 
 - **The eMMC is discovered automatically**, distinguishing it from the
   microSD card the board is currently running from — the boot device is
-  never a format target, so there's no risk of an app wiping the card it's
-  running on.
-- **Formatting is idempotent, keyed on the label you pass.** An eMMC already
-  carrying a FAT filesystem labelled `label` is only mounted, never
-  reformatted — this is how a second run (or every run after the first)
-  avoids wiping its own data. A blank eMMC (no filesystem at all) is always
-  formatted, even with `destructive` set to `false`.
-- **`destructive` guards everything else.** If the eMMC holds *other* data —
-  a FAT volume under a different label, or non-FAT content — `false` makes
-  `FormatAndMount` refuse and return an error rather than touch it; `true`
-  wipes and reformats it. `label` is limited to 11 ASCII characters (FAT's
-  own volume-label limit) and is stored upper-cased.
+  never a format target, so there's no risk of an app wiping the card
+  it's running on.
+- **Formatting is idempotent, keyed on the label you pass.** An eMMC
+  already carrying a FAT filesystem labelled `label` is only mounted,
+  never reformatted — this is how a second run (or every run after the
+  first) avoids wiping its own data. A blank eMMC (no filesystem at all)
+  is always formatted, even with `destructive` set to `false`.
+- **`destructive` guards everything else.** If the eMMC holds *other*
+  data — a FAT volume under a different label, or non-FAT content —
+  `false` makes `FormatAndMount` refuse and return an error rather than
+  touch it; `true` wipes and reformats it. `label` is limited to 11
+  ASCII characters (FAT's own volume-label limit) and is stored
+  upper-cased.
 - **It's a whole-device FAT filesystem** — the mount source is the raw
   `/dev/mmcblkN` device, not a partition on it — with the same limits as
   `/data`: no unix permissions, ownership, symlinks, or hard links, and it is
   not power-loss-robust. Write durable state with the same sequence
   described under "Making a write durable" above — including the two syncs
   after the rename, which FAT needs wherever it's mounted.
-- **On a board with no onboard eMMC** (the Pi boards, or a Rockchip board
-  whose only eMMC turns out to be the boot device), `FormatAndMount`'s
-  channel yields `emmc.ErrNoEMMC` — check for it with `errors.Is` and treat
-  it as "no eMMC here" rather than a fatal error, the way `examples/emmcstorage`
-  does.
+- **On a board with no onboard eMMC** (the Pi boards, a Rockchip board
+  whose only eMMC turns out to be the boot device, or an unfitted ROCK
+  4SE module), `FormatAndMount`'s channel yields `emmc.ErrNoEMMC` — check
+  for it with `errors.Is` and treat it as "no eMMC here" rather than a
+  fatal error, the way `examples/emmcstorage` does.
 
-`examples/emmcstorage` is the worked example: it formats and mounts the eMMC at
-`/storage`, degrades gracefully (logs and exits cleanly) when `ErrNoEMMC`
-comes back, and otherwise writes a small file and reads it back to
-demonstrate persistence.
+`examples/emmcstorage` is the worked example: it formats and mounts the
+eMMC at `/storage`, degrades gracefully (logs and exits cleanly) when
+`ErrNoEMMC` comes back, and otherwise writes a small file and reads it
+back to demonstrate persistence.
 
 ## Attached disk storage (`disk` package)
 
-The public `disk` package is the general-purpose sibling of `emmc`: where
-`emmc` addresses one specific device (a board's soldered-on eMMC), `disk`
-takes whatever mass storage it finds attached — an M.2 NVMe SSD, a USB
-drive, an SD card in a USB reader. The call is the same shape:
+The public `disk` package is the general-purpose sibling of `emmc`:
+where `emmc` addresses one specific device (a board's onboard eMMC),
+`disk` takes whatever mass storage it finds attached — an M.2 NVMe SSD,
+a USB drive, an SD card in a USB reader. The call is the same shape:
 
 ```go
 res := <-disk.FormatAndMount("APPDATA", "/storage", false)
@@ -457,27 +488,28 @@ if res.Err != nil {
 ```
 
 Everything `emmc` guarantees, `disk` guarantees identically: it returns
-immediately and the channel delivers exactly one `Result` before closing;
-formatting is idempotent and keyed on the label, so a disk already carrying a
-volume with your label is only mounted; a blank disk is always formatted;
-`destructive` gates everything else; `label` is 11 ASCII characters, FAT's own
-limit (and equally valid as an exFAT label).
+immediately and the channel delivers exactly one `Result` before
+closing; formatting is idempotent and keyed on the label, so a disk
+already carrying a volume with your label is only mounted; a blank disk
+is always formatted; `destructive` gates everything else; `label` is 11
+ASCII characters, FAT's own limit (and equally valid as an exFAT label).
 
 - **Discovery is an allowlist, and never picks the boot media.** Only
-  `nvme*` (NVMe namespaces), `sd*` (SCSI/USB mass storage), `vd*` (virtio)
-  and `mmcblk*` (SD/eMMC) can be chosen, and only if nothing is mounted from
-  them. `/sys/block` is full of nodes that would be catastrophic or pointless
-  to format — `loop*`, `ram*`, `zram*`, `zd*`, `dm-*`, `md*`, `sr*`, `nbd*`,
-  `mtdblock*`, `ubiblock*`, and an eMMC's `boot0`/`boot1`/`rpmb` hardware
-  partitions — and none of them is ever a candidate. A device reporting no
-  medium (an empty card-reader slot) or write protection is skipped too.
-- **When several disks qualify, the order is fixed**: NVMe, then USB/SCSI,
-  then virtio, then MMC, and alphabetically within each class — so the choice
-  never depends on which device the kernel happened to enumerate first. To
-  pick deliberately, `disk.Devices()` lists the qualifying device nodes in
-  that same order and `disk.FormatAndMountDevice("/dev/sda", …)` targets one.
-  Naming a device explicitly still can't wipe a disk something is mounted
-  from.
+  `nvme*` (NVMe namespaces), `sd*` (SCSI/USB mass storage), `vd*`
+  (virtio) and `mmcblk*` (SD/eMMC) can be chosen, and only if nothing is
+  mounted from them. `/sys/block` is full of nodes that would be
+  catastrophic or pointless to format — `loop*`, `ram*`, `zram*`, `zd*`,
+  `dm-*`, `md*`, `sr*`, `nbd*`, `mtdblock*`, `ubiblock*`, and an eMMC's
+  `boot0`/`boot1`/`rpmb` hardware partitions — and none of them is ever
+  a candidate. A device reporting no medium (an empty card-reader slot)
+  or write protection is skipped too.
+- **When several disks qualify, the order is fixed**: NVMe, then
+  USB/SCSI, then virtio, then MMC, and alphabetically within each class
+  — so the choice never depends on which device the kernel happened to
+  enumerate first. To pick deliberately, `disk.Devices()` lists the
+  qualifying device nodes in that same order and
+  `disk.FormatAndMountDevice("/dev/sda", …)` targets one. Naming a
+  device explicitly still can't wipe a disk something is mounted from.
 - **It's a whole-device filesystem** — the mount source is the raw
   `/dev/nvme0n1`, not a partition on it. That is deliberate: it's what lets
   `Result.BlockDevice` be handed straight to `gadget.MassStorage` to share
@@ -495,14 +527,14 @@ limit (and equally valid as an exFAT label).
 
 ### FAT32 or exFAT
 
-`FormatAndMount` writes **FAT32**, which every host mounts and every GoSD
-board's kernel can. Its price is two hard ceilings: **no single file may exceed
-4 GiB**, however large the disk, and **GoSD will only create a FAT32 volume up
-to 256 GiB** — point it at a 512 GB SSD and it refuses before touching the
-disk, naming the limit, because the FAT32 volume it would write past that size
-is corrupt (the pure-Go formatter counts the sectors in each file allocation
-table in 16 bits). exFAT has neither ceiling.
-`FormatAndMountWith` takes the alternative:
+`FormatAndMount` writes **FAT32**, which every host mounts and every
+GoSD board's kernel can. Its price is two hard ceilings: **no single
+file may exceed 4 GiB**, however large the disk, and **GoSD will only
+create a FAT32 volume up to 256 GiB** — point it at a 512 GB SSD and it
+refuses before touching the disk, naming the limit, because the FAT32
+volume it would write past that size is corrupt (the pure-Go formatter
+counts the sectors in each file allocation table in 16 bits). exFAT has
+neither ceiling. `FormatAndMountWith` takes the alternative:
 
 ```go
 res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
@@ -515,73 +547,127 @@ if errors.Is(res.Err, disk.ErrUnsupportedFS) {
 }
 ```
 
-`Options`' zero value is exactly what `FormatAndMount` does — FAT32, discover
-the disk, refuse to overwrite — so it is the one call to reach for when you
-want to vary anything, including `Device` (which `FormatAndMountDevice` sets
-for you).
+`Options`' zero value is exactly what `FormatAndMount` does — FAT32,
+discover the disk, refuse to overwrite — so it is the one call to reach
+for when you want to vary anything, including `Device` (which
+`FormatAndMountDevice` sets for you).
 
 Three things are worth knowing about exFAT here:
 
 - **An exFAT disk that already carries your label is mounted, not
-  reformatted** — whichever `Filesystem` you asked for. Most SSDs and USB
-  drives ship exFAT, and if such a drive already holds your app's volume then
-  that data is the reason it was plugged in. Converting it would destroy it,
-  so `disk` never does. (A volume with somebody *else's* label is still
-  refused without `destructive=true`, as always.)
-- **Not every board's kernel can mount it.** `CONFIG_EXFAT_FS` is required,
-  and `COMPATIBILITY.md`'s "exFAT on attached disks" row says which boards
-  have it in their published artifacts. Where it is missing, `disk` reports
-  `ErrUnsupportedFS` *before writing anything* — it reads `/proc/filesystems`
-  first — so a fallback like the one above always finds the disk intact. This
-  applies to reading too: an exFAT drive on a board whose kernel lacks the
-  driver reports the same error rather than a bare mount failure.
-- **The formatter is GoSD's own.** `go-diskfs`, which writes our FAT32, has no
-  exFAT support, so `internal/diskfmt` writes exFAT directly from the
-  Microsoft specification — pure Go, no `mkfs.exfat`, no root. It writes the
-  main and backup boot regions, the FAT, the allocation bitmap, a
-  BMP-complete up-case table and a root directory carrying the label.
+  reformatted** — whichever `Filesystem` you asked for. Most SSDs and
+  USB drives ship exFAT, and if such a drive already holds your app's
+  volume then that data is the reason it was plugged in. Converting it
+  would destroy it, so `disk` never does. (A volume with somebody
+  *else's* label is still refused without `destructive=true`, as
+  always.)
+- **Not every board's kernel can mount it.** `CONFIG_EXFAT_FS` is
+  required, and `COMPATIBILITY.md`'s "exFAT on attached disks" row says
+  which boards have it in their published artifacts. Where it is
+  missing, `disk` reports `ErrUnsupportedFS` *before writing anything*
+  — it reads `/proc/filesystems` first — so a fallback like the one
+  above always finds the disk intact. This applies to reading too: an
+  exFAT drive on a board whose kernel lacks the driver reports the same
+  error rather than a bare mount failure.
+- **The formatter is GoSD's own.** `go-diskfs`, which writes our FAT32,
+  has no exFAT support, so `internal/diskfmt` writes exFAT directly from
+  the Microsoft specification — pure Go, no `mkfs.exfat`, no root. It
+  writes the main and backup boot regions, the FAT, the allocation
+  bitmap, a BMP-complete up-case table and a root directory carrying the
+  label.
 
-There is no `disk`-specific example yet; `examples/emmcstorage` is the shape
-to copy — the only difference is the import and the sentinel you check for.
+There is no `disk`-specific example yet; `examples/emmcstorage` is the
+shape to copy — the only difference is the import and the sentinel you
+check for.
 
 ## Logging
 
 There is no syslog, no log file, and no remote log shipping. `/app`'s
-stdout and stderr are connected straight to the serial console — whatever
-your app prints is what shows up when someone has a serial cable attached
-(or a serial-over-USB/console viewer for their board). Log to stdout/stderr
-as you normally would; there's nowhere else for it to go, and nothing else
-reads it.
+stdout and stderr are connected straight to the serial console —
+whatever your app prints is what shows up when someone has a serial
+cable attached (or a serial-over-USB/console viewer for their board).
+Log to stdout/stderr as you normally would; there's nowhere else for it
+to go, and nothing else reads it.
+
+## Serial console baud rate (`--console-baud`)
+
+Every board's kernel talks to its debug UART at a fixed default rate
+baked into the boot config `gosd build` renders: 115200 on the Pi
+boards, 1500000 (1.5Mbaud) on the Rockchip boards (Radxa Zero 3E,
+NanoPi Zero2, Radxa ROCK 4SE). Some common USB-serial adapters —
+notably CP210x and PL2303 families — can't reliably read 1.5Mbaud;
+garbled or missing console output on an otherwise-working board is a
+strong signal you've hit this rather than a real boot failure. See
+COMPATIBILITY.md's Radxa Zero 3E serial footnote for the specific case
+this was found on.
+
+`gosd build --console-baud <rate>` bakes a different rate into the same
+config, for every board that renders one:
+
+```sh
+gosd build . --board radxa-zero-3e --console-baud 115200
+```
+
+- **Only the rate changes.** The UART device itself (`ttyS2`, `serial0`,
+  etc.) is fixed per board and unaffected by this flag.
+- **Any positive integer is accepted.** A rate outside the common set
+  (9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1500000,
+  3000000) prints a warning rather than failing outright — a mismatched
+  or unusual rate is far more often a typo than an intentional choice,
+  but the flag's entire purpose is accommodating hardware GoSD can't
+  enumerate in advance, so it doesn't hard-block anything positive.
+- **`qemu-virt` can't honor it.** That profile's console is a fixed
+  `qemu-system-aarch64 -append "console=ttyAMA0"` argument with no baud
+  rate at all (a virtual console has no real adapter to mismatch rates
+  with) — see `internal/qemurun`. `--console-baud` together with
+  `--board=qemu-virt` fails fast with an actionable error rather than
+  silently doing nothing.
+- **U-Boot's own output is unaffected.** On the Rockchip boards, U-Boot
+  itself prints at its compiled-in 1500000 regardless of
+  `--console-baud` — the flag only changes what the *kernel and
+  onward* (gosd-init, your app's stdout/stderr) render into
+  extlinux.conf/cmdline.txt. If you need U-Boot's own boot log readable
+  too, use an adapter that supports 1.5Mbaud (or compile a custom
+  U-Boot with a different `CONFIG_BAUDRATE`, out of scope for this
+  flag).
+- **No reflash needed to try a different rate on an already-flashed
+  card.** `extlinux/extlinux.conf` (Rockchip boards) or `cmdline.txt`
+  (Pi boards) on the `GOSD-BOOT` partition is a plain text file —
+  hand-editing the `console=` argument there has the same effect as
+  rebuilding with `--console-baud`.
 
 ## Build constraints
 
-- `gosd build` always cross-compiles with `CGO_ENABLED=0`,
-  `GOOS=linux`, `GOARCH=arm64` (see `internal/build/build.go`) — both
-  supported boards are arm64, and cgo would introduce a dependency on the
-  host's C toolchain/libc that the image can't provide. Pure Go dependencies
+- `gosd build` always cross-compiles with `CGO_ENABLED=0` and
+  `GOOS=linux`; `GOARCH` (and `GOARM`, where it applies) is chosen per
+  board — see `internal/build/build.go` and `internal/boards.Arch` for
+  the current mapping. cgo would introduce a dependency on the host's C
+  toolchain/libc that the image can't provide, so pure Go dependencies
   only.
-- The path you pass to `gosd build` must be a `package main` with a `func
-  main` — `gosd build` checks this up front and fails with an actionable
-  error otherwise.
-- `gosd-init` itself has no shell, no interactive surface, and no remote
-  debug access, on purpose — the only things running alongside your app are
-  the supervisor, its network/time-sync bring-up, and its mDNS responder
-  (and, later, an update listener). If you need to inspect
-  a running device, that has to happen through your own app (an HTTP
-  endpoint, for instance, as `examples/hello` does) or the serial console.
+- The path you pass to `gosd build` must be a `package main` with a
+  `func main` — `gosd build` checks this up front and fails with an
+  actionable error otherwise.
+- `gosd-init` itself has no shell, no interactive surface, and no
+  remote debug access, on purpose — the only things running alongside
+  your app are the supervisor, its network/time-sync bring-up, and its
+  mDNS responder (and, later, an update listener). If you need to
+  inspect a running device, that has to happen through your own app (an
+  HTTP endpoint, for instance, as `examples/hello` does) or the serial
+  console.
 - Each selected board's own Go build tag (`gosd_<board-id>`, e.g.
-  `gosd_pi_zero_2w`) is passed to your app's compile — gosd-init is never
-  tagged. See [`docs/board-build-tags.md`](board-build-tags.md) for how to
-  gate board-specific source with it.
+  `gosd_pi_zero_2w`) is passed to your app's compile — gosd-init is
+  never tagged. See [`docs/board-build-tags.md`](board-build-tags.md)
+  for how to gate board-specific source with it.
 
 ## Bundling a companion binary (`--with-external`)
 
 Not everything your app needs is a pure-Go library. A video decoder, a
 vendor CLI, or any other prebuilt executable can ride along in the same
-image via `gosd build --with-external <path>[:<dest>]` (repeatable). Don't
-have that binary built yet? `gosd build-external` cross-compiles one from a
-`gosd-external.toml` recipe inside Docker/Podman, ready to hand straight to
-`--with-external` — see [`docs/externals.md`](externals.md).
+image via `gosd build --with-external <path>[:<dest>]` (repeatable).
+Don't have that binary built yet? `gosd build-external` cross-compiles
+one from a `gosd-external.toml` recipe inside Docker/Podman, ready to
+hand straight to `--with-external` — see
+[`docs/externals.md`](externals.md).
 
 ```sh
 gosd build . --board pi-zero-2w \
@@ -589,33 +675,35 @@ gosd build . --board pi-zero-2w \
   --with-external ./build/tool:/usr/local/bin/tool
 ```
 
-- **Dest defaults to `/bin/<basename of path>`.** An explicit `<dest>` must
-  be an absolute path; one that collides with `/init`, `/app`,
-  `/etc/gosd/*`, `/lib/firmware/*`, or another `--with-external`'s dest is
-  rejected before the build touches the network or the toolchain.
-- **The binary must be fully static.** The initramfs ships no `ld.so` and no
-  library layout, so a dynamically linked binary (one with a `PT_INTERP`
-  program header) is rejected at build time with an actionable error —
-  build it with `CGO_ENABLED=0` (Go) or full static linking (C/C++).
+- **Dest defaults to `/bin/<basename of path>`.** An explicit `<dest>`
+  must be an absolute path; one that collides with `/init`, `/app`,
+  `/etc/gosd/*`, `/lib/firmware/*`, or another `--with-external`'s dest
+  is rejected before the build touches the network or the toolchain.
+- **The binary must be fully static.** The initramfs ships no `ld.so`
+  and no library layout, so a dynamically linked binary (one with a
+  `PT_INTERP` program header) is rejected at build time with an
+  actionable error — build it with `CGO_ENABLED=0` (Go) or full static
+  linking (C/C++).
 - **It must match the board's architecture.** `gosd build` checks each
   external's ELF class/machine against every selected board's target
-  architecture before assembling anything — an arm64 binary alongside
-  `--board pi-zero-w` (armv6) fails immediately, naming the board, instead
-  of shipping something that can't `exec`.
+  architecture before assembling anything — a mismatched binary fails
+  immediately, naming the board, instead of shipping something that
+  can't `exec`.
 - **Your app owns it at runtime.** gosd-init stays a single-child
   supervisor — it starts and restarts only `/app`. Launch, monitor, and
-  restart the companion binary yourself via `os/exec`; if the pair wedges,
-  exit `/app` and let gosd-init's own backoff supervisor restart the unit.
+  restart the companion binary yourself via `os/exec`; if the pair
+  wedges, exit `/app` and let gosd-init's own backoff supervisor
+  restart the unit.
 
 ## GPIO, I2C, SPI
 
 GoSD doesn't ship its own hardware I/O library — use the same pure-Go
 libraries you'd use on any Linux board:
 
-- [`go-gpiocdev`](https://github.com/warthog618/go-gpiocdev) for GPIO via
-  the modern `/dev/gpiochipN` character-device API.
-- [`periph.io`](https://periph.io/) for a broader device driver ecosystem
-  (I2C, SPI, and specific sensor/peripheral drivers).
+- [`go-gpiocdev`](https://github.com/warthog618/go-gpiocdev) for GPIO
+  via the modern `/dev/gpiochipN` character-device API.
+- [`periph.io`](https://periph.io/) for a broader device driver
+  ecosystem (I2C, SPI, and specific sensor/peripheral drivers).
 
 Both are plain Go and work under `CGO_ENABLED=0`, so they cross-compile
 the same way your app does. GPIO, I2C, and SPI all have worked examples,
@@ -624,36 +712,38 @@ covered below.
 ### GPIO is available via /dev/gpiochipN
 
 `CONFIG_GPIO_CDEV` is already enabled on every board's kernel, so
-`/dev/gpiochipN` character devices for the header/FPC pins exist at boot on
-every board with no build flag or device-tree change needed — unlike
-I2C and SPI, GPIO needed no per-board enablement work at all. What differs
-per board is *numbering*: which chip backs which pins, and which line
-offset within that chip a given pin is.
+`/dev/gpiochipN` character devices for the header/FPC pins exist at boot
+on every board with no build flag or device-tree change needed — unlike
+I2C and SPI, GPIO needed no per-board enablement work at all. What
+differs per board is *numbering*: which chip backs which pins, and
+which line offset within that chip a given pin is.
 
-- **Raspberry Pi Zero 2 W / Zero W / 3B** (BCM2837/BCM2835): the whole SoC
-  is one chip, `gpiochip0` (54 lines). Its device tree maps lines to BCM GPIO
-  numbers 1:1 (`gpio-ranges = <&gpio 0 0 54>`, an identity mapping), so
-  `gpiochip0`'s line offset is always the same number as the "GPIOn"
-  silkscreened on most Pi pinout diagrams. Physical header pin 3 (the I2C
-  bus's SDA line — see the table below) is BCM GPIO2, i.e. `gpiochip0` line
-  2; pin 5 (SCL, GPIO3) is `gpiochip0` line 3.
+- **Raspberry Pi Zero 2 W / Zero W / 3B** (BCM2837/BCM2835): the whole
+  SoC is one chip, `gpiochip0` (54 lines). Its device tree maps lines to
+  BCM GPIO numbers 1:1 (`gpio-ranges = <&gpio 0 0 54>`, an identity
+  mapping), so `gpiochip0`'s line offset is always the same number as
+  the "GPIOn" silkscreened on most Pi pinout diagrams. Physical header
+  pin 3 (the I2C bus's SDA line — see the table below) is BCM GPIO2,
+  i.e. `gpiochip0` line 2; pin 5 (SCL, GPIO3) is `gpiochip0` line 3.
 - **Radxa Zero 3E / NanoPi Zero2** (Rockchip RK3566 / RK3528): the GPIO
   controller is split into up to 5 independently-numbered banks
-  (`gpio0`..`gpio4`), each its own `/dev/gpiochipN` in bank order (bank 0 is
-  `gpiochip0`, bank 1 is `gpiochip1`, and so on — true on both boards
-  because nothing else on either SoC registers a GPIO chardev ahead of
-  them). Rockchip's own signal names spell out the exact line within that
-  chip: `GPIO<bank>_<group><pin>`, where group `A`/`B`/`C`/`D` are 0/1/2/3,
-  giving a line offset of `group*8 + pin` *within that bank's chip* (not a
-  global line number). The I2C bus's `GPIO1_A0`/`GPIO1_A1` signals (Radxa,
-  header pins 3/5) are therefore `gpiochip1` lines 0 and 1; the NanoPi's
-  `GPIO1_B2`/`GPIO1_B3` (FPC pins 12/13) are `gpiochip1` lines 10 and 11.
-- **Radxa ROCK 4SE** (Rockchip RK3399): the same up-to-5-bank convention as
-  above, and the same `GPIO<bank>_<group><pin>`/`group*8 + pin` naming.
-  Hardware-verified during bring-up (bean `gosd-sz6p`, 2026-07-23): all five
-  banks enumerate as `gpiochip0`-`gpiochip4`, 32 lines each. The 40-pin
-  header's `GPIO2_A0` signal (physical pin 27 — also the `i2c2` bus's SDA2
-  line, see the I2C table below) is `gpiochip2` line 0.
+  (`gpio0`..`gpio4`), each its own `/dev/gpiochipN` in bank order (bank
+  0 is `gpiochip0`, bank 1 is `gpiochip1`, and so on — true on both
+  boards because nothing else on either SoC registers a GPIO chardev
+  ahead of them). Rockchip's own signal names spell out the exact line
+  within that chip: `GPIO<bank>_<group><pin>`, where group `A`/`B`/`C`/
+  `D` are 0/1/2/3, giving a line offset of `group*8 + pin` *within that
+  bank's chip* (not a global line number). The I2C bus's `GPIO1_A0`/
+  `GPIO1_A1` signals (Radxa, header pins 3/5) are therefore `gpiochip1`
+  lines 0 and 1; the NanoPi's `GPIO1_B2`/`GPIO1_B3` (FPC pins 12/13) are
+  `gpiochip1` lines 10 and 11.
+- **Radxa ROCK 4SE** (Rockchip RK3399): the same up-to-5-bank convention
+  as above, and the same `GPIO<bank>_<group><pin>`/`group*8 + pin`
+  naming. Hardware-verified during bring-up (bean `gosd-sz6p`,
+  2026-07-23): all five banks enumerate as `gpiochip0`-`gpiochip4`, 32
+  lines each. The 40-pin header's `GPIO2_A0` signal (physical pin 27 —
+  also the `i2c2` bus's SDA2 line, see the I2C table below) is
+  `gpiochip2` line 0.
 
 | Board | Connector | GPIO controller | Worked example: the I2C pins above, as (chip, line) |
 |---|---|---|---|
@@ -665,42 +755,44 @@ offset within that chip a given pin is.
 | Radxa ROCK 4SE | 40-pin header | 5 banks, `gpiochip0`-`gpiochip4` (32 lines each) | Pin 27 (GPIO2_A0) → `gpiochip2` line 0 |
 
 **Caution: a BCM GPIO number, a physical pin number, and a gpiochip line
-offset are three different numbering schemes that happen to coincide on the
-Pi boards and don't anywhere else.** The Pi's `gpiochip0` line == BCM GPIO
-number is a property of *that specific device tree's* identity
+offset are three different numbering schemes that happen to coincide on
+the Pi boards and don't anywhere else.** The Pi's `gpiochip0` line ==
+BCM GPIO number is a property of *that specific device tree's* identity
 `gpio-ranges`, not a rule the kernel enforces generally — a board that
-recorded its `gpio-ranges` differently (or any non-Pi board) would break the
-coincidence. On the Rockchip boards, the line offset is always local to its
-bank's chip (`group*8 + pin`), never a whole-SoC number, and the *physical*
-pin position on the header/FPC is a third, independent numbering fixed only
-by the board's own wiring — always check a real pinout diagram or schematic
-for your board rather than assuming a pattern carries over from another
-one.
+recorded its `gpio-ranges` differently (or any non-Pi board) would
+break the coincidence. On the Rockchip boards, the line offset is
+always local to its bank's chip (`group*8 + pin`), never a whole-SoC
+number, and the *physical* pin position on the header/FPC is a third,
+independent numbering fixed only by the board's own wiring — always
+check a real pinout diagram or schematic for your board rather than
+assuming a pattern carries over from another one.
 
 `examples/gpioinfo` is the worked example: by default it opens every
 `/dev/gpiochipN` present and prints a `gpioinfo`(1)-style dump — chip
 name/label/line count, then each line's offset, name, direction, and
-consumer — entirely read-only, so it's safe to run against unknown wiring.
-Setting both `GOSD_GPIO_CHIP` (e.g. `gpiochip1`) and `GOSD_GPIO_LINE` (e.g.
-`0`) opts into a second, destructive step: that one line is requested as an
-output and toggled a few times, logging each transition — useful for
-confirming a chip/line pair against a multimeter or LED before wiring up
-real application code. Neither env var alone does anything; the example
-never drives a pin unless told exactly which one. Under `qemu-virt`, the
-`-M virt` machine has no GPIO controller, so the enumeration step correctly
-reports "no GPIO character devices found" and exits 0 rather than erroring.
-For real applications, reach for `go-gpiocdev` directly (as the example
-does) or `periph.io`'s higher-level line/pin abstractions.
+consumer — entirely read-only, so it's safe to run against unknown
+wiring. Setting both `GOSD_GPIO_CHIP` (e.g. `gpiochip1`) and
+`GOSD_GPIO_LINE` (e.g. `0`) opts into a second, destructive step: that
+one line is requested as an output and toggled a few times, logging
+each transition — useful for confirming a chip/line pair against a
+multimeter or LED before wiring up real application code. Neither env
+var alone does anything; the example never drives a pin unless told
+exactly which one. Under `qemu-virt`, the `-M virt` machine has no GPIO
+controller, so the enumeration step correctly reports "no GPIO
+character devices found" and exits 0 rather than erroring. For real
+applications, reach for `go-gpiocdev` directly (as the example does) or
+`periph.io`'s higher-level line/pin abstractions.
 
 ### I2C is on by default
 
-Every board image `gosd build` produces has one I2C bus enabled and ready as
-a `/dev/i2c-N` character device by the time your app starts — no build flag
-needed, and there's no opt-out flag today (a `gosd.toml` knob to disable it
-may come later if a real use case needs the pins back for plain GPIO). The
-kernel driver has always been built in on every board
-(`CONFIG_I2C_BCM2835`/`CONFIG_I2C_RK3X` plus `CONFIG_I2C_CHARDEV`); what this
-adds is the device-tree/`config.txt` enablement that was previously missing.
+Every board image `gosd build` produces has one I2C bus enabled and
+ready as a `/dev/i2c-N` character device by the time your app starts —
+no build flag needed, and there's no opt-out flag today (a `gosd.toml`
+knob to disable it may come later if a real use case needs the pins
+back for plain GPIO). The kernel driver has always been built in on
+every board (`CONFIG_I2C_BCM2835`/`CONFIG_I2C_RK3X` plus
+`CONFIG_I2C_CHARDEV`); what this adds is the device-tree/`config.txt`
+enablement that was previously missing.
 
 | Board | Device | Physical pins | Notes |
 |---|---|---|---|
@@ -712,29 +804,29 @@ adds is the device-tree/`config.txt` enablement that was previously missing.
 | Radxa ROCK 4SE | `/dev/i2c-7` | 40-pin header pins 3 (SDA7) / 5 (SCL7) | Same physical header position as the Pi's I2C pins. **Hardware-verified** (device ACK from a Qwiic Button, bean `gosd-sz6p`, 2026-07-23). Uniquely among GoSD's boards, two more header I2C buses are enabled and equally hardware-verified: `/dev/i2c-2` on pins 27 (SDA2) / 28 (SCL2), and `/dev/i2c-6` on pins 29 (SCL6) / 31 (SDA6) — note the SCL/SDA pin order flips between buses. Adapter numbers are alias-pinned to controller names and stable (buses 0/1/3/4 exist as internal-only buses; 5 and 8 are disabled controllers). |
 
 On the Pi boards, enabling I2C means `config.txt` carries
-`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the three
-Rockchip boards, it means the shipped kernel's device tree enables the
-relevant `i2cN` controller node(s) — see
+`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the
+three Rockchip boards, it means the shipped kernel's device tree
+enables the relevant `i2cN` controller node(s) — see
 `build/boards/radxa-zero-3e/kernel/patches/`,
 `build/boards/nanopi-zero2/kernel/patches/`, and
 `build/boards/rock-4se/kernel/patches/` if you're curious about the
 mechanism, or need to add a similar peripheral enablement yourself.
 
-`examples/i2cscan` is a worked example: it opens every `/dev/i2c-*` present,
-scans each bus for a responding device, and additionally checks for a
-BME280/BMP280-family sensor's chip-ID response — a common, cheap way to
-sanity-check your wiring before writing real sensor code. For anything past
-that sanity check, reach for `periph.io` rather than hand-rolling ioctls the
-way the example does.
+`examples/i2cscan` is a worked example: it opens every `/dev/i2c-*`
+present, scans each bus for a responding device, and additionally
+checks for a BME280/BMP280-family sensor's chip-ID response — a common,
+cheap way to sanity-check your wiring before writing real sensor code.
+For anything past that sanity check, reach for `periph.io` rather than
+hand-rolling ioctls the way the example does.
 
 ### SPI is on by default
 
 Every board image `gosd build` produces has a `/dev/spidev*` character
-device ready by the time your app starts — no build flag needed, and (as
-with I2C) there's no opt-out flag today. The kernel driver has always been
-built in on every board (`CONFIG_SPI_BCM2835`/`CONFIG_SPI_ROCKCHIP` plus
-`CONFIG_SPI_SPIDEV`); what this adds is the device-tree/`config.txt`
-enablement that was previously missing.
+device ready by the time your app starts — no build flag needed, and
+(as with I2C) there's no opt-out flag today. The kernel driver has
+always been built in on every board (`CONFIG_SPI_BCM2835`/
+`CONFIG_SPI_ROCKCHIP` plus `CONFIG_SPI_SPIDEV`); what this adds is the
+device-tree/`config.txt` enablement that was previously missing.
 
 | Board | Device(s) | Physical pins | Notes |
 |---|---|---|---|
@@ -745,41 +837,43 @@ enablement that was previously missing.
 | NanoPi Zero2 | `/dev/spidev1.0`, `/dev/spidev1.1` | 30-pin FPC pins 16 (CLK) / 17 (MOSI) / 18 (MISO) / 19 (CS0) / 20 (CS1) | Confirmed against FriendlyElec's schematic; both chip selects are routed to the FPC connector. |
 | Radxa ROCK 4SE | `/dev/spidev1.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, per Radxa's own pinout docs. **Schematic-derived, not hardware-verified** — SPI wasn't exercised during the board's hardware bring-up (bean `gosd-sz6p`). Only one chip select is wired up (CS0); the DTS patch adds no second `spidev` child node, so there is no `/dev/spidev1.1`. |
 
-On the Pi boards, enabling SPI means `config.txt` carries `dtparam=spi=on`
-(Raspberry Pi's own documented mechanism, giving both `spidev0.0` and
-`spidev0.1`); on the three Rockchip boards, it means the shipped kernel's
-device tree enables the relevant `spiN` controller node and adds a
-`spidev` child node for each header-routed chip select — see
-`build/boards/radxa-zero-3e/kernel/patches/`,
+On the Pi boards, enabling SPI means `config.txt` carries
+`dtparam=spi=on` (Raspberry Pi's own documented mechanism, giving both
+`spidev0.0` and `spidev0.1`); on the three Rockchip boards, it means
+the shipped kernel's device tree enables the relevant `spiN` controller
+node and adds a `spidev` child node for each header-routed chip select
+— see `build/boards/radxa-zero-3e/kernel/patches/`,
 `build/boards/nanopi-zero2/kernel/patches/`, and
 `build/boards/rock-4se/kernel/patches/` if you're curious about the
-mechanism. Note the child node's `compatible` value: the kernel's spidev
-driver (`drivers/spi/spidev.c`) refuses to bind to a bare `compatible =
-"spidev"` node (it logs "spidev listed directly in DT is not supported" and
-fails to probe) — GoSD's patches use `"rohm,dh2228fv"`, spidev's own
-documented generic placeholder compatible (`Documentation/spi/spidev.rst`),
-the same one Raspberry Pi's downstream spidev overlays use.
+mechanism. Note the child node's `compatible` value: the kernel's
+spidev driver (`drivers/spi/spidev.c`) refuses to bind to a bare
+`compatible = "spidev"` node (it logs "spidev listed directly in DT is
+not supported" and fails to probe) — GoSD's patches use
+`"rohm,dh2228fv"`, spidev's own documented generic placeholder
+compatible (`Documentation/spi/spidev.rst`), the same one Raspberry
+Pi's downstream spidev overlays use.
 
-`examples/spiloopback` is a worked example: it opens every `/dev/spidev*`
-present and performs a full-duplex transfer of a fixed test pattern,
-reporting whether the bytes read back match the bytes sent. This is only a
-meaningful test with **MOSI physically jumpered to MISO** on the bus under
-test — with that jumper in place, a correct loopback confirms the bus works
-end-to-end before you wire up a real device; without it, a mismatch is the
-expected (not erroneous) result. For anything past that self-test, reach for
-`periph.io` rather than hand-rolling ioctls the way the example does.
+`examples/spiloopback` is a worked example: it opens every
+`/dev/spidev*` present and performs a full-duplex transfer of a fixed
+test pattern, reporting whether the bytes read back match the bytes
+sent. This is only a meaningful test with **MOSI physically jumpered to
+MISO** on the bus under test — with that jumper in place, a correct
+loopback confirms the bus works end-to-end before you wire up a real
+device; without it, a mismatch is the expected (not erroneous) result.
+For anything past that self-test, reach for `periph.io` rather than
+hand-rolling ioctls the way the example does.
 
 ## Audio — the `sound` package, and a kernel that has sound in it
 
-Every published GoSD kernel is built with `# CONFIG_SOUND is not set`, so a
-stock image has no `/dev/snd` and no app can make a noise. Audio is in the
-same position as display: an opt-in `gosd build-kernel` recipe rather than a
-base-image feature.
+Every published GoSD kernel is built with `# CONFIG_SOUND is not set`,
+so a stock image has no `/dev/snd` and no app can make a noise. Audio is
+in the same position as display: an opt-in `gosd build-kernel` recipe
+rather than a base-image feature.
 
-The `sound` package plays interleaved S16_LE frames out of whatever playback
-device the board has, talking the kernel's ALSA PCM interface directly (a GoSD
-image has no `libasound.so.2` to link or `dlopen`, and no `/usr/share/alsa`
-config tree):
+The `sound` package plays interleaved S16_LE frames out of whatever
+playback device the board has, talking the kernel's ALSA PCM interface
+directly (a GoSD image has no `libasound.so.2` to link or `dlopen`, and
+no `/usr/share/alsa` config tree):
 
 ```go
 dev, err := sound.Open() // or OpenWith(sound.Options{Prefer: sound.Analog})
@@ -792,112 +886,73 @@ defer func() { _ = dev.Close() }()
 err = dev.Play(frames) // len(frames) % dev.Format().FrameBytes() == 0
 ```
 
-**[docs/sound.md](sound.md) is the full guide**: which recipe each board needs,
-what each output physically is, what the kernel grows by, and the gotchas —
-HDMI audio only exists if the display was connected *before* power-up, the Pi
-Zeros have no analog jack at all, enabling `CONFIG_SND` drags in every audio
-driver the defconfig ships as a module (including a USB MIDI gadget that can
-claim the only UDC and break `--usb-gadget`), and the NanoPi Zero2 has no audio
-path in the pinned kernel whatsoever.
+**[docs/sound.md](sound.md) is the full guide**: which recipe each
+board needs, what each output physically is, what the kernel grows by,
+and the gotchas — HDMI audio only exists if the display was connected
+*before* power-up, the Pi Zeros have no analog jack at all, enabling
+`CONFIG_SND` drags in every audio driver the defconfig ships as a
+module (including a USB MIDI gadget that can claim the only UDC and
+break `--usb-gadget`), and the NanoPi Zero2 has no audio path in the
+pinned kernel whatsoever.
 
-`examples/chime` is the worked example — a boot chime and a periodic test tone,
-plus the kernel recipes for the Pi boards, the ROCK 4SE's headphone jack, and
-HDMI audio on the two Rockchip boards that have it.
+`examples/chime` is the worked example — a boot chime and a periodic
+test tone, plus the kernel recipes for the Pi boards, the ROCK 4SE's
+headphone jack, and HDMI audio on the two Rockchip boards that have it.
 
 ## USB gadget mode
 
-Your app can present the board as a USB peripheral instead of (or alongside)
-its normal role, using the pure-Go `gadget` package — no cgo, no exec, just
-configfs file writes. Today that means CDC-ACM serial and USB mass storage;
-a USB Ethernet gadget (device-as-network-interface, no WiFi/cable needed at
-all) is planned for later.
+Your app can present the board as a USB peripheral instead of (or
+alongside) its normal role, using the pure-Go `gadget` package — no
+cgo, no exec, just configfs file writes. Today that means CDC-ACM
+serial and USB mass storage; a USB Ethernet gadget (device-as-network-
+interface, no WiFi/cable needed at all) is planned for later.
 
-- Build with `gosd build --usb-gadget` so the board's USB controller boots
-  in peripheral mode. On the Pi Zero 2W this repurposes its only USB port
-  from host to peripheral mode (the *inner* micro-USB is the data port, not
-  the one marked PWR); the Radxa Zero 3E needs no flag-driven change at all
-  — its USB-C OTG/power port negotiates role automatically.
-- `gosd build --usb-gadget` fails fast, naming the offending board, for any
-  selected board with no USB peripheral controller at its pinned artifacts
-  (e.g. the NanoPi Zero2 today — see COMPATIBILITY.md's USB gadget row)
-  rather than producing an image whose app can never find a UDC.
+- Build with `gosd build --usb-gadget` so the board's USB controller
+  boots in peripheral mode. On the Pi Zero 2W this repurposes its only
+  USB port from host to peripheral mode (the *inner* micro-USB is the
+  data port, not the one marked PWR); the Radxa Zero 3E needs no
+  flag-driven change at all — its USB-C OTG/power port negotiates role
+  automatically.
+- `gosd build --usb-gadget` fails fast, naming the offending board, for
+  any selected board with no USB peripheral controller at its pinned
+  artifacts (e.g. the NanoPi Zero2 today — see COMPATIBILITY.md's USB
+  gadget row) rather than producing an image whose app can never find a
+  UDC.
 - Activation is your app's job, not `gosd-init`'s: construct a
   `gadget.Gadget`, add a `gadget.ACM{}` function, and call `Apply()` at
-  startup (`Close()` to tear it down). Without `--usb-gadget` at build time,
-  `Apply()` fails with an actionable error instead of silently doing
-  nothing.
-- Once applied, the device shows up at `/dev/ttyGS0` on the board and as a
-  USB-serial device on the host (`/dev/ttyACM0` on Linux, `/dev/cu.usbmodem*`
-  on macOS).
-- See `examples/usbserial` for a complete worked example: it applies the
-  gadget and echoes back every line it reads over `/dev/ttyGS0`.
-- A `gadget.MassStorage` function exposes a block device or disk-image file
-  on the board as a removable-drive-style disk on the host (one LUN, with
-  read-only and removable flags). While it's applied the *host* owns that
-  storage outright — never mount or write the backing path from the app at
-  the same time; expose or mount, not both. It needs
-  `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
+  startup (`Close()` to tear it down). Without `--usb-gadget` at build
+  time, `Apply()` fails with an actionable error instead of silently
+  doing nothing.
+- Once applied, the device shows up at `/dev/ttyGS0` on the board and
+  as a USB-serial device on the host (`/dev/ttyACM0` on Linux,
+  `/dev/cu.usbmodem*` on macOS).
+- See `examples/usbserial` for a complete worked example: it applies
+  the gadget and echoes back every line it reads over `/dev/ttyGS0`.
+- A `gadget.MassStorage` function exposes a block device or disk-image
+  file on the board as a removable-drive-style disk on the host (one
+  LUN, with read-only and removable flags). While it's applied the
+  *host* owns that storage outright — never mount or write the backing
+  path from the app at the same time; expose or mount, not both. It
+  needs `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
   COMPATIBILITY.md's USB gadget footnote for per-board status.
-- See `examples/usbwebsite` for a worked example: it serves a storage volume
-  as a static website, but presents that same volume as a USB drive when
-  plugged into a computer so the site can be edited. The volume is the
-  onboard eMMC where one is fitted (`emmc.FormatAndMount` returns the device
-  backing the mount, and `emmc.Unmount` releases it so `gadget.MassStorage`
-  can take it exclusively) and otherwise the SD card's `GOSD-DATA` partition
-  (build with `--data-size`), which is how the eMMC-less Pi Zeros run it.
-  The `disk` package pairs with `gadget.MassStorage` the same way, for an
-  app that wants to share an attached SSD or USB drive instead.
-
-## Serial console baud rate (`--console-baud`)
-
-Every board's kernel talks to its debug UART at a fixed default rate baked
-into the boot config `gosd build` renders: 1500000 (1.5Mbaud) on the three
-Rockchip boards (Radxa Zero 3E, NanoPi Zero2, Radxa ROCK 4SE), 115200 on the
-two Pi boards. Some common USB-serial adapters — notably CP210x and PL2303
-families — can't reliably read 1.5Mbaud; garbled or missing console output
-on an otherwise-working board is a strong signal you've hit this rather than
-a real boot failure. See COMPATIBILITY.md's Radxa Zero 3E serial footnote for
-the specific case this was found on.
-
-`gosd build --console-baud <rate>` bakes a different rate into the same
-config, for every board that renders one:
-
-```sh
-gosd build . --board radxa-zero-3e --console-baud 115200
-```
-
-- **Only the rate changes.** The UART device itself (`ttyS2`, `serial0`,
-  etc.) is fixed per board and unaffected by this flag.
-- **Any positive integer is accepted.** A rate outside the common set (9600,
-  19200, 38400, 57600, 115200, 230400, 460800, 921600, 1500000, 3000000)
-  prints a warning rather than failing outright — a mismatched or unusual
-  rate is far more often a typo than an intentional choice, but the flag's
-  entire purpose is accommodating hardware GoSD can't enumerate in advance,
-  so it doesn't hard-block anything positive.
-- **`qemu-virt` can't honor it.** That profile's console is a fixed
-  `qemu-system-aarch64 -append "console=ttyAMA0"` argument with no baud rate
-  at all (a virtual console has no real adapter to mismatch rates with) — see
-  `internal/qemurun`. `--console-baud` together with `--board=qemu-virt`
-  fails fast with an actionable error rather than silently doing nothing.
-- **U-Boot's own output is unaffected.** On the Rockchip boards, U-Boot
-  itself prints at its compiled-in 1500000 regardless of `--console-baud` —
-  the flag only changes what the *kernel and onward* (gosd-init, your app's
-  stdout/stderr) render into extlinux.conf/cmdline.txt. If you need U-Boot's
-  own boot log readable too, use an adapter that supports 1.5Mbaud (or
-  compile a custom U-Boot with a different `CONFIG_BAUDRATE`, out of scope
-  for this flag).
-- **No reflash needed to try a different rate on an already-flashed card.**
-  `extlinux/extlinux.conf` (Rockchip boards) or `cmdline.txt` (Pi boards) on
-  the `GOSD-BOOT` partition is a plain text file — hand-editing the
-  `console=` argument there has the same effect as rebuilding with
-  `--console-baud`.
+- See `examples/usbwebsite` for a worked example: it serves a storage
+  volume as a static website, but presents that same volume as a USB
+  drive when plugged into a computer so the site can be edited. The
+  volume is the onboard eMMC where one is fitted
+  (`emmc.FormatAndMount` returns the device backing the mount, and
+  `emmc.Unmount` releases it so `gadget.MassStorage` can take it
+  exclusively) and otherwise the SD card's `GOSD-DATA` partition
+  (build with `--data-size`), which is how the eMMC-less Pi Zeros run
+  it. The `disk` package pairs with `gadget.MassStorage` the same way,
+  for an app that wants to share an attached SSD or USB drive instead.
 
 ## Testing your app under qemu (no hardware needed)
 
-You don't need a Pi or a Radxa on your desk to see your app run through the
-whole boot sequence above — `--board=qemu-virt` builds the same kind of
-image for `qemu-system-aarch64 -M virt` instead of real hardware. The
-fastest way to use it is `gosd run`, which builds and boots in one step:
+You don't need a Pi or a Radxa on your desk to see your app run through
+the whole boot sequence above — `--board=qemu-virt` builds the same
+kind of image for `qemu-system-aarch64 -M virt` instead of real
+hardware. The fastest way to use it is `gosd run`, which builds and
+boots in one step:
 
 ```
 go run ./cmd/gosd run ./examples/hello
@@ -906,24 +961,25 @@ go run ./cmd/gosd run ./examples/hello
 This is an internal/CI board (see CLAUDE.md's locked decisions) — it's
 never built by a plain `gosd build` with no `--board`, and it's not a
 target you'd ship to end users — but it runs the real `gosd-init`, the
-real boot sequence, and your real app, under an emulator instead of an SD
-card. `qemu-system-aarch64` needs installing first:
+real boot sequence, and your real app, under an emulator instead of an
+SD card. `qemu-system-aarch64` needs installing first:
 
 - macOS: `brew install qemu`
 - Debian/Ubuntu: `apt-get install qemu-system-arm`
 
-`gosd run` cross-compiles your app and gosd-init, assembles a qemu-virt
-image into a temp directory (reusing the exact same build pipeline, and
-artifact cache, as `gosd build`), then boots it with serial console on
-stdio, so `gosd-init`'s boot log and your app's stdout/stderr print live in
-your terminal exactly as they would over a real serial cable. Your app's
-port 80 is reachable at `http://localhost:8080` once gosd-init starts it
-and networking comes up (virtio-net, DHCP from qemu's own user-mode
-network). Ctrl-C stops qemu and deletes the temp image; pass `--keep` to
-keep it instead. Useful flags:
+`gosd run` cross-compiles your app and gosd-init, assembles a
+qemu-virt image into a temp directory (reusing the exact same build
+pipeline, and artifact cache, as `gosd build`), then boots it with
+serial console on stdio, so `gosd-init`'s boot log and your app's
+stdout/stderr print live in your terminal exactly as they would over a
+real serial cable. Your app's port 80 is reachable at
+`http://localhost:8080` once gosd-init starts it and networking comes
+up (virtio-net, DHCP from qemu's own user-mode network). Ctrl-C stops
+qemu and deletes the temp image; pass `--keep` to keep it instead.
+Useful flags:
 
-- `--port` changes the host port your app's HTTP port 80 is forwarded to
-  (default 8080).
+- `--port` changes the host port your app's HTTP port 80 is forwarded
+  to (default 8080).
 - `--memory` changes the guest's RAM in MiB (default 512).
 - `--qemu-arg` passes an extra argument straight through to
   `qemu-system-aarch64` (repeatable) — an escape hatch for anything the
@@ -934,41 +990,41 @@ keep it instead. Useful flags:
 
 If you already have a `--board=qemu-virt` image built (e.g. from CI, or
 because you want to boot the exact same image repeatedly without
-rebuilding), `scripts/qemu-run.sh <path-to-image.img>` boots it directly,
-using the same underlying qemu invocation (`internal/qemurun`) as
-`gosd run`:
+rebuilding), `scripts/qemu-run.sh <path-to-image.img>` boots it
+directly, using the same underlying qemu invocation
+(`internal/qemurun`) as `gosd run`:
 
 ```
 go run ./cmd/gosd build ./examples/hello --board=qemu-virt -o dist/
 scripts/qemu-run.sh dist/hello-qemu-virt.img
 ```
 
-Quit either one with Ctrl-A X (inside the qemu console), or Ctrl-C to stop
-qemu from the host side.
+Quit either one with Ctrl-A X (inside the qemu console), or Ctrl-C to
+stop qemu from the host side.
 
 ## When to reach for gokrazy instead
 
-GoSD is heavily inspired by [gokrazy](https://gokrazy.org/) — if you haven't
-used it, it's worth knowing about regardless of which one you pick. The
-honest comparison:
+GoSD is heavily inspired by [gokrazy](https://gokrazy.org/) — if you
+haven't used it, it's worth knowing about regardless of which one you
+pick. The honest comparison:
 
-- **Multiple services on one device, or a fleet you update over the air:**
-  gokrazy is built around running several Go programs together on one
-  device and updating them remotely; that's its core strength. GoSD
-  currently runs exactly **one** app per image, and update tooling isn't
-  built yet — it's aimed at a single-purpose appliance you reflash, not a
-  managed fleet.
+- **Multiple services on one device, or a fleet you update over the
+  air:** gokrazy is built around running several Go programs together
+  on one device and updating them remotely; that's its core strength.
+  GoSD currently runs exactly **one** app per image, and update tooling
+  isn't built yet — it's aimed at a single-purpose appliance you
+  reflash, not a managed fleet.
 - **A wider range of boards, or x86:** gokrazy supports a broad set of
   targets. GoSD is deliberately narrow: a small set of Raspberry Pi,
   Radxa, and FriendlyElec boards (see `COMPATIBILITY.md`), at least for
   now.
 - **A one-file, hand-a-friend-an-SD-card appliance, optimized for the
-  smallest/cheapest boards:** this is GoSD's focus — minimal image, fast
-  boot, no persistence to worry about, and (once the artifact pipeline and
-  flashing guide land) a flow a non-technical person can follow with the
-  Raspberry Pi Imager.
+  smallest/cheapest boards:** this is GoSD's focus — minimal image,
+  fast boot, no persistence to worry about, and (once the artifact
+  pipeline and flashing guide land) a flow a non-technical person can
+  follow with the Raspberry Pi Imager.
 
-If you're not sure, gokrazy is the more mature, more general-purpose choice
-today. GoSD is worth trying when you want the smallest possible
+If you're not sure, gokrazy is the more mature, more general-purpose
+choice today. GoSD is worth trying when you want the smallest possible
 single-purpose device image and don't need multiple services or fleet
 management.

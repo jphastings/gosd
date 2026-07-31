@@ -1,42 +1,21 @@
 # Externals: bundling a cross-compiled companion binary
 
-Not every companion process your app needs is a pure-Go library you can
-`go get` and cross-compile alongside it. A hardware-accelerated video
-player, a vendor CLI, or any other prebuilt executable your app supervises
-over `os/exec` still needs to exist as a fully static `linux/arm64` (or
-`linux/arm`, GOARM 6) binary before `gosd build` can embed it — and that
-binary usually has its own, non-Go build system (autotools, CMake, a
-vendor Makefile) that needs its own cross-toolchain.
+Not every companion process your app needs is pure Go you can cross-compile
+alongside it. A hardware-accelerated video player, a vendor CLI, or any other
+prebuilt executable your app supervises over `os/exec` must still exist as a
+fully static `linux/arm64` (or `linux/arm`, GOARM 6) binary before `gosd
+build` can embed it — and it usually comes with its own non-Go build system
+(autotools, CMake, a vendor Makefile) that needs its own cross-toolchain.
 
-`gosd build-external` is that build step: it reads a developer-authored
-`gosd-external.toml` recipe naming a build script, runs that script inside a
+`gosd build-external` is that build step. It reads a developer-authored
+`gosd-external.toml` recipe naming a build script, runs the script inside a
 Docker/Podman container with a cross-compiler on `$PATH`, verifies the
 result is a fully static ELF binary matching the target arch, and writes it
-to `./gosd-externals/<arch>/<name>` — ready for `gosd build
---with-external` to bundle into an image. (The driving use case is a
-separate, unreferenced project — a video-playback appliance bundling a
-static `mpv`, supervised by the app over mpv's JSON IPC — not shipped as an
-in-repo example; see the "GPL/licensing carve-out" section below for why.)
-
-## Two commands, two concerns
-
-- **`gosd build-external`** cross-compiles. You own the build script; this
-  command owns running it reproducibly in a container and verifying its
-  output. See ["`gosd-external.toml` reference"](#gosd-externaltoml-reference)
-  below.
-- **`gosd build --with-external <path>[:<dest>]`** bundles. It takes any
-  prebuilt static binary — one `gosd build-external` just produced, or one
-  from anywhere else — and embeds it into the image's initramfs. See
-  [`docs/runtime.md`'s "Bundling a companion binary"
-  section](runtime.md#bundling-a-companion-binary---with-external) for its
-  flag, dest defaulting/collision rules, and the "your app owns it at
-  runtime" supervision contract (gosd-init stays a single-child supervisor;
-  it never launches or restarts an external itself).
-
-These are deliberately independent: `--with-external` never requires
-Docker, so a binary built once (locally, in CI, by someone else entirely)
-can be bundled repeatedly with zero container runtime on the machine
-running `gosd build`.
+to `./gosd-externals/<arch>/<name>` — ready for `gosd build --with-external`
+to bundle into an image. (The driving use case is a separate, unreferenced
+project: a video-playback appliance bundling a static `mpv`, supervised over
+mpv's JSON IPC. It isn't shipped as an in-repo example — see "GPL/licensing
+carve-out" below for why.)
 
 ## Quickstart
 
@@ -78,16 +57,35 @@ gosd build-external
 gosd build . --board pi-zero-2w --with-external ./gosd-externals/arm64/mpv -o hello.img
 ```
 
-`gosd build-external` requires a local Docker or Podman daemon running
-(Docker Desktop, [colima](https://colima.run/) in its default
-docker-runtime mode, or podman) — it drives it directly
-(`internal/container`), the same way `gosd build-kernel` does, auto-detecting
-whichever one it finds unless `--builder` or the recipe's own
-`[external.<name>].builder` says otherwise. This is an explicit, opt-in
-exception to GoSD's usual "no build step needs Docker" rule (see
-`CLAUDE.md`'s locked decisions) — `gosd build` itself still never requires a
-container runtime; only `gosd build-kernel` and `gosd build-external` do,
-and both say so in their own `--help` text and errors.
+`gosd build-external` requires a local Docker or Podman daemon (Docker
+Desktop, [colima](https://colima.run/) in its default docker-runtime mode,
+or podman) — it drives the daemon directly (`internal/container`), the same
+way `gosd build-kernel` does, auto-detecting whichever one it finds unless
+`--builder` or the recipe's own `[external.<name>].builder` says otherwise.
+This is an explicit, opt-in exception to GoSD's usual "no build step needs
+Docker" rule (see `CLAUDE.md`'s locked decisions): `gosd build` itself never
+requires a container runtime; only `gosd build-kernel` and
+`gosd build-external` do, and both say so in their own `--help` text and
+errors.
+
+## Two commands, two concerns
+
+- **`gosd build-external`** cross-compiles. You own the build script; this
+  command runs it reproducibly in a container and verifies its output. See
+  ["`gosd-external.toml` reference"](#gosd-externaltoml-reference) below.
+- **`gosd build --with-external <path>[:<dest>]`** bundles. It takes any
+  prebuilt static binary — one `gosd build-external` just produced, or one
+  from anywhere else — and embeds it into the image's initramfs. See
+  [`docs/runtime.md`'s "Bundling a companion binary"
+  section](runtime.md#bundling-a-companion-binary---with-external) for its
+  flag, dest defaulting/collision rules, and the "your app owns it at
+  runtime" supervision contract: gosd-init stays a single-child supervisor
+  and never launches or restarts an external itself.
+
+The two are deliberately independent: `--with-external` never requires
+Docker, so a binary built once — locally, in CI, by someone else entirely —
+can be bundled repeatedly with zero container runtime on the machine running
+`gosd build`.
 
 ## The container contract
 
@@ -107,11 +105,10 @@ inside the container log, if it didn't.
 ## The fully-static-binary contract
 
 GoSD's initramfs ships **no `ld.so` and no library layout** — there is
-nowhere for a dynamic loader to resolve `.so` dependencies against, on
-purpose (it keeps the image small and the boot path simple). Every
-external must therefore be a **fully static** binary: no `PT_INTERP`
-program header, and its ELF class/machine must match the arch it was built
-for.
+nowhere for a dynamic loader to resolve `.so` dependencies, by design: it
+keeps the image small and the boot path simple. Every external must
+therefore be a **fully static** binary: no `PT_INTERP` program header, and
+its ELF class/machine must match the arch it was built for.
 
 `gosd build-external` enforces this itself, right after your script exits
 and before the result ever reaches the output directory or the cache: it
@@ -192,13 +189,13 @@ provenance record missing any of those defeats the point of recording it.
 ```
 
 Output is keyed by **arch, not board** — `arm64` covers pi-zero-2w,
-radxa-zero-3e, and nanopi-zero2 alike; `arm-6` covers pi-zero-w — since an
-external's toolchain and static-linking result depend only on the target
-arch, not which board eventually boots it. The `source.json` filename is
-prefixed with the external's own name (`<name>.source.json`, not a bare
-`source.json`) because a single `<arch>/` directory can hold more than one
-external's output side by side; a bare `source.json` would silently
-overwrite between them.
+radxa-zero-3e, nanopi-zero2, rock-4se, and pi-3b alike; `arm-6` covers
+pi-zero-w — since an external's toolchain and static-linking result depend
+only on the target arch, not which board eventually boots it. The
+`source.json` filename is prefixed with the external's own name
+(`<name>.source.json`, not a bare `source.json`) because a single `<arch>/`
+directory can hold more than one external's output side by side; a bare
+`source.json` would silently overwrite between them.
 
 Builds are content-addressed and cached (script bytes + container image +
 arch + output name), mirroring `gosd build-kernel`: an unchanged recipe

@@ -1,10 +1,10 @@
 # Provisioning formats: what Raspberry Pi Imager writes
 
-Source-analysis half of bean `gosd-qvoq`. Every claim below is cited against a
-specific rpi-imager tag/commit so it can be re-checked as upstream changes.
-The empirical fixture-capture half (flashing real media and diffing the
-result) is **not** covered here — see the unchecked todos on `gosd-qvoq` for
-exactly what a human needs to do at the bench.
+Every claim below is cited against a specific `rpi-imager` tag/commit so it
+can be re-checked as upstream changes. The last section describes what
+`gosd-init` actually reads out of all this (`internal/provision`); the rest
+explains what Raspberry Pi Imager itself writes to the boot partition, and
+why, so that section's choices make sense.
 
 Primary source: [github.com/raspberrypi/rpi-imager](https://github.com/raspberrypi/rpi-imager).
 Current release analyzed: **v2.0.10** (commit
@@ -14,20 +14,18 @@ pre-`init_format`) and **v1.7.5** (commit `b49408781a3c347bd6f6c057c68bb34d6c06a
 transitional). All permalinks below point at these exact commits, not branch
 tips.
 
-## 0. The finding that changes the plan: "Use custom" gets NO customization UI
+## "Use custom" disables OS customization entirely
 
-Before the format details: **in the current Imager GUI, selecting "Use
-custom" and browsing to a local `.img` file disables OS customization
-entirely.** This is the single most important finding for GoSD, because it
-means the naive plan ("flash a GoSD image via Imager's gear icon with
-WiFi/hostname filled in") does not work as a GUI flow, full stop — the
-customization wizard step never appears.
+In the Imager GUI, selecting "Use custom" and browsing to a local `.img`
+file disables OS customization entirely: the customization wizard step
+never appears. There is no GUI path that flashes a local image with
+WiFi/hostname/etc. filled in via the gear icon.
 
-Why: customization availability is gated by `ImageWriter::imageSupportsCustomization()`,
-which is just `!_initFormat.isEmpty()`
+Why: customization availability is gated by
+`ImageWriter::imageSupportsCustomization()`, which is just `!_initFormat.isEmpty()`
 ([src/imagewriter.cpp#L4082-L4085](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L4082-L4085)).
-`_initFormat` is populated from the `init_format` field of the *catalog* entry
-(`os_list.json`) the user picked
+`_initFormat` is populated from the `init_format` field of the *catalog*
+entry (`os_list.json`) the user picked
 ([src/oslistmodel.cpp#L342](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/oslistmodel.cpp#L342),
 consumed in
 [src/wizard/OSSelectionStep.qml#L717-L730](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/OSSelectionStep.qml#L717-L730)).
@@ -41,9 +39,8 @@ all, then explicitly clears every customization flag once it observes
 The wizard then skips the customization step outright
 ([src/wizard/WizardContainer.qml#L840](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/wizard/WizardContainer.qml#L840)).
 
-There are exactly two officially-supported ways to get Imager to write
-provisioning data onto a GoSD image, and neither is "select local file, click
-gear icon":
+There are exactly two ways to get Imager to write provisioning data onto a
+GoSD image:
 
 1. **`rpi-imager-cli`**, which always sets `_initFormat` itself
    (`"systemd"` unless `--cloudinit-userdata`/`--cloudinit-networkconfig` is
@@ -53,32 +50,29 @@ gear icon":
    the command line
    ([src/cli.cpp#L216-L289](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/cli.cpp#L216-L289)).
    This only proves file *placement and cmdline.txt mangling* — the content
-   is whatever the human hand-crafts, not what the GUI's field-to-file
-   generator produces.
+   is whatever's hand-crafted, not what the GUI's field-to-file generator
+   produces.
 2. **A custom repository** (`ImageWriter::setCustomRepo`,
    [src/imagewriter.h#L107](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.h#L107)):
    host a small `os_list.json` (schema documented at
    [doc/json-schema/os-list-schema.json](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/json-schema/os-list-schema.json),
    worked example in
    [doc/schema-notes.md](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/doc/schema-notes.md))
-   listing the GoSD `.img` with `"init_format": "systemd"` (or `"cloudinit"`),
-   point Imager's Settings → "Custom repository" at it, and the GoSD image
-   then appears as a normal catalog entry with the *full* customization
-   wizard (WiFi/hostname/user/locale) exactly as an end user would
-   experience it. **This is the scenario that matters for GoSD** — it's the
-   only one that exercises the real field→file generator (PBKDF2 hashing,
-   hostname insertion, etc.), and it's the closest fixture-capture proxy for
-   what an actual GoSD end user will do once we publish a repo URL for our
-   own images.
+   listing the image with `"init_format": "systemd"` (or `"cloudinit"`),
+   point Imager's Settings → "Custom repository" at it, and the image then
+   appears as a normal catalog entry with the *full* customization wizard
+   (WiFi/hostname/user/locale) exactly as an end user experiences it. This
+   is the path GoSD's own catalog entry uses (`gosd build`'s `os_list.json`
+   output, per the locked end-user-flashing decision — see root
+   `CLAUDE.md`), and the path the fixtures cited throughout this document
+   were captured through.
 
-This finding should also go back to bean `gosd-b22t` (the parent epic) since
-it affects the "Imager will just work" assumption in its description — GoSD
-will need to either publish a custom-repo JSON, or document that users must
-use `rpi-imager-cli` with hand-made customization files, or convince
-upstream to relax the local-file restriction. That product decision is out
-of scope for this research bean.
+This is why the flagship flashing path is a custom-repository catalog
+entry with `gosd.toml` hand-editing as the always-present fallback, not
+"flash the `.img` and click the gear icon" — that GUI step doesn't exist
+for a locally-selected file.
 
-## 1. Mechanisms and when each applies
+## Mechanisms, and when each applies
 
 Imager has exactly three provisioning mechanisms today, selected by a single
 `init_format` string carried on the OS-list entry (`"systemd"`,
@@ -95,7 +89,7 @@ be conflated in folk knowledge with Alpine's or other distros' unrelated
 | `"systemd"` | `firstrun.sh`, `cmdline.txt` (appended) | `CustomisationGenerator::generateSystemdScript` | The legacy/universal mechanism. Works on any OS that mounts the FAT partition at `/boot` and boots with systemd. |
 | `"cloudinit"` | `user-data`, `network-config`, `meta-data`, `cmdline.txt` (appended) | `generateCloudInitUserData` + `generateCloudInitNetworkConfig` | Generic cloud-init (NoCloud datasource). Used for non-RPi distros that already ship cloud-init (e.g. Ubuntu). |
 | `"cloudinit-rpi"` | same as `"cloudinit"`, plus an `rpi:` block in `user-data` | same, with `hasCcRpi=true` | Adds the Raspberry-Pi-specific `cc_raspberry_pi` cloud-init module (I2C/SPI/1-Wire/serial/USB-gadget). Gated additionally by the OS entry's `capabilities` list, checked via `imageSupportsCcRpi()` ([src/imagewriter.cpp#L4087-L4090](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L4087-L4090)). |
-| `""` / `"none"` | nothing | — | Customization step is skipped entirely. This is the effective value for any locally-selected "Use custom" image (see §0). |
+| `""` / `"none"` | nothing | — | Customization step is skipped entirely. This is the effective value for any locally-selected "Use custom" image (see above). |
 
 The dispatch is a single branch in
 `ImageWriter::applyCustomisationFromSettings`
@@ -111,6 +105,28 @@ for eMMC-over-USB (fastboot/rpiboot) targets like CM4/CM5 in USB-boot mode —
 not relevant to GoSD, which produces plain `.img` files written the first
 way.
 
+Every field the `"systemd"` generator emits into `firstrun.sh` is wrapped
+unconditionally in both an `imager_custom`-present branch and a manual-
+fallback branch (`if [ -f /usr/lib/raspberrypi-sys-mods/imager_custom ];
+then ... else ... fi` — see
+[src/customization_generator.cpp#L196-L202](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L196-L202)
+for one example), regardless of what target OS Imager thinks it's writing
+for — both branches are always present in the script.
+
+`cmdline.txt` is appended (never fully rewritten unless it didn't exist —
+see the Radxa case, below) with, depending on format and content:
+- `systemd` only: ` systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target`
+- either cloud-init format, only if cloud content is non-empty: ` ds=nocloud;i=<instance-id>`
+- either format, only if a WiFi country was set: ` cfg80211.ieee80211_regdom=<CC>` (this is how country gets applied even when there's no SSID to attach it to in the YAML)
+
+Confirmed on a real capture (Raspberry Pi Imager v2.0.10, custom-repository
+catalog flow, macOS, 2026-07-05 — see
+`internal/provision/testdata/imager-2.0.10/`): appending, not replacing, is
+exactly what happens. A GoSD-built image's own
+`console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w
+cfg80211.ieee80211_regdom=GB` cmdline survives unchanged, with Imager's
+`ds=nocloud;i=rpi-imager-<timestamp>` token appended after it.
+
 ### Older behavior (pre-cloud-init, v1.6.2 and earlier)
 
 Before cloud-init support existed, **`firstrun.sh` + `cmdline.txt` editing
@@ -122,10 +138,10 @@ symbol exists anywhere in the v1.6.2 tree). The gear/OptionsPopup was always
 visible and always generated `firstrun.sh`, e.g.
 [OptionsPopup.qml#L520-L580](https://github.com/raspberrypi/rpi-imager/blob/4a039b78853a87b665b7ab89d819f36af591a1b1/OptionsPopup.qml#L520-L580).
 The `init_format`-based gating (and therefore the "Use custom disables
-customization" restriction in §0) was already present by v1.7.5, so it
-predates the current 2.0 rewrite by some margin — this is not a recent
-regression, it has applied to every Imager release GoSD is likely to
-encounter in the wild.
+customization" restriction described above) was already present by
+v1.7.5, so it predates the current 2.0 rewrite by some margin — this is not
+a recent regression, it has applied to every Imager release GoSD is likely
+to encounter in the wild.
 
 Cloud-init support for Imager itself was added well before Raspberry Pi OS
 adopted cloud-init: rpi-imager could target cloud-init-based distros (like
@@ -136,10 +152,10 @@ the `firstrun.sh`/systemd mechanism, and require `init_format: "systemd"`.
 (Source: [raspberrypi.com/news/cloud-init-on-raspberry-pi-os](https://www.raspberrypi.com/news/cloud-init-on-raspberry-pi-os/).)
 Practically: **almost every Raspberry Pi OS image currently in the wild
 (including everything Radxa-adjacent boards would plausibly borrow
-conventions from) is on the `firstrun.sh` mechanism**, which is why it's the
-priority target for gosd-init.
+conventions from) is on the `firstrun.sh` mechanism** — GoSD's own catalog
+entry sidesteps this by declaring `init_format: "cloudinit"` itself.
 
-## 2. WiFi PSK: PBKDF2-hashed, never plaintext, in every format
+## WiFi PSK: PBKDF2-hashed, never plaintext, in every format
 
 The PSK is **never written as a plaintext passphrase** to any file Imager
 writes. It's derived client-side, in the UI, the moment the user finishes
@@ -161,10 +177,9 @@ This is the standard WPA2-PSK passphrase→PMK derivation (IEEE 802.11i-2004
 Annex H.4) — identical, byte for byte, to `wpa_passphrase` and to what
 gosd-init's own `wifiup.DerivePSK` already implements
 (`cmd/gosd-init/internal/wifiup/psk.go`, same algorithm, same parameters,
-same comment citing the same IEEE annex). **No parser or hashing work is
-needed on the GoSD side beyond what `gosd-fbwa` already built** — the parser
-in `gosd-pctc` just needs to extract the 64-hex string and feed it to
-`ParsePSKHex`.
+same comment citing the same IEEE annex). No hashing work was needed on the
+GoSD side beyond what `wifiup.DerivePSK`/`wifiup.ParsePSKHex` already do —
+`internal/provision`'s parser just extracts the 64-hex string (see below).
 
 The only value that ever reaches an artifact is the crypted PSK
 (`wifiPasswordCrypt`); the generator prefers it and only falls back to
@@ -174,10 +189,10 @@ for firstrun.sh,
 [src/customization_generator.cpp#L724-L732](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L724-L732)
 for network-config) — either way, only the hash is ever serialized. A
 literal 64-hex-character input is passed through unhashed (treated as an
-already-derived PSK, not double-hashed) — same "is it 64 hex chars"
-heuristic gosd-init's `wifiup.isHexPSK` already uses. Open networks (no
-password) get `key_mgmt=NONE` (firstrun.sh) or an `auth: {key-management:
-none}` block (network-config) — no PSK field at all.
+already-derived PSK, not double-hashed) — the same "is it 64 hex chars"
+heuristic `wifiup.isHexPSK` uses. Open networks (no password) get
+`key_mgmt=NONE` (firstrun.sh) or an `auth: {key-management: none}` block
+(network-config) — no PSK field at all.
 
 This derivation is unchanged as far back as v1.6.2
 ([imagewriter.cpp#L970-L984](https://github.com/raspberrypi/rpi-imager/blob/4a039b78853a87b665b7ab89d819f36af591a1b1/imagewriter.cpp#L970-L984)) —
@@ -185,7 +200,12 @@ same hash, same iteration count, same key length, just built with OpenSSL's
 `PKCS5_PBKDF2_HMAC_SHA1` on non-Darwin platforms instead of Qt's
 `QPasswordDigestor` (an implementation detail with no on-disk difference).
 
-## 3. Field-by-field extraction table
+Confirmed on a real capture: the WiFi PSK is delivered as a 64-character
+hex PBKDF2 digest in `network-config`'s `password` field in every captured
+scenario that configured WiFi, never plaintext, matching the derivation
+above exactly.
+
+## Field-by-field extraction table
 
 Settings map keys (as consumed by `CustomisationGenerator`,
 [src/customization_generator.h](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.h)
@@ -217,21 +237,15 @@ cloud-init's NoCloud datasource treats the seed as fresh each time it's
 regenerated —
 [src/downloadthread.cpp#L2378-L2384](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/downloadthread.cpp#L2378-L2384)).
 
-`cmdline.txt` is appended (never fully rewritten unless it didn't exist — see
-§4) with, depending on format and content:
-- `systemd` only: ` systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target`
-- either cloud-init format, only if cloud content is non-empty: ` ds=nocloud;i=<instance-id>`
-- either format, only if a WiFi country was set: ` cfg80211.ieee80211_regdom=<CC>` (this is how country gets applied even when there's no SSID to attach it to in the YAML)
-
 User account password hashing (`ImageWriter::crypt`,
 [src/imagewriter.cpp#L3960-L3993](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/imagewriter.cpp#L3960-L3993)):
 `yescrypt` for any OS with `release_date >= 2023-01-01`, `sha256crypt`
 (`$5$...`) otherwise. This is a **login password hash**, unrelated to the
 WiFi PSK derivation — gosd-init has no login shell to apply it to (per the
-"no interactive surface" locked decision), so this field is likely
-irrelevant to `gosd-pctc` beyond "don't crash parsing it."
+"no interactive surface" locked decision), so this field is not consumed by
+`internal/provision` beyond "don't error out parsing it."
 
-## 4. What happens with no `cmdline.txt` (the Radxa case)
+## No `cmdline.txt` on the boot partition (the Radxa case)
 
 This is the direct, source-confirmed answer to "does firstrun injection
 break, no-op, or fall back?" for boards like Radxa Zero 3E that don't ship a
@@ -279,8 +293,9 @@ pointing at the FAT partition in our images' rootfs (there's no rootfs
 consuming it at all in gosd-init's minimal design), and no bootloader path
 that turns `cmdline.txt` content into `/proc/cmdline` in the first place.
 **`firstrun.sh` therefore sits on the boot partition completely inert** —
-this is exactly why `gosd-pctc`'s plan to regex-parse `firstrun.sh` directly
-(never execute it) is correct: nothing else is ever going to run it for us.
+which is exactly why `internal/provision` only detects its presence and
+never parses or executes it: nothing else is ever going to run it for us
+either.
 
 The same "missing file = silent no-op, new content gets appended/created"
 behavior holds for `config.txt` (only touched `if (!_config.isEmpty())`) and
@@ -299,12 +314,13 @@ GoSD boards aren't flashed through this path, so it doesn't apply to us, but
 it's worth knowing the two code paths disagree, in case a future board does
 use fastboot.
 
-## 5. What consumes each format on a normal Raspberry Pi OS boot
+## What consumes each format on a real Raspberry Pi OS boot
 
-For context — none of this runs on GoSD images (gosd-init parses the files
-directly and never executes them, per `gosd-pctc`), but it's what
-`firstrun.sh`/cloud-init are *designed* to be consumed by, and it explains
-why the generated scripts look the way they do:
+None of this runs on a GoSD image — gosd-init parses cloud-init's files
+directly and never executes `firstrun.sh` (see below). This section is
+context: what `firstrun.sh`/cloud-init are *designed* to be consumed by on
+a stock Raspberry Pi OS boot, which is why the generated content looks the
+way it does.
 
 - **`systemd.run=` kernel parameter** → `systemd-run-generator(8)`, a
   built-in systemd generator (not RPi-specific) that turns the parameter
@@ -320,13 +336,12 @@ why the generated scripts look the way they do:
   ([RPi-Distro/raspberrypi-sys-mods](https://github.com/RPi-Distro/raspberrypi-sys-mods)).
   `firstrun.sh` calls this if present, falling back to manual file edits
   otherwise (which is what runs on non-RPi-OS targets, and — since it never
-  runs at all on GoSD — is irrelevant to us beyond explaining the two
-  code branches per field in §3). On current (Bookworm+) RPi OS,
-  `set_wlan` writes a NetworkManager keyfile
+  runs at all on GoSD — is irrelevant to us beyond explaining why the field
+  table above has two shell branches per field). On current (Bookworm+) RPi
+  OS, `set_wlan` writes a NetworkManager keyfile
   (`/etc/NetworkManager/system-connections/preconfigured.nmconnection`),
   **not** `wpa_supplicant.conf` — that fallback format only appears on
-  older/non-NetworkManager targets, which is a second reason a regex parser
-  needs to handle both shapes of the WiFi block in `firstrun.sh`.
+  older/non-NetworkManager targets.
 - **`/usr/lib/userconf-pi/userconf`** — companion package
   ([RPi-Distro/userconf-pi](https://github.com/RPi-Distro/userconf-pi))
   handling first-user rename/password.
@@ -338,120 +353,109 @@ why the generated scripts look the way they do:
   Raspberry-Pi-specific `cc_raspberry_pi` cloud-init module, only present on
   OS builds that declare the corresponding capability.
 
-## 6. Recommended parser precedence for `gosd-init`
+## What gosd-init parses, and its precedence
 
-This matches the precedence already locked in bean `gosd-pctc`, and this
-research is the rationale for it:
+`gosd-init` reads provisioning through `internal/provision`
+(`provision.Read`), called once, right after the `GOSD-BOOT` partition
+mounts (`cmd/gosd-init/internal/boot/sequence.go`). It consumes exactly two
+things, both from cloud-init's YAML:
+
+- **Hostname**, from `user-data`'s top-level `hostname` field
+  (`internal/provision/userdata.go`). Every other top-level field —
+  `packages`, `apt`, `user`, `ssh_pwauth`, `runcmd`, `keyboard`,
+  `timezone`, and anything else the wizard or a hand-written file adds — is
+  ignored; a single log line summarizes what was ignored, so nothing is
+  dropped without a trace.
+- **WiFi networks**, from `network-config`'s
+  `network.wifis.<interface>.access-points` map
+  (`internal/provision/networkconfig.go`), in file order. gosd-init only
+  ever joins one network at a time, so only the first entry is used; the
+  rest are kept in the result only so a caller can log what else was
+  found. SSID, password, and the `hidden` flag are extracted;
+  `regulatory-domain` and every other `network-config` section are not.
+
+`meta-data` is deliberately never read: every captured fixture shows it
+containing only cloud-init's own `instance-id` bookkeeping field, nothing
+gosd-init consumes.
+
+`firstrun.sh` is detected (an `os.Stat`, nothing more) but never opened,
+parsed, or executed — the locked end-user-flashing decision (root
+`CLAUDE.md`) puts firstrun.sh parsing out of scope: gosd-init logs one
+line pointing the user at `gosd.toml` instead. Executing it was never on
+the table anyway, since gosd-init ships no shell. `custom.toml` isn't checked for at all, since it isn't a real
+Imager output format (see above) — nothing produces it to parse.
+
+### Precedence
 
 ```
-gosd.toml  >  custom.toml  >  cloud-init files  >  firstrun.sh  >  baked config.json
+gosd.toml  >  cloud-init (user-data / network-config)  >  baked config.json
 ```
 
-Rationale, source-by-source:
+This is implemented, not merely recommended. `boot.Run` reads cloud-init
+first and lets a subsequent `gosd.toml` value overwrite the hostname it set
+(`cmd/gosd-init/internal/boot/sequence.go`);
+`wifiup.ConfigCredentials.Credentials` resolves the same order for WiFi —
+`gosd.toml`'s network wins if set, else the first cloud-init network, else
+the network baked into `config.json` at build time
+(`cmd/gosd-init/internal/wifiup/credentials.go`).
+
+Rationale:
 
 1. **`gosd.toml`** first because it's GoSD's own hand-editable format
    (locked project-wide decision, see root `CLAUDE.md`) — an explicit,
    purpose-built file always wins over an inferred one.
-2. **`custom.toml`** is listed as a fallback in the precedence chain despite
-   this research finding **it does not exist as an Imager output format at
-   all** (§1) — keep the parser slot for it anyway, since (a) it costs
-   nothing to check for a file that's usually absent, and (b) if a future
-   Imager version or a different flashing tool introduces a TOML-based
-   scheme under that name, the precedence slot is already reserved above
-   the formats we know are real. Do not spend `gosd-pctc` effort writing a
-   TOML customization *generator*-compatible parser beyond "if the file
-   exists and parses as TOML, use it" — there's no known producer to test
-   fixtures against yet.
-3. **Cloud-init files** (`user-data`/`network-config`) next because they're
-   the newer, actively-developed mechanism and — critically — they're
-   **pure declarative YAML**, not a shell script. Parsing YAML is strictly
-   safer and less ambiguous than regexing shell, so where both a
-   `firstrun.sh` and cloud-init files exist (shouldn't normally happen,
-   since Imager only ever generates one or the other per `_initFormat`, but
-   a hand-edited card could have stale leftovers from a previous flash) the
-   structured format should win.
-4. **`firstrun.sh`** last among Imager-native formats, because it's a shell
-   script gosd-init must never execute (locked in `gosd-pctc`) and can only
-   partially recover via regex — it's the most likely to have a field this
-   research didn't anticipate, and the least likely to be the *only* signal
-   available given cloud-init's growing share, but it is realistically
-   **the one gosd-init will see the most in practice today**, since almost
-   all currently-imaged Raspberry Pi OS builds are pre-Trixie
-   (see §1). The regex patterns to target (both `imager_custom`-style and
-   manual-fallback shapes, since GoSD images have neither
-   `raspberrypi-sys-mods` nor `userconf-pi` installed, so Imager's CLI/
-   custom-repo path may itself take either branch depending on what it
-   detects about the target — worth confirming empirically, see the bench
-   todos):
-   - hostname: `set_hostname (\S+)` or `echo (\S+) >/etc/hostname`
-   - WiFi: `set_wlan(?:\s+-h)?\s+(\S+)\s+(\S+)\s+(\S*)` **or** the
-     `wpa_supplicant.conf` heredoc (`ssid="..."`/`ssid=hex:...`,
-     `psk=...`, presence/absence of `key_mgmt=NONE`)
-   - user/password: `userconf (\S+) (\S+)` or the `chpasswd -e` /
-     `usermod -l` fallback block
-   - SSH keys: the `<<'EOF' ... EOF` heredoc into `authorized_keys`
-5. **Baked `config.json`** last: it's what GoSD wrote at build time, before
-   the user ever touched Imager — any of the above sources represents the
-   user's explicit, later intent and should override it.
+2. **Cloud-init files** next because they're structured YAML, not a shell
+   script — parsing YAML is safer and less ambiguous than regexing shell,
+   and it's the format GoSD's own catalog entry asks Imager to produce.
+3. **Baked `config.json`** last: it's what GoSD wrote at build time, before
+   the user ever touched Imager, so any of the above sources represents
+   later, more explicit user intent.
 
-## Open questions for the bench (see bean `gosd-qvoq` todos)
+`custom.toml` was left out of this chain entirely, rather than kept as a
+reserved-but-unused slot, because it has no real producer (see above); and
+`firstrun.sh` was scoped out of parsing rather than placed below cloud-init
+in precedence, because it's a shell script gosd-init must never execute and
+cloud-init already covers the flagship flashing path (see the "no
+interactive surface" and "end-user flashing path" locked decisions, root
+`CLAUDE.md`).
 
-- Already resolved from source alone, no bench work needed: whether
-  `firstrun.sh` contains the `imager_custom`-shaped or manual-fallback
-  branch for each field. It contains **both**, unconditionally — every
-  field is generated as `if [ -f /usr/lib/raspberrypi-sys-mods/imager_custom
-  ]; then ... else ... fi`
-  ([src/customization_generator.cpp#L196-L202](https://github.com/raspberrypi/rpi-imager/blob/467be3d3e88f5d83fa78c78788f6e6fdce61a47e/src/customization_generator.cpp#L196-L202)
-  is one example of the pattern). `gosd-pctc`'s regex needs to handle both
-  branches regardless, since the produced script always contains both — a
-  real capture will just confirm this, not add new information.
-- Genuinely open: confirm the exact bytes Imager writes for a real WiFi
-  SSID containing non-ASCII/control bytes, to validate the `\xHH`-escaping
-  and `ssid=hex:` paths against a real capture rather than only
-  source-reading.
+### WiFi PSK handling
 
-## Empirical confirmation (real v2.0.10 capture)
+The password extracted from `network-config` is passed through exactly as
+found — `internal/provision` never inspects its shape.
+`wifiup.ConfigCredentials.Credentials`
+(`cmd/gosd-init/internal/wifiup/credentials.go`) is what distinguishes a
+64-hex-character value (Raspberry Pi Imager's PBKDF2 output, see above)
+from a plaintext passphrase (run through `wifiup.DerivePSK`) — the same
+shape heuristic Imager's own generator uses (see above). An empty password
+with a non-empty SSID means an open network.
 
-The three required scenarios (`wifi-hostname`, `hostname-only`, `everything`)
-were captured from a real Raspberry Pi Imager v2.0.10 run via the
-custom-repository catalog flow (`init_format: "cloudinit"`) — see
+### Fixtures
+
+Every extraction is tested directly against real captures: Raspberry Pi
+Imager v2.0.10, captured via the custom-repository catalog flow
+(`init_format: "cloudinit"`), macOS, 2026-07-05 — see
 `internal/provision/testdata/imager-2.0.10/` and its `capture-notes.md`.
-The capture confirms every source-analysis claim above with no surprises:
+Three scenarios are committed (`wifi-hostname`, `hostname-only`,
+`everything`); `internal/provision/provision_test.go` runs the parser
+against each and asserts on the extracted hostname, WiFi network(s), and
+log output.
 
-- The cloud-init trio (`user-data`, `network-config`, `meta-data`) is
-  written exactly as §1 predicts; `network-config` is present only when
-  WiFi was configured in the dialog (absent in `hostname-only`).
-- `cmdline.txt` is **appended to, not replaced**: our own
-  `console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w
-  cfg80211.ieee80211_regdom=GB` tokens survive unchanged, with Imager's
-  `ds=nocloud;i=rpi-imager-<timestamp>` tokens appended after them —
-  confirming gosd-init's `init=` argument is preserved rather than
-  clobbered.
-- The WiFi PSK is delivered as a 64-character hex PBKDF2 digest in
-  `network-config`'s `password` field in every scenario that configured
-  WiFi, never plaintext, matching §2 exactly.
-- `config.txt` and `gosd.toml` were **untouched by Imager**: both are
-  byte-identical, across all three captures, to what GoSD's own builder
-  renders (verified directly against `RenderConfigTxt`/`gosdtoml.Render`
-  — see `capture-notes.md`), so neither is committed as a fixture.
-- One capture-process quirk, not an Imager bug in the generator: the
-  customization dialog persists field values between runs, so
-  `hostname: fixture-one` appears in all three captured `user-data` files
-  rather than a per-scenario name. See `capture-notes.md` for detail —
-  this does not affect the validity of the WiFi/user/SSH/locale fields
-  captured for each scenario.
+`config.txt` and `gosd.toml` are not committed as fixtures: across all
+three captures they were byte-identical to GoSD's own builder output
+(`pizero2w/templates.RenderConfigTxt`, `gosdtoml.Render`), confirming
+Imager left both untouched in the cloud-init flow. One capture-process
+quirk to know when reading the raw fixtures: Imager's customization dialog
+persists field values between runs, so `hostname: fixture-one` appears in
+all three captured `user-data` files rather than a per-scenario name — the
+scenario directory name, not the hostname value, is what each fixture
+actually tests (see `capture-notes.md`).
 
-Not yet captured: the two optional scenarios (open/no-password WiFi;
-non-ASCII/control-byte SSID) remain genuinely open per the last bullet
-above.
+## Not yet verified on the bench
 
-## Implementation
-
-The parser recommended in §6 (scoped down to cloud-init + gosd.toml only,
-per the re-scope note on bean `gosd-pctc`) lives in `internal/provision`,
-tested directly against the fixtures in this directory, and is wired into
-`gosd-init`'s boot sequence (`cmd/gosd-init/internal/boot`) right after the
-`GOSD-BOOT` mount, alongside the existing `gosd.toml` read. See that
-package's docs for the exact precedence and field handling; `firstrun.sh`
-is detected but deliberately never parsed, per the locked flashing-path
-decision in the root `CLAUDE.md`.
+Two scenarios remain uncaptured against a real Imager run (tracked on bean
+`gosd-qvoq`): an open/no-password WiFi network, and a WiFi SSID containing
+non-ASCII or control-byte characters. The latter would confirm the `\xHH`
+octet-escaping shown in the extraction table above against real Imager
+output — `internal/provision`'s parser tests currently only cover those
+shapes with hand-written YAML, not a captured fixture.
