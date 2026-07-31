@@ -209,9 +209,11 @@ what's asserted per board.
 
 ### Caching
 
-Kernel builds are content-addressed: the cache key covers the kernel
-ref, the container image, GoSD's own fragment/patches, and your overlay's
-fragment/patches. An unchanged input set skips the container run entirely.
+Kernel builds are content-addressed: the cache key covers every board and
+overlay input that affects the generated build script — the kernel ref, the
+container image, defconfig, toolchain, GoSD's own fragment/patches, your
+overlay's fragment/patches, and the kernel/DTB build targets and output
+paths. An unchanged input set skips the container run entirely.
 Cache entries live under a durable GoSD-managed directory under your home
 (not a system temp or evictable-cache location, so a long-running build's
 bind mounts and cached outputs survive OS cache purges) — see

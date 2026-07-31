@@ -225,6 +225,40 @@ func TestBuild_CacheHitSkipsContainer(t *testing.T) {
 	}
 }
 
+// TestBuild_CacheHitsDespiteRequiredYChange pins the documented, intentional
+// exclusion (cache.go's cacheInputs doc comment): RequiredY/ForbiddenY are
+// post-olddefconfig assertions, not build inputs, so fixing one alone must
+// not force a rebuild of an otherwise-identical cached kernel.
+func TestBuild_CacheHitsDespiteRequiredYChange(t *testing.T) {
+	spec := testSpec()
+	overlay := testOverlay()
+	cacheDir := t.TempDir()
+	rt := newSucceedingRunner(spec)
+
+	if _, err := kernelbuild.Build(context.Background(), spec, overlay, kernelbuild.Options{
+		Runtime: rt, CacheDir: cacheDir,
+	}); err != nil {
+		t.Fatalf("first Build: %v", err)
+	}
+
+	changed := spec
+	changed.RequiredY = append([]string{"CONFIG_NEW=y"}, spec.RequiredY...)
+	changed.ForbiddenY = append([]string{"CONFIG_NEWFORBIDDEN"}, spec.ForbiddenY...)
+
+	result, err := kernelbuild.Build(context.Background(), changed, overlay, kernelbuild.Options{
+		Runtime: rt, CacheDir: cacheDir,
+	})
+	if err != nil {
+		t.Fatalf("second Build: %v", err)
+	}
+	if !result.Skipped {
+		t.Error("Skipped = false after only RequiredY/ForbiddenY changed, want true (intentionally excluded from the cache key)")
+	}
+	if len(rt.calls) != 1 {
+		t.Errorf("container ran %d times, want still 1 (RequiredY/ForbiddenY change must not force a rebuild)", len(rt.calls))
+	}
+}
+
 func TestBuild_CacheMissesOnChangedInput(t *testing.T) {
 	base := testSpec()
 	baseOverlay := testOverlay()
@@ -248,6 +282,22 @@ func TestBuild_CacheMissesOnChangedInput(t *testing.T) {
 		// A newly-listed additional DTB must invalidate old cache entries,
 		// which lack the new output file (pi-3b's 3B+ blob, bean gosd-oq0z).
 		"additional DTB added": {spec: withAdditionalDTB(base), overlay: baseOverlay},
+		// gosd-7jmj: each of these feeds buildScript (script.go) but was
+		// missing from the cache key, so fixing one alone silently kept
+		// re-serving the old, wrong cached kernel/DTB.
+		"defconfig changed":      {spec: withDefconfig(base, "other_defconfig"), overlay: baseOverlay},
+		"toolchain arch changed": {spec: withToolchainArch(base, "arm"), overlay: baseOverlay},
+		"toolchain cross-compile changed": {
+			spec: withToolchainCross(base, "arm-linux-gnueabihf-"), overlay: baseOverlay,
+		},
+		"kernel make target changed": {spec: withKernelMakeTarget(base, "zImage"), overlay: baseOverlay},
+		"kernel source path changed": {
+			spec: withKernelSourcePath(base, "arch/arm64/boot/other-image"), overlay: baseOverlay,
+		},
+		"DTB make target changed": {spec: withDTBMakeTarget(base, "other.dtb"), overlay: baseOverlay},
+		"DTB source path changed": {
+			spec: withDTBSourcePath(base, "arch/arm64/boot/dts/other.dtb"), overlay: baseOverlay,
+		},
 	}
 
 	baseKey := buildAndGetKey(t, base, baseOverlay, "")
@@ -318,6 +368,47 @@ func withAdditionalDTB(spec kernelspec.KernelSpec) kernelspec.KernelSpec {
 		SourcePath: "arch/arm64/boot/dts/test-plus.dtb",
 		Filename:   "test-board-plus.dtb",
 	}}
+	return spec
+}
+
+func withDefconfig(spec kernelspec.KernelSpec, defconfig string) kernelspec.KernelSpec {
+	spec.Defconfig = defconfig
+	return spec
+}
+
+func withToolchainArch(spec kernelspec.KernelSpec, arch string) kernelspec.KernelSpec {
+	spec.Toolchain.KernelArch = arch
+	return spec
+}
+
+func withToolchainCross(spec kernelspec.KernelSpec, cross string) kernelspec.KernelSpec {
+	spec.Toolchain.CrossCompile = cross
+	return spec
+}
+
+func withKernelMakeTarget(spec kernelspec.KernelSpec, target string) kernelspec.KernelSpec {
+	spec.KernelMakeTarget = target
+	return spec
+}
+
+func withKernelSourcePath(spec kernelspec.KernelSpec, path string) kernelspec.KernelSpec {
+	spec.KernelSourcePath = path
+	return spec
+}
+
+// withDTBMakeTarget and withDTBSourcePath copy spec.DTB so they don't
+// mutate the shared base spec's DTB through its pointer.
+func withDTBMakeTarget(spec kernelspec.KernelSpec, target string) kernelspec.KernelSpec {
+	dtb := *spec.DTB
+	dtb.MakeTarget = target
+	spec.DTB = &dtb
+	return spec
+}
+
+func withDTBSourcePath(spec kernelspec.KernelSpec, path string) kernelspec.KernelSpec {
+	dtb := *spec.DTB
+	dtb.SourcePath = path
+	spec.DTB = &dtb
 	return spec
 }
 
