@@ -12,6 +12,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
 )
 
@@ -201,10 +202,7 @@ func Run(deps Deps, opts Options) error {
 		}
 	}
 
-	if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
-		return fatal(deps, log, "setting hostname", err)
-	}
-	log("hostname set to %q", cfg.Hostname)
+	applyHostname(deps, log, cfg.Hostname, "")
 
 	pathExists := deps.PathExists
 	if pathExists == nil {
@@ -236,8 +234,12 @@ func Run(deps Deps, opts Options) error {
 	if deps.ReadProvisioning != nil {
 		provisionResult = deps.ReadProvisioning(log)
 		if provisionResult.Hostname != "" {
-			cfg.Hostname = provisionResult.Hostname
-			log("hostname from cloud-init user-data")
+			if validHostname(provisionResult.Hostname) {
+				cfg.Hostname = provisionResult.Hostname
+				log("hostname from cloud-init user-data")
+			} else {
+				log("hostname %q from cloud-init user-data is invalid (must be 1-%d lowercase letters, digits, and hyphens); keeping %q", provisionResult.Hostname, naming.MaxLength, cfg.Hostname)
+			}
 		}
 	}
 
@@ -249,23 +251,21 @@ func Run(deps Deps, opts Options) error {
 		} else {
 			gosdToml = parsed
 			if gosdToml.Hostname != "" {
-				cfg.Hostname = gosdToml.Hostname
-				log("hostname from gosd.toml")
+				if validHostname(gosdToml.Hostname) {
+					cfg.Hostname = gosdToml.Hostname
+					log("hostname from gosd.toml")
+				} else {
+					log("hostname %q from gosd.toml is invalid (must be 1-%d lowercase letters, digits, and hyphens); keeping %q", gosdToml.Hostname, naming.MaxLength, cfg.Hostname)
+				}
 			}
 		}
 		for _, warning := range warnings {
 			log("%s", warning)
 		}
 
-		if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
-			return fatal(deps, log, "re-applying hostname after gosd.toml", err)
-		}
-		log("hostname set to %q (gosd.toml applied)", cfg.Hostname)
+		applyHostname(deps, log, cfg.Hostname, "gosd.toml")
 	} else if provisionResult.Hostname != "" {
-		if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
-			return fatal(deps, log, "re-applying hostname after cloud-init", err)
-		}
-		log("hostname set to %q (cloud-init applied)", cfg.Hostname)
+		applyHostname(deps, log, cfg.Hostname, "cloud-init")
 	}
 
 	switch {
@@ -479,4 +479,37 @@ func fatal(deps Deps, log func(format string, args ...any), action string, err e
 	deps.Sleep(5 * time.Second)
 	deps.Rebooter.Reboot()
 	return wrapped
+}
+
+// validHostname reports whether name is safe to hand to SetHostname as-is:
+// non-empty and unchanged by naming.Sanitize, meaning it already satisfies
+// both of Sanitize's constraints — the [a-z0-9-] charset and the
+// naming.MaxLength byte cap that sethostname(2) enforces. A gosd.toml or
+// cloud-init hostname that fails this check is never silently rewritten to
+// fit (see gosd-jeaw): mangling a hand-edited value would only confuse
+// whoever wrote it, so it's rejected outright and the previous hostname —
+// always itself a value that once passed this same check — is kept.
+func validHostname(name string) bool {
+	return name != "" && naming.Sanitize(name) == name
+}
+
+// applyHostname calls SetHostname and reports the outcome without ever
+// failing boot. Earlier, a SetHostname failure here was treated as fatal
+// (step 8, reboot); but a wrong hostname is cosmetic, while a reboot loop
+// is not — see gosd-jeaw, where a hand-edited gosd.toml hostname long
+// enough to make sethostname(2) return EINVAL turned into a permanent
+// reboot loop with no boot-failure.log written. step names which source is
+// being (re-)applied — "" for the initial config.json apply at step 4,
+// "gosd.toml"/"cloud-init" for the re-apply once the boot partition is
+// mounted — and is folded into both the success and failure log lines.
+func applyHostname(deps Deps, log func(format string, args ...any), hostname, step string) {
+	suffix := ""
+	if step != "" {
+		suffix = fmt.Sprintf(" (%s applied)", step)
+	}
+	if err := deps.Hostname.SetHostname(hostname); err != nil {
+		log("setting hostname to %q failed%s, continuing without changing it: %v", hostname, suffix, err)
+		return
+	}
+	log("hostname set to %q%s", hostname, suffix)
 }
