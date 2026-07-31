@@ -24,12 +24,14 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		AddKernelPartition: func(string, int, int64, int64) error {
 			return errUnsupportedPlatform
 		},
-		Inspect:     func(string) (diskfmt.Contents, error) { return diskfmt.Contents{}, errUnsupportedPlatform },
-		FormatFAT32: func(string, string) error { return errUnsupportedPlatform },
-		SyncDevice:  func(string) error { return errUnsupportedPlatform },
-		PathExists:  func(string) bool { return false },
-		Sleep:       time.Sleep,
-		Now:         time.Now,
-		Log:         log,
+		Inspect:      func(string) (diskfmt.Contents, error) { return diskfmt.Contents{}, errUnsupportedPlatform },
+		FormatFAT32:  func(string, string) error { return errUnsupportedPlatform },
+		CreateMarker: func(string) error { return errUnsupportedPlatform },
+		MarkerExists: func(string) (bool, error) { return false, errUnsupportedPlatform },
+		SyncDevice:   func(string) error { return errUnsupportedPlatform },
+		PathExists:   func(string) bool { return false },
+		Sleep:        time.Sleep,
+		Now:          time.Now,
+		Log:          log,
 	}
 }
