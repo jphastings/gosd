@@ -6,8 +6,6 @@ type: feature
 priority: normal
 created_at: 2026-07-31T10:25:45Z
 updated_at: 2026-07-31T10:32:47Z
-blocked_by:
-    - gosd-lirl
 ---
 
 Phase 1 of the upgrade-path design (bean gosd-inau, docs/design/upgrade-path.md §0.4). Parameterize internal/image's boot partition size: --boot-size flag (default 256MiB, today's constant), validated at flag-parse time (min: fits the payload — surface the current raw go-diskfs disk-full failure as an actionable error naming --boot-size; max: sane MBR/FAT32 bounds). The chosen size becomes the app's layout ABI: changing it in a later release erases GOSD-DATA on upgrade (documented; see the design's §2 grow/shrink analysis). Also: print boot-volume usage (payload bytes / size) at the end of every build so developers watch their headroom shrink across releases. Motivating case: Betamin's >1GB boot volume; also unblocks app-slot OTA (gosd-vxal) slot space for large apps.
@@ -52,31 +50,46 @@ Phase 1 of the upgrade-path design (bean gosd-inau, docs/design/upgrade-path.md 
   `BootSizeBytes` moves partition 2's offset, `WriteReport` values) and an
   `ErrBootPartitionFull` test. `cmd/gosd` gained `parseBootSize` unit tests
   (valid sizes, invalid input, too-small, misaligned, over the FAT32 ceiling)
-  and two `build_integration_test.go` fixture tests: a non-default
+  and three `build_integration_test.go` fixture tests: a non-default
   `--boot-size` + fixed `--data-size` build asserting partition 1's size and
   partition 2's offset read back from the image (plus the stderr usage
-  line), and a `--boot-size=1MiB` build against the real cross-compiled
-  hello/gosd-init payload asserting the actionable `ErrBootPartitionFull`
-  refusal. All pre-existing tests (including the default-256MiB goldens)
-  pass unchanged.
+  line); a `--boot-size=128MiB --data-size=expand` build asserting the same
+  geometry composes correctly with dataexpand's MBR-derived offset (see the
+  dataexpand bullet below); and a `--boot-size=1MiB` build against the real
+  cross-compiled hello/gosd-init payload asserting the actionable
+  `ErrBootPartitionFull` refusal. All pre-existing tests (including the
+  default-256MiB goldens) pass unchanged.
 - **Not touched**: `docs/design/upgrade-path.md`, `COMPATIBILITY.md` (no row
-  changed), and `cmd/gosd-init/internal/dataexpand` — its mirrored
-  `dataPartitionStartLBA` constant still assumes the old fixed 272MiB
-  boundary and is fixed by the parallel bean `gosd-lirl` (deriving the data
-  offset from the flashed MBR instead). **This PR must merge after
-  gosd-lirl's**: until dataexpand reads the MBR, a non-default `--boot-size`
-  `--data-size=expand` image would have first boot create GOSD-DATA inside
-  the boot partition.
-- **Merge-time addition (bean gosd-e3e3 landed on main mid-task)**: PR #156
-  added `diskfmt.LargestSelfConsistentFAT32Bytes`, trimming `--data-size` to
-  the largest FAT32 volume go-diskfs lays out with an addressable FAT (at
-  most two clusters less) — exactly the "internal/diskfmt's FAT32
-  self-consistency helpers" this bean's body already named. Resolving the
-  merge conflict in `computeLayout` applied the identical trim to the boot
-  partition, so `--boot-size` gets the same self-consistency guarantee
+  changed), and `cmd/gosd-init/internal/dataexpand` beyond what merging main
+  already carried. `gosd-lirl` (PR #158) landed on `main` while this bean was
+  in flight, deriving GOSD-DATA's offset from the flashed MBR (partition 1's
+  start + size) instead of a mirrored `dataPartitionStartLBA` constant. This
+  branch is now rebased directly onto that merged `main`, so the former
+  "merge after gosd-lirl" ordering requirement is satisfied structurally, not
+  just promised in the PR body. Added a seam test,
+  `TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly`
+  (`cmd/gosd/build_integration_test.go`), asserting a `--boot-size=128MiB
+  --data-size=expand` build's MBR carries partition 1 at exactly that size -
+  precisely what dataexpand reads back on first boot to derive GOSD-DATA's
+  offset - and still ships no partition 2 in the image itself.
+- **Merge-time addition (bean gosd-e3e3, PR #156, also landed on main
+  mid-task)**: `diskfmt.LargestSelfConsistentFAT32Bytes`, trimming
+  `--data-size` to the largest FAT32 volume go-diskfs lays out with an
+  addressable FAT (at most two clusters less) — exactly the "internal/diskfmt's
+  FAT32 self-consistency helpers" this bean's body already named. Rebasing
+  onto it applied the identical trim to the boot partition in
+  `computeLayout`, so `--boot-size` gets the same self-consistency guarantee
   `--data-size` does. Verified by hand that the 256MiB default, and every
   boot/data size this PR's own tests use (32MiB, 128MiB, 4MiB, 1MiB), fall
   outside the trim's affected bands, so no existing golden churns; one size
   originally used in a new fixture (64MiB) does fall in an affected band and
   was swapped for 128MiB to keep that test an exact-equality check rather
   than a trim-aware one.
+- **Merge-time addition (bean gosd-acdn, PR #159, also landed on main
+  mid-task)**: `internal/pipeline.Assemble` now hashes every payload file
+  into a content-derived image identity (`internal/initcfg.ComputeIdentity`)
+  before building the initramfs. Rebasing wove `BootSizeBytes`/`WriteReport`
+  through that same restructured function without otherwise touching the
+  identity logic - every early return gained the `image.WriteReport{}` zero
+  value, and the final `image.Write` call gained `BootSizeBytes:
+  opts.BootSizeBytes` and now captures its returned report.
