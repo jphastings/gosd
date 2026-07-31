@@ -1,37 +1,35 @@
 # GoSD
 
-Turn Go applications into SD card images for the Raspberry Pi Zero 2W, Raspberry Pi Zero W, Raspberry Pi 3B (and 3B+), Radxa Zero 3E, FriendlyElec NanoPi Zero2, and Radxa ROCK 4SE. See [`COMPATIBILITY.md`](COMPATIBILITY.md) for exactly which features work on which board today.
+Turn a Go application into a flashable SD-card image for the Raspberry Pi
+Zero 2W, Raspberry Pi Zero W, Raspberry Pi 3B (and 3B+), Radxa Zero 3E,
+FriendlyElec NanoPi Zero2, and Radxa ROCK 4SE.
+[`COMPATIBILITY.md`](COMPATIBILITY.md) is the board × feature matrix: what
+works where, and how each cell was verified.
 
-Like GoKrazy, but the result is something _anyone_ can burn and use.
+Like [gokrazy](https://gokrazy.org), but the result is something _anyone_ can
+burn and use: images plug into Raspberry Pi Imager's WiFi/hostname wizard, so
+the people you send them to never need a terminal.
 
 ## Features
 
-- Simple CLI tool that can be run locally or in CI
-- Extremely fast boot (under 5 seconds, including Wifi)
-- Optional USB OTG (run as a USB _device_) — see [`docs/runtime.md`](docs/runtime.md#usb-gadget-mode) and `examples/usbserial`
-- Connect to the internet via Ethernet (assumes DHCP) or WiFi (credentials added as your SD card is written)
-- Run any normal (linux-capable) Go application
+- One CLI, runnable locally or in CI — building an image needs no Docker, no
+  root, and no Linux
+- Boots to your app in under 5 seconds, WiFi included
+- Runs any normal Linux-capable Go program — no SDK, no special imports
+- Networking via Ethernet (DHCP) or WiFi (credentials written as the SD card
+  is flashed)
+- Optional USB gadget mode — the board presents as a USB serial, Ethernet,
+  or mass-storage _device_: see
+  [`docs/runtime.md`](docs/runtime.md#usb-gadget-mode) and
+  `examples/usbserial`
 
 ## Quickstart
 
-> **This project is pre-release**, but the steps below are the real,
-> working pipeline as of `main` today — not aspirational. `go install
-> .../gosd@latest` installs cleanly even though no numbered CLI release
-> has been tagged yet (Go resolves `@latest` to the newest commit when
-> there's no tag to pin to). `gosd build` with no extra flags downloads the
-> published `artifacts/v0.1.0` kernels/bootloader from GitHub Releases
-> (see `docs/artifacts.md`), cross-compiles your app, and assembles a
-> complete, flashable `.img` — verified end-to-end on a clean machine
-> (empty cache, and an offline rebuild afterwards to confirm the cache
-> alone is sufficient).
->
-> What's genuinely still missing is hardware bring-up: no GoSD image has
-> yet been flashed to and booted from a real Pi Zero 2W or Radxa Zero 3E
-> (tracked by beans `gosd-m9dj`/`gosd-nlzf`). Everything through "produce
-> `hello.img`" below is real and tested; the flashing and booting steps are
-> the intended flow, not yet confirmed on physical hardware. See
-> [`COMPATIBILITY.md`](COMPATIBILITY.md) for the full board/feature
-> breakdown.
+> **Pre-release:** no numbered CLI release has been tagged yet, so `go
+> install …@latest` resolves to the newest commit (and installs cleanly).
+> The steps below are the real, working pipeline on `main`, proven end-to-end
+> on real hardware — per-board verification status lives in
+> [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 1. Install the CLI:
 
@@ -39,9 +37,9 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    go install github.com/jphastings/gosd/cmd/gosd@latest
    ```
 
-   Or, with nix (handy in CI — the flake bundles the Go toolchain and a
-   vendored copy of gosd's own sources, so `gosd build` works offline
-   apart from your app's dependencies and board artifacts):
+   Or, with nix — handy in CI, since the flake bundles the Go toolchain and
+   a vendored copy of gosd's own sources, so `gosd build` works offline
+   apart from your app's dependencies and board artifacts:
 
    ```sh
    nix run github:jphastings/gosd -- build ./cmd/myapp
@@ -71,11 +69,9 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    unavailable).
 
    > **Calling an HTTPS API from your app?** GoSD images ship no CA bundle,
-   > so `crypto/x509` has no roots to verify a server's certificate against
-   > and outbound HTTPS fails until you blank-import
+   > so outbound HTTPS fails until you blank-import
    > `golang.org/x/crypto/x509roots/fallback` — see
-   > [`docs/runtime.md`](docs/runtime.md#https-calls-need-a-ca-bundle-your-app-supplies)
-   > for the full pattern.
+   > [`docs/runtime.md`](docs/runtime.md#https-calls-need-a-ca-bundle-your-app-supplies).
 
    Need different source per board (different pins, an optional
    peripheral)? `gosd build` passes each selected board's own Go build tag
@@ -88,56 +84,56 @@ Like GoKrazy, but the result is something _anyone_ can burn and use.
    gosd build . --board pi-zero-2w -o hello.img
    ```
 
-   Omit `--board` to build every supported board at once; run `gosd build
-   --help` for the full set of flags (`--hostname`, `--wifi-ssid` /
-   `--wifi-pass`, repeatable `--board`, `-o`/`--output`, repeatable
-   `--with-external` to bundle a prebuilt static companion binary — see
+   Omit `--board` to build every supported board at once; `gosd build
+   --help` lists the full flag set (`--hostname`, `--wifi-ssid` /
+   `--wifi-pass`, `-o`/`--output`, repeatable `--with-external` — see
    [`docs/runtime.md`](docs/runtime.md#bundling-a-companion-binary---with-external)).
 
-   Don't have a board on hand yet? `gosd run .` cross-compiles your app,
-   builds an image, and boots it under `qemu-system-aarch64` in one step,
-   so you can see the real boot sequence and hit your app's HTTP port
-   locally before ever touching hardware — see
+   No board on hand yet? `gosd run .` cross-compiles your app, builds an
+   image, and boots it under `qemu-system-aarch64` in one step, so you can
+   watch the real boot sequence and hit your app's HTTP port locally before
+   ever touching hardware — see
    [`docs/runtime.md`](docs/runtime.md#testing-your-app-under-qemu-no-hardware-needed).
 
-4. Flash `hello.img` to an SD card. The recommended path is [Raspberry Pi
-   Imager](https://www.raspberrypi.com/software/)'s custom-repository
-   catalog: build with `--catalog --publish-base-url=<url>` to also emit an
-   `os_list.json`, host it next to your image, and paste that URL into
-   Imager's Settings → Custom repository to get the full WiFi/hostname
-   customization wizard — see [`docs/publishing.md`](docs/publishing.md)
-   for the full walkthrough. (Imager's plain "Use custom image" file picker
-   skips that wizard entirely for any image, GoSD's included — see
-   `docs/provisioning-formats.md` — so if you use that flow instead,
-   hand-edit the `gosd.toml` file on the flashed boot partition.) Then boot
-   the board and open `http://<hostname>.local/` — or the sanitized name of
-   your main package if you didn't pass `--hostname`. `gosd-init` runs its
-   own mDNS responder, so `.local` should resolve on macOS, Linux, and
-   Windows without any extra setup; if it doesn't on your network, fall
-   back to finding the device's address via your router. Sending an app to
-   someone non-technical? [`docs/flashing.md`](docs/flashing.md) is a
-   screenshot-driven, jargon-free version of these same steps you can point
-   them at directly.
+4. Flash `hello.img` to an SD card and boot it. The recommended path is
+   [Raspberry Pi Imager](https://www.raspberrypi.com/software/)'s custom
+   repository: build with `--catalog --publish-base-url=<url>`, host the
+   emitted `os_list.json` next to your image, and paste that URL into
+   Imager's Settings → Custom repository — flashers get the full
+   WiFi/hostname wizard. [`docs/publishing.md`](docs/publishing.md) is the
+   developer walkthrough; [`docs/flashing.md`](docs/flashing.md) is a
+   screenshot-driven, jargon-free version of the end-user steps you can
+   send to non-technical people directly.
 
-For the runtime contract your app runs under once it's booted — supervision,
-environment variables, networking timing, storage, logging — see
-[`docs/runtime.md`](docs/runtime.md).
+   (Imager's plain "Use custom image" file picker skips that wizard for
+   *every* image, GoSD's included — see
+   [`docs/provisioning-formats.md`](docs/provisioning-formats.md). If you
+   flash that way, hand-edit `gosd.toml` on the flashed boot partition
+   instead.)
 
-Need a driver GoSD's stock, trimmed kernels cut (a USB DVB-T tuner, a niche
-sensor)? `gosd build-kernel` is an opt-in, Docker/Podman-driven command that
-compiles a custom kernel from a `gosd-kernel.toml` you declare in your
-project, without slowing down the default zero-Docker path for everyone
-else — see [`docs/custom-kernels.md`](docs/custom-kernels.md).
+   Then open `http://<hostname>.local/` — the hostname defaults to your
+   main package's sanitized name unless you passed `--hostname`.
+   `gosd-init` runs its own mDNS responder, so `.local` resolves on macOS,
+   Linux, and Windows with no extra setup; if your network blocks mDNS,
+   find the device's address via your router.
 
-Want your app to make a noise? Sound is one of those cut drivers, so it needs
-such a kernel — and then the `sound` package plays PCM out of HDMI or a board's
-headphone jack with no cgo and no alsa-lib. Ready-made recipes per board, and
-the traps, are in [`docs/sound.md`](docs/sound.md); `examples/chime` is the
-worked example.
+## Going further
 
-Need a companion binary that isn't pure Go (a hardware-accelerated video
-player, a vendor CLI)? `gosd build-external` is the same kind of opt-in,
-Docker/Podman-driven command, cross-compiling one from a
-`gosd-external.toml` recipe into a fully static binary `gosd build
---with-external` bundles into the image — see
-[`docs/externals.md`](docs/externals.md).
+- **The runtime contract** your app runs under once booted — supervision,
+  environment variables, networking timing, storage, logging:
+  [`docs/runtime.md`](docs/runtime.md)
+- **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
+  trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
+  Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in
+  your project; the default build path stays zero-Docker for everyone else:
+  [`docs/custom-kernels.md`](docs/custom-kernels.md)
+- **Sound** — one of those cut drivers. With a custom kernel, the `sound`
+  package plays PCM out of HDMI or a board's headphone jack, no cgo and no
+  alsa-lib. Per-board recipes and the traps: [`docs/sound.md`](docs/sound.md);
+  `examples/chime` is the worked example.
+- **Companion binaries** (`gosd build-external`) — need something that isn't
+  pure Go (a hardware-accelerated video player, a vendor CLI)? The same kind
+  of opt-in, Docker/Podman-driven command cross-compiles a fully static
+  binary from a `gosd-external.toml` recipe, and `gosd build
+  --with-external` bundles it into the image:
+  [`docs/externals.md`](docs/externals.md)

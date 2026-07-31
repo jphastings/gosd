@@ -1,15 +1,15 @@
 # Artifact pipeline: cutting and consuming a GoSD artifact release
 
-`gosd build` needs a kernel, DTB, and (for the Radxa Zero 3E and NanoPi
-Zero2) a bootloader for every board it targets. GoSD compiles these itself —
-it never asks a user to build a kernel — and ships them as GitHub Releases
-tagged `artifacts/vX.Y.Z`, separate from the CLI's own `vX.Y.Z` releases.
-This page covers cutting one of those releases, and how the CLI consumes
-it. See bean `gosd-wtpa` for the design history.
+`gosd build` needs a kernel, DTB, and (for the Radxa Zero 3E, NanoPi Zero2,
+and ROCK 4SE) a bootloader for every board it targets. GoSD compiles these
+itself — it never asks a user to build a kernel — and ships them as GitHub
+Releases tagged `artifacts/vX.Y.Z`, separate from the CLI's own `vX.Y.Z`
+releases. This page covers cutting one of those releases, and how the CLI
+consumes it. See bean `gosd-wtpa` for the design history.
 
-Third-party binary blobs (Pi GPU firmware, Pi WiFi firmware, Rockchip
-rkbin) are **not** part of an artifact release: they stay upstream-fetched
-by the CLI at a pinned URL + sha256 per board (see each board's
+Third-party binary blobs (Pi GPU firmware, Pi WiFi firmware, Rockchip rkbin)
+are **not** part of an artifact release: they stay upstream-fetched by the
+CLI at a pinned URL + sha256 per board (see each board's
 `build/boards/<board>/manifest.json` and `internal/fetch`). An artifact
 release contains only what GoSD compiles: kernels and U-Boot.
 
@@ -19,31 +19,32 @@ Pushing a git tag `artifacts/vX.Y.Z` runs
 `.github/workflows/build-artifacts.yml`, which:
 
 1. Runs `gosd build-kernel --board <id> --staging staging/` (bean gosd-07fl)
-   for each of `pi-zero-2w`, `pi-zero-w`, `radxa-zero-3e`, `nanopi-zero2`,
-   and `qemu-virt` — one job per board, each driving Docker from
-   `internal/kernelspec`'s declarative per-board spec, cross-compiling for
-   arm64 (or, for pi-zero-w, armv6) via a `-linux-gnu-` cross toolchain, so
-   they run unchanged on GitHub's amd64 `ubuntu-latest` runners (no QEMU, no
-   arm64 runner needed). This is the same command a developer runs locally
-   with `gosd build-kernel` — CI dogfoods the real CLI path rather than a
-   separate release-only script. `gosd build-kernel --staging` also writes
-   each board's `source.json` directly, so the release path and the local
-   dev path produce identical provenance data. The two U-Boot boards
-   (radxa-zero-3e, nanopi-zero2) additionally run their own
-   `build/boards/<board>/uboot/build.sh` — U-Boot orchestration is out of
-   scope for `gosd build-kernel` (epic gosd-47rm) and stays a plain script; a
-   small workflow step merges its pinned repo/tag into the board's
-   already-written `source.json`, since the U-Boot script has no `source.json`
-   of its own.
+   for each of `pi-zero-2w`, `pi-zero-w`, `pi-3b`, `radxa-zero-3e`,
+   `nanopi-zero2`, `rock-4se`, and `qemu-virt` — one job per board, each
+   driving Docker from `internal/kernelspec`'s declarative per-board spec,
+   cross-compiling for arm64 (or, for pi-zero-w, armv6) via a `-linux-gnu-`
+   cross toolchain, so they run unchanged on GitHub's amd64 `ubuntu-latest`
+   runners (no QEMU, no arm64 runner needed). This is the same command a
+   developer runs locally with `gosd build-kernel` — CI dogfoods the real
+   CLI path rather than a separate release-only script. `gosd build-kernel
+   --staging` also writes each board's `source.json` directly, so the
+   release path and the local dev path produce identical provenance data.
+   The three U-Boot boards (radxa-zero-3e, nanopi-zero2, rock-4se)
+   additionally run their own `build/boards/<board>/uboot/build.sh` —
+   U-Boot orchestration is out of scope for `gosd build-kernel` (epic
+   gosd-47rm) and stays a plain script; a small workflow step merges its
+   pinned repo/tag into the board's already-written `source.json` (rock-4se
+   also folds in its from-source Trusted Firmware-A provenance here), since
+   the U-Boot script has no `source.json` of its own.
 2. Packages the outputs into per-board tarballs — `pi-zero-2w.tar.zst`,
-   `pi-zero-w.tar.zst`, `radxa-zero-3e.tar.zst`, `nanopi-zero2.tar.zst`, and
-   `qemu-virt.tar.zst` — using `build/artifacts/package.sh`, which also
-   writes a `manifest.json` describing every file's name, sha256, and size,
-   plus each compiled component's source repo/commit-or-tag/config path (GPL
-   provenance). Because `gosd build-kernel --staging` also emits the
-   generated `kernel.config` alongside the kernel image and DTB, that file is
-   now packaged into the tarball too (previously only referenced by path from
-   a committed copy) — a small, deliberate content change, not a regression.
+   `pi-zero-w.tar.zst`, `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`,
+   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, and `qemu-virt.tar.zst` —
+   using `build/artifacts/package.sh`, which also writes a `manifest.json`
+   describing every file's name, sha256, and size, plus each compiled
+   component's source repo/commit-or-tag/config path (GPL provenance).
+   `gosd build-kernel --staging` emits the generated `kernel.config`
+   alongside the kernel image and DTB, so that file is packaged into the
+   tarball too.
 3. Publishes a GitHub Release for the pushed tag with the tarballs and
    `manifest.json` attached.
 
@@ -77,6 +78,12 @@ staging/
     bcm2835-rpi-zero-w.dtb
     kernel.config
     source.json
+  pi-3b/
+    kernel8.img
+    bcm2710-rpi-3-b.dtb
+    bcm2710-rpi-3-b-plus.dtb
+    kernel.config
+    source.json
   radxa-zero-3e/
     Image
     rk3566-radxa-zero-3e.dtb
@@ -87,6 +94,13 @@ staging/
   nanopi-zero2/
     Image
     rk3528-nanopi-zero2.dtb
+    kernel.config
+    idbloader.img
+    u-boot.itb
+    source.json
+  rock-4se/
+    Image
+    rk3399-rock-4se.dtb
     kernel.config
     idbloader.img
     u-boot.itb
@@ -106,24 +120,36 @@ the same tarballs + manifest.json the workflow publishes.
 
 ## Cutting a new release
 
-1. Land whatever kernel/U-Boot changes are needed on `main` (an
-   `internal/kernelspec.go`, config-fragment, or U-Boot `build.sh` change,
-   reviewed and merged like any other PR).
-2. Decide the new version number (`vX.Y.Z`, independent of the CLI's own
-   version — bump the artifact version when kernels/U-Boot change, not when
-   unrelated CLI code changes).
-3. Push a tag: `git tag artifacts/vX.Y.Z && git push origin artifacts/vX.Y.Z`.
+1. Land the kernel/U-Boot change on `main` (an `internal/kernelspec`,
+   config-fragment, or U-Boot `build.sh` change, reviewed and merged like
+   any other PR) **without** bumping `internal/artifacts.Version` in the
+   same PR — that bump is step 5, after the tag exists.
+2. Decide the new version number, `vX.Y.Z` — independent of the CLI's own
+   version. Bump it when kernels/U-Boot changed, not for unrelated CLI code
+   changes.
+3. JP pushes the tag: `git tag artifacts/vX.Y.Z && git push origin
+   artifacts/vX.Y.Z`. This is a deliberate, manual step — no automation
+   pushes tags — so cutting a release is never a side effect of merging a
+   PR.
 4. Watch the `Build artifacts` workflow run. On success it publishes a
    GitHub Release named `Artifacts vX.Y.Z` with `pi-zero-2w.tar.zst`,
-   `pi-zero-w.tar.zst`, `radxa-zero-3e.tar.zst`, `nanopi-zero2.tar.zst`,
-   `qemu-virt.tar.zst`, and `manifest.json` attached.
-5. Bump `internal/artifacts.Version` to `vX.Y.Z` in a follow-up commit (a
-   normal CLI-code change, part of the *next* `vX.Y.Z` CLI release, not the
-   artifact release itself) so newly-built `gosd` binaries pick it up.
-
-Steps 3-4 are a manual, human step — no automation here pushes tags for you,
-by design: cutting an artifact release is a deliberate decision, not a side
-effect of merging a PR.
+   `pi-zero-w.tar.zst`, `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`,
+   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, `qemu-virt.tar.zst`, and
+   `manifest.json` attached.
+5. In a follow-up PR — a normal CLI-code change, part of the *next* CLI
+   `vX.Y.Z` release, not the artifact release itself — bump
+   `internal/artifacts.Version` to the new tag, so newly-built `gosd`
+   binaries pick it up.
+6. Before merging that PR, verify the bump three ways and record each in
+   the bean:
+   - **Clean-machine build** — fresh `HOME`, no `--board`/`--artifacts-dir`
+     flags, so every public board's image comes from a real download of the
+     new release.
+   - **Offline re-run** — kill network access (e.g. a dead proxy) and
+     rebuild; it must succeed entirely from the now-populated cache.
+   - **Content spot-check** — confirm the released artifact actually
+     carries the change, e.g. `dtc -I dtb -O dts` showing the newly enabled
+     DT node.
 
 ## How the CLI consumes a release: pinning and caching
 

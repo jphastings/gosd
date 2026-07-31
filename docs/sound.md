@@ -11,8 +11,8 @@ Two halves, and you need both:
    the kernel's ALSA PCM interface directly — no cgo, no alsa-lib, nothing to
    install in the image — see [Playing a sound](#playing-a-sound).
 
-`examples/chime` is the end-to-end worked example: a boot chime and a periodic
-test tone, plus the kernel recipes both halves of this page describe.
+`examples/chime` is the end-to-end worked example — a boot chime and a
+periodic test tone — and ships every recipe this page describes.
 
 ## Which kernel do I need
 
@@ -37,10 +37,11 @@ subsystem. That is a 7x difference for the same audible result on a different
 connector, so an app that only wants the jack should not pay for it.
 
 **nanopi-zero2 has no audio path.** Its RK3528 has I2S and SPDIF pins on the
-30-pin FPC header, but at the pinned kernel tag `arch/arm64/boot/dts/rockchip/rk3528.dtsi`
-defines no `i2s`, `spdif`, `hdmi` or `vop` node at all — only pin-mux groups
-with nothing to attach them to. There is no driver to enable, so there is no
-recipe: this board is ➖ rather than 🚧.
+30-pin FPC header, but at the pinned kernel tag
+`arch/arm64/boot/dts/rockchip/rk3528.dtsi` defines no `i2s`, `spdif`, `hdmi`
+or `vop` node at all — only pin-mux groups with nothing to attach them to.
+There is no driver to enable, so there is no recipe: this board is ➖ rather
+than 🚧 (bean `gosd-lrxz`).
 
 ### Building one
 
@@ -62,43 +63,12 @@ gosd build ./examples/chime --board rock-4se \
   --artifacts-dir ./sound-artifacts -o chime.img
 ```
 
-Kernel builds need a local Docker or Podman daemon and take 20–60 minutes the
-first time; they are content-addressed and cached, so a re-run with unchanged
-inputs is instant. See [custom-kernels.md](custom-kernels.md) for the general
-mechanism, the caching rules, and the host requirements.
+See [custom-kernels.md](custom-kernels.md) for the mechanism these commands
+drive: the Docker/Podman requirement, build times, caching, and host support.
 
 You can point a recipe of your own at these fragments — copy the file, don't
 write a three-line "enable sound" fragment (see
 [the deny-list trap](#the-deny-list-is-the-load-bearing-half)).
-
-### Why HDMI costs DRM on Rockchip but not on the Pi
-
-On the Pi, audio is `snd_bcm2835`: a driver that asks the VideoCore firmware to
-play, over VCHIQ. The firmware owns HDMI on a GoSD image (we never load vc4
-KMS), so HDMI audio needs no DRM, no ASoC, and — because the driver binds to a
-VCHIQ *bus* device rather than a device-tree node — no DTS patch. Three
-Kconfig lines and a one-line patch that defaults the driver's `enable_hdmi`
-module parameter on, which is the only lever that behaves identically on all
-three Pi boards.
-
-On RK3399 and RK3566, HDMI audio is an I2S codec hanging off the Synopsys
-DesignWare HDMI bridge (`DRM_DW_HDMI_I2S_AUDIO`), and that bridge is a
-component of the Rockchip DRM driver. Asking for HDMI sound therefore compiles
-in DRM, the display controller and the KMS helpers — exactly the subsystem
-GoSD's stock kernels cut. That is why the ROCK 4SE has two recipes: its
-**analog** path (ES8316 codec on I2C1 at 0x11, fed by I2S0) needs ASoC but no
-DRM at all, so an app that just wants a beep out of the headphone jack pays
-nothing for a display stack it will never use.
-
-Neither Rockchip path needs a device-tree patch either, which surprised us:
-mainline already wires both up. `rk3399-rock-4se.dts` includes
-`rk3399-rock-pi-4.dtsi`, which enables `i2c1` with its `codec@11` node,
-enables `i2s0` with an audio-graph port pointing at the codec, declares the
-analog card (`sound { compatible = "audio-graph-card"; label = "Analog"; }`),
-and sets `&hdmi`, `&hdmi_sound` and `&i2s2` to `"okay"`. Same story on the
-Radxa Zero 3E via `rk3566-radxa-zero-3.dtsi`. So these recipes are
-Kconfig-only, they live in the example rather than in
-`build/boards/<board>/kernel/patches/`, and they need no artifacts release.
 
 ## Gotchas
 
@@ -110,9 +80,10 @@ finds, once. Plug the monitor in afterwards and there is no card to play to
 until the next boot. Connect the cable, *then* power up.
 
 Expect the same rule to bite on Rockchip for a different reason — the sink's
-capabilities come from the display's EDID — though there the card is created by
-a device-tree machine driver rather than by display enumeration. Unverified
-either way on Rockchip; see [Verification status](#verification-status).
+capabilities come from the display's EDID — though there the card is created
+by a device-tree machine driver rather than by display enumeration.
+Unverified either way on Rockchip; see
+[Verification status](#verification-status).
 
 ### The Pi Zero W and Zero 2 W have no analog output
 
@@ -144,11 +115,11 @@ also card 0.
 The `sound` package now recognises a virtual card by the driver identity in
 `/proc/asound/cards` (`snd-aloop`, `snd-dummy`) rather than by any
 user-visible name, and never selects one: `Open` leaves them out of the
-search, names each one it skipped through `Options.Logf`, and returns an error
-wrapping `ErrNoDevice` — naming the Kconfig symbol to deny — when they are all
-a board has. Every fragment in this repo already carries
-`# CONFIG_SND_ALOOP is not set`, so a by-the-book image is safe; a hand-written
-recipe is how one gets in (see [the deny-list
+search, names each one it skipped through `Options.Logf`, and returns an
+error wrapping `ErrNoDevice` — naming the Kconfig symbol to deny — when they
+are all a board has. Every fragment in this repo already carries
+`# CONFIG_SND_ALOOP is not set`, so a by-the-book image is safe; a
+hand-written recipe is how one gets in (see [the deny-list
 trap](#the-deny-list-is-the-load-bearing-half)).
 
 **The escape hatch is `Options.Path`.** It opens exactly the PCM you name,
@@ -163,8 +134,9 @@ board's defconfig ships as a module, and GoSD kernels are monolithic
 (`CONFIG_MODULES` is always off), so `make olddefconfig` promotes all of them
 to built-in. Measured, on a Pi: a three-line "enable sound" fragment silently
 compiled in ~60 HAT machine drivers, ~45 codecs, USB audio, the MIDI sequencer
-and OSS emulation. On arm64 the defconfig is multiplatform, so the equivalent
-haul is every SoC vendor's ASoC platform drivers plus about twenty codecs.
+and OSS emulation (bean `gosd-df57`). On arm64 the defconfig is multiplatform,
+so the equivalent haul is every SoC vendor's ASoC platform drivers plus about
+twenty codecs (bean `gosd-lrxz`).
 
 Both of this example's fragment families are therefore mostly deny-list, and
 each denied symbol traces to a line the pinned defconfig really ships (the
@@ -178,10 +150,11 @@ because ASoC is precisely what the codec needs.
 cannot exist while `CONFIG_SOUND` is off — so they sit dormant in every stock
 GoSD kernel and become reachable the moment sound appears. Legacy gadget
 drivers claim the board's only UDC at probe, which is exactly how "Gadget Zero"
-stopped `--usb-gadget` working once before (bean `gosd-spjt`). The raspberrypi
-defconfigs do ship them as modules, so on the Pi this is a real, measured
-15,424 bytes and a real risk; the arm64 defconfig does not, so on Rockchip it
-is only a precaution. Every fragment here denies them explicitly.
+stopped `--usb-gadget` working once before (bean `gosd-spjt`); building the
+sound fragment reproduced the risk (bean `gosd-y9hc`). The raspberrypi
+defconfigs do ship these as modules, so on the Pi it's a real, measured
+15,424 bytes and a real risk; the arm64 defconfig does not, so on Rockchip
+it's only a precaution. Every fragment here denies them explicitly.
 
 ### Sound is not in the stock kernels, and that is a decision, not an oversight
 
@@ -266,19 +239,46 @@ kernel's PCM ioctl ABI itself — `HW_PARAMS` → `SW_PARAMS` → `PREPARE` →
 plugin does underneath anyway. Epic `gosd-qkbl` records the survey of the
 alternatives.
 
+## Why HDMI costs DRM on Rockchip but not on the Pi
+
+On the Pi, audio is `snd_bcm2835`: a driver that asks the VideoCore firmware to
+play, over VCHIQ. The firmware owns HDMI on a GoSD image (we never load vc4
+KMS), so HDMI audio needs no DRM, no ASoC, and — because the driver binds to a
+VCHIQ *bus* device rather than a device-tree node — no DTS patch. Three
+Kconfig lines and a one-line patch that defaults the driver's `enable_hdmi`
+module parameter on, which is the only lever that behaves identically on all
+three Pi boards.
+
+On RK3399 and RK3566, HDMI audio is an I2S codec hanging off the Synopsys
+DesignWare HDMI bridge (`DRM_DW_HDMI_I2S_AUDIO`), and that bridge is a
+component of the Rockchip DRM driver. Asking for HDMI sound therefore compiles
+in DRM, the display controller and the KMS helpers — exactly the subsystem
+GoSD's stock kernels cut. That is why the ROCK 4SE has two recipes: its
+**analog** path (ES8316 codec on I2C1 at 0x11, fed by I2S0) needs ASoC but no
+DRM at all, so an app that just wants a beep out of the headphone jack pays
+nothing for a display stack it will never use.
+
+Neither Rockchip path needs a device-tree patch either, which surprised us:
+mainline already wires both up. `rk3399-rock-4se.dts` includes
+`rk3399-rock-pi-4.dtsi`, which enables `i2c1` with its `codec@11` node,
+enables `i2s0` with an audio-graph port pointing at the codec, declares the
+analog card (`sound { compatible = "audio-graph-card"; label = "Analog"; }`),
+and sets `&hdmi`, `&hdmi_sound` and `&i2s2` to `"okay"`. Same story on the
+Radxa Zero 3E via `rk3566-radxa-zero-3.dtsi`. So these recipes are
+Kconfig-only, they live in the example rather than in
+`build/boards/<board>/kernel/patches/`, and they need no artifacts release
+(bean `gosd-lrxz`).
+
 ## Verification status
 
-Honest state of play, because none of this has made a noise yet:
-
-| Board | Recipe compiled? | Heard on hardware? |
-|---|---|---|
-| pi-zero-w, pi-zero-2w | ✅ real `gosd build-kernel` runs; resulting `kernel.config` checked | ❌ not yet |
-| pi-3b | ❌ (shares the fragment, patch, defconfig and driver with the Zeros) | ❌ not yet |
-| rock-4se, radxa-zero-3e | ❌ — the fragments were written against the pinned kernel's Kconfig and device trees, but never compiled | ❌ not yet |
-
-The playback code itself is exercised by unit tests on the host (the ALSA
-struct layouts are pinned for both 64- and 32-bit word widths, which the ioctl
-numbers depend on), and cross-compiles for every board architecture.
+Board-by-board build and hardware status — which recipes have run through a
+real `gosd build-kernel`, and which have actually been heard — lives in
+COMPATIBILITY.md's audio row (footnotes `[^audio]` and `[^rock4se-audio]`),
+not here: it changes with every bench session, and a second copy would only
+go stale. What doesn't drift: the playback code itself is exercised by unit
+tests on the host (the ALSA struct layouts are pinned for both 64- and
+32-bit word widths, which the ioctl numbers depend on), and it cross-compiles
+for every board architecture.
 
 ### Measuring the cost yourself
 
