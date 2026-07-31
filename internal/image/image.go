@@ -242,20 +242,28 @@ func writeBootFiles(fs filesystem.FileSystem, files map[string]io.Reader) error 
 	return nil
 }
 
+// resolvedRawWrite is a RawWrite whose content has been read into memory, so
+// its length - and therefore the byte range it occupies - is known.
+type resolvedRawWrite struct {
+	offsetBytes int64
+	data        []byte
+}
+
 // applyRawWrites writes each RawWrite's content into the image at its
 // OffsetBytes, refusing any write that would overlap the MBR, the boot
-// partition, or (when present) the data partition.
+// partition, (when present) the data partition, or another RawWrite in
+// writes. Each Content reader is read exactly once: RawWrite carries no
+// length, so a write's byte range is only known once its content has been
+// read, and content overlap can only be checked once every write's range is
+// known - hence the two passes, read-and-check then write, rather than the
+// read-check-write-per-item loop this replaced.
 func applyRawWrites(d *disk.Disk, writes []RawWrite, lay layout) error {
 	if len(writes) == 0 {
 		return nil
 	}
 
-	wf, err := d.Backend.Writable()
-	if err != nil {
-		return fmt.Errorf("opening the image for raw writes failed: %w", err)
-	}
-
-	for _, w := range writes {
+	resolved := make([]resolvedRawWrite, len(writes))
+	for i, w := range writes {
 		if w.OffsetBytes < 0 {
 			return fmt.Errorf("raw write offset %d is negative", w.OffsetBytes)
 		}
@@ -269,8 +277,45 @@ func applyRawWrites(d *disk.Disk, writes []RawWrite, lay layout) error {
 			return err
 		}
 
-		if _, err := wf.WriteAt(data, w.OffsetBytes); err != nil {
-			return fmt.Errorf("raw write of %d bytes at offset %d failed: %w", len(data), w.OffsetBytes, err)
+		resolved[i] = resolvedRawWrite{offsetBytes: w.OffsetBytes, data: data}
+	}
+
+	if err := checkRawWritesDontOverlap(resolved); err != nil {
+		return err
+	}
+
+	wf, err := d.Backend.Writable()
+	if err != nil {
+		return fmt.Errorf("opening the image for raw writes failed: %w", err)
+	}
+
+	for _, rw := range resolved {
+		if _, err := wf.WriteAt(rw.data, rw.offsetBytes); err != nil {
+			return fmt.Errorf("raw write of %d bytes at offset %d failed: %w", len(rw.data), rw.offsetBytes, err)
+		}
+	}
+
+	return nil
+}
+
+// checkRawWritesDontOverlap rejects any pair of writes whose byte ranges
+// intersect. checkRawWriteBounds already keeps each write clear of the MBR
+// and the partitions individually, but has no visibility into sibling
+// writes - two RawWrites that each individually land cleanly in the
+// unpartitioned gap can still clobber each other (e.g. a board's
+// idbloader.img growing far enough to run into its own u-boot.itb offset).
+func checkRawWritesDontOverlap(writes []resolvedRawWrite) error {
+	for i := 0; i < len(writes); i++ {
+		iEnd := writes[i].offsetBytes + int64(len(writes[i].data))
+		for j := i + 1; j < len(writes); j++ {
+			jEnd := writes[j].offsetBytes + int64(len(writes[j].data))
+			if rangesOverlap(writes[i].offsetBytes, iEnd, writes[j].offsetBytes, jEnd) {
+				return fmt.Errorf("%w: raw write at offset %d (%d bytes, ends at byte %d) overlaps the raw write at "+
+					"offset %d (%d bytes, ends at byte %d); shrink or move whichever one grew, or re-check the "+
+					"board's locked raw-write offsets",
+					ErrRawWriteOverlap, writes[i].offsetBytes, len(writes[i].data), iEnd,
+					writes[j].offsetBytes, len(writes[j].data), jEnd)
+			}
 		}
 	}
 
