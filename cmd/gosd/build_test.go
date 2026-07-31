@@ -13,6 +13,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/image"
 )
 
 func TestResolveBoardsDefaultsToAll(t *testing.T) {
@@ -314,6 +315,127 @@ func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
 			// The refusal has to say how big is too big, and where the
 			// whole story is written down.
 			for _, want := range []string{diskfmt.GibibytesString(maxBytes), strconv.FormatInt(maxBytes, 10), "exFAT", dataSizeLimitDocsURL} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestDefaultBootSizeMatchesImagePackage pins defaultBootSize's parsed value
+// against image.DefaultBootPartitionSizeBytes: the flag's default and the
+// image package's zero-means-default fallback must agree, or `gosd build`
+// with no --boot-size would report a different size than it actually wrote.
+func TestDefaultBootSizeMatchesImagePackage(t *testing.T) {
+	got, err := parseBootSize(defaultBootSize)
+	if err != nil {
+		t.Fatalf("parseBootSize(defaultBootSize) failed: %v", err)
+	}
+	if got != image.DefaultBootPartitionSizeBytes {
+		t.Errorf("parseBootSize(%q) = %d, want image.DefaultBootPartitionSizeBytes (%d)", defaultBootSize, got, int64(image.DefaultBootPartitionSizeBytes))
+	}
+}
+
+func TestParseBootSize(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"256MiB", 256 * 1024 * 1024},
+		{"1GiB", 1024 * 1024 * 1024},
+		{"1gib", 1024 * 1024 * 1024},
+		{"2G", 2 * 1024 * 1024 * 1024},
+		{"512MiB", 512 * 1024 * 1024},
+		{" 8 MiB ", 8 * 1024 * 1024},
+	}
+	for _, c := range cases {
+		got, err := parseBootSize(c.in)
+		if err != nil {
+			t.Errorf("parseBootSize(%q) error: %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("parseBootSize(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// TestParseBootSizeRejectsInvalidValues covers non-numeric/negative input,
+// the same shape TestParseDataSizeRejectsInvalidValues checks for
+// --data-size, plus --boot-size's own bounds: too small to plausibly hold
+// anything (a likely missing unit suffix), too large for the FAT32
+// formatter, and not a whole number of MiB.
+func TestParseBootSizeRejectsInvalidValues(t *testing.T) {
+	for _, in := range []string{"", "-1", "-1GiB", "1GB", "lots", "1.5GiB", "expand", "0"} {
+		if _, err := parseBootSize(in); err == nil {
+			t.Errorf("parseBootSize(%q) succeeded, want an error", in)
+		}
+	}
+}
+
+// TestParseBootSizeRejectsTooSmallToBePlausible confirms a --boot-size well
+// under any real kernel+initramfs (most likely a missing unit suffix, e.g.
+// "256" meaning 256 bytes) is refused at flag-parse time with an actionable
+// error, rather than silently attempted and failing deep inside go-diskfs.
+func TestParseBootSizeRejectsTooSmallToBePlausible(t *testing.T) {
+	for _, in := range []string{"1", "256", "1023KiB"} {
+		_, err := parseBootSize(in)
+		if err == nil {
+			t.Fatalf("parseBootSize(%q) succeeded, want a too-small refusal", in)
+		}
+		if !strings.Contains(err.Error(), "--boot-size") {
+			t.Errorf("parseBootSize(%q) error %q does not mention --boot-size", in, err)
+		}
+	}
+}
+
+// TestParseBootSizeRejectsMisalignedValues confirms a --boot-size that isn't
+// a whole number of MiB is refused with a rounded suggestion, rather than
+// silently truncated to the nearest sector (image.computeLayout's own
+// sector-rounding would otherwise make the flag's value and the partition's
+// real size quietly diverge).
+func TestParseBootSizeRejectsMisalignedValues(t *testing.T) {
+	for _, in := range []string{"10485761", "2049KiB"} { // 1 byte, and 1KiB, past a whole MiB
+		_, err := parseBootSize(in)
+		if err == nil {
+			t.Fatalf("parseBootSize(%q) succeeded, want a misalignment refusal", in)
+		}
+		if !strings.Contains(err.Error(), "whole number of MiB") {
+			t.Errorf("parseBootSize(%q) error %q does not mention MiB alignment", in, err)
+		}
+	}
+}
+
+// TestParseBootSizeRefusesMoreThanFAT32CanHold mirrors
+// TestParseDataSizeRefusesMoreThanFAT32CanHold: --boot-size is bounded by the
+// same FAT32 formatter ceiling as --data-size.
+func TestParseBootSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
+	maxBytes := diskfmt.MaxFAT32Bytes()
+	// --boot-size also requires MiB alignment (TestParseBootSizeRejects
+	// MisalignedValues), and maxBytes itself isn't a whole MiB, so the
+	// largest value --boot-size actually accepts is one MiB below it.
+	maxAlignedBytes := (maxBytes / bootSizeAlignmentBytes) * bootSizeAlignmentBytes
+
+	for _, tc := range []struct {
+		name    string
+		in      string
+		refused bool
+	}{
+		{"a 1GiB boot volume", "1GiB", false},
+		{"the largest MiB-aligned value at or under the maximum", strconv.FormatInt(maxAlignedBytes, 10), false},
+		{"one sector past the maximum", strconv.FormatInt(maxBytes+512, 10), true},
+		{"a 400GiB boot volume", "400GiB", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseBootSize(tc.in)
+			if (err != nil) != tc.refused {
+				t.Fatalf("parseBootSize(%q) = (%d, %v), want refused = %v", tc.in, got, err, tc.refused)
+			}
+			if err == nil {
+				return
+			}
+			for _, want := range []string{diskfmt.GibibytesString(maxBytes), strconv.FormatInt(maxBytes, 10), "--boot-size"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal %q does not mention %q", err, want)
 				}

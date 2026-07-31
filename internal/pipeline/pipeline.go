@@ -102,15 +102,21 @@ type Options struct {
 	// config.json tells gosd-init to create one filling the rest of the
 	// card on first boot.
 	DataExpand bool
+
+	// BootSizeBytes is the size of the FAT32 GOSD-BOOT partition, passed
+	// straight through to image.Spec.BootSizeBytes. Zero means
+	// image.DefaultBootPartitionSizeBytes (256MiB).
+	BootSizeBytes int64
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
 // build the initramfs, ask the board for its boot files and raw writes, and
-// write the resulting flashable image to opts.OutputPath.
-func Assemble(ctx context.Context, opts Options) error {
+// write the resulting flashable image to opts.OutputPath. The returned
+// image.WriteReport lets a caller print a boot-volume usage summary.
+func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	resolved, err := boards.ResolveArtifacts(ctx, opts.Board.Name(), opts.Board.Artifacts(), opts.ArtifactsDir, opts.CacheDir, fetchBoardArtifacts)
 	if err != nil {
-		return fmt.Errorf("resolving artifacts for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("resolving artifacts for %s: %w", opts.Board.Name(), err)
 	}
 
 	firmware := opts.Board.FirmwareFiles(resolved)
@@ -128,19 +134,19 @@ func Assemble(ctx context.Context, opts Options) error {
 	// twice.
 	initBinBytes, err := os.ReadFile(opts.InitBinaryPath)
 	if err != nil {
-		return fmt.Errorf("opening gosd-init binary at %s: %w", opts.InitBinaryPath, err)
+		return image.WriteReport{}, fmt.Errorf("opening gosd-init binary at %s: %w", opts.InitBinaryPath, err)
 	}
 	appBinBytes, err := os.ReadFile(opts.AppBinaryPath)
 	if err != nil {
-		return fmt.Errorf("opening app binary at %s: %w", opts.AppBinaryPath, err)
+		return image.WriteReport{}, fmt.Errorf("opening app binary at %s: %w", opts.AppBinaryPath, err)
 	}
 	firmwareBytes, err := readAllReaders(firmware)
 	if err != nil {
-		return fmt.Errorf("reading firmware files for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("reading firmware files for %s: %w", opts.Board.Name(), err)
 	}
 	extraExecBytes, err := readAllReaders(opts.ExtraExecutables)
 	if err != nil {
-		return fmt.Errorf("reading extra executables for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("reading extra executables for %s: %w", opts.Board.Name(), err)
 	}
 
 	// Board.BootFiles requires a non-nil Initramfs even though it never
@@ -159,7 +165,7 @@ func Assemble(ctx context.Context, opts Options) error {
 
 	bootFiles, err := opts.Board.BootFiles(opts.Config, resolved)
 	if err != nil {
-		return fmt.Errorf("assembling boot files for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("assembling boot files for %s: %w", opts.Board.Name(), err)
 	}
 	if bootFiles == nil {
 		bootFiles = make(map[string]io.Reader, 1)
@@ -190,13 +196,13 @@ func Assemble(ctx context.Context, opts Options) error {
 		}
 		data, err := readAllAndClose(r)
 		if err != nil {
-			return fmt.Errorf("reading boot file %q for %s: %w", name, opts.Board.Name(), err)
+			return image.WriteReport{}, fmt.Errorf("reading boot file %q for %s: %w", name, opts.Board.Name(), err)
 		}
 		bootFiles[name] = bytes.NewReader(data)
 		payload = append(payload, initcfg.PayloadFile{Path: name, Content: data})
 	}
 	if initramfsKey == "" {
-		return fmt.Errorf("assembling boot files for %s: BootFiles did not include the initramfs archive", opts.Board.Name())
+		return image.WriteReport{}, fmt.Errorf("assembling boot files for %s: BootFiles did not include the initramfs archive", opts.Board.Name())
 	}
 
 	payload = append(payload,
@@ -239,7 +245,7 @@ func Assemble(ctx context.Context, opts Options) error {
 		Identity:   identity,
 	})
 	if err != nil {
-		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
 	}
 
 	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+3)
@@ -257,20 +263,22 @@ func Assemble(ctx context.Context, opts Options) error {
 
 	var initramfsBuf bytes.Buffer
 	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files, Dirs: mountPointDirs}); err != nil {
-		return fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
+		return image.WriteReport{}, fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
 	}
 	resolved.Initramfs = &initramfsBuf
 	bootFiles[initramfsKey] = &initramfsBuf
 
-	if err := image.Write(opts.OutputPath, image.Spec{
+	report, err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:     bootFiles,
 		RawWrites:     opts.Board.RawWrites(resolved),
 		DataSizeBytes: opts.DataSizeBytes,
-	}); err != nil {
-		return fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)
+		BootSizeBytes: opts.BootSizeBytes,
+	})
+	if err != nil {
+		return image.WriteReport{}, fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)
 	}
 
-	return nil
+	return report, nil
 }
 
 // fetchBoardArtifacts is the boards.BoardArtifactsFunc every real build uses:

@@ -77,7 +77,7 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 	}
 
 	imgPath := filepath.Join(dir, "out.img")
-	err := pipeline.Assemble(context.Background(), pipeline.Options{
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board:          b,
 		AppBinaryPath:  appPath,
 		InitBinaryPath: initPath,
@@ -140,7 +140,7 @@ func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
 	initPath := writeTempFile(t, dir, "gosd-init", "init")
 
 	imgPath := filepath.Join(dir, "out.img")
-	err := pipeline.Assemble(context.Background(), pipeline.Options{
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath,
 		DataExpand: true,
@@ -182,7 +182,7 @@ func TestAssembleBakesEnvIntoConfigJSONAndGosdToml(t *testing.T) {
 
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
-	err := pipeline.Assemble(context.Background(), pipeline.Options{
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		Config:     boards.BuildConfig{Env: map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}},
 		OutputPath: imgPath,
@@ -232,7 +232,7 @@ func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
-	if err := pipeline.Assemble(context.Background(), pipeline.Options{
+	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -270,7 +270,7 @@ func TestAssembleAppliesRawWrites(t *testing.T) {
 	}
 
 	imgPath := filepath.Join(dir, "out.img")
-	if err := pipeline.Assemble(context.Background(), pipeline.Options{
+	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -299,7 +299,7 @@ func TestAssembleThreadsDataSizeBytesIntoTheImage(t *testing.T) {
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	const dataSizeBytes = 4 * 1024 * 1024
-	if err := pipeline.Assemble(context.Background(), pipeline.Options{
+	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath, DataSizeBytes: dataSizeBytes,
 	}); err != nil {
@@ -329,7 +329,7 @@ func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 	wantErr := errors.New("board-specific boot files failure")
 	b := &fakeBoard{name: "fake-board", bootFilesErr: wantErr}
 
-	err := pipeline.Assemble(context.Background(), pipeline.Options{
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: filepath.Join(dir, "out.img"),
 	})

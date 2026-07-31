@@ -28,7 +28,7 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 	nested := []byte("nested boot script contents\n")
 	raw := []byte("raw-bootloader-payload")
 
-	err := image.Write(imgPath, image.Spec{
+	report, err := image.Write(imgPath, image.Spec{
 		BootFiles: map[string]io.Reader{
 			"gosd.toml":           bytes.NewReader(topLevel),
 			"nested/dir/boot.scr": bytes.NewReader(nested),
@@ -40,6 +40,12 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Write() failed: %v", err)
+	}
+	if report.BootPartitionSizeBytes != image.DefaultBootPartitionSizeBytes {
+		t.Errorf("report.BootPartitionSizeBytes = %d, want the default %d (BootSizeBytes unset)", report.BootPartitionSizeBytes, image.DefaultBootPartitionSizeBytes)
+	}
+	if want := int64(len(topLevel) + len(nested)); report.BootPartitionPayloadBytes != want {
+		t.Errorf("report.BootPartitionPayloadBytes = %d, want %d (the boot files' total content length)", report.BootPartitionPayloadBytes, want)
 	}
 
 	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
@@ -100,7 +106,7 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 
 	const dataSizeBytes = 4 * 1024 * 1024 // small, so the test doesn't need a full 1GiB partition
 
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
 		DataSizeBytes: dataSizeBytes,
 	})
@@ -176,7 +182,7 @@ func TestWriteFormatsBothPartitionsWithAddressableFATs(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	const dataSizeBytes = 64 * 1024 * 1024
-	if err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
+	if _, err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
 		t.Fatalf("Write() failed: %v", err)
 	}
 
@@ -228,7 +234,7 @@ func fat32ClusterAndEntryCounts(t *testing.T, imgPath string, offset int64) (clu
 func TestWriteRejectsRawWriteOverlappingDataPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		DataSizeBytes: 4 * 1024 * 1024,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: dataPartitionOffsetBytes, Content: bytes.NewReader([]byte("clobber"))},
@@ -242,7 +248,7 @@ func TestWriteRejectsRawWriteOverlappingDataPartition(t *testing.T) {
 func TestWriteRejectsRawWriteOverlappingMBR(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: 0, Content: bytes.NewReader([]byte("clobber"))},
 		},
@@ -255,7 +261,7 @@ func TestWriteRejectsRawWriteOverlappingMBR(t *testing.T) {
 func TestWriteRejectsRawWriteOverlappingBootPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: bootPartitionOffsetBytes, Content: bytes.NewReader([]byte("clobber"))},
 		},
@@ -277,7 +283,7 @@ func TestWriteRejectsTwoRawWritesThatOverlapEachOther(t *testing.T) {
 	idbloader := bytes.Repeat([]byte{0xaa}, ubootOffset-idbloaderOffset+1)
 	uboot := []byte("u-boot payload")
 
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: idbloaderOffset, Content: bytes.NewReader(idbloader)},
 			{OffsetBytes: ubootOffset, Content: bytes.NewReader(uboot)},
@@ -298,12 +304,87 @@ func TestWriteRejectsRawWriteStraddlingIntoBootPartition(t *testing.T) {
 
 	// Starts inside the gap but is long enough to run into partition 1.
 	content := bytes.Repeat([]byte{0xff}, 1024)
-	err := image.Write(imgPath, image.Spec{
+	_, err := image.Write(imgPath, image.Spec{
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: bootPartitionOffsetBytes - 512, Content: bytes.NewReader(content)},
 		},
 	})
 	if !errors.Is(err, image.ErrRawWriteOverlap) {
 		t.Fatalf("Write() with a raw write straddling into partition 1 = %v, want an ErrRawWriteOverlap", err)
+	}
+}
+
+// TestWriteWithBootSizeMovesTheDataPartitionOffset is the acceptance test for
+// bean gosd-m70t: a non-default Spec.BootSizeBytes must resize partition 1
+// and shift partition 2 (and the image's total size) to start immediately
+// after it, exactly as the fixed 256MiB default already did before
+// --boot-size existed. Partition 1 still starts at the locked 16MiB offset -
+// only its end moves.
+func TestWriteWithBootSizeMovesTheDataPartitionOffset(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	const (
+		bootSizeBytes = 32 * 1024 * 1024
+		dataSizeBytes = 4 * 1024 * 1024
+	)
+
+	report, err := image.Write(imgPath, image.Spec{
+		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
+		BootSizeBytes: bootSizeBytes,
+		DataSizeBytes: dataSizeBytes,
+	})
+	if err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+	if report.BootPartitionSizeBytes != bootSizeBytes {
+		t.Errorf("report.BootPartitionSizeBytes = %d, want %d", report.BootPartitionSizeBytes, int64(bootSizeBytes))
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the written image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	part1, err := d.GetPartition(1)
+	if err != nil {
+		t.Fatalf("GetPartition(1) failed: %v", err)
+	}
+	if got := part1.GetStart(); got != bootPartitionOffsetBytes {
+		t.Errorf("partition 1 starts at byte %d, want %d (16MiB, unaffected by BootSizeBytes)", got, bootPartitionOffsetBytes)
+	}
+	if got := part1.GetSize(); got != bootSizeBytes {
+		t.Errorf("partition 1 size = %d bytes, want %d (BootSizeBytes)", got, int64(bootSizeBytes))
+	}
+
+	wantDataOffset := int64(bootPartitionOffsetBytes + bootSizeBytes)
+	part2, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got := part2.GetStart(); got != wantDataOffset {
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after the resized partition 1)", got, wantDataOffset)
+	}
+}
+
+// TestWriteWrapsGoDiskfsDiskFullError is the acceptance test for gosd-m70t's
+// fit reporting: a boot partition too small for its BootFiles must fail with
+// image.ErrBootPartitionFull, not go-diskfs's bare "no space left on device"
+// - which names no flag and gives a developer no way to know what to change.
+func TestWriteWrapsGoDiskfsDiskFullError(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	// The smallest FAT32 volume go-diskfs will format at all; a single
+	// modest file still can't fit once the reserved area and root
+	// directory are accounted for.
+	const tinyBootSizeBytes = 1024 * 1024
+	payload := bytes.Repeat([]byte{0xaa}, 2*1024*1024)
+
+	_, err := image.Write(imgPath, image.Spec{
+		BootFiles:     map[string]io.Reader{"big-file.bin": bytes.NewReader(payload)},
+		BootSizeBytes: tinyBootSizeBytes,
+	})
+	if !errors.Is(err, image.ErrBootPartitionFull) {
+		t.Fatalf("Write() with an oversized payload = %v, want an ErrBootPartitionFull", err)
 	}
 }

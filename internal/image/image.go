@@ -3,18 +3,30 @@
 // built entirely in Go via github.com/diskfs/go-diskfs (no root, no external
 // mkfs/fdisk tooling).
 //
-// The on-disk layout is locked:
+// The on-disk layout is locked except for the boot partition's size, which is
+// per-build (Spec.BootSizeBytes, defaulting to today's 256MiB - see
+// `gosd build --boot-size`):
 //
-//	byte 0        MBR (512 bytes)
-//	byte 512      unpartitioned gap (Rockchip bootloaders land here on
-//	              boards that need it - see the Radxa embed task)
-//	byte 16MiB    partition 1: FAT32, type 0x0C, label GOSD-BOOT, 256MiB
-//	byte 272MiB   partition 2 (optional): FAT32, type 0x0C, label GOSD-DATA,
-//	              size from Spec.DataSizeBytes, immediately after partition 1
-//	byte 272MiB+  end of image (or +Spec.DataSizeBytes if partition 2 exists)
+//	byte 0                      MBR (512 bytes)
+//	byte 512                    unpartitioned gap (Rockchip bootloaders land
+//	                            here on boards that need it - see the Radxa
+//	                            embed task)
+//	byte 16MiB                  partition 1: FAT32, type 0x0C, label
+//	                            GOSD-BOOT, Spec.BootSizeBytes (default 256MiB)
+//	byte 16MiB+BootSizeBytes    partition 2 (optional): FAT32, type 0x0C,
+//	                            label GOSD-DATA, size from Spec.DataSizeBytes,
+//	                            immediately after partition 1
+//	end of image                (16MiB+BootSizeBytes, or +Spec.DataSizeBytes
+//	                            if partition 2 exists)
 //
 // Partition 2 is omitted entirely (single-partition layout, unchanged from
 // earlier versions) when Spec.DataSizeBytes is zero.
+//
+// The chosen boot size becomes part of an app's on-disk layout: a later
+// build that changes it moves partition 2's start, so a device upgraded via
+// plain reflash finds its old GOSD-DATA superblock at the wrong offset (or
+// gone) and re-formats - a deliberate, documented consequence (see
+// docs/design/upgrade-path.md §0.4 and §2), not a bug here.
 //
 // Write is the only entry point; RawWrites into the gap and BootFiles into
 // the FAT partition are both validated so a caller cannot accidentally
@@ -29,6 +41,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/disk"
@@ -45,28 +58,22 @@ const (
 	// start of the image.
 	mbrSizeBytes = sectorSizeBytes
 
-	// bootPartitionOffsetBytes and bootPartitionSizeBytes are the locked
-	// layout for partition 1: it starts at exactly 16MiB (LBA 32768 at
-	// 512-byte sectors) and is 256MiB, leaving the 512B-16MiB gap
-	// unpartitioned.
+	// bootPartitionOffsetBytes is the locked start of partition 1: exactly
+	// 16MiB (LBA 32768 at 512-byte sectors), leaving the 512B-16MiB gap
+	// unpartitioned. This does NOT move with Spec.BootSizeBytes - only the
+	// partition's end (and so partition 2's start) does.
 	bootPartitionOffsetBytes = 16 * 1024 * 1024
-	bootPartitionSizeBytes   = 256 * 1024 * 1024
 
-	// totalImageSizeBytes is 272MiB: the boot partition's offset plus its
-	// size, with no additional slack needed since the MBR itself already
-	// fits inside the leading gap. This is the whole image when Spec's
-	// data partition is disabled.
-	totalImageSizeBytes = bootPartitionOffsetBytes + bootPartitionSizeBytes
+	// DefaultBootPartitionSizeBytes is partition 1's size when
+	// Spec.BootSizeBytes is zero: today's locked constant (256MiB),
+	// unchanged from before --boot-size existed. Exported so callers that
+	// need to talk about "the default" (e.g. `gosd build --boot-size`'s
+	// own flag default) don't duplicate the number.
+	DefaultBootPartitionSizeBytes = 256 * 1024 * 1024
 
-	bootPartitionLabel      = "GOSD-BOOT"
-	bootPartitionIndex      = 1
-	bootPartitionStartLBA   = bootPartitionOffsetBytes / sectorSizeBytes
-	bootPartitionSizeInLBAs = bootPartitionSizeBytes / sectorSizeBytes
-
-	// dataPartitionOffsetBytes is the locked start of partition 2: directly
-	// after partition 1, no gap.
-	dataPartitionOffsetBytes = bootPartitionOffsetBytes + bootPartitionSizeBytes
-	dataPartitionStartLBA    = dataPartitionOffsetBytes / sectorSizeBytes
+	bootPartitionLabel    = "GOSD-BOOT"
+	bootPartitionIndex    = 1
+	bootPartitionStartLBA = bootPartitionOffsetBytes / sectorSizeBytes
 
 	dataPartitionLabel = "GOSD-DATA"
 	dataPartitionIndex = 2
@@ -101,24 +108,90 @@ type Spec struct {
 	// whole sector, and then to the largest size go-diskfs formats into a
 	// self-consistent FAT32 volume (at most two clusters less).
 	DataSizeBytes int64
+
+	// BootSizeBytes is the size of the FAT32 boot partition (label
+	// GOSD-BOOT), which always starts at byte 16MiB. Zero means
+	// DefaultBootPartitionSizeBytes (256MiB, the size every image used
+	// before `gosd build --boot-size` existed). Non-zero sizes are rounded
+	// down to the nearest whole sector, and then to the largest size
+	// go-diskfs formats into a self-consistent FAT32 volume (at most two
+	// clusters less) - the same trim DataSizeBytes gets.
+	BootSizeBytes int64
 }
 
-// layout is the concrete geometry one Write call resolves Spec.DataSizeBytes
-// into: whether partition 2 exists, and the image's total size.
+// WriteReport summarizes what a Write call actually wrote, so a caller can
+// print a boot-volume usage line (`gosd build`'s per-board summary) without
+// re-opening and re-inspecting the finished image.
+type WriteReport struct {
+	// BootPartitionSizeBytes is the boot partition's resolved capacity:
+	// Spec.BootSizeBytes, or DefaultBootPartitionSizeBytes when that was
+	// zero.
+	BootPartitionSizeBytes int64
+
+	// BootPartitionPayloadBytes is the sum of every BootFiles entry's
+	// content length actually written. It is not the partition's true
+	// on-disk usage - FAT32 cluster rounding, directory entries, and the
+	// reserved boot region all add a little further overhead this doesn't
+	// count - but it's close enough to watch headroom shrink release over
+	// release.
+	BootPartitionPayloadBytes int64
+}
+
+// layout is the concrete geometry one Write call resolves Spec.BootSizeBytes
+// and Spec.DataSizeBytes into: the boot partition's real size, whether
+// partition 2 exists, and the image's total size.
 type layout struct {
-	totalSizeBytes          int64
-	hasDataPartition        bool
-	dataPartitionSizeInLBAs uint32
+	bootPartitionSizeBytes   int64
+	bootPartitionSizeInLBAs  uint32
+	dataPartitionOffsetBytes int64
+	dataPartitionStartLBA    uint32
+	totalSizeBytes           int64
+	hasDataPartition         bool
+	dataPartitionSizeInLBAs  uint32
 }
 
-// computeLayout turns Spec.DataSizeBytes into a concrete layout, rejecting
-// sizes that can't produce a valid partition.
-func computeLayout(dataSizeBytes int64) (layout, error) {
+// computeLayout turns Spec.BootSizeBytes and Spec.DataSizeBytes into a
+// concrete layout, rejecting sizes that can't produce a valid partition.
+func computeLayout(bootSizeBytes, dataSizeBytes int64) (layout, error) {
+	if bootSizeBytes < 0 {
+		return layout{}, fmt.Errorf("boot partition size %d bytes is negative", bootSizeBytes)
+	}
+	if bootSizeBytes == 0 {
+		bootSizeBytes = DefaultBootPartitionSizeBytes
+	}
+
+	bootSizeInLBAs := bootSizeBytes / sectorSizeBytes
+	if bootSizeInLBAs == 0 {
+		return layout{}, fmt.Errorf("boot partition size %d bytes is smaller than one sector (%d bytes)", bootSizeBytes, sectorSizeBytes)
+	}
+	if bootSizeInLBAs > math.MaxUint32 {
+		return layout{}, fmt.Errorf("boot partition size %d bytes is too large for an MBR partition", bootSizeBytes)
+	}
+
+	// go-diskfs lays a FAT32 volume out with a FAT too small to index every
+	// cluster it advertises at ~0.8% of sizes, so - exactly like the data
+	// partition below - the boot partition is trimmed to the largest size
+	// go-diskfs formats correctly, which costs at most two clusters. The
+	// 256MiB default (and every whole-MiB size in its cluster-size band) is
+	// unaffected: this only ever bites within sectorsPerCluster+1 sectors of
+	// a band's top.
+	bootSizeInLBAs = diskfmt.LargestSelfConsistentFAT32Bytes(bootSizeInLBAs*sectorSizeBytes) / sectorSizeBytes
+	bootSizeBytes = bootSizeInLBAs * sectorSizeBytes
+
+	dataOffsetBytes := bootPartitionOffsetBytes + bootSizeBytes
+	lay := layout{
+		bootPartitionSizeBytes:   bootSizeBytes,
+		bootPartitionSizeInLBAs:  uint32(bootSizeInLBAs),
+		dataPartitionOffsetBytes: dataOffsetBytes,
+		dataPartitionStartLBA:    uint32(dataOffsetBytes / sectorSizeBytes),
+		totalSizeBytes:           dataOffsetBytes,
+	}
+
 	if dataSizeBytes < 0 {
 		return layout{}, fmt.Errorf("data partition size %d bytes is negative", dataSizeBytes)
 	}
 	if dataSizeBytes == 0 {
-		return layout{totalSizeBytes: totalImageSizeBytes}, nil
+		return lay, nil
 	}
 
 	sizeInLBAs := dataSizeBytes / sectorSizeBytes
@@ -129,30 +202,26 @@ func computeLayout(dataSizeBytes int64) (layout, error) {
 		return layout{}, fmt.Errorf("data partition size %d bytes is too large for an MBR partition", dataSizeBytes)
 	}
 
-	// go-diskfs lays a FAT32 volume out with a FAT too small to index every
-	// cluster it advertises at ~0.8% of sizes — 64 GiB and most other round
-	// sizes among them — so the partition is trimmed to the largest size it
-	// formats correctly, which costs at most two clusters.
+	// Same trim as the boot partition above.
 	sizeInLBAs = diskfmt.LargestSelfConsistentFAT32Bytes(sizeInLBAs*sectorSizeBytes) / sectorSizeBytes
 
-	return layout{
-		totalSizeBytes:          dataPartitionOffsetBytes + sizeInLBAs*sectorSizeBytes,
-		hasDataPartition:        true,
-		dataPartitionSizeInLBAs: uint32(sizeInLBAs),
-	}, nil
+	lay.hasDataPartition = true
+	lay.dataPartitionSizeInLBAs = uint32(sizeInLBAs)
+	lay.totalSizeBytes = dataOffsetBytes + sizeInLBAs*sectorSizeBytes
+	return lay, nil
 }
 
-// Write assembles a flashable MBR + FAT32 .img file at imgPath from spec.
-// It is pure Go and requires no root privileges.
-func Write(imgPath string, spec Spec) (err error) {
-	lay, err := computeLayout(spec.DataSizeBytes)
+// Write assembles a flashable MBR + FAT32 .img file at imgPath from spec. It
+// is pure Go and requires no root privileges.
+func Write(imgPath string, spec Spec) (report WriteReport, err error) {
+	lay, err := computeLayout(spec.BootSizeBytes, spec.DataSizeBytes)
 	if err != nil {
-		return fmt.Errorf("computing image layout for %s failed: %w", imgPath, err)
+		return WriteReport{}, fmt.Errorf("computing image layout for %s failed: %w", imgPath, err)
 	}
 
 	d, err := diskfs.Create(imgPath, lay.totalSizeBytes, diskfs.SectorSize512)
 	if err != nil {
-		return fmt.Errorf("creating image file %s failed: %w", imgPath, err)
+		return WriteReport{}, fmt.Errorf("creating image file %s failed: %w", imgPath, err)
 	}
 	defer func() {
 		if cerr := d.Close(); cerr != nil && err == nil {
@@ -165,14 +234,14 @@ func Write(imgPath string, spec Spec) (err error) {
 			Index: bootPartitionIndex,
 			Type:  mbr.Fat32LBA,
 			Start: bootPartitionStartLBA,
-			Size:  bootPartitionSizeInLBAs,
+			Size:  lay.bootPartitionSizeInLBAs,
 		},
 	}
 	if lay.hasDataPartition {
 		partitions = append(partitions, &mbr.Partition{
 			Index: dataPartitionIndex,
 			Type:  mbr.Fat32LBA,
-			Start: dataPartitionStartLBA,
+			Start: lay.dataPartitionStartLBA,
 			Size:  lay.dataPartitionSizeInLBAs,
 		})
 	}
@@ -182,7 +251,7 @@ func Write(imgPath string, spec Spec) (err error) {
 		Partitions:         partitions,
 	}
 	if err := d.Partition(table); err != nil {
-		return fmt.Errorf("writing the MBR partition table to %s failed: %w", imgPath, err)
+		return WriteReport{}, fmt.Errorf("writing the MBR partition table to %s failed: %w", imgPath, err)
 	}
 
 	fs, err := d.CreateFilesystem(disk.FilesystemSpec{
@@ -191,11 +260,12 @@ func Write(imgPath string, spec Spec) (err error) {
 		VolumeLabel: bootPartitionLabel,
 	})
 	if err != nil {
-		return fmt.Errorf("formatting the %s FAT32 boot partition failed: %w", bootPartitionLabel, err)
+		return WriteReport{}, fmt.Errorf("formatting the %s FAT32 boot partition failed: %w", bootPartitionLabel, err)
 	}
 
-	if err := writeBootFiles(fs, spec.BootFiles); err != nil {
-		return err
+	payloadBytes, err := writeBootFiles(fs, spec.BootFiles)
+	if err != nil {
+		return WriteReport{}, wrapBootPartitionFullError(err, lay.bootPartitionSizeBytes)
 	}
 
 	if lay.hasDataPartition {
@@ -204,51 +274,79 @@ func Write(imgPath string, spec Spec) (err error) {
 			FSType:      filesystem.TypeFat32,
 			VolumeLabel: dataPartitionLabel,
 		}); err != nil {
-			return fmt.Errorf("formatting the %s FAT32 data partition failed: %w", dataPartitionLabel, err)
+			return WriteReport{}, fmt.Errorf("formatting the %s FAT32 data partition failed: %w", dataPartitionLabel, err)
 		}
 	}
 
 	if err := applyRawWrites(d, spec.RawWrites, lay); err != nil {
-		return err
+		return WriteReport{}, err
 	}
 
-	return nil
+	return WriteReport{
+		BootPartitionSizeBytes:    lay.bootPartitionSizeBytes,
+		BootPartitionPayloadBytes: payloadBytes,
+	}, nil
+}
+
+// bootPartitionFullMarker is the exact, unexported error text go-diskfs's
+// FAT32 writer returns when a volume runs out of allocatable clusters
+// (filesystem/fat12.FileSystem.allocateSpace, embedded into fat32.FileSystem)
+// - the library exports no sentinel for it, so this substring match is the
+// only way to recognize "the boot partition is full" and turn it into a
+// refusal actionable at the flag that controls the partition's size, instead
+// of a bare "no space left on device" a developer would otherwise have no way
+// to connect to --boot-size.
+const bootPartitionFullMarker = "no space left on device"
+
+// wrapBootPartitionFullError recognizes go-diskfs's disk-full error inside
+// err and wraps it into ErrBootPartitionFull with the partition's capacity,
+// so a caller can add flag-specific guidance; any other error passes through
+// unchanged.
+func wrapBootPartitionFullError(err error, bootPartitionSizeBytes int64) error {
+	if !strings.Contains(err.Error(), bootPartitionFullMarker) {
+		return err
+	}
+	return fmt.Errorf("%w (capacity %d bytes): %w", ErrBootPartitionFull, bootPartitionSizeBytes, err)
 }
 
 // writeBootFiles copies each of files into the FAT32 filesystem fs, creating
-// any parent directories the path requires.
-func writeBootFiles(fs filesystem.FileSystem, files map[string]io.Reader) error {
+// any parent directories the path requires, and returns the total bytes
+// copied (WriteReport.BootPartitionPayloadBytes).
+func writeBootFiles(fs filesystem.FileSystem, files map[string]io.Reader) (int64, error) {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
 
+	var totalBytes int64
 	for _, p := range paths {
 		if p == "" {
-			return errors.New("boot file path must not be empty")
+			return totalBytes, errors.New("boot file path must not be empty")
 		}
 
 		if dir := path.Dir(p); dir != "." {
 			if err := fs.Mkdir(dir); err != nil {
-				return fmt.Errorf("creating boot partition directory %q failed: %w", dir, err)
+				return totalBytes, fmt.Errorf("creating boot partition directory %q failed: %w", dir, err)
 			}
 		}
 
 		f, err := fs.OpenFile(p, os.O_CREATE|os.O_RDWR)
 		if err != nil {
-			return fmt.Errorf("creating boot partition file %q failed: %w", p, err)
+			return totalBytes, fmt.Errorf("creating boot partition file %q failed: %w", p, err)
 		}
-		if _, err := io.Copy(f, files[p]); err != nil {
+		n, err := io.Copy(f, files[p])
+		totalBytes += n
+		if err != nil {
 			_ = f.Close()
-			return fmt.Errorf("writing boot partition file %q failed: %w", p, err)
+			return totalBytes, fmt.Errorf("writing boot partition file %q failed: %w", p, err)
 		}
 		if err := f.Close(); err != nil {
-			return fmt.Errorf("closing boot partition file %q failed: %w", p, err)
+			return totalBytes, fmt.Errorf("closing boot partition file %q failed: %w", p, err)
 		}
 	}
 
-	return nil
+	return totalBytes, nil
 }
 
 // resolvedRawWrite is a RawWrite whose content has been read into memory, so
@@ -336,23 +434,24 @@ func checkRawWritesDontOverlap(writes []resolvedRawWrite) error {
 // data partition, and if it would run past the end of the image entirely.
 func checkRawWriteBounds(offset, length int64, lay layout) error {
 	end := offset + length
+	bootPartitionEndBytes := bootPartitionOffsetBytes + lay.bootPartitionSizeBytes
 
 	if rangesOverlap(offset, end, 0, mbrSizeBytes) {
 		return fmt.Errorf("%w: write at offset %d (%d bytes) overlaps the MBR (bytes 0-%d); "+
 			"choose an offset at or after byte %d", ErrRawWriteOverlap, offset, length, mbrSizeBytes, mbrSizeBytes)
 	}
 
-	if rangesOverlap(offset, end, bootPartitionOffsetBytes, bootPartitionOffsetBytes+bootPartitionSizeBytes) {
+	if rangesOverlap(offset, end, bootPartitionOffsetBytes, bootPartitionEndBytes) {
 		return fmt.Errorf("%w: write at offset %d (%d bytes) overlaps partition 1 (bytes %d-%d); "+
 			"raw writes must stay within the unpartitioned gap (bytes %d-%d)",
-			ErrRawWriteOverlap, offset, length, bootPartitionOffsetBytes, bootPartitionOffsetBytes+bootPartitionSizeBytes,
+			ErrRawWriteOverlap, offset, length, bootPartitionOffsetBytes, bootPartitionEndBytes,
 			mbrSizeBytes, bootPartitionOffsetBytes)
 	}
 
-	if lay.hasDataPartition && rangesOverlap(offset, end, dataPartitionOffsetBytes, lay.totalSizeBytes) {
+	if lay.hasDataPartition && rangesOverlap(offset, end, lay.dataPartitionOffsetBytes, lay.totalSizeBytes) {
 		return fmt.Errorf("%w: write at offset %d (%d bytes) overlaps the %s data partition (bytes %d-%d); "+
 			"raw writes must stay within the unpartitioned gap (bytes %d-%d)",
-			ErrRawWriteOverlap, offset, length, dataPartitionLabel, dataPartitionOffsetBytes, lay.totalSizeBytes,
+			ErrRawWriteOverlap, offset, length, dataPartitionLabel, lay.dataPartitionOffsetBytes, lay.totalSizeBytes,
 			mbrSizeBytes, bootPartitionOffsetBytes)
 	}
 
