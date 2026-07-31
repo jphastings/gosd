@@ -74,11 +74,11 @@ func greetingSuffix(greeting string) string {
 const dataDir = "/data"
 
 // bumpBootCounter demonstrates GoSD's persistent storage: it increments a
-// counter file on the GOSD-DATA partition every boot, using the
-// write-to-temp + fsync + rename pattern docs/runtime.md recommends for
-// FAT32's weak crash-safety. When the image has no data partition, /data is
-// read-only and the write fails with EROFS; hello reports that instead of
-// treating it as an error.
+// counter file on the GOSD-DATA partition every boot, using the durable-write
+// sequence docs/runtime.md recommends for FAT32's weak crash-safety, so the
+// count survives a power cut immediately after the write. When the image has
+// no data partition, /data is read-only and the write fails with EROFS; hello
+// reports that instead of treating it as an error.
 func bumpBootCounter() string {
 	counterPath := filepath.Join(dataDir, "hello-boots")
 
@@ -99,8 +99,11 @@ func bumpBootCounter() string {
 }
 
 // writeFileDurably writes data to path so that a power cut leaves either the
-// old contents or the new, never a torn mix: write a temp file, fsync it,
-// then rename it over the real name.
+// old contents or the new, never a torn mix, and so that the new contents
+// are on the card by the time it returns: write a temp file, fsync it,
+// rename it over the real name, then fsync the renamed file and its
+// directory. The two syncs after the rename are what FAT needs — see
+// docs/runtime.md's "Making a write durable".
 func writeFileDurably(path string, data []byte) error {
 	tmp := path + ".tmp"
 
@@ -116,8 +119,36 @@ func writeFileDurably(path string, data []byte) error {
 		_ = f.Close()
 		return err
 	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// The rename itself is only a directory-block change, and on FAT a
+	// dirty directory block waits for normal writeback (~30s) — a power
+	// cut before that loses the rename. Syncing the still-open file
+	// writes its (new) directory entry with the real start cluster and
+	// size, and syncing the directory writes the entry the rename added
+	// and the one it removed. Both are needed: see docs/runtime.md.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory itself, so directory entries added or removed
+// in it reach the card rather than waiting for writeback.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }

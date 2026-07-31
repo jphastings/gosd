@@ -451,7 +451,8 @@ see `beans list` for what's in flight.
     formats it with a whole-device FAT filesystem the first time it's seen
     blank, mounting-only on every run after that. It carries the same
     FAT-only caveats as the `/data` partition (no unix permissions/symlinks,
-    not power-loss-robust; write with the temp-file+fsync+rename pattern).
+    not power-loss-robust; write with the sequence in `docs/runtime.md`'s
+    "Making a write durable").
     **Hardware-verified on the NanoPi Zero2** (bean `gosd-odp7`,
     2026-07-24): first hardware validation of the detect/format/mount path,
     and of serving eMMC-hosted content over HTTP via `examples/usbwebsite`

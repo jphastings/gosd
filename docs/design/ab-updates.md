@@ -120,7 +120,12 @@ re-reads it.
 ## 4. Commit protocol
 
 Every write to `GOSD-BOOT` follows the same shape: write to a temp name,
-`fsync` the data, `rename` over the real name. This is the same
+`fsync` the data, `rename` over the real name — and then, because the
+medium is FAT, `fsync` the renamed file *and* the directory it lives in, or
+the rename sits in RAM for up to 30s and a power cut undoes it (bean
+`gosd-0nk4`; the full sequence and why each sync is needed is in
+`docs/runtime.md`'s "Making a write durable"). Every "renamed and durable"
+row in the table below means all four steps completed. This is the same
 write-then-rename discipline the rejected design used for `autoboot.txt`/
 U-Boot env — reused here because the underlying medium (FAT32, no journal,
 directory-entry rename is not power-loss-atomic) hasn't changed. What has
