@@ -2,6 +2,8 @@ package blockmount
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -249,13 +251,13 @@ func TestRunNamesTheStorageInItsErrors(t *testing.T) {
 }
 
 func TestValidateLabel(t *testing.T) {
-	valid := []string{"A", "APPDATA", "ELEVENCHARS"}
+	valid := []string{"A", "APPDATA", "ELEVENCHARS", "AB CD", "GOSD-DATA"}
 	for _, label := range valid {
 		if err := ValidateLabel("pkg", label); err != nil {
 			t.Errorf("ValidateLabel(%q) = %v, want nil", label, err)
 		}
 	}
-	invalid := []string{"", "TWELVECHARSX", "café"}
+	invalid := []string{"", "TWELVECHARSX", "café", "APPDATA ", " APPDATA", " APPDATA ", "   "}
 	for _, label := range invalid {
 		err := ValidateLabel("pkg", label)
 		if err == nil {
@@ -264,6 +266,124 @@ func TestValidateLabel(t *testing.T) {
 		}
 		if !strings.HasPrefix(err.Error(), "pkg: ") {
 			t.Errorf("ValidateLabel(%q) = %q, want it prefixed with the caller's package name", label, err)
+		}
+	}
+}
+
+// TestValidateLabelRejectsEdgeSpacesActionably pins the fix for gosd-xq9l: a
+// label with a leading or trailing space provably cannot round-trip through
+// either filesystem's format→Inspect (both strip edge padding on read), so
+// ValidateLabel must catch it up front — with an actionable message, not a
+// bare complaint — rather than let it reach Run, where the mismatch would
+// reformat, and destroy, the app's own data on every subsequent boot.
+func TestValidateLabelRejectsEdgeSpacesActionably(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		label string
+	}{
+		{"trailing space", "APPDATA "},
+		{"leading space", " APPDATA"},
+		{"both edges", " APPDATA "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateLabel("pkg", tc.label)
+			if err == nil {
+				t.Fatalf("ValidateLabel(%q) = nil, want an error", tc.label)
+			}
+			if !strings.Contains(err.Error(), "space") {
+				t.Errorf("ValidateLabel(%q) = %q, want it to name the problem (a space)", tc.label, err)
+			}
+			// Actionable: point at the fix, not just the complaint.
+			trimmed := strings.Trim(tc.label, " ")
+			if !strings.Contains(err.Error(), trimmed) {
+				t.Errorf("ValidateLabel(%q) = %q, want it to suggest the trimmed label %q as the fix", tc.label, err, trimmed)
+			}
+		})
+	}
+}
+
+// TestValidateLabelAllowsInteriorSpaces confirms the bean's other half: only
+// the edges are the problem. A space in the middle of a label lands inside
+// neither filesystem's edge-padding trim, so it survives format→Inspect
+// unchanged and must stay admitted.
+func TestValidateLabelAllowsInteriorSpaces(t *testing.T) {
+	if err := ValidateLabel("pkg", "AB CD"); err != nil {
+		t.Errorf("ValidateLabel(%q) = %v, want nil — only edge spaces are the problem", "AB CD", err)
+	}
+}
+
+// TestValidateLabelRejectsNULViaThePrintableASCIICheck confirms NUL is
+// already refused — by the existing printable-ASCII rule, since it is a
+// control character — so the edge-space check does not need to duplicate it.
+func TestValidateLabelRejectsNULViaThePrintableASCIICheck(t *testing.T) {
+	err := ValidateLabel("pkg", "APP\x00DATA")
+	if err == nil {
+		t.Fatal("ValidateLabel accepted a label containing NUL")
+	}
+	if !strings.Contains(err.Error(), "printable ASCII") {
+		t.Errorf("ValidateLabel(NUL label) = %q, want the printable-ASCII complaint (not a bespoke NUL check)", err)
+	}
+}
+
+// TestLabelMatchesComparesTrimmed is the belt-and-braces half of gosd-xq9l:
+// even if ValidateLabel's edge-space rejection were ever bypassed, Run's
+// idempotency comparison (labelMatches) must not compare the untrimmed
+// caller string, or a trailing-space label would mismatch forever and
+// reformat — wiping the app's own data — on every single boot.
+func TestLabelMatchesComparesTrimmed(t *testing.T) {
+	contents := diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}
+
+	for _, label := range []string{"APPDATA", "APPDATA ", " APPDATA", "appdata"} {
+		if !labelMatches(contents, label) {
+			t.Errorf("labelMatches(%+v, %q) = false, want true — an edge space or case difference must still match", contents, label)
+		}
+	}
+	if labelMatches(contents, "OTHERAPP") {
+		t.Error("labelMatches matched an unrelated label")
+	}
+	if labelMatches(diskfmt.Contents{Label: "APPDATA"}, "APPDATA") {
+		t.Error("labelMatches matched content with no filesystem (Blank or unreadable)")
+	}
+}
+
+// TestAdmittedLabelsRoundTripToWhatRunCompares is the round-trip test the
+// bean asks for: it pins the invariant that every label class ValidateLabel
+// admits is stable across boots — format it for real, Inspect it back for
+// real, and confirm Run's own comparison (labelMatches) would recognise the
+// result as "already provisioned" rather than reformatting again next boot.
+func TestAdmittedLabelsRoundTripToWhatRunCompares(t *testing.T) {
+	labels := []string{"A", "APPDATA", "ELEVENCHARS", "AB CD", "GOSD-DATA"}
+
+	for _, fs := range []diskfmt.FS{diskfmt.FAT32, diskfmt.ExFAT} {
+		for _, label := range labels {
+			t.Run(string(fs)+"/"+label, func(t *testing.T) {
+				if err := ValidateLabel("pkg", label); err != nil {
+					t.Fatalf("test bug: %q is not a label ValidateLabel admits: %v", label, err)
+				}
+
+				path := filepath.Join(t.TempDir(), "device.img")
+				f, err := os.Create(path)
+				if err != nil {
+					t.Fatalf("creating backing file: %v", err)
+				}
+				if err := f.Truncate(64 * 1024 * 1024); err != nil {
+					t.Fatalf("sizing backing file: %v", err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatalf("closing backing file: %v", err)
+				}
+
+				if err := diskfmt.Format(path, label, fs); err != nil {
+					t.Fatalf("Format(%q, %s): %v", label, fs, err)
+				}
+				contents, err := diskfmt.Inspect(path)
+				if err != nil {
+					t.Fatalf("Inspect: %v", err)
+				}
+				if !labelMatches(contents, label) {
+					t.Errorf("after format→Inspect, label %q round-tripped to %q, which Run would not recognise as already provisioned — every future boot would reformat and wipe the app's data", label, contents.Label)
+				}
+			})
 		}
 	}
 }

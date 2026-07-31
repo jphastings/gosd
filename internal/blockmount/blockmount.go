@@ -100,7 +100,7 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 
 	format, action := true, "formatting"
 	switch {
-	case contents.FS != "" && strings.EqualFold(contents.Label, label):
+	case labelMatches(contents, label):
 		// Already provisioned by an earlier run — mount only, and mount it as
 		// whatever filesystem it turned out to be. Reformatting it to the
 		// caller's preferred filesystem would destroy the app's own data.
@@ -142,6 +142,25 @@ func remedyFor(fs diskfmt.FS) string {
 	return fmt.Sprintf("rebuild the board's kernel with it (see docs/custom-kernels.md), or use %s instead", diskfmt.FAT32)
 }
 
+// labelMatches reports whether contents already carries the label the caller
+// is asking for. label is compared in its trimmed form even though
+// ValidateLabel now refuses leading/trailing space outright — belt and
+// braces, so that if that check were ever bypassed (a future call site, a
+// regression) the comparison still can't mismatch forever: FAT32 and exFAT
+// both strip an edge space on read-back, so comparing against the untrimmed
+// caller string would otherwise reformat the device — and destroy the app's
+// own data — on every single boot.
+func labelMatches(contents diskfmt.Contents, label string) bool {
+	return contents.FS != "" && strings.EqualFold(contents.Label, trimLabel(label))
+}
+
+// trimLabel mirrors the edge padding both diskfmt readers strip on read-back
+// (FAT32's and exFAT's label decoders each `TrimRight(label, " \x00")`),
+// applied to both edges here since ValidateLabel refuses a leading space too.
+func trimLabel(label string) string {
+	return strings.Trim(label, " \x00")
+}
+
 // describe renders what is on the device for the "refusing to reformat" error.
 func describe(c diskfmt.Contents) string {
 	switch {
@@ -159,12 +178,25 @@ func describe(c diskfmt.Contents) string {
 // is the stricter of the two filesystems GoSD writes — an 11-character
 // printable-ASCII label is equally valid as an exFAT label, so one label works
 // whichever filesystem the caller ends up with.
+//
+// A leading or trailing space is refused outright: both FAT32 and exFAT strip
+// edge padding when they read a label back (see trimLabel), so such a label
+// can never round-trip through format→Inspect. Undetected, that mismatch
+// makes Run's idempotency check fail forever, reformatting — and destroying —
+// the app's own data on every single boot. NUL is refused too, but by the
+// printable-ASCII check below: it is a control character, not printable.
 func ValidateLabel(pkg, label string) error {
 	if label == "" {
 		return fmt.Errorf("%s: the volume label must not be empty", pkg)
 	}
 	if len(label) > maxLabelLen {
 		return fmt.Errorf("%s: volume label %q is %d characters; volume labels are at most %d", pkg, label, len(label), maxLabelLen)
+	}
+	if trimmed := strings.Trim(label, " "); trimmed != label {
+		if trimmed == "" {
+			return fmt.Errorf("%s: volume label %q is all spaces; pick a label with real characters in it", pkg, label)
+		}
+		return fmt.Errorf("%s: volume label %q has a leading or trailing space; FAT32 and exFAT both strip it when reading the label back, so the device would look re-labelled on every boot — remove the space (or use %q)", pkg, label, trimmed)
 	}
 	for _, r := range label {
 		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
