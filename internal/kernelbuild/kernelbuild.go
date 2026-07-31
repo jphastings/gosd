@@ -5,11 +5,11 @@
 // `gosd build --artifacts-dir`. See bean gosd-x488 and epic gosd-47rm.
 //
 // Builds are content-addressed and cached under a per-OS durable state
-// directory (see defaultBuildRoot) as <root>/<key>/ (key = hash of the kernel ref,
-// container image digest, GoSD fragment/patches, developer overlay, and
-// output filenames - see cacheKey): a call whose key already has every
-// expected output present skips the container run entirely and reports
-// that via Result.Skipped.
+// directory (see defaultBuildRoot) as <root>/<key>/ (key = hash of every
+// spec/overlay field that feeds the generated build script, plus the
+// container image digest - see cacheInputs and cacheKey): a call whose key
+// already has every expected output present skips the container run
+// entirely and reports that via Result.Skipped.
 package kernelbuild
 
 import (
