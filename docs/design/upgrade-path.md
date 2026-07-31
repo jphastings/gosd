@@ -109,9 +109,13 @@ always-reformat code self-heals it. The marker's durable presence
 implies everything before the barrier persisted, so only a genuinely
 completed format (from any earlier life) is ever adopted; anything else
 — including such debris — formats fresh, exactly as today. The marker is
-a reserved dotfile like `.gosd-data`: apps must leave it alone, and its
-absence under an already-committed MBR entry is deliberately NOT treated
-as corruption (an app deleting it must not halt the device).
+a reserved root file named `gosd-data-established` — deliberately not a
+dotfile, because go-diskfs derives an empty 8.3 short name for
+leading-dot files and then filters them out of its own listings, making
+a dotfile marker invisible to the very check that needs it. Like
+`.gosd-data`, apps must leave it alone; its absence under an
+already-committed MBR entry is deliberately NOT treated as corruption
+(an app deleting it must not halt the device).
 
 What happens when a release changes the boot volume size (§0.4's
 caveat, mechanically): if it **grew**, the flash itself overwrote the
