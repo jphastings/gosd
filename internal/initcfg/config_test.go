@@ -41,6 +41,16 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Hostname: "my-device", DataExpand: true},
 		},
 		{
+			name: "identity parses when present",
+			data: `{"hostname":"my-device","identity":"deadbeef"}`,
+			want: Config{Hostname: "my-device", Identity: "deadbeef"},
+		},
+		{
+			name: "config predating identity parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
 			name: "ntpServers overrides the default list",
 			data: `{"hostname":"my-device","ntpServers":["ntp1.example.com","ntp2.example.com"]}`,
 			want: Config{
@@ -74,6 +84,30 @@ func TestParseConfig(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("ParseConfig(%q) = %+v, want %+v", tt.data, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigShortIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+		want     string
+	}{
+		{name: "empty identity (pre-gosd-acdn image) stays empty", identity: "", want: ""},
+		{name: "short identity is returned whole", identity: "abcd", want: "abcd"},
+		{
+			name:     "a full sha256 hex digest is truncated",
+			identity: "30e629b6f8caf1ff8f16ee98d8f1c5c7eb3138b9c63944e235e9678744f2094b",
+			want:     "30e629b6f8ca",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Identity: tt.identity}
+			if got := cfg.ShortIdentity(); got != tt.want {
+				t.Errorf("Config{Identity: %q}.ShortIdentity() = %q, want %q", tt.identity, got, tt.want)
 			}
 		})
 	}

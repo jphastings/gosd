@@ -21,6 +21,7 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 // roundTripFunc adapts a function into an http.RoundTripper, so the test
@@ -1470,6 +1471,145 @@ func TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml(t *testing.T) {
 		if !strings.Contains(string(gosdToml), want) {
 			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
 		}
+	}
+}
+
+// buildConfigJSON runs `gosd build` for pi-zero-2w with extraArgs appended
+// to the fixture flags every other build_integration_test.go test shares
+// (no network, fake artifacts), and returns the resulting config.json,
+// parsed.
+func buildConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.Config {
+	t.Helper()
+
+	args := append([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	}, extraArgs...)
+
+	cmd := newRootCmd()
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+
+	var cfg initcfg.Config
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
+	}
+	return cfg
+}
+
+// TestBuildBakesImageIdentityIntoConfigJSON is the acceptance test for
+// gosd-acdn (docs/design/upgrade-path.md §4): config.json carries a
+// content-derived image identity - a hex SHA-256 digest, never a
+// timestamp or a random id.
+func TestBuildBakesImageIdentityIntoConfigJSON(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cfg := buildConfigJSON(t, imgPath)
+
+	if len(cfg.Identity) != sha256.Size*2 {
+		t.Fatalf("config.json's identity = %q (%d chars), want a %d-character hex SHA-256 digest", cfg.Identity, len(cfg.Identity), sha256.Size*2)
+	}
+	if _, err := hex.DecodeString(cfg.Identity); err != nil {
+		t.Errorf("config.json's identity = %q is not hex: %v", cfg.Identity, err)
+	}
+}
+
+// TestBuildIdentityIsReproducibleAcrossRebuilds is the acceptance test for
+// gosd-acdn's core requirement: identical rebuilds from identical inputs
+// produce identical identities, which is what keeps the qemu CI path
+// deterministic. It's also what backs the reproducibility claim in
+// internal/pipeline.Assemble's comment above its ComputeIdentity call:
+// gosd build's own image bytes are NOT fully reproducible today (go-diskfs's
+// FAT32 formatter stamps wall-clock directory-entry timestamps and a volume
+// serial number - confirmed by building this same fixture twice and diffing
+// the two .img files), but the identity is hashed from the payload before
+// it ever reaches the FAT layer, so it comes out identical regardless.
+func TestBuildIdentityIsReproducibleAcrossRebuilds(t *testing.T) {
+	dir := t.TempDir()
+	cfg1 := buildConfigJSON(t, filepath.Join(dir, "build1.img"))
+	cfg2 := buildConfigJSON(t, filepath.Join(dir, "build2.img"))
+
+	if cfg1.Identity == "" {
+		t.Fatal("first build's identity is empty")
+	}
+	if cfg1.Identity != cfg2.Identity {
+		t.Errorf("identical rebuilds produced different identities: %q vs %q", cfg1.Identity, cfg2.Identity)
+	}
+}
+
+// TestBuildIdentityChangesWithBootPayloadContent confirms the identity
+// really is content-derived by changing one of the hashed FAT-root files
+// (cmdline.txt, via --console-baud - see
+// TestBuildConsoleBaudOverridesPiCmdlineTxt) and checking the identity
+// moves.
+func TestBuildIdentityChangesWithBootPayloadContent(t *testing.T) {
+	dir := t.TempDir()
+	defaultBaud := buildConfigJSON(t, filepath.Join(dir, "default-baud.img"))
+	overriddenBaud := buildConfigJSON(t, filepath.Join(dir, "overridden-baud.img"), "--console-baud", "9600")
+
+	if defaultBaud.Identity == overriddenBaud.Identity {
+		t.Errorf("identity stayed %q after --console-baud changed cmdline.txt's content, want it to change", defaultBaud.Identity)
+	}
+}
+
+// TestBuildIdentityChangesWithHostnameAndWifiViaGosdToml confirms
+// --hostname/--wifi-ssid/--wifi-pass still move the identity despite
+// config.json being excluded from the hashed payload (see
+// ComputeIdentity's docstring): those values are also baked into the
+// rendered gosd.toml template, a real hashed FAT-root file, so they're not
+// actually invisible to Identity end to end - only their config.json copies
+// are.
+func TestBuildIdentityChangesWithHostnameAndWifiViaGosdToml(t *testing.T) {
+	dir := t.TempDir()
+	deviceA := buildConfigJSON(t, filepath.Join(dir, "device-a.img"), "--hostname", "device-a", "--wifi-ssid", "network-a", "--wifi-pass", "passphrase-a")
+	deviceB := buildConfigJSON(t, filepath.Join(dir, "device-b.img"), "--hostname", "device-b", "--wifi-ssid", "network-b", "--wifi-pass", "passphrase-b")
+
+	if deviceA.Identity == "" {
+		t.Fatal("device A's identity is empty")
+	}
+	if deviceA.Identity == deviceB.Identity {
+		t.Errorf("identity stayed %q across builds with different --hostname/--wifi-*, want it to change (they change gosd.toml's content)", deviceA.Identity)
+	}
+}
+
+// TestBuildIdentityUnaffectedByDataExpand confirms the one genuine
+// exception ComputeIdentity's docstring documents: --data-size=expand only
+// sets config.json's DataExpand field (config.json is entirely excluded
+// from the hashed payload, and DataExpand has no footprint in gosd.toml or
+// anywhere else in the payload, unlike Hostname/Wifi/Env), so it's the one
+// build flag that changes config.json without moving Identity.
+func TestBuildIdentityUnaffectedByDataExpand(t *testing.T) {
+	dir := t.TempDir()
+	withoutExpand := buildConfigJSON(t, filepath.Join(dir, "no-expand.img"))
+	withExpand := buildConfigJSON(t, filepath.Join(dir, "expand.img"), "--data-size", "expand")
+
+	if !withExpand.DataExpand {
+		t.Fatal("config.json's dataExpand is false after --data-size=expand")
+	}
+	if withoutExpand.Identity == "" {
+		t.Fatal("the --data-size=expand build's identity is empty")
+	}
+	if withoutExpand.Identity != withExpand.Identity {
+		t.Errorf("identity differed across builds that only differed by --data-size=expand: %q vs %q", withoutExpand.Identity, withExpand.Identity)
 	}
 }
 

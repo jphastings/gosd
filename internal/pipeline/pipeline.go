@@ -1,8 +1,10 @@
 // Package pipeline wires the pieces gosd build needs into one flashable
 // image per board: resolving pinned/local artifacts, building the
-// initramfs (app + gosd-init + firmware + config.json), asking the board
-// profile for its boot files and raw writes, and writing the finished .img
-// via internal/image.
+// initramfs (app + gosd-init + firmware + config.json), computing
+// config.json's content-derived image identity over that same payload
+// (see internal/initcfg.ComputeIdentity), asking the board profile for its
+// boot files and raw writes, and writing the finished .img via
+// internal/image.
 package pipeline
 
 import (
@@ -118,50 +120,42 @@ func Assemble(ctx context.Context, opts Options) error {
 	defer closeReaders(firmware)
 	defer closeReaders(opts.ExtraExecutables)
 
-	initBin, err := os.Open(opts.InitBinaryPath)
+	// Every input that contributes to config.json's image identity (see
+	// initcfg.ComputeIdentity) has to be read into memory before it can be
+	// hashed, so everything below is read exactly once, here, and the same
+	// bytes are reused for both hashing and the real archive/partition
+	// writes further down — nothing is read from disk (or decompressed)
+	// twice.
+	initBinBytes, err := os.ReadFile(opts.InitBinaryPath)
 	if err != nil {
 		return fmt.Errorf("opening gosd-init binary at %s: %w", opts.InitBinaryPath, err)
 	}
-	defer func() { _ = initBin.Close() }()
-
-	appBin, err := os.Open(opts.AppBinaryPath)
+	appBinBytes, err := os.ReadFile(opts.AppBinaryPath)
 	if err != nil {
 		return fmt.Errorf("opening app binary at %s: %w", opts.AppBinaryPath, err)
 	}
-	defer func() { _ = appBin.Close() }()
-
-	configJSON, err := json.Marshal(initcfg.Config{
-		Board:    opts.Board.Name(),
-		Hostname: opts.Config.Hostname,
-		Wifi: initcfg.Wifi{
-			SSID:       opts.Config.WifiSSID,
-			Passphrase: opts.Config.WifiPassword,
-		},
-		Env:        opts.Config.Env,
-		DataExpand: opts.DataExpand,
-	})
+	firmwareBytes, err := readAllReaders(firmware)
 	if err != nil {
-		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
+		return fmt.Errorf("reading firmware files for %s: %w", opts.Board.Name(), err)
+	}
+	extraExecBytes, err := readAllReaders(opts.ExtraExecutables)
+	if err != nil {
+		return fmt.Errorf("reading extra executables for %s: %w", opts.Board.Name(), err)
 	}
 
-	files := make([]initramfs.File, 0, len(firmware)+len(opts.ExtraExecutables)+3)
-	files = append(files,
-		initramfs.File{Path: "/init", Content: initBin, Mode: initFileMode},
-		initramfs.File{Path: "/app", Content: appBin, Mode: appFileMode},
-		initramfs.File{Path: "/etc/gosd/config.json", Content: bytes.NewReader(configJSON), Mode: configFileMode},
-	)
-	for name, r := range firmware {
-		files = append(files, initramfs.File{Path: "/lib/firmware/" + name, Content: r, Mode: firmwareFileMode})
-	}
-	for dest, r := range opts.ExtraExecutables {
-		files = append(files, initramfs.File{Path: dest, Content: r, Mode: executableFileMode})
-	}
-
-	var initramfsBuf bytes.Buffer
-	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files, Dirs: mountPointDirs}); err != nil {
-		return fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
-	}
-	resolved.Initramfs = &initramfsBuf
+	// Board.BootFiles requires a non-nil Initramfs even though it never
+	// reads it — it just threads the reader through to its returned map,
+	// opaquely, under its own well-known name (every board's BootFiles
+	// does exactly this; see e.g. internal/boards/pizero2w). The real
+	// archive can't exist yet: building it needs the final config.json,
+	// and config.json's Identity needs everything else BootFiles is about
+	// to return (kernel, DTB, the board's boot-config file...). So a
+	// placeholder stands in for this one call, purely to satisfy that
+	// nil-check; initramfsPlaceholder's identity (not its — empty —
+	// content) is what finds the right map key to overwrite with the real
+	// archive once it exists, below.
+	initramfsPlaceholder := &bytes.Buffer{}
+	resolved.Initramfs = initramfsPlaceholder
 
 	bootFiles, err := opts.Board.BootFiles(opts.Config, resolved)
 	if err != nil {
@@ -177,8 +171,96 @@ func Assemble(ctx context.Context, opts Options) error {
 	// Board.BootFiles implementation: both boards get it at the FAT root.
 	// The baked env (opts.Config.Env, from `gosd build --env`) is rendered
 	// here too, so the card shows the developer's defaults for the user to
-	// see and override.
+	// see and override. It's added before the read-and-hash loop below so
+	// it's covered by the image identity like every other FAT-root file.
 	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
+
+	// Read every FAT-root file into memory — both to hash it into the
+	// image identity below and to serve image.Write from a fresh reader
+	// later (the originals, e.g. artifact files opened by Board.BootFiles,
+	// are each read to EOF and closed here). initramfsKey is remembered,
+	// not read: its reader is the placeholder from above, standing in
+	// until the real archive is built.
+	var initramfsKey string
+	payload := make([]initcfg.PayloadFile, 0, len(bootFiles)+len(firmwareBytes)+len(extraExecBytes)+2)
+	for name, r := range bootFiles {
+		if r == io.Reader(initramfsPlaceholder) {
+			initramfsKey = name
+			continue
+		}
+		data, err := readAllAndClose(r)
+		if err != nil {
+			return fmt.Errorf("reading boot file %q for %s: %w", name, opts.Board.Name(), err)
+		}
+		bootFiles[name] = bytes.NewReader(data)
+		payload = append(payload, initcfg.PayloadFile{Path: name, Content: data})
+	}
+	if initramfsKey == "" {
+		return fmt.Errorf("assembling boot files for %s: BootFiles did not include the initramfs archive", opts.Board.Name())
+	}
+
+	payload = append(payload,
+		initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/init"), Content: initBinBytes},
+		initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/app"), Content: appBinBytes},
+	)
+	for name, data := range firmwareBytes {
+		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/lib/firmware/" + name), Content: data})
+	}
+	for dest, data := range extraExecBytes {
+		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath(dest), Content: data})
+	}
+
+	// config.json (/etc/gosd/config.json inside the initramfs) is
+	// deliberately not part of payload — see ComputeIdentity's docstring
+	// for why it can't be, and what that means Identity does and doesn't
+	// cover.
+	//
+	// payload is hashed from these pre-FAT-write bytes rather than from
+	// the finished .img, and that's load-bearing, not just convenient:
+	// gosd build's own output isn't fully byte-reproducible today —
+	// go-diskfs's FAT32 formatter stamps directory-entry timestamps and a
+	// volume serial number from wall-clock time, confirmed by building the
+	// same inputs twice and diffing the two images (a couple dozen bytes
+	// differ, confined to exactly those fields). Hashing the files before
+	// they reach the FAT layer hashes around that non-reproducible input
+	// entirely, which is what TestBuildIdentityIsReproducibleAcrossRebuilds
+	// (cmd/gosd/build_integration_test.go) checks.
+	identity := initcfg.ComputeIdentity(payload)
+
+	configJSON, err := json.Marshal(initcfg.Config{
+		Board:    opts.Board.Name(),
+		Hostname: opts.Config.Hostname,
+		Wifi: initcfg.Wifi{
+			SSID:       opts.Config.WifiSSID,
+			Passphrase: opts.Config.WifiPassword,
+		},
+		Env:        opts.Config.Env,
+		DataExpand: opts.DataExpand,
+		Identity:   identity,
+	})
+	if err != nil {
+		return fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
+	}
+
+	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+3)
+	files = append(files,
+		initramfs.File{Path: "/init", Content: bytes.NewReader(initBinBytes), Mode: initFileMode},
+		initramfs.File{Path: "/app", Content: bytes.NewReader(appBinBytes), Mode: appFileMode},
+		initramfs.File{Path: "/etc/gosd/config.json", Content: bytes.NewReader(configJSON), Mode: configFileMode},
+	)
+	for name, data := range firmwareBytes {
+		files = append(files, initramfs.File{Path: "/lib/firmware/" + name, Content: bytes.NewReader(data), Mode: firmwareFileMode})
+	}
+	for dest, data := range extraExecBytes {
+		files = append(files, initramfs.File{Path: dest, Content: bytes.NewReader(data), Mode: executableFileMode})
+	}
+
+	var initramfsBuf bytes.Buffer
+	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files, Dirs: mountPointDirs}); err != nil {
+		return fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
+	}
+	resolved.Initramfs = &initramfsBuf
+	bootFiles[initramfsKey] = &initramfsBuf
 
 	if err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:     bootFiles,
@@ -206,4 +288,29 @@ func closeReaders(files map[string]io.Reader) {
 			_ = c.Close()
 		}
 	}
+}
+
+// readAllAndClose fully reads r, then best-effort closes it if it
+// implements io.Closer — the same close discipline closeReaders applies to
+// a whole map, for a single reader consumed inline.
+func readAllAndClose(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(r)
+	if c, ok := r.(io.Closer); ok {
+		_ = c.Close()
+	}
+	return data, err
+}
+
+// readAllReaders reads every entry of files fully into memory (see
+// readAllAndClose), returning their bytes keyed the same way files was.
+func readAllReaders(files map[string]io.Reader) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(files))
+	for name, r := range files {
+		data, err := readAllAndClose(r)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = data
+	}
+	return out, nil
 }

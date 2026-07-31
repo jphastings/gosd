@@ -87,6 +87,86 @@ func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
 	}
 }
 
+// TestRunLogsImageIdentityWhenPresent is the acceptance test for gosd-acdn's
+// boot-time log line: config.json's Identity, when baked in, is logged as a
+// short, human-scannable digest so a bench session can eyeball which build
+// is running.
+func TestRunLogsImageIdentityWhenPresent(t *testing.T) {
+	stop := make(chan struct{})
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Identity: "30e629b6f8caf1ff8f16ee98d8f1c5c7eb3138b9c63944e235e9678744f2094b"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       func(d time.Duration) { clock.Sleep(d) },
+		Now:         clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !strings.Contains(console.String(), "[gosd] image identity: 30e629b6f8ca") {
+		t.Errorf("console output missing the image identity log line: %q", console.String())
+	}
+}
+
+// TestRunDoesNotLogImageIdentityWhenAbsent covers backward compatibility
+// with images built before gosd-acdn: config.json's Identity is optional,
+// so an empty one is not an error and produces no misleading log line
+// (e.g. "image identity: ").
+func TestRunDoesNotLogImageIdentityWhenAbsent(t *testing.T) {
+	stop := make(chan struct{})
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{Hostname: "my-device"}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       func(d time.Duration) { clock.Sleep(d) },
+		Now:         clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a pre-gosd-acdn config.json must still boot)", err)
+	}
+
+	if strings.Contains(console.String(), "image identity") {
+		t.Errorf("console output unexpectedly logged an image identity for a config.json with none: %q", console.String())
+	}
+}
+
 func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 	// StartNetworking must never delay /app's launch: Run should
 	// dispatch it and move straight on to supervision.
