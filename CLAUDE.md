@@ -28,7 +28,19 @@ say so in the bean rather than silently diverging.
 - Stacked work: when a task depends on an as-yet-unmerged PR, branch from that
   PR's branch (not `main`), say "stacked on #NN" in the body, and rebase onto
   `main` once it lands. Keep stacks shallow — prefer waiting for a merge over
-  towering unreviewed PRs.
+  towering unreviewed PRs. **Merging the base can silently strand a child**,
+  in two different ways: merged as-is it lands on the stack branch rather than
+  main (PR #98), and if the base branch is deleted at merge GitHub may CLOSE
+  the child outright rather than retarget it, dropping its content with no
+  conflict and no warning (PR #133 — the verified dtparam findings had to be
+  cherry-picked onto main as #137). So after any stack merge: retarget
+  survivors with `gh pr edit N --base main`, and verify the content actually
+  reached main (`git show origin/main:<file>` or grep for it) rather than
+  trusting a badge.
+- Never open a PR against a repository outside the `jphastings` account
+  without JP's explicit permission — upstream dependencies included. Prepare
+  the patch in a local clone and record it in the bean instead; JP decides
+  whether to send it.
 
 ## Project-wide locked decisions
 
