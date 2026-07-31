@@ -95,10 +95,23 @@ WriteMBR(...)                           # commit record, as today
 Power-loss safety is unchanged: the MBR write remains the commit record
 (ab-updates' analysis of `gosd-6sac` holds — a crash before it lands
 leaves no entry, and the next boot redoes everything, now finding and
-adopting the same survivor). Adopting a *foreign* filesystem is gated the
-same way `blockmount` gates everything: exact offset + FAT32 + exact
-label. A partition that inspects as anything else formats fresh, exactly
-as today.
+adopting the same survivor).
+
+Adoption is gated on **four** things: the derived offset, FAT32, the
+exact label — and a **format-completion marker** dataexpand itself wrote
+into the filesystem's root after the format's sync barrier (write file →
+sync → marker → sync). The marker exists because a filesystem probe is
+not proof of a *completed* format: go-diskfs writes the volume label
+last with no intervening syncs, so a power cut during a first boot's own
+format can persist label-bearing debris whose FAT tables never landed —
+which a probe-only gate would adopt and commit forever, where today's
+always-reformat code self-heals it. The marker's durable presence
+implies everything before the barrier persisted, so only a genuinely
+completed format (from any earlier life) is ever adopted; anything else
+— including such debris — formats fresh, exactly as today. The marker is
+a reserved dotfile like `.gosd-data`: apps must leave it alone, and its
+absence under an already-committed MBR entry is deliberately NOT treated
+as corruption (an app deleting it must not halt the device).
 
 What happens when a release changes the boot volume size (§0.4's
 caveat, mechanically): if it **grew**, the flash itself overwrote the
