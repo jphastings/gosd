@@ -30,7 +30,11 @@ type fakeOp struct {
 // (e.g. "configs/c.1/strings"), and f_mass_storage's "lun.0" under its
 // function directory. MkdirAll marks these as already-present the moment
 // their owning parent is created, matching the kernel; they're
-// cascade-removed once their parent's user-created content is gone.
+// cascade-removed once their parent's user-created content is gone. Symlink
+// fails with fs.ErrExist if newname is already occupied (by a link, dir, or
+// file), matching real os.Symlink/configfs — unlike a naive fake that
+// silently overwrites, since a stranded symlink from a prior failed Apply is
+// exactly the state a re-Apply must fail loudly against, not paper over.
 type fakeFS struct {
 	dirs          map[string]bool
 	files         map[string][]byte
@@ -94,6 +98,15 @@ func (f *fakeFS) Symlink(oldname, newname string) error {
 	f.calls = append(f.calls, fakeOp{"symlink", newname})
 	if !f.dirs[parentOf(newname)] {
 		return fmt.Errorf("fakeFS: Symlink %s: %w: parent directory not created", newname, fs.ErrNotExist)
+	}
+	if _, ok := f.links[newname]; ok {
+		return fmt.Errorf("fakeFS: Symlink %s: %w", newname, fs.ErrExist)
+	}
+	if f.dirs[newname] {
+		return fmt.Errorf("fakeFS: Symlink %s: %w", newname, fs.ErrExist)
+	}
+	if _, ok := f.files[newname]; ok {
+		return fmt.Errorf("fakeFS: Symlink %s: %w", newname, fs.ErrExist)
 	}
 	f.links[newname] = oldname
 	return nil
