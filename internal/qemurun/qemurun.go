@@ -191,7 +191,10 @@ func Args(workDir, imgPath string, opts Options) []string {
 		// probe skips any other candidate — the same mechanism real
 		// bootloaders would use to point past a stale eMMC image (see
 		// gosd-vzk2), exercised end-to-end on every qemu boot.
-		"-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda",
+		// panic=10 matches every real board's cmdline (see the board
+		// templates): a kernel panic — including the one PID 1 dying
+		// causes — reboots instead of hanging forever (gosd-fkkr).
+		"-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10",
 		"-drive", "if=none,file="+imgPath+",format=raw,id=hd0",
 		"-device", "virtio-blk-pci,drive=hd0,romfile=",
 		"-netdev", fmt.Sprintf("user,id=n0,hostfwd=tcp::%d-:80", port),

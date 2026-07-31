@@ -4,4 +4,4 @@ label gosd
     kernel /Image
     fdt /rk3566-radxa-zero-3e.dtb
     initrd /initramfs.cpio.zst
-    append console=ttyS2,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=radxa-zero-3e
+    append console=ttyS2,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=radxa-zero-3e panic=10

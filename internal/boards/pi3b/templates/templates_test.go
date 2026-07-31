@@ -19,7 +19,7 @@ const (
 		"dtparam=i2c_arm=on\n" +
 		"dtparam=spi=on\n"
 
-	wantCmdlineTxt = "console=serial0,115200 quiet init=/init gosd.board=pi-3b"
+	wantCmdlineTxt = "console=serial0,115200 quiet init=/init gosd.board=pi-3b panic=10"
 )
 
 func TestRenderConfigTxt(t *testing.T) {
@@ -69,7 +69,7 @@ func TestRenderCmdlineTxt_ConsoleBaudOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderCmdlineTxt() error = %v", err)
 	}
-	want := "console=serial0,57600 quiet init=/init gosd.board=pi-3b"
+	want := "console=serial0,57600 quiet init=/init gosd.board=pi-3b panic=10"
 	if got != want {
 		t.Errorf("RenderCmdlineTxt(ConsoleBaud: 57600) = %q, want %q", got, want)
 	}
