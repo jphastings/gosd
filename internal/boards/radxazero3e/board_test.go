@@ -2,6 +2,7 @@ package radxazero3e_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
+	"github.com/jphastings/gosd/internal/image"
 )
 
 // resolveFakeArtifacts seeds a temp --artifacts-dir with a fake file for
@@ -248,6 +250,36 @@ func TestRawWritesPanicsWhenUbootTooBigForTheGap(t *testing.T) {
 		}
 	}()
 	b.RawWrites(art)
+}
+
+func TestBuildFailsWhenIdbloaderGrowsIntoUboot(t *testing.T) {
+	dir := t.TempDir()
+	b := radxazero3e.New()
+	for _, ref := range b.Artifacts() {
+		content := []byte("fake " + ref.Name)
+		if ref.Name == "idbloader.img" {
+			// idbloader.img is written at offset 32768, u-boot.itb at
+			// 8388608; RawWrites only checks u-boot.itb's own size against
+			// the 16MiB boot partition, so an oversized idbloader.img that
+			// runs into u-boot.itb's offset isn't caught there - it must
+			// be caught by internal/image.Write's raw-write overlap check.
+			content = make([]byte, 8388608-32768+1)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ref.Name), content, 0o644); err != nil {
+			t.Fatalf("seeding fake artifact %q: %v", ref.Name, err)
+		}
+	}
+
+	art, err := boards.ResolveArtifacts(context.Background(), b.Name(), b.Artifacts(), dir, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("ResolveArtifacts: %v", err)
+	}
+
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+	err = image.Write(imgPath, image.Spec{RawWrites: b.RawWrites(art)})
+	if !errors.Is(err, image.ErrRawWriteOverlap) {
+		t.Fatalf("image.Write() with an oversized idbloader.img = %v, want an ErrRawWriteOverlap, not a silently-corrupted image", err)
+	}
 }
 
 func TestFirmwareFilesIsEmpty(t *testing.T) {

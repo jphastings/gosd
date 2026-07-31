@@ -204,6 +204,34 @@ func TestWriteRejectsRawWriteOverlappingBootPartition(t *testing.T) {
 	}
 }
 
+func TestWriteRejectsTwoRawWritesThatOverlapEachOther(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	// Mimics a Rockchip board's idbloader.img (offset 32768) growing past
+	// its usual size and running into u-boot.itb's offset (8388608):
+	// checkRawWriteBounds passes both individually (each lands cleanly in
+	// the unpartitioned gap), but they clobber each other.
+	const idbloaderOffset = 32768
+	const ubootOffset = 8388608
+	idbloader := bytes.Repeat([]byte{0xaa}, ubootOffset-idbloaderOffset+1)
+	uboot := []byte("u-boot payload")
+
+	err := image.Write(imgPath, image.Spec{
+		RawWrites: []image.RawWrite{
+			{OffsetBytes: idbloaderOffset, Content: bytes.NewReader(idbloader)},
+			{OffsetBytes: ubootOffset, Content: bytes.NewReader(uboot)},
+		},
+	})
+	if !errors.Is(err, image.ErrRawWriteOverlap) {
+		t.Fatalf("Write() with two overlapping raw writes = %v, want an ErrRawWriteOverlap", err)
+	}
+	for _, want := range []string{"32768", "8388609", "8388608"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Write() error = %q, want it to name the offending offsets/lengths (missing %q)", err, want)
+		}
+	}
+}
+
 func TestWriteRejectsRawWriteStraddlingIntoBootPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
