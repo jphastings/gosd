@@ -410,8 +410,16 @@ enforces it: `--data-size=400GiB` is refused at the flag, before anything is
 compiled or written, naming the maximum. `--data-size=expand` caps itself at a
 round 256GiB on a larger card and logs how much of the card it left unused.
 
-The reason is GoSD's pure-Go FAT32 formatter, which counts the sectors in each
-file allocation table in 16 bits: past that size the volume would be laid out
+Below that ceiling, any size works — though the volume that gets written may be
+up to two clusters (at most 32.5KiB) smaller than the size you asked for. The
+formatter trims to the largest size it can lay a self-consistent FAT out for;
+without that, roughly one whole-GiB size in nine — 16, 32, 64, 128 and 256GiB
+among them — produces a volume that macOS First Aid and Windows chkdsk report
+as damaged (bean `gosd-e3e3`).
+
+The reason for the ceiling is GoSD's pure-Go FAT32 formatter, which counts the
+sectors in each file allocation table in 16 bits: past that size the volume
+would be laid out
 with FATs far too small to address its own clusters, and — worse than an
 error — written out and mounted as if it were fine. Refusing is deliberate. It
 is not a limit of FAT32 itself, and lifting it is tracked in beans `gosd-8kdm`

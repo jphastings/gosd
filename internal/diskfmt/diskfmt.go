@@ -236,6 +236,12 @@ func FormatFAT32(devicePath, volumeLabel string) (err error) {
 		return err
 	}
 
+	// go-diskfs sizes the FAT too small for the clusters it then advertises at
+	// ~0.8% of volume sizes, so the filesystem spans the largest prefix of the
+	// device it lays out correctly — at most two clusters short of all of it.
+	// See fat32selfconsistent.go.
+	d.Size = LargestSelfConsistentFAT32Bytes(d.Size)
+
 	if _, err := d.CreateFilesystem(disk.FilesystemSpec{
 		Partition:   0, // 0 = whole device, no partition table
 		FSType:      filesystem.TypeFat32,
