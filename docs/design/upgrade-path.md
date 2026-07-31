@@ -1,0 +1,170 @@
+# Design spike: firmware upgrade path for fielded SD cards
+
+Bean `gosd-inau`. This is the piece `docs/design/ab-updates.md` §0
+deliberately left open: the kernel, initramfs, boot files — everything a
+reflash carries — are "reflash-only", and this document decides what
+"reflash" means for a device that is already in someone's hands.
+
+**The operator constraint (locked):** the people running these devices
+never use a terminal. Upgrading must be at most as hard as what they
+already did — flash the SD card with Raspberry Pi Imager per
+`docs/flashing.md`.
+
+## 0. Decisions locked in this spike (JP, 2026-07-31)
+
+1. **The Rockchip bootloader is pinned: full reflash only.** idbloader and
+   u-boot.itb live in raw sectors outside any partition; no boot-volume
+   mechanism can touch them, and no in-place rewrite of them will be
+   designed. A bootloader bump ships as a new image the operator flashes —
+   which this design makes non-destructive. (Bootloader bumps are rare and
+   per-family; this is the same posture ab-updates took for the kernel.)
+2. **Route 3 (non-destructive plain reflash) is the baseline upgrade
+   path, contingent on a `gosd.toml` self-healing mitigation** — losing
+   the operator's hand-edits (or forcing WiFi re-entry on a board whose
+   provisioning came from a card edit rather than the wizard) was judged
+   not acceptable without one. The mitigation is §3.
+3. **Route 1 (self-update over the network) is phase 2**, riding the
+   app-slot update machinery (`gosd-vxal`) once it exists. Route 4
+   (sneakernet bundle) folds into phase 2's staging design. Route 2 (a
+   custom flasher GUI) is not pursued: its only unique win over route 3 +
+   mitigation is preserving files the mitigation already preserves, and it
+   costs a signed, maintained GUI on three OSes.
+
+## 1. The four routes, against the constraint
+
+| Route | Operator effort | Offline boards | GOSD-DATA | gosd.toml | New tooling |
+|---|---|---|---|---|---|
+| 1 self-update | zero (automatic) | ✗ never works | survives | survives | update endpoint (gosd-vxal) |
+| 2 custom flasher | new tool, same clicks | ✓ | survives | survives | GUI × 3 OSes, signed, maintained |
+| 3 reflash, non-destructive | identical to first flash | ✓ | survives | via mitigation (§3) | none |
+| 4 sneakernet bundle | copy file to card/USB drive | ✓ | survives | survives | bundle format + apply-at-boot |
+
+Route 3 wins the baseline because the operator's mental model doesn't
+change at all: "new version? flash the card again, like last time." Its
+two gaps — data loss on reflash and provisioning loss — are closed by §2
+and §3. Route 1 is the right end state for connected fleets and is
+already half-designed (`ab-updates` §6's endpoint, HMAC auth, and
+`gosd push` flow); extending it from app slots to boot-file payloads is
+phase 2, out of scope here. Route 4 shares phase 2's staging/verify
+design and is deferred with it.
+
+## 2. Making plain reflash non-destructive (GOSD-DATA re-adoption)
+
+Why reflashing destroys `/data` today: writing the image rewrites the
+MBR, whose partition table has no partition 2 — the entry is dropped even
+though, for a `--data-size=expand` image, the image file *ends* at the
+boot partition and the data region's bytes are never touched by the
+flash. (A fixed-size image embeds a freshly formatted GOSD-DATA in the
+image itself, so the flash overwrites the data region directly — nothing
+can save it. Consequence: **`--data-size=expand` is the recommended mode
+for updatable deployments**, and the docs will say so.)
+
+The fix is one insertion in `dataexpand`'s existing first-boot sequence.
+Both sides already agree the data partition starts at a fixed offset
+(`internal/image.dataPartitionOffsetBytes` = 272MiB, mirrored as
+`dataexpand.dataPartitionStartLBA`):
+
+```
+AddKernelPartition(...)                 # partition node appears (existing)
+contents := Inspect(partitionDevice)    # NEW: look before formatting
+if contents is FAT32 labelled GOSD-DATA:
+    skip FormatFAT32                    # adopt the survivor
+FormatFAT32(...)                        # otherwise, as today
+WriteMBR(...)                           # commit record, as today
+```
+
+Power-loss safety is unchanged: the MBR write remains the commit record
+(ab-updates' analysis of `gosd-6sac` holds — a crash before it lands
+leaves no entry, and the next boot redoes everything, now finding and
+adopting the same survivor). Adopting a *foreign* filesystem is gated the
+same way `blockmount` gates everything: exact offset + FAT32 + exact
+label. A partition that inspects as anything else formats fresh, exactly
+as today.
+
+What re-adoption does NOT promise: schema compatibility of `/data`
+contents across app versions is the app's own concern, same as after any
+app update (`docs/runtime.md` already frames `/data` this way).
+
+## 3. The `gosd.toml` self-healing mitigation (provisioning snapshot)
+
+Requirement (locked): an upgrade must not silently discard the
+operator's provisioning — hand-edited `[env]` values, and WiFi/hostname
+on boards provisioned by card-edit rather than the wizard.
+
+Mechanism: gosd-init snapshots provisioning into the data partition, and
+re-applies it on the first boot after a reflash.
+
+- **Snapshot (every successful boot, after provisioning settles):** write
+  `/data/.gosd/provision-snapshot/` containing the effective `gosd.toml`,
+  the baked `[env]` defaults it was merged against (from `config.json`),
+  and the image identity (§4). Durable-write rules apply
+  (`docs/runtime.md` "Making a write durable"). No data partition → no
+  snapshot → no self-healing; the docs say so (one more reason `expand`
+  is the updatable-deployment default).
+- **Detect "first boot after reflash":** the snapshot's recorded image
+  identity differs from the running image's (§4). Wizard re-provisioning
+  is visible independently: fresh cloud-init files on GOSD-BOOT.
+- **Restore precedence (freshest intent wins):**
+  1. Anything the operator just provided via the wizard (fresh cloud-init
+     hostname/WiFi) is applied as normal and *also refreshes the
+     snapshot* — the wizard is the operator speaking most recently.
+  2. `[env]` keys in the snapshot whose values differ from their
+     *contemporaneous* baked defaults (i.e. provable hand-edits) are
+     restored into the new card's `gosd.toml` — written back to
+     GOSD-BOOT so the operator can still see and edit them — unless the
+     new image's template itself changed that key's baked default AND the
+     snapshot value equals the old default (not a hand-edit at all).
+  3. Hostname/WiFi restore from the snapshot only when the fresh boot has
+     none (wizard skipped — the "Use custom image" flow): this turns
+     "reflash via the no-wizard path" from "board falls off the network"
+     into "board comes back by itself".
+- The exact merge rules live with the implementation bean; the invariant
+  this spike locks is **the wizard always wins over the snapshot, and the
+  snapshot always wins over baked defaults.**
+
+## 4. Image identity (small prerequisite)
+
+`config.json` (`internal/initcfg`) currently records no build identity.
+Add one — content-derived (e.g. a digest over the boot payload set), not
+a timestamp, so identical rebuilds compare equal and the qemu CI path
+stays deterministic. Used by: snapshot skew detection (§3), and later by
+phase-2 self-update to answer "am I already running this?" the same way
+the catalog answers it (`extract_sha256` — no semver scheme needed
+anywhere).
+
+## 5. The stale-file question, answered
+
+"How does a new firmware delete files of a previous firmware?" — under
+route 3 the question dissolves: the flash rewrites all of GOSD-BOOT, so
+stale files cannot exist; the only thing that survives is what §3
+deliberately restores. The manifest-of-owned-paths scheme is therefore
+NOT needed for the baseline. It returns in phase 2 (self-update writes
+into a live GOSD-BOOT and must delete what the new payload doesn't
+carry) and is recorded there, not built now.
+
+## 6. Phasing and implementation beans
+
+Phase 1 (this design, buildable now):
+
+- `gosd-lirl` — dataexpand: re-adopt an orphaned GOSD-DATA on first boot
+  (§2).
+- `gosd-acdn` — image identity in config.json (§4).
+- `gosd-ry3b` — provisioning snapshot + first-boot self-heal (§3;
+  blocked by `gosd-acdn`).
+- `gosd-zlee` — docs: the upgrade story (runtime.md, publishing.md,
+  flashing.md's "upgrading" section; expand as the updatable-deployment
+  default).
+
+Phase 2 (deferred, new design work, after `gosd-vxal` lands its
+endpoint): self-update of boot files over the network — staging area on
+GOSD-BOOT, verify-then-commit, the manifest scheme from §5, and the
+sneakernet bundle (route 4) as the offline carrier of the same payload
+format. Tracked as `gosd-522n` (blocked by `gosd-vxal`).
+
+## Acceptance for phase 1
+
+An operator with a `--data-size=expand` deployment upgrades by flashing
+the new image with Imager exactly as they first did (wizard or not):
+their app data is intact, their hand-edited `[env]` values are back, a
+wizard-skipping reflash rejoins WiFi by itself, and at no point did they
+open a terminal.
