@@ -271,8 +271,9 @@ specific to expand:
   partition, and `/data` behaves like a `--data-size=0` image: read-only,
   writes fail with `EROFS`.
 - **The partition is capped at 256GiB** for now (a FAT32-formatter
-  limitation, bean `gosd-8kdm`); a bigger card's remainder stays unused,
-  with a log line saying so.
+  limitation — see [How big the data partition can
+  be](#how-big-the-data-partition-can-be)); a bigger card's remainder stays
+  unused, with a log line saying so.
 - **Reflashing resets the cycle**: the freshly-flashed image again has no
   partition 2, so the next first boot re-creates `/data` from scratch —
   reflashing wipes `/data` exactly as it does for fixed-size images.
@@ -313,6 +314,27 @@ Rules of engagement:
 For a worked example, `examples/hello` persists a boot counter to
 `/data` using exactly the write-rename-fsync pattern above, and reports
 "no-data-partition" when the write comes back `EROFS`.
+
+### How big the data partition can be
+
+**256.06 GiB (274,940,836,864 bytes) is the ceiling**, and `gosd build`
+enforces it: `--data-size=400GiB` is refused at the flag, before anything is
+compiled or written, naming the maximum. `--data-size=expand` caps itself at a
+round 256GiB on a larger card and logs how much of the card it left unused.
+
+The reason is GoSD's pure-Go FAT32 formatter, which counts the sectors in each
+file allocation table in 16 bits: past that size the volume would be laid out
+with FATs far too small to address its own clusters, and — worse than an
+error — written out and mounted as if it were fine. Refusing is deliberate. It
+is not a limit of FAT32 itself, and lifting it is tracked in beans `gosd-8kdm`
+and `gosd-mt53`; when it goes, it goes for `--data-size`, for `expand`, and for
+the `disk`/`emmc` packages at once.
+
+If your app needs more storage than that, the answer today is an attached disk
+rather than a bigger `/data`: the [`disk` package](#attached-disk-storage-disk-package)
+formats an SSD or USB drive as **exFAT**, which has neither this ceiling nor
+FAT32's 4GiB-per-file one. `/data` remains the place for state; bulk media
+belongs on the drive holding it.
 
 ## Onboard eMMC storage (Rockchip boards)
 

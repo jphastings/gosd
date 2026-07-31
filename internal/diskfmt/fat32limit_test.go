@@ -18,7 +18,7 @@ const (
 func TestFAT32SizeLimitSitsWhereSectorsPerFATOverflows(t *testing.T) {
 	if maxFAT32Bytes != largestSafeFAT32Bytes {
 		t.Errorf("FAT32 size limit = %d bytes (%s), want %d bytes (%s)",
-			maxFAT32Bytes, gibibytes(maxFAT32Bytes), int64(largestSafeFAT32Bytes), gibibytes(largestSafeFAT32Bytes))
+			maxFAT32Bytes, GibibytesString(maxFAT32Bytes), int64(largestSafeFAT32Bytes), GibibytesString(largestSafeFAT32Bytes))
 	}
 	if got := fat32SectorsPerFAT(largestSafeFAT32Bytes); got != fat32MaxSectorsPerFAT {
 		t.Errorf("sectors per FAT at the limit = %d, want %d (the largest go-diskfs can record)", got, fat32MaxSectorsPerFAT)
@@ -50,7 +50,7 @@ func TestCheckFAT32SizeRefusesOnlyVolumesItCannotLayOut(t *testing.T) {
 				return
 			}
 			// The refusal has to leave the app author somewhere to go.
-			for _, want := range []string{"/dev/sda", gibibytes(maxFAT32Bytes), "exFAT"} {
+			for _, want := range []string{"/dev/sda", GibibytesString(maxFAT32Bytes), "exFAT"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal %q does not mention %q", err, want)
 				}
