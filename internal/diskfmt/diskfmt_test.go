@@ -75,6 +75,37 @@ func TestFormatFAT32ProducesUsableFilesystem(t *testing.T) {
 	}
 }
 
+func TestRootFileRoundTripsWithoutMounting(t *testing.T) {
+	const marker = "gosd-data-established"
+	path := backingFile(t, 128*1024*1024)
+	if err := FormatFAT32(path, "GOSD-DATA"); err != nil {
+		t.Fatalf("FormatFAT32: %v", err)
+	}
+
+	// A freshly formatted volume carries nothing, which is what makes the
+	// file's presence meaningful to whoever writes one.
+	if found, err := RootFileExists(path, marker); err != nil || found {
+		t.Fatalf("RootFileExists on a fresh filesystem = (%v, %v), want (false, nil)", found, err)
+	}
+
+	if err := CreateEmptyFile(path, marker); err != nil {
+		t.Fatalf("CreateEmptyFile: %v", err)
+	}
+	if found, err := RootFileExists(path, marker); err != nil || !found {
+		t.Fatalf("RootFileExists after creating it = (%v, %v), want (true, nil)", found, err)
+	}
+	if found, err := RootFileExists(path, "gosd-something-else"); err != nil || found {
+		t.Errorf("RootFileExists for an absent name = (%v, %v), want (false, nil)", found, err)
+	}
+}
+
+func TestRootFileExistsReportsAnUnreadableFilesystem(t *testing.T) {
+	// Blank space is not a filesystem: "no" would be a lie, so it errors.
+	if _, err := RootFileExists(backingFile(t, 8*1024*1024), "gosd-data-established"); err == nil {
+		t.Error("RootFileExists on a blank device = nil error, want a failure to read it")
+	}
+}
+
 func TestInspectBlankDevice(t *testing.T) {
 	got, err := Inspect(backingFile(t, 8*1024*1024))
 	if err != nil {

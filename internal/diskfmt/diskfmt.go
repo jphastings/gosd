@@ -246,6 +246,69 @@ func FormatFAT32(devicePath, volumeLabel string) (err error) {
 	return nil
 }
 
+// CreateEmptyFile creates an empty file called name in the root directory of
+// the filesystem on devicePath, without mounting it: go-diskfs writes the
+// directory entry straight to the device. name is a plain filename, not a
+// path, and must NOT begin with a dot — go-diskfs derives an empty 8.3 short
+// name for such a name and then skips the entry when listing the directory,
+// so the file it creates is one RootFileExists can never find.
+//
+// The write lands in the page cache like any other; a caller that needs it on
+// the medium must flush the device afterwards.
+func CreateEmptyFile(devicePath, name string) (err error) {
+	d, err := openDisk(devicePath, false)
+	if err != nil {
+		return fmt.Errorf("opening %s to create %s failed: %w", devicePath, name, err)
+	}
+	defer func() {
+		if cerr := d.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing %s after creating %s failed: %w", devicePath, name, cerr)
+		}
+	}()
+
+	fs, err := d.GetFilesystem(0)
+	if err != nil {
+		return fmt.Errorf("reading the filesystem on %s failed: %w", devicePath, err)
+	}
+	f, err := fs.OpenFile("/"+name, os.O_CREATE|os.O_RDWR)
+	if err != nil {
+		return fmt.Errorf("creating %s on %s failed: %w", name, devicePath, err)
+	}
+	if cerr := f.Close(); cerr != nil {
+		return fmt.Errorf("closing %s on %s failed: %w", name, devicePath, cerr)
+	}
+	return nil
+}
+
+// RootFileExists reports whether the root directory of the filesystem on
+// devicePath holds a file called name, matched case-insensitively as FAT
+// itself matches names. An error means the directory could not be read at
+// all, which is not the same answer as "no".
+func RootFileExists(devicePath, name string) (found bool, err error) {
+	d, err := openDisk(devicePath, true)
+	if err != nil {
+		return false, fmt.Errorf("opening %s to look for %s failed: %w", devicePath, name, err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(0)
+	if err != nil {
+		return false, fmt.Errorf("reading the filesystem on %s failed: %w", devicePath, err)
+	}
+	// "." rather than "/": go-diskfs validates directory paths as io/fs
+	// paths, which are unrooted, and rejects a leading slash.
+	entries, err := fs.ReadDir(".")
+	if err != nil {
+		return false, fmt.Errorf("reading the root directory of %s failed: %w", devicePath, err)
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // openDisk opens the block device (or image file) at devicePath as a
 // go-diskfs disk, finding its size by seeking to its end rather than via
 // diskfs.Open's ioctl(BLKGETSIZE64). That ioctl reads the kernel's u64 answer

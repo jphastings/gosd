@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,11 @@ type fakeCard struct {
 	sizeBytes  int64
 	contents   diskfmt.Contents
 	inspectErr error
+	// marked is whether the partition already carries the completed-format
+	// marker; markerErr makes reading it fail, as a half-written filesystem
+	// with an unreadable root directory would.
+	marked     bool
+	markerErr  error
 	nodeExists bool
 	// nodeAppearsOnAdd simulates devtmpfs: the partition node shows up when
 	// AddKernelPartition succeeds. Defaults true via newFakeCard.
@@ -67,8 +73,14 @@ func (c *fakeCard) deps() Deps {
 		},
 		Inspect:     func(string) (diskfmt.Contents, error) { return c.contents, c.inspectErr },
 		FormatFAT32: func(_, label string) error { c.actions = append(c.actions, "format-"+label); return nil },
-		SyncDevice:  func(string) error { c.actions = append(c.actions, "sync-partition"); return nil },
-		PathExists:  func(string) bool { return c.nodeExists },
+		CreateMarker: func(string) error {
+			c.actions = append(c.actions, "write-marker")
+			c.marked = true
+			return nil
+		},
+		MarkerExists: func(string) (bool, error) { return c.marked, c.markerErr },
+		SyncDevice:   func(string) error { c.actions = append(c.actions, "sync-partition"); return nil },
+		PathExists:   func(string) bool { return c.nodeExists },
 		Sleep: func(d time.Duration) {
 			clock.mu.Lock()
 			clock.now = clock.now.Add(d)
@@ -143,7 +155,7 @@ func TestRunCreatesTheDataPartitionOnFirstBoot(t *testing.T) {
 	// record, written only after the formatted filesystem is durable, so
 	// power loss at any earlier point leaves no entry and the next boot
 	// redoes everything.
-	wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-mbr"}
+	wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
 	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 		t.Fatalf("actions = %v, want %v", card.actions, wantActions)
 	}
@@ -191,6 +203,7 @@ func TestRunAdoptsASurvivingDataPartitionAfterAReflash(t *testing.T) {
 	// bytes beyond the boot partition, so the app's data is still there.
 	card := newFakeCard(defaultMBR(), 8<<30)
 	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	card.marked = true
 
 	if err := Run(card.deps(), testOptions()); err != nil {
 		t.Fatalf("Run() = %v, want nil", err)
@@ -210,24 +223,42 @@ func TestRunAdoptsASurvivingDataPartitionAfterAReflash(t *testing.T) {
 }
 
 func TestRunFormatsWhateverIsNotASurvivingDataPartition(t *testing.T) {
+	// The last two cases are the debris of an interrupted format: go-diskfs
+	// writes the volume label last and syncs nothing along the way, so a
+	// power cut can leave a volume that inspects as GOSD-DATA over
+	// incomplete FAT tables. Only the marker — written after this package's
+	// own sync barrier — separates that from a real survivor, and adopting
+	// it would commit an MBR entry over a broken filesystem forever.
 	cases := []struct {
-		name     string
-		contents diskfmt.Contents
+		name      string
+		contents  diskfmt.Contents
+		marked    bool
+		markerErr error
 	}{
-		{"a blank card", diskfmt.Contents{Blank: true}},
-		{"a foreign volume", diskfmt.Contents{FS: diskfmt.FAT32, Label: "HOLIDAY"}},
-		{"an unreadable filesystem", diskfmt.Contents{OtherFS: "exFAT"}},
-		{"mid-partition rubble", diskfmt.Contents{}},
+		{name: "a blank card", contents: diskfmt.Contents{Blank: true}},
+		{name: "a foreign volume", contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "HOLIDAY"}},
+		{name: "an unreadable filesystem", contents: diskfmt.Contents{OtherFS: "exFAT"}},
+		{name: "mid-partition rubble", contents: diskfmt.Contents{}},
+		{
+			name:     "a labelled volume with no completion marker",
+			contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: Label},
+		},
+		{
+			name:      "a labelled volume whose root directory will not read",
+			contents:  diskfmt.Contents{FS: diskfmt.FAT32, Label: Label},
+			marked:    true,
+			markerErr: errors.New("invalid argument"),
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			card := newFakeCard(defaultMBR(), 8<<30)
-			card.contents = c.contents
+			card.contents, card.marked, card.markerErr = c.contents, c.marked, c.markerErr
 
 			if err := Run(card.deps(), testOptions()); err != nil {
 				t.Fatalf("Run() = %v, want nil", err)
 			}
-			wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-mbr"}
+			wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
 			if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 				t.Errorf("actions = %v, want %v", card.actions, wantActions)
 			}
@@ -248,9 +279,9 @@ func TestRunRefusesToFormatContentsItCouldNotRead(t *testing.T) {
 }
 
 func TestRunResumesCleanlyAfterAnInterruptedFirstBoot(t *testing.T) {
-	// Power loss between the format and the MBR write leaves the card with
-	// no partition-2 entry over a perfectly good filesystem; the next boot
-	// must reach the same committed table without reformatting it.
+	// Power loss between the marker's flush and the MBR write leaves the card
+	// with no partition-2 entry over a finished, marked filesystem; the next
+	// boot must reach the same committed table without reformatting it.
 	card := newFakeCard(defaultMBR(), 8<<30)
 	if err := Run(card.deps(), testOptions()); err != nil {
 		t.Fatalf("first boot: Run() = %v, want nil", err)
@@ -259,6 +290,7 @@ func TestRunResumesCleanlyAfterAnInterruptedFirstBoot(t *testing.T) {
 
 	resumed := newFakeCard(defaultMBR(), 8<<30) // the MBR write never landed
 	resumed.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	resumed.marked = card.marked // exactly what the first boot left behind
 	if err := Run(resumed.deps(), testOptions()); err != nil {
 		t.Fatalf("second boot: Run() = %v, want nil", err)
 	}
@@ -380,14 +412,24 @@ func TestRunRefusesAForeignPartitionTable(t *testing.T) {
 	noSignature := defaultMBR()
 	noSignature[signatureOffset] = 0x00 // not a GoSD card
 
-	// A partition 1 of no length would put the data partition on top of the
-	// boot partition, so the derivation refuses it rather than deriving
-	// nonsense.
-	emptyBoot := gosdMBR(0)
+	// A partition 1 ending past the MBR's 32-bit sector range has no
+	// expressible successor: the derived start would wrap.
+	overflowing := defaultMBR()
+	binary.LittleEndian.PutUint32(overflowing[partitionEntriesOffset+12:], math.MaxUint32)
 
-	for name, mbr := range map[string][]byte{"no boot signature": noSignature, "a zero-length partition 1": emptyBoot} {
-		t.Run(name, func(t *testing.T) {
-			card := newFakeCard(mbr, 8<<30)
+	cases := []struct {
+		name string
+		mbr  []byte
+	}{
+		{"no boot signature", noSignature},
+		// A partition 1 of no length would put the data partition on top of
+		// the boot partition, so the derivation refuses it.
+		{"a zero-length partition 1", gosdMBR(0)},
+		{"a partition 1 ending past the MBR's addressing limit", overflowing},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			card := newFakeCard(c.mbr, 8<<30)
 			err := Run(card.deps(), testOptions())
 			if err == nil || !strings.Contains(err.Error(), "leaving it untouched") {
 				t.Fatalf("Run() = %v, want a refusal naming the foreign table", err)

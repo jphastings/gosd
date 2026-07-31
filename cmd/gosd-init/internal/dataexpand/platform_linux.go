@@ -24,7 +24,13 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		AddKernelPartition: addKernelPartition,
 		Inspect:            diskfmt.Inspect,
 		FormatFAT32:        diskfmt.FormatFAT32,
-		SyncDevice:         syncDevice,
+		CreateMarker: func(partitionDevice string) error {
+			return diskfmt.CreateEmptyFile(partitionDevice, EstablishedMarker)
+		},
+		MarkerExists: func(partitionDevice string) (bool, error) {
+			return diskfmt.RootFileExists(partitionDevice, EstablishedMarker)
+		},
+		SyncDevice: syncDevice,
 		PathExists: func(path string) bool {
 			_, err := os.Stat(path)
 			return err == nil
