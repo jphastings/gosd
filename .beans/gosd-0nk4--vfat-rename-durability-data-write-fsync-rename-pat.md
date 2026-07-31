@@ -72,7 +72,7 @@ after:    SFN 'åELLO-~1TMP' (0xE5 deleted)  +  LFN 'hello-boots' + SFN 'HELLO-~
 
 Regression cover: CI's existing `qemu-expand-data` job already boots the same image twice, killing qemu seconds after the first boot's counter write, so the second boot's assertions now include `boots=2` — no new job, no extra boot. Verified locally both ways: passes on this branch, and fails with `serial log is missing: boots=2` when `examples/hello` is reverted to the old two-step write.
 
-## For JP to decide: the `dirsync` mount option (NOT done here)
+## Decided: no `dirsync` (JP, 2026-07-31) — analysis kept for the record
 
 `dirsync` would make correctness the default for every app — no four-step dance to learn — by making every directory mutation synchronous. On vfat it closes both halves of the trap: `IS_DIRSYNC(dir)` makes `fat_add_entries`/`fat_remove_entries` call `sync_dirty_buffer()` on each modified entry buffer, and `vfat_sync_ipos()` call `fat_sync_inode()`, so `rename(2)` returns with the entry fully on the card, cluster and size included.
 
@@ -100,5 +100,14 @@ Where it would change, if you want it:
 - [x] Prove the "directory fsync alone" trap experimentally rather than only from the source
 - [x] Lock it in with a CI assertion, verified to fail against the pre-fix code
 - [x] File the go-diskfs `ReadDir` issue separately: **gosd-zzdz**
-- [ ] JP: decide on the `dirsync` mount option (recommendation above: no)
+- [x] JP: decide on the `dirsync` mount option — **DECIDED 2026-07-31: no.**
+      JP: "let's avoid dirsync for now - let apps make their own choice."
+      Locked: GoSD mounts `/data` without `dirsync`, and durability is the
+      app's decision via the documented four-step pattern. The reasoning, if
+      this is ever revisited: `dirsync` would tax every card write to protect
+      the minority of apps that write durable state, on media where small
+      synchronous writes are the expensive operation — and it still would not
+      remove the need to fsync file *data*, so it buys a permanent cost
+      without removing the sharp edge. The narrow `/data`-only change is a
+      one-word diff (`mounts.go`) if the calculus ever changes.
 - [ ] Optional, not needed for confidence: repeat one kill-cycle on real hardware via sdwire (qemu ran our real kernel and mount options, so this only adds card-level realism)
