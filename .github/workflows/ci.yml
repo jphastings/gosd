@@ -234,6 +234,9 @@ jobs:
   # gains a GOSD-DATA partition on first boot, and the second boot finds it
   # and leaves it alone. Killing qemu after the first boot doubles as a
   # power-cut: everything the second boot depends on must already be durable.
+  # The third boot follows a re-flash of the very same image over the front
+  # of the card, and must re-adopt the partition the flash orphaned rather
+  # than reformat it (docs/design/upgrade-path.md §2).
   qemu-expand-data:
     name: qemu first-boot data-partition expansion
     runs-on: ubuntu-latest
@@ -260,6 +263,8 @@ jobs:
             --hostname ci-qemu-expand \
             --data-size=expand \
             -o dist/hello-qemu-virt.img
+          # Kept aside as the flasher's copy, for the re-flash step below.
+          cp dist/hello-qemu-virt.img dist/flashable.img
           # The image is 272MiB; a real card is bigger. truncate models
           # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
           truncate -s +1G dist/hello-qemu-virt.img
@@ -278,6 +283,18 @@ jobs:
             "data partition already present" \
             "data partition mounted read-write at /data" \
             "boots=2"
+      # An upgrade, as an operator performs it: Imager writes the image over
+      # the front of the card and stops at its end, so the MBR loses
+      # partition 2's entry while the data region beyond it is never
+      # touched. boots=3 is the proof the app's data came back — a reformat
+      # would have restarted the counter at 1.
+      - name: "Re-flash: the orphaned data partition is re-adopted, not reformatted"
+        run: |
+          dd if=dist/flashable.img of=dist/hello-qemu-virt.img conv=notrunc
+          ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img reflash.log \
+            "data partition re-adopted" \
+            "data partition mounted read-write at /data" \
+            "boots=3"
       - name: "Corrupted established partition: halts instead of repairing"
         run: |
           # Zero the filesystem out from under the established partition
