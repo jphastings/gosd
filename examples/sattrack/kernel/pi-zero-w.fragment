@@ -13,12 +13,131 @@ CONFIG_CMA_SIZE_MBYTES=64
 # DRM_VC4 hard-depends on SND && SND_SOC at this tree's pinned commit
 # (drivers/gpu/drm/vc4/Kconfig: "depends on SND && SND_SOC" - HDMI audio
 # support is not severable), so the stock "no sound" cut must be partially
-# reverted or `make olddefconfig` silently drops DRM_VC4. This is the
-# minimum sound surface that satisfies the dependency; no codec, machine,
-# or USB audio drivers come with it.
+# reverted or `make olddefconfig` silently drops DRM_VC4. This example plays
+# no audio itself - these three lines exist ONLY to satisfy that dependency.
 CONFIG_SOUND=y
 CONFIG_SND=y
 CONFIG_SND_SOC=y
+
+# Everything from here to the USB-gadget section is a deny-list, and it is
+# the load-bearing half of the three lines above. GoSD kernels are monolithic
+# (CONFIG_MODULES is always off), and the raspberrypi bcmrpi_defconfig ships
+# the entire Pi audio ecosystem as modules (`=m`): ~40 HAT machine drivers,
+# ~15 generic ASoC codecs, USB audio, MIDI, OSS emulation, and the
+# loopback/dummy test cards. `make olddefconfig` promotes every `=m` to
+# built-in the instant CONFIG_SND is enabled, so a bare three-line "just
+# satisfy the dependency" fragment silently ships all of it - this file used
+# to claim "no codec, machine, or USB audio drivers come with it", and the
+# built kernel.config proved that false (bean gosd-df57). Unlike
+# examples/chime's Pi fragment, `# CONFIG_SND_SOC is not set` cannot do the
+# work here - DRM_VC4 needs SND_SOC=y - so every ASoC machine/codec driver
+# below is denied by name instead. Regenerate this list against the pinned
+# commit with:
+#
+#   curl -s https://raw.githubusercontent.com/raspberrypi/linux/<piZeroCommitRef>/arch/arm/configs/bcmrpi_defconfig \
+#     | grep -E '^CONFIG_(SND|SOUND)'
+
+# Generic ALSA driver menus: dummy/loopback/MIDI-interface cards and USB
+# audio class drivers we have no hardware for.
+# CONFIG_SND_DRIVERS is not set
+# CONFIG_SND_ARM is not set
+# CONFIG_SND_SPI is not set
+# CONFIG_SND_USB is not set
+
+# Named explicitly too, not just via the menu above: a virtual card silently
+# swallowing playback - it registers as an ordinary-looking card, often card
+# 0, with no volume/mute to flag it - has already cost a bench session on
+# real hardware in a sibling project. See docs/sound.md's "A virtual
+# loopback card swallows the audio" section.
+# CONFIG_SND_ALOOP is not set
+# CONFIG_SND_DUMMY is not set
+
+# No MIDI, no sequencer, no OSS emulation, no legacy ioctl shims: this app
+# never opens /dev/snd/* at all.
+# CONFIG_SND_SEQUENCER is not set
+# CONFIG_SND_OSSEMUL is not set
+# CONFIG_SND_HRTIMER is not set
+# CONFIG_SND_SUPPORT_OLD_API is not set
+
+# The Pi HAT machine drivers (HiFiBerry, IQaudio, JustBoom, Allo,
+# AudioInjector, Pisound, DionAudio, Google VoiceHAT, ChipDip, PiFi, the
+# stock RPi Cirrus/DAC/Proto cards, i-Sabre, ADAU1977, DigiDAC1,
+# AudioSense) - this app has none of this hardware; SND_SOC=y above exists
+# only for vc4.
+# CONFIG_SND_BCM2708_SOC_CHIPDIP_DAC is not set
+# CONFIG_SND_BCM2708_SOC_GOOGLEVOICEHAT_SOUNDCARD is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_ADC is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DAC is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DACPLUS is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DACPLUSHD is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DACPLUSADC is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DACPLUSADCPRO is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DACPLUSDSP is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_DIGI is not set
+# CONFIG_SND_BCM2708_SOC_HIFIBERRY_AMP is not set
+# CONFIG_SND_BCM2708_SOC_PIFI_40 is not set
+# CONFIG_SND_BCM2708_SOC_RPI_CIRRUS is not set
+# CONFIG_SND_BCM2708_SOC_RPI_DAC is not set
+# CONFIG_SND_BCM2708_SOC_RPI_PROTO is not set
+# CONFIG_SND_BCM2708_SOC_JUSTBOOM_BOTH is not set
+# CONFIG_SND_BCM2708_SOC_JUSTBOOM_DAC is not set
+# CONFIG_SND_BCM2708_SOC_JUSTBOOM_DIGI is not set
+# CONFIG_SND_BCM2708_SOC_IQAUDIO_CODEC is not set
+# CONFIG_SND_BCM2708_SOC_IQAUDIO_DAC is not set
+# CONFIG_SND_BCM2708_SOC_IQAUDIO_DIGI is not set
+# CONFIG_SND_BCM2708_SOC_I_SABRE_Q2M is not set
+# CONFIG_SND_BCM2708_SOC_ADAU1977_ADC is not set
+# CONFIG_SND_AUDIOINJECTOR_PI_SOUNDCARD is not set
+# CONFIG_SND_AUDIOINJECTOR_OCTO_SOUNDCARD is not set
+# CONFIG_SND_AUDIOINJECTOR_ISOLATED_SOUNDCARD is not set
+# CONFIG_SND_AUDIOSENSE_PI is not set
+# CONFIG_SND_DIGIDAC1_SOUNDCARD is not set
+# CONFIG_SND_BCM2708_SOC_DIONAUDIO_LOCO is not set
+# CONFIG_SND_BCM2708_SOC_DIONAUDIO_LOCO_V2 is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_PIANO_DAC is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_PIANO_DAC_PLUS is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_BOSS_DAC is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_BOSS2_DAC is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_DIGIONE is not set
+# CONFIG_SND_BCM2708_SOC_ALLO_KATANA_DAC is not set
+# CONFIG_SND_BCM2708_SOC_FE_PI_AUDIO is not set
+# CONFIG_SND_PISOUND is not set
+
+# Generic ASoC codec drivers the HAT machine drivers above reference. Denied
+# individually because SND_SOC stays enabled for vc4 here (unlike
+# examples/chime's Pi fragment, which denies SND_SOC wholesale and so never
+# has to name a codec).
+# CONFIG_SND_SOC_AD193X_SPI is not set
+# CONFIG_SND_SOC_AD193X_I2C is not set
+# CONFIG_SND_SOC_ADAU1701 is not set
+# CONFIG_SND_SOC_ADAU7002 is not set
+# CONFIG_SND_SOC_AK4554 is not set
+# CONFIG_SND_SOC_CS4265 is not set
+# CONFIG_SND_SOC_ICS43432 is not set
+# CONFIG_SND_SOC_MA120X0P is not set
+# CONFIG_SND_SOC_MAX98357A is not set
+# CONFIG_SND_SOC_SPDIF is not set
+# CONFIG_SND_SOC_TLV320AIC23_I2C is not set
+# CONFIG_SND_SOC_WM8804_I2C is not set
+# CONFIG_SND_SOC_WM8904 is not set
+# CONFIG_SND_SOC_WM8960 is not set
+# CONFIG_SND_SIMPLE_CARD is not set
+
+# The VideoCore firmware audio driver itself (examples/chime's actual
+# playback path) and its I2S companion - this app plays no sound at all, so
+# even the Pi's own driver is denied.
+# CONFIG_SND_BCM2835 is not set
+# CONFIG_SND_BCM2835_SOC_I2S is not set
+
+# Not about sound at all: GoSD's stock Pi fragments enable the USB gadget
+# stack, and the defconfig's USB MIDI gadget function sits dormant because it
+# depends on the raw-MIDI core, which cannot exist while CONFIG_SOUND is off.
+# Turn sound on and it wakes up too. Legacy gadget drivers claim the board's
+# only UDC at probe, exactly how bean gosd-spjt's "Gadget Zero" bug stopped
+# --usb-gadget working, so an app that wants DRM AND a USB gadget needs these
+# off.
+# CONFIG_USB_MIDI_GADGET is not set
+# CONFIG_USB_CONFIGFS_F_MIDI is not set
 
 # Appliance display: the app owns the screen. No fbdev shim, no text
 # console splashing kernel messages over the map, no boot logo, no CEC.
