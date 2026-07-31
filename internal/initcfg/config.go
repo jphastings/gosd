@@ -42,6 +42,35 @@ type Config struct {
 	// every config.json baked before this field existed — means no
 	// expansion, exactly like --data-size=0.
 	DataExpand bool `json:"dataExpand,omitempty"`
+
+	// Identity is a content-derived digest of this build's boot payload,
+	// baked in by gosd build (see ComputeIdentity's docstring for the
+	// exact recipe, and internal/pipeline for where it's computed).
+	// Identical rebuilds from identical inputs produce the identical
+	// Identity — it is never a timestamp or a random id — which is what
+	// makes it usable both for upgrade-skew detection (does the running
+	// image match what a provisioning snapshot was taken from?) and for
+	// a future self-update's "am I already running this?" check.
+	// Optional: empty for every config.json baked before this field
+	// existed; callers must treat that as "unknown, not comparable"
+	// rather than as a mismatch (see ShortIdentity).
+	Identity string `json:"identity,omitempty"`
+}
+
+// shortIdentityLen is how many leading hex characters of Identity
+// ShortIdentity keeps: enough to tell builds apart at a glance in a boot
+// log line, without spelling out the full SHA-256.
+const shortIdentityLen = 12
+
+// ShortIdentity returns a truncated, human-scannable form of Identity, for
+// logging (e.g. gosd-init's boot-time "[gosd] image identity: <short
+// digest>" line). Empty when Identity is empty, e.g. an image built before
+// this field existed.
+func (c Config) ShortIdentity() string {
+	if len(c.Identity) <= shortIdentityLen {
+		return c.Identity
+	}
+	return c.Identity[:shortIdentityLen]
 }
 
 // Wifi holds the baked-in WPA2-PSK or open network credentials. Both fields

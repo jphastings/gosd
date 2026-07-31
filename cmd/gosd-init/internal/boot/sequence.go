@@ -180,6 +180,11 @@ func Run(deps Deps, opts Options) error {
 		log("reading config.json failed, using defaults: %v", err)
 		cfg = initcfg.Config{}
 	}
+	// Absent on any image built before gosd-acdn (config.json's Identity
+	// is optional) - nothing to eyeball on those, so nothing is logged.
+	if cfg.Identity != "" {
+		log("image identity: %s", cfg.ShortIdentity())
+	}
 
 	// Only reachable now that /proc is mounted (mountEarly above), which
 	// is what makes /proc/cmdline readable in the first place.
