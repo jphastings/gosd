@@ -79,7 +79,7 @@ func contains(args []string, want string) bool {
 
 func TestExtractBootFilesCopiesEveryBootPartitionFile(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "qemu-virt.img")
-	if err := image.Write(imgPath, image.Spec{
+	if _, err := image.Write(imgPath, image.Spec{
 		BootFiles: map[string]io.Reader{
 			"Image":              strings.NewReader("fake kernel bytes"),
 			"initramfs.cpio.zst": strings.NewReader("fake initramfs bytes"),
@@ -130,7 +130,7 @@ func TestRunOnANonQemuVirtImageFailsActionably(t *testing.T) {
 	}
 
 	imgPath := filepath.Join(t.TempDir(), "not-qemu-virt.img")
-	if err := image.Write(imgPath, image.Spec{
+	if _, err := image.Write(imgPath, image.Spec{
 		BootFiles: map[string]io.Reader{
 			"gosd.toml": strings.NewReader("hostname = \"test\"\n"),
 		},

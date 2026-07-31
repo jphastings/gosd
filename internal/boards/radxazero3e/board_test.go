@@ -276,7 +276,7 @@ func TestBuildFailsWhenIdbloaderGrowsIntoUboot(t *testing.T) {
 	}
 
 	imgPath := filepath.Join(t.TempDir(), "test.img")
-	err = image.Write(imgPath, image.Spec{RawWrites: b.RawWrites(art)})
+	_, err = image.Write(imgPath, image.Spec{RawWrites: b.RawWrites(art)})
 	if !errors.Is(err, image.ErrRawWriteOverlap) {
 		t.Fatalf("image.Write() with an oversized idbloader.img = %v, want an ErrRawWriteOverlap, not a silently-corrupted image", err)
 	}

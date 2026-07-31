@@ -21,6 +21,7 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 )
 
@@ -296,6 +297,185 @@ func TestBuildRefusesADataSizeFAT32CannotHold(t *testing.T) {
 	}
 	if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
 		t.Errorf("gosd build wrote %s despite refusing the data size; the refusal must come first", imgPath)
+	}
+}
+
+// TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition is
+// the acceptance test for bean gosd-m70t: a non-default --boot-size must
+// resize GOSD-BOOT (partition 1) and shift GOSD-DATA (partition 2) to start
+// immediately after it, and the build must print a boot-volume usage summary
+// naming the board.
+func TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	// 128MiB and 32MiB are both outside the FAT32 self-consistency trim's
+	// affected bands (unlike e.g. 64MiB, which the formatter trims by one
+	// sector - see internal/diskfmt.LargestSelfConsistentFAT32Bytes), so the
+	// image's partitions land at exactly these requested sizes.
+	const (
+		bootSizeBytes = 128 * 1024 * 1024
+		dataSizeBytes = 32 * 1024 * 1024
+	)
+
+	cmd := newRootCmd()
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--boot-size", "128MiB",
+		"--data-size", "32MiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	bootPart, err := d.GetPartition(1)
+	if err != nil {
+		t.Fatalf("GetPartition(1) failed: %v", err)
+	}
+	if got, want := bootPart.GetStart(), int64(16*1024*1024); got != want {
+		t.Errorf("partition 1 starts at byte %d, want %d (16MiB, unaffected by --boot-size)", got, want)
+	}
+	if got, want := bootPart.GetSize(), int64(bootSizeBytes); got != want {
+		t.Errorf("partition 1 size = %d bytes, want %d (the requested --boot-size)", got, want)
+	}
+
+	wantDataOffset := int64(16*1024*1024 + bootSizeBytes)
+	dataPart, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got := dataPart.GetStart(); got != wantDataOffset {
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after the resized GOSD-BOOT)", got, wantDataOffset)
+	}
+	if got, want := dataPart.GetSize(), int64(dataSizeBytes); got != want {
+		t.Errorf("partition 2 size = %d bytes, want %d (the requested --data-size)", got, want)
+	}
+
+	if !strings.Contains(stderr.String(), "pi-zero-2w boot volume:") {
+		t.Errorf("stderr = %q, want a boot-volume usage summary naming pi-zero-2w", stderr.String())
+	}
+}
+
+// TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly is the seam test the
+// bean flagged: with gosd-lirl's dataexpand now deriving GOSD-DATA's offset
+// from the flashed MBR (partition 1's start + size) instead of a mirrored
+// 272MiB constant, a non-default --boot-size must produce an image whose MBR
+// partition 1 alone already tells gosd-init exactly where to grow GOSD-DATA
+// on first boot - the image itself still ships no partition 2 (that's the
+// point of --data-size=expand), so this only has the MBR to check.
+func TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	const bootSizeBytes = 128 * 1024 * 1024
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--boot-size", "128MiB",
+		"--data-size", "expand",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	bootPart, err := d.GetPartition(1)
+	if err != nil {
+		t.Fatalf("GetPartition(1) failed: %v", err)
+	}
+	if got, want := bootPart.GetStart(), int64(16*1024*1024); got != want {
+		t.Errorf("partition 1 starts at byte %d, want %d (16MiB)", got, want)
+	}
+	if got, want := bootPart.GetSize(), int64(bootSizeBytes); got != want {
+		t.Errorf("partition 1 size = %d bytes, want %d (the requested --boot-size); this is exactly what dataexpand reads back to derive GOSD-DATA's offset", got, want)
+	}
+
+	// --data-size=expand must still keep the image itself single-partition,
+	// no matter the boot size: partition 2 is created on the device, not
+	// baked into the image.
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d with --data-size=expand, want none in the image (it's created on-device)", part2.GetSize())
+	}
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(configJSON), `"dataExpand":true`) {
+		t.Errorf("config.json = %q, want it to contain %q", configJSON, `"dataExpand":true`)
+	}
+}
+
+// TestBuildRefusesABootSizeTooSmallForThePayload is the acceptance test for
+// gosd-m70t's fit reporting: a --boot-size too small for what a real build
+// actually writes must fail with an actionable error naming --boot-size,
+// not go-diskfs's bare "no space left on device" (the disk-full error this
+// used to surface as, with no clue which flag to change).
+func TestBuildRefusesABootSizeTooSmallForThePayload(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		// The smallest --boot-size the flag parser allows; the real
+		// cross-compiled hello binary, gosd-init, and initramfs alone
+		// can't fit in 1MiB.
+		"--boot-size", "1MiB",
+		"-o", imgPath,
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --boot-size=1MiB succeeded, want a refusal")
+	}
+	if !errors.Is(err, image.ErrBootPartitionFull) {
+		t.Fatalf("gosd build --boot-size=1MiB error = %v, want it to wrap image.ErrBootPartitionFull", err)
+	}
+	if !strings.Contains(err.Error(), "--boot-size") {
+		t.Errorf("refusal %q does not mention --boot-size", err)
 	}
 }
 

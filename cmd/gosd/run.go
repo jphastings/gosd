@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/build"
+	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 	"github.com/jphastings/gosd/internal/qemurun"
@@ -31,6 +33,7 @@ var (
 	runHostname     string
 	runArtifactsDir string
 	runGosdInitSrc  string
+	runBootSize     string
 )
 
 func newRunCmd() *cobra.Command {
@@ -68,6 +71,8 @@ place and prints its path instead.`,
 		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
 	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
+	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
+		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
 
 	return cmd
 }
@@ -124,6 +129,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	bootSizeBytes, err := parseBootSize(runBootSize)
+	if err != nil {
+		return err
+	}
+
 	imgPath := filepath.Join(workDir, appName+"-qemu-virt.img")
 
 	ctx := cmd.Context()
@@ -138,10 +148,16 @@ func runRun(cmd *cobra.Command, args []string) error {
 		CacheDir:      cacheDir,
 		OutputPath:    imgPath,
 		DataSizeBytes: dataSizeBytes,
+		BootSizeBytes: bootSizeBytes,
 	}
-	if err := pipeline.Assemble(ctx, opts); err != nil {
+	report, err := pipeline.Assemble(ctx, opts)
+	if err != nil {
+		if errors.Is(err, image.ErrBootPartitionFull) {
+			return fmt.Errorf("building %s for qemu-virt failed: %w; pass a larger --boot-size than %s and rebuild", appName, err, humanizeBinaryBytes(bootSizeBytes))
+		}
 		return fmt.Errorf("building %s for qemu-virt failed: %w", appName, err)
 	}
+	printBootVolumeUsage(cmd, "qemu-virt", report)
 
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

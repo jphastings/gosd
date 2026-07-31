@@ -23,6 +23,7 @@ import (
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
@@ -61,6 +62,7 @@ var (
 	artifactsDir   string
 	gosdInitSrc    string
 	dataSize       string
+	bootSize       string
 	catalogFlag    bool
 	publishBaseURL string
 	usbGadget      bool
@@ -75,6 +77,12 @@ var (
 // appliance images that don't need /data don't pay its image-size and
 // flash-time cost.
 const defaultDataSize = "0"
+
+// defaultBootSize is the GOSD-BOOT partition size used when --boot-size is
+// not given: today's locked constant, unchanged from before the flag
+// existed. TestDefaultBootSizeMatchesImagePackage pins it against
+// image.DefaultBootPartitionSizeBytes so the two can't silently drift apart.
+const defaultBootSize = "256MiB"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -98,6 +106,8 @@ func newBuildCmd() *cobra.Command {
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy)")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
 		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
+	cmd.Flags().StringVar(&bootSize, "boot-size", defaultBootSize,
+		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); default 256MiB fits every stock board's kernel/initramfs, but a large app may need more - the build fails with an actionable error naming this flag if it doesn't fit; this size becomes part of the app's on-disk layout, so changing it in a later release erases GOSD-DATA on upgrade (see docs/design/upgrade-path.md §0.4)")
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
@@ -134,6 +144,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	dataSizeBytes, dataExpand, err := parseDataSize(dataSize)
+	if err != nil {
+		return err
+	}
+
+	bootSizeBytes, err := parseBootSize(bootSize)
 	if err != nil {
 		return err
 	}
@@ -224,12 +239,18 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			OutputPath:       outputs[b.Name()],
 			DataSizeBytes:    dataSizeBytes,
 			DataExpand:       dataExpand,
+			BootSizeBytes:    bootSizeBytes,
 			ExtraFirmware:    extraFirmware,
 			ExtraExecutables: extraExecutables,
 		}
-		if err := pipeline.Assemble(ctx, opts); err != nil {
+		report, err := pipeline.Assemble(ctx, opts)
+		if err != nil {
+			if errors.Is(err, image.ErrBootPartitionFull) {
+				return fmt.Errorf("building %s for %s failed: %w; pass a larger --boot-size than %s and rebuild", appName, b.Name(), err, humanizeBinaryBytes(bootSizeBytes))
+			}
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
 		}
+		printBootVolumeUsage(cmd, b.Name(), report)
 	}
 
 	if catalogFlag {
@@ -255,16 +276,44 @@ func deriveAppName(pkgPath string) (string, error) {
 	return naming.Sanitize(filepath.Base(abs)), nil
 }
 
-// dataSizeUnits are the size suffixes --data-size accepts, all binary
-// (power-of-1024) units: partition sizes are conventionally binary, and
-// offering only one interpretation avoids MB-vs-MiB ambiguity.
-var dataSizeUnits = map[string]int64{
+// binarySizeUnits are the size suffixes --data-size and --boot-size both
+// accept, all binary (power-of-1024) units: partition sizes are
+// conventionally binary, and offering only one interpretation avoids
+// MB-vs-MiB ambiguity.
+var binarySizeUnits = map[string]int64{
 	"KIB": 1024,
 	"MIB": 1024 * 1024,
 	"GIB": 1024 * 1024 * 1024,
 	"K":   1024,
 	"M":   1024 * 1024,
 	"G":   1024 * 1024 * 1024,
+}
+
+// parseSizeBytes parses the numeric core --data-size and --boot-size both
+// share - a bare number of bytes, or one with a binarySizeUnits suffix (e.g.
+// "512MiB", "2G") - into bytes. flagName is used only to name the flag in the
+// returned error. Callers layer their own keywords (--data-size's "expand")
+// and bounds (max/min/alignment) on top.
+func parseSizeBytes(flagName, s string) (int64, error) {
+	trimmed := strings.TrimSpace(s)
+
+	numPart := trimmed
+	var multiplier int64 = 1
+	for suffix, mult := range binarySizeUnits {
+		if n, ok := strings.CutSuffix(strings.ToUpper(trimmed), suffix); ok {
+			numPart, multiplier = strings.TrimSpace(n), mult
+			break
+		}
+	}
+
+	n, err := strconv.ParseInt(numPart, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s %q is not a valid size; use a number with a binary unit (e.g. 512MiB, 1GiB)", flagName, s)
+	}
+	if multiplier > 1 && n > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("%s %q is too large; choose something that fits on an SD card", flagName, s)
+	}
+	return n * multiplier, nil
 }
 
 // dataSizeLimitDocsURL is where the --data-size refusal sends a developer who
@@ -285,28 +334,78 @@ func parseDataSize(s string) (bytes int64, expand bool, err error) {
 		return 0, true, nil
 	}
 
-	numPart := trimmed
-	var multiplier int64 = 1
-	for suffix, mult := range dataSizeUnits {
-		if n, ok := strings.CutSuffix(strings.ToUpper(trimmed), suffix); ok {
-			numPart, multiplier = strings.TrimSpace(n), mult
-			break
-		}
+	size, err := parseSizeBytes("--data-size", s)
+	if err != nil {
+		return 0, false, fmt.Errorf("%w, 'expand' to fill the card on first boot, or 0 to disable the data partition", err)
 	}
-
-	n, err := strconv.ParseInt(numPart, 10, 64)
-	if err != nil || n < 0 {
-		return 0, false, fmt.Errorf("--data-size %q is not a valid size; use a number with a binary unit (e.g. 512MiB, 1GiB), 'expand' to fill the card on first boot, or 0 to disable the data partition", s)
-	}
-	if multiplier > 1 && n > math.MaxInt64/multiplier {
-		return 0, false, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
-	}
-	size := n * multiplier
 	if size > diskfmt.MaxFAT32Bytes() {
 		return 0, false, fmt.Errorf("--data-size %q is larger than GoSD can format: the largest GOSD-DATA partition it will create is %s (%d bytes), because %s; use --data-size=256GiB or less (--data-size=%d for the exact maximum), or --data-size=expand to fill the card up to 256GiB on first boot; if the app needs more storage than that, attach a disk and format it exFAT with the disk package, which has no such ceiling - see %s",
 			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason, diskfmt.MaxFAT32Bytes(), dataSizeLimitDocsURL)
 	}
 	return size, false, nil
+}
+
+// minBootSizeBytes is the smallest --boot-size GoSD will accept: not because
+// any real board's kernel+initramfs could fit in 1MiB (they can't - the
+// actual fit is checked at build time, once the payload is known, and
+// refused with ErrBootPartitionFull if it doesn't fit), but because anything
+// smaller is certainly a mistake, most likely a missing unit suffix (e.g.
+// --boot-size=256 meaning 256 bytes instead of 256MiB).
+const minBootSizeBytes = 1024 * 1024
+
+// bootSizeAlignmentBytes is the granularity --boot-size values must land on:
+// a whole number of MiB, so the flag can't accidentally desynchronize the
+// data partition's start from a round boundary a card's own erase-block
+// alignment would want anyway.
+const bootSizeAlignmentBytes = 1024 * 1024
+
+// parseBootSize parses a --boot-size value like "512MiB" or "2G" into bytes.
+// Unlike --data-size there is no "0 disables it" or "expand" case - every
+// image has exactly one boot partition - so an empty/default flag value
+// resolves to image.DefaultBootPartitionSizeBytes via Spec.BootSizeBytes's
+// own zero-means-default handling, and parseBootSize itself only ever
+// returns a concrete positive size or an error naming --boot-size.
+func parseBootSize(s string) (int64, error) {
+	size, err := parseSizeBytes("--boot-size", s)
+	if err != nil {
+		return 0, err
+	}
+	if size < minBootSizeBytes {
+		return 0, fmt.Errorf("--boot-size %q (%d bytes) is smaller than the %d-byte minimum GoSD will format as a boot partition; double-check you didn't forget a unit suffix (e.g. --boot-size=256MiB, not --boot-size=256) - whether your app's own kernel and initramfs actually fit is checked at build time, not here",
+			s, size, minBootSizeBytes)
+	}
+	if size > diskfmt.MaxFAT32Bytes() {
+		return 0, fmt.Errorf("--boot-size %q is larger than GoSD can format: the largest GOSD-BOOT partition it will create is %s (%d bytes), because %s",
+			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason)
+	}
+	if size%bootSizeAlignmentBytes != 0 {
+		return 0, fmt.Errorf("--boot-size %q (%d bytes) is not a whole number of MiB; round it to the nearest MiB, e.g. --boot-size=%dMiB",
+			s, size, (size+bootSizeAlignmentBytes/2)/bootSizeAlignmentBytes)
+	}
+	return size, nil
+}
+
+// humanizeBinaryBytes renders a byte count the way a developer thinks about
+// partition sizes: whole-number MiB below 1GiB, two-decimal GiB above.
+func humanizeBinaryBytes(n int64) string {
+	const gib = 1024 * 1024 * 1024
+	if n >= gib {
+		return fmt.Sprintf("%.2fGiB", float64(n)/gib)
+	}
+	return fmt.Sprintf("%dMiB", n/(1024*1024))
+}
+
+// printBootVolumeUsage prints a one-line boot-volume usage summary
+// (`gosd build`'s per-board headroom report, bean gosd-m70t) so a developer
+// watches their app's footprint against --boot-size shrink across releases,
+// long before it trips ErrBootPartitionFull.
+func printBootVolumeUsage(cmd *cobra.Command, boardName string, report image.WriteReport) {
+	var percent float64
+	if report.BootPartitionSizeBytes > 0 {
+		percent = 100 * float64(report.BootPartitionPayloadBytes) / float64(report.BootPartitionSizeBytes)
+	}
+	cmd.PrintErrf("gosd build: %s boot volume: %s / %s used (%.1f%%)\n",
+		boardName, humanizeBinaryBytes(report.BootPartitionPayloadBytes), humanizeBinaryBytes(report.BootPartitionSizeBytes), percent)
 }
 
 // envKeyPattern is the shape a --env KEY must match: a POSIX-ish environment
