@@ -22,7 +22,7 @@ func TestArgsUsesDefaultsWhenPortAndMemoryAreZero(t *testing.T) {
 	assertFlag(t, args, "-initrd", filepath.Join("/work", "initramfs.cpio.zst"))
 	// gosd.bootdev=vda keeps gosd-init's GOSD-BOOT probe on the virtio disk
 	// the kernel booted from, exercising the gosd-vzk2 mechanism end to end.
-	assertFlag(t, args, "-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda")
+	assertFlag(t, args, "-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10")
 	assertContains(t, args, "-drive", "if=none,file=/img.img,format=raw,id=hd0")
 	assertContains(t, args, "-netdev", "user,id=n0,hostfwd=tcp::8080-:80")
 }

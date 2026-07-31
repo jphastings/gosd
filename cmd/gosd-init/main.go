@@ -104,13 +104,23 @@ func main() {
 			// already builds for them (see netupDeps/wifiupDeps).
 			mdnsChanged := mdnsresponder.NewSignal()
 
-			go netup.Run(netupDeps(log, mdnsChanged), netup.Options{})
-			go timesync.Run(timesyncDeps(log), timesync.Options{
-				Servers:               ntpServers(cfg),
-				ResyncEvery:           timesync.DefaultResyncInterval,
-				NetworkUpPollInterval: timesync.DefaultNetworkUpPollInterval,
+			// Each of these loops runs for the life of the device, and a
+			// panic escaping any of them would take PID 1 with it — so
+			// they run guarded, logging the stack and rebooting instead
+			// (see boot.PanicGuard and gosd-fkkr).
+			guard := boot.PanicGuard{Rebooter: platform.Rebooter, Sleep: time.Sleep, Log: log}
+
+			guard.Go("netup", func() { netup.Run(netupDeps(log, mdnsChanged), netup.Options{}) })
+			guard.Go("timesync", func() {
+				timesync.Run(timesyncDeps(log), timesync.Options{
+					Servers:               ntpServers(cfg),
+					ResyncEvery:           timesync.DefaultResyncInterval,
+					NetworkUpPollInterval: timesync.DefaultNetworkUpPollInterval,
+				})
 			})
-			go mdnsresponder.Run(mdnsresponderDeps(log, mdnsChanged), mdnsresponder.Options{Hostname: cfg.Hostname})
+			guard.Go("the mDNS responder", func() {
+				mdnsresponder.Run(mdnsresponderDeps(log, mdnsChanged), mdnsresponder.Options{Hostname: cfg.Hostname})
+			})
 
 			wifiClient, err := wifiup.NewPlatform()
 			if err != nil {
@@ -119,7 +129,9 @@ func main() {
 				log("WiFi unavailable, skipping: %v", err)
 				return
 			}
-			wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged), wifiup.Options{})
+			guard.Guard("wifiup", func() {
+				wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged), wifiup.Options{})
+			})
 		},
 	}
 	opts := boot.Options{
@@ -132,10 +144,14 @@ func main() {
 		DataTimeout: dataMountTimeout,
 	}
 
-	// Run only returns once the fatal (log+sync+sleep+reboot) path has
-	// already been triggered, or the machine has rebooted out from under
-	// us; either way there's nothing left for main to do.
-	_ = boot.Run(deps, opts)
+	// RunAndReboot only returns once a reboot has been requested — by the
+	// fatal path, by a panic guard, or by RunAndReboot itself if the boot
+	// sequence ever simply returns. The machine is on its way down by
+	// then, but main must not return regardless: PID 1 exiting is a kernel
+	// panic, and an appliance that panics is an appliance someone has to
+	// physically power-cycle (gosd-fkkr).
+	boot.RunAndReboot(deps, opts)
+	select {}
 }
 
 // readConfig reads and parses config.json, which is baked into the

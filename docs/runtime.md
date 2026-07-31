@@ -47,6 +47,11 @@ starts `/app` and supervises it for the rest of the device's life:
 - If something in early boot fails fatally (e.g. the boot partition never
   mounts), `gosd-init` logs the error, syncs, and reboots the device —
   your app is never left running with a boot sequence half-completed.
+- A bug in `gosd-init` itself gets the same treatment: every long-running
+  goroutine it starts is wrapped so a panic prints its stack to the console
+  and reboots, and every board boots with `panic=10` on the kernel command
+  line, so even a panic gosd-init can't catch reboots after 10s instead of
+  leaving an unattended device hung until someone unplugs it.
 
 ## Environment variables
 

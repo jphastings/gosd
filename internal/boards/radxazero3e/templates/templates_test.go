@@ -13,7 +13,7 @@ const wantExtlinuxConf = "default gosd\n" +
 	"    kernel /Image\n" +
 	"    fdt /rk3566-radxa-zero-3e.dtb\n" +
 	"    initrd /initramfs.cpio.zst\n" +
-	"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e\n"
+	"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e panic=10\n"
 
 func TestRenderExtlinuxConf(t *testing.T) {
 	got, err := RenderExtlinuxConf(ExtlinuxConfData{ConsoleBaud: 1500000})
@@ -30,7 +30,7 @@ func TestRenderExtlinuxConf_ConsoleBaudOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderExtlinuxConf() error = %v", err)
 	}
-	want := "    append console=ttyS2,115200n8 quiet init=/init gosd.board=radxa-zero-3e\n"
+	want := "    append console=ttyS2,115200n8 quiet init=/init gosd.board=radxa-zero-3e panic=10\n"
 	if !strings.Contains(got, want) {
 		t.Errorf("RenderExtlinuxConf(ConsoleBaud: 115200) = %q, want it to contain %q", got, want)
 	}

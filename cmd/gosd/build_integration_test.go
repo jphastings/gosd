@@ -380,7 +380,7 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 		"    kernel /Image\n" +
 		"    fdt /rk3566-radxa-zero-3e.dtb\n" +
 		"    initrd /initramfs.cpio.zst\n" +
-		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e\n"
+		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e panic=10\n"
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
@@ -616,7 +616,7 @@ func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T
 		"    kernel /Image\n" +
 		"    fdt /rk3528-nanopi-zero2.dtb\n" +
 		"    initrd /initramfs.cpio.zst\n" +
-		"    append console=ttyS0,1500000n8 quiet init=/init gosd.board=nanopi-zero2\n"
+		"    append console=ttyS0,1500000n8 quiet init=/init gosd.board=nanopi-zero2 panic=10\n"
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
@@ -1177,7 +1177,7 @@ func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
 		"    kernel /Image\n" +
 		"    fdt /rk3399-rock-4se.dtb\n" +
 		"    initrd /initramfs.cpio.zst\n" +
-		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=rock-4se\n"
+		"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=rock-4se panic=10\n"
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}

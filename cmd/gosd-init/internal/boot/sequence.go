@@ -289,8 +289,11 @@ func Run(deps Deps, opts Options) error {
 	mountData(deps, opts, log)
 	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
 
+	guard := PanicGuard{Rebooter: deps.Rebooter, Sleep: deps.Sleep, Log: log}
 	if deps.StartNetworking != nil {
-		go deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
+		guard.Go("networking", func() {
+			deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
+		})
 	}
 	sup := &Supervisor{
 		Start: func() (int, error) {
@@ -303,8 +306,21 @@ func Run(deps Deps, opts Options) error {
 		StableAfter: StableRunThreshold,
 		Log:         log,
 	}
-	sup.Run(opts.Stop)
+	guard.Guard("app supervision", func() { sup.Run(opts.Stop) })
 	return nil
+}
+
+// RunAndReboot runs the boot sequence and, however it ends — the fatal
+// path, a panic, or a clean return — asks for a reboot before returning
+// itself. PID 1 exiting is a kernel panic, so gosd-init's main calls this
+// and then blocks forever: this is what makes that block a formality
+// rather than the only thing between a latent bug and a bricked board.
+func RunAndReboot(deps Deps, opts Options) {
+	guard := PanicGuard{Rebooter: deps.Rebooter, Sleep: deps.Sleep, Log: deps.FallbackLog}
+	defer guard.recoverPanic("the boot sequence")
+
+	err := Run(deps, opts)
+	guard.Reboot(fmt.Sprintf("the boot sequence returned (%v)", err))
 }
 
 // mountData mounts the GOSD-DATA partition read-write at opts.DataTarget when
