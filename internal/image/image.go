@@ -34,6 +34,8 @@ import (
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/partition/mbr"
+
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 const (
@@ -96,7 +98,8 @@ type Spec struct {
 	// partition. Zero disables the partition entirely, producing the
 	// single-partition layout (older images, or an explicit
 	// --data-size=0). Non-zero sizes are rounded down to the nearest
-	// whole sector.
+	// whole sector, and then to the largest size go-diskfs formats into a
+	// self-consistent FAT32 volume (at most two clusters less).
 	DataSizeBytes int64
 }
 
@@ -125,6 +128,12 @@ func computeLayout(dataSizeBytes int64) (layout, error) {
 	if sizeInLBAs > math.MaxUint32 {
 		return layout{}, fmt.Errorf("data partition size %d bytes is too large for an MBR partition", dataSizeBytes)
 	}
+
+	// go-diskfs lays a FAT32 volume out with a FAT too small to index every
+	// cluster it advertises at ~0.8% of sizes — 64 GiB and most other round
+	// sizes among them — so the partition is trimmed to the largest size it
+	// formats correctly, which costs at most two clusters.
+	sizeInLBAs = diskfmt.LargestSelfConsistentFAT32Bytes(sizeInLBAs*sectorSizeBytes) / sectorSizeBytes
 
 	return layout{
 		totalSizeBytes:          dataPartitionOffsetBytes + sizeInLBAs*sectorSizeBytes,

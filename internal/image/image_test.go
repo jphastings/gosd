@@ -2,8 +2,10 @@ package image_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,6 +164,65 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 	if got, err := fs1.ReadFile("gosd.toml"); err != nil || string(got) != "contents\n" {
 		t.Errorf("boot partition contents = (%q, %v), want (\"contents\\n\", nil)", got, err)
 	}
+}
+
+// TestWriteFormatsBothPartitionsWithAddressableFATs guards the image against
+// the FAT-sizing defect go-diskfs lays a FAT32 volume out with at ~0.8% of
+// sizes: a volume that advertises more clusters than its FAT can index, which
+// macOS First Aid and Windows chkdsk both call damaged. 64 MiB is one of the
+// defective sizes, so a `--data-size` an app author might plausibly pick used
+// to produce an image that fails a host's disk check on first mount.
+func TestWriteFormatsBothPartitionsWithAddressableFATs(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	const dataSizeBytes = 64 * 1024 * 1024
+	if err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+
+	for _, part := range []struct {
+		name   string
+		offset int64
+	}{
+		{"GOSD-BOOT", bootPartitionOffsetBytes},
+		{"GOSD-DATA", dataPartitionOffsetBytes},
+	} {
+		clusters, entries := fat32ClusterAndEntryCounts(t, imgPath, part.offset)
+		if entries < clusters+2 {
+			t.Errorf("%s advertises %d clusters but its FAT holds only %d entries; %d are needed to address them all",
+				part.name, clusters, entries, clusters+2)
+		}
+	}
+}
+
+// fat32ClusterAndEntryCounts reads the FAT32 BIOS Parameter Block at offset and
+// reports how many data clusters the volume advertises and how many of them one
+// FAT can index — the arithmetic a host's disk check applies.
+func fat32ClusterAndEntryCounts(t *testing.T, imgPath string, offset int64) (clusters, entries int64) {
+	t.Helper()
+	f, err := os.Open(imgPath)
+	if err != nil {
+		t.Fatalf("reopening the written image failed: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	sector := make([]byte, 512)
+	if _, err := f.ReadAt(sector, offset); err != nil {
+		t.Fatalf("reading the boot sector at %d failed: %v", offset, err)
+	}
+	var (
+		bytesPerSector    = int64(binary.LittleEndian.Uint16(sector[11:13]))
+		sectorsPerCluster = int64(sector[13])
+		reservedSectors   = int64(binary.LittleEndian.Uint16(sector[14:16]))
+		fatCount          = int64(sector[16])
+		totalSectors      = int64(binary.LittleEndian.Uint32(sector[32:36]))
+		sectorsPerFAT     = int64(binary.LittleEndian.Uint32(sector[36:40]))
+	)
+	if sectorsPerCluster == 0 || sectorsPerFAT == 0 {
+		t.Fatalf("the boot sector at %d is not a FAT32 one: % x", offset, sector[:64])
+	}
+	clusters = (totalSectors - reservedSectors - fatCount*sectorsPerFAT) / sectorsPerCluster
+	return clusters, sectorsPerFAT * bytesPerSector / 4
 }
 
 func TestWriteRejectsRawWriteOverlappingDataPartition(t *testing.T) {
