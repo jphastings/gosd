@@ -426,7 +426,10 @@ see `beans list` for what's in flight.
     gosd-init create one filling the rest of the card on first boot
     (board-independent; QEMU-boot-tested via CI's `qemu-expand-data` job,
     not yet exercised on real hardware) — to get writable
-    persistence. The capability itself is unchanged and identical across all
+    persistence. Either way the partition tops out at 256 GiB — the same
+    FAT32-formatter ceiling [^exfat] describes: `--data-size` past it is
+    refused at the flag, and `expand` caps itself and says so on the console.
+    The capability itself is unchanged and identical across all
     boards; see `docs/runtime.md`'s "Persistent storage: `/data`"
     section. Hardware-exercised on both Pi Zeros during the usbwebsite
     bench session (beans `gosd-4ajn`/`gosd-spjt`, 2026-07-26): on each

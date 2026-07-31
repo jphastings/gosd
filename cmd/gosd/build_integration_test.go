@@ -19,6 +19,8 @@ import (
 	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/klauspost/compress/zstd"
 	"github.com/u-root/u-root/pkg/cpio"
+
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 // roundTripFunc adapts a function into an http.RoundTripper, so the test
@@ -264,6 +266,35 @@ func TestBuildWithExplicitDataSizeAddsTheDataPartition(t *testing.T) {
 	}
 	if label := strings.TrimSpace(dataFS.Label()); label != "GOSD-DATA" {
 		t.Errorf("data partition label = %q, want GOSD-DATA", label)
+	}
+}
+
+// TestBuildRefusesADataSizeFAT32CannotHold is the acceptance test for bean
+// gosd-mt53: a --data-size past the FAT32 formatter's ceiling has to be
+// refused before the build starts, not turned into an image whose GOSD-DATA
+// partition is silently corrupt (bean gosd-8kdm).
+func TestBuildRefusesADataSizeFAT32CannotHold(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-size", "400GiB",
+		"-o", imgPath,
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --data-size=400GiB succeeded, want a refusal")
+	}
+	for _, want := range []string{diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), dataSizeLimitDocsURL} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
+		t.Errorf("gosd build wrote %s despite refusing the data size; the refusal must come first", imgPath)
 	}
 }
 

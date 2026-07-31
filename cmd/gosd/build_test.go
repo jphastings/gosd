@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 func TestResolveBoardsDefaultsToAll(t *testing.T) {
@@ -281,6 +283,42 @@ func TestParseDataSizeRejectsInvalidValues(t *testing.T) {
 		if _, _, err := parseDataSize(in); err == nil {
 			t.Errorf("parseDataSize(%q) succeeded, want an error", in)
 		}
+	}
+}
+
+// TestParseDataSizeRefusesMoreThanFAT32CanHold is bean gosd-mt53's guard: a
+// --data-size past the largest FAT32 volume GoSD can lay out used to build an
+// image whose GOSD-DATA partition was silently corrupt (bean gosd-8kdm).
+func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
+	maxBytes := diskfmt.MaxFAT32Bytes()
+
+	for _, tc := range []struct {
+		name    string
+		in      string
+		refused bool
+	}{
+		{"a 64GiB card's worth", "64GiB", false},
+		{"the round 256GiB --data-size=expand caps at", "256GiB", false},
+		{"the exact maximum, in bytes", strconv.FormatInt(maxBytes, 10), false},
+		{"one sector past the maximum", strconv.FormatInt(maxBytes+512, 10), true},
+		{"a 400GiB partition", "400GiB", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := parseDataSize(tc.in)
+			if (err != nil) != tc.refused {
+				t.Fatalf("parseDataSize(%q) = (%d, %v), want refused = %v", tc.in, got, err, tc.refused)
+			}
+			if err == nil {
+				return
+			}
+			// The refusal has to say how big is too big, and where the
+			// whole story is written down.
+			for _, want := range []string{diskfmt.GibibytesString(maxBytes), strconv.FormatInt(maxBytes, 10), "exFAT", dataSizeLimitDocsURL} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not mention %q", err, want)
+				}
+			}
+		})
 	}
 }
 

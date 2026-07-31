@@ -5,7 +5,7 @@ status: in-progress
 type: bug
 priority: normal
 created_at: 2026-07-30T20:28:52Z
-updated_at: 2026-07-30T22:16:04Z
+updated_at: 2026-07-31T03:37:04Z
 ---
 
 Found while designing --data-size=expand (bean gosd-6sac): go-diskfs v1.9.3's `fat32.Create` computes `sectorsPerFat := uint16((4*(totalSectors-reserved) + fatEntryDenom - 1) / fatEntryDenom)` — a straight uint16 cast. With the 32KiB clusters the >32GB size class uses, the value exceeds 65535 once the volume passes roughly 256GiB, silently truncating: the FAT is laid out far too small for the cluster count and the resulting filesystem is corrupt. `Fat32MaxSize` (2TiB) doesn't catch it.
@@ -65,7 +65,7 @@ change of ours, noted below for whoever sends the patch upstream.)
 an oversized device before writing a byte:
 
 > `/dev/sda is 476.84 GiB, and GoSD cannot create a FAT32 volume larger than
-> 256.06 GiB: its FAT32 formatter counts the sectors in each file allocation
+> 256.06 GiB: GoSD's FAT32 formatter counts the sectors in each file allocation
 > table in 16 bits, so a larger volume would be laid out with FATs far too small
 > for it and silently corrupted; format this device as exFAT instead
 > (disk.Options{Filesystem: disk.ExFAT}), which has no such limit and suits media
@@ -89,10 +89,13 @@ exFAT", COMPATIBILITY.md's exFAT footnote.
   defect.
 - **`internal/image`** (build host, not device) formats the image's GOSD-DATA
   partition through the same go-diskfs call with the developer's `--data-size`,
-  and is **not** guarded by this change: `gosd build --data-size=400GiB` still
-  produces an image whose data partition is corrupt. That is a `gosd build` CLI
-  behaviour decision rather than this bean's device-side scope, so it is left for
-  JP rather than silently changed — see the follow-up below.
+  and was **not** guarded by this change — a `gosd build` CLI behaviour decision
+  rather than this bean's device-side scope, left for JP. His answer was to
+  refuse: `cmd/gosd`'s `parseDataSize` now rejects anything past the same limit
+  at flag validation, before a byte is compiled or written (bean `gosd-mt53`).
+  `internal/image` itself remains structurally able to write an oversized
+  volume, but nothing can reach it that way: `gosd build` and `gosd run` are its
+  only callers, and both size the partition through `parseDataSize`.
 
 ## Upstream fix — prepared, NOT sent
 
@@ -214,12 +217,19 @@ Description to paste into the upstream PR:
 ## Follow-up
 
 - [ ] Once a `go-diskfs` release carries the 64-bit fix, bump the pin and drop
-      **both** caps together — `internal/diskfmt`'s `maxFAT32Bytes` guard and
-      `cmd/gosd-init/internal/dataexpand`'s `maxPartitionBytes` (256 GiB). They
-      exist for one reason and removing either alone is misleading. Before
-      lifting them, check memory: `fat32.Create` holds the whole FAT in RAM
-      (`make([]uint32, fatSize/4)`), ~120 MB for a 1 TB volume, on boards with
-      512 MB.
-- [ ] Decide whether `gosd build --data-size` should refuse (or cap) sizes above
-      the same limit — `internal/image` writes the data partition's FAT32 through
-      the same go-diskfs call and is unguarded today.
+      **all three** caps together — `internal/diskfmt`'s `maxFAT32Bytes` guard,
+      `cmd/gosd-init/internal/dataexpand`'s `maxPartitionBytes` (256 GiB), and
+      `cmd/gosd`'s `--data-size` refusal. They exist for one reason and removing
+      any one alone is misleading. Before lifting them, check memory:
+      `fat32.Create` holds the whole FAT in RAM (`make([]uint32, fatSize/4)`),
+      ~120 MB for a 1 TB volume, on boards with 512 MB. This route, and the
+      alternatives to it, are laid out in bean `gosd-mt53`.
+- [x] Decide whether `gosd build --data-size` should refuse (or cap) sizes above
+      the same limit — decided: **refuse**, at flag validation in `cmd/gosd`'s
+      `parseDataSize`, naming the maximum in both GiB and bytes and linking
+      `docs/runtime.md#how-big-the-data-partition-can-be`. Capping silently
+      would hand a developer a smaller partition than they asked for with no say
+      in it, and a fixed `--data-size` that large implies an `.img` file that
+      large anyway, so there is no size worth quietly rounding down. The reason
+      clause is now `diskfmt.FAT32SizeLimitReason`, shared with the runtime
+      refusal above so the two tell one story (bean `gosd-mt53`).

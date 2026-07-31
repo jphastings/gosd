@@ -22,6 +22,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/rock4se"
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
@@ -132,6 +133,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	dataSizeBytes, dataExpand, err := parseDataSize(dataSize)
+	if err != nil {
+		return err
+	}
+
 	if err := validateConsoleBaudRate(cmd, consoleBaud); err != nil {
 		return err
 	}
@@ -164,11 +170,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := ensureOutputDir(output, len(selected) > 1); err != nil {
-		return err
-	}
-
-	dataSizeBytes, dataExpand, err := parseDataSize(dataSize)
-	if err != nil {
 		return err
 	}
 
@@ -266,11 +267,18 @@ var dataSizeUnits = map[string]int64{
 	"G":   1024 * 1024 * 1024,
 }
 
+// dataSizeLimitDocsURL is where the --data-size refusal sends a developer who
+// asked for a partition GoSD's FAT32 formatter cannot lay out: the runtime
+// contract's account of the ceiling and what to reach for instead.
+const dataSizeLimitDocsURL = "https://github.com/jphastings/gosd/blob/main/docs/runtime.md#how-big-the-data-partition-can-be"
+
 // parseDataSize parses a --data-size value like "512MiB", "2G", or "0" into
 // bytes, or the keyword "expand" (ship no data partition in the image and
 // have gosd-init create one filling the rest of the card on first boot). A
 // bare number is bytes; 0 (with or without a unit) disables the data
-// partition.
+// partition. A size past the largest FAT32 volume GoSD can write is refused
+// here, before any image bytes exist, rather than after a long build produces
+// a silently corrupt partition.
 func parseDataSize(s string) (bytes int64, expand bool, err error) {
 	trimmed := strings.TrimSpace(s)
 	if strings.EqualFold(trimmed, "expand") {
@@ -293,7 +301,12 @@ func parseDataSize(s string) (bytes int64, expand bool, err error) {
 	if multiplier > 1 && n > math.MaxInt64/multiplier {
 		return 0, false, fmt.Errorf("--data-size %q is too large; choose something that fits on an SD card", s)
 	}
-	return n * multiplier, false, nil
+	size := n * multiplier
+	if size > diskfmt.MaxFAT32Bytes() {
+		return 0, false, fmt.Errorf("--data-size %q is larger than GoSD can format: the largest GOSD-DATA partition it will create is %s (%d bytes), because %s; use --data-size=256GiB or less (--data-size=%d for the exact maximum), or --data-size=expand to fill the card up to 256GiB on first boot; if the app needs more storage than that, attach a disk and format it exFAT with the disk package, which has no such ceiling - see %s",
+			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason, diskfmt.MaxFAT32Bytes(), dataSizeLimitDocsURL)
+	}
+	return size, false, nil
 }
 
 // envKeyPattern is the shape a --env KEY must match: a POSIX-ish environment
