@@ -29,6 +29,19 @@ already did — flash the SD card with Raspberry Pi Imager per
    custom flasher GUI) is not pursued: its only unique win over route 3 +
    mitigation is preserving files the mitigation already preserves, and it
    costs a signed, maintained GUI on three OSes.
+4. **The boot volume size is per-app, not a GoSD constant** (JP,
+   2026-07-31). There is no reasonable fixed size: Betamin (the mpv video
+   appliance driving `docs/externals.md`) needs a boot volume over 1GB,
+   and forcing every deployment to carry the largest app's headroom is
+   not acceptable. `gosd build` grows a `--boot-size` (default: today's
+   256MiB), and the size an app ships becomes **that app's layout ABI**:
+   a later release that changes it (either direction) erases the data
+   volume on upgrade — cleanly, via the adoption gate in §2, never as
+   corruption — and must say so at release level. Consequence for §2:
+   nothing on the device may assume a fixed data-partition offset; it is
+   derived from the flashed MBR (§2). Side benefit: per-app sizing is
+   also what makes app-slot OTA (`gosd-vxal`) workable for large apps —
+   two slots of a Betamin-sized payload never fit in a fixed 256MiB.
 
 ## 1. The four routes, against the constraint
 
@@ -60,11 +73,17 @@ can save it. Consequence: **`--data-size=expand` is the recommended mode
 for updatable deployments**, and the docs will say so.)
 
 The fix is one insertion in `dataexpand`'s existing first-boot sequence.
-Both sides already agree the data partition starts at a fixed offset
+Today both sides hardcode the data offset
 (`internal/image.dataPartitionOffsetBytes` = 272MiB, mirrored as
-`dataexpand.dataPartitionStartLBA`):
+`dataexpand.dataPartitionStartLBA`); with per-app boot sizes (§0.4) that
+mirror is wrong by construction, so **dataexpand derives the data offset
+from the flashed MBR instead: partition 1's start + size**, which the
+image writer put there and the flash just rewrote. The mirrored constant
+is deleted, not parameterized — the MBR is already on the card and is
+always right for the image that was actually flashed.
 
 ```
+offset := end of MBR partition 1        # CHANGED: derived, not constant
 AddKernelPartition(...)                 # partition node appears (existing)
 contents := Inspect(partitionDevice)    # NEW: look before formatting
 if contents is FAT32 labelled GOSD-DATA:
@@ -80,6 +99,20 @@ adopting the same survivor). Adopting a *foreign* filesystem is gated the
 same way `blockmount` gates everything: exact offset + FAT32 + exact
 label. A partition that inspects as anything else formats fresh, exactly
 as today.
+
+What happens when a release changes the boot volume size (§0.4's
+caveat, mechanically): if it **grew**, the flash itself overwrote the
+old GOSD-DATA's superblock (the bigger image extends past the old data
+offset), the new offset holds unrecognizable mid-partition bytes, and
+dataexpand formats fresh — a clean wipe, indistinguishable from a first
+flash. If it **shrank**, the old superblock actually survives (it lies
+beyond the new image's end) but at an offset nothing looks at; adoption
+stays exact-offset-only and we deliberately do NOT scan for it, so the
+outcome is the same clean wipe. (Scanning candidate offsets to rescue
+the shrink case is a possible future refinement, not part of this
+design.) Either way a size change means data loss with a working device,
+never corruption — and it is a release-notes-level breaking change for
+that app (§0.4).
 
 What re-adoption does NOT promise: schema compatibility of `/data`
 contents across app versions is the app's own concern, same as after any
@@ -146,8 +179,12 @@ carry) and is recorded there, not built now.
 
 Phase 1 (this design, buildable now):
 
-- `gosd-lirl` — dataexpand: re-adopt an orphaned GOSD-DATA on first boot
-  (§2).
+- `gosd-m70t` — `gosd build --boot-size`: per-app boot volume size, with
+  build-time fit validation and a usage report so developers watch their
+  headroom (§0.4).
+- `gosd-lirl` — dataexpand: derive the data offset from the flashed MBR
+  (deleting the mirrored constant) and re-adopt an orphaned GOSD-DATA on
+  first boot (§2).
 - `gosd-acdn` — image identity in config.json (§4).
 - `gosd-ry3b` — provisioning snapshot + first-boot self-heal (§3;
   blocked by `gosd-acdn`).

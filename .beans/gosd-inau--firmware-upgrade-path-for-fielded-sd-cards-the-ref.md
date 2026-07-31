@@ -5,7 +5,7 @@ status: completed
 type: feature
 priority: normal
 created_at: 2026-07-31T08:08:11Z
-updated_at: 2026-07-31T09:18:14Z
+updated_at: 2026-07-31T10:26:08Z
 ---
 
 `docs/design/ab-updates.md` §0 (epic `gosd-vxal`) locks OTA updates to the
@@ -102,3 +102,14 @@ wizard-skipped WiFi on the first boot after a reflash. Rockchip bootloader
 pinned (full reflash only). Self-update over the network is phase 2 riding
 gosd-vxal; the custom flasher GUI route is not pursued. Five follow-up
 beans filed (see checked todo).
+
+
+**Addendum (JP, 2026-07-31, follow-up on PR #157 review):** no fixed boot
+volume size is reasonable (Betamin needs >1GB; most apps don't). Decision:
+per-app `gosd build --boot-size` (new bean gosd-m70t), and the shipped
+size is that app's layout ABI — changing it in a later release erases the
+data volume on upgrade, cleanly, as a documented release-level breaking
+change. Consequence: dataexpand derives the data offset from the flashed
+MBR instead of a mirrored constant (folded into gosd-lirl). The
+generation-marker idea is dropped as unnecessary — a size change IS the
+break, and nothing at flash time could act on a marker anyway.
