@@ -67,3 +67,16 @@ Phase 1 of the upgrade-path design (bean gosd-inau, docs/design/upgrade-path.md 
   gosd-lirl's**: until dataexpand reads the MBR, a non-default `--boot-size`
   `--data-size=expand` image would have first boot create GOSD-DATA inside
   the boot partition.
+- **Merge-time addition (bean gosd-e3e3 landed on main mid-task)**: PR #156
+  added `diskfmt.LargestSelfConsistentFAT32Bytes`, trimming `--data-size` to
+  the largest FAT32 volume go-diskfs lays out with an addressable FAT (at
+  most two clusters less) — exactly the "internal/diskfmt's FAT32
+  self-consistency helpers" this bean's body already named. Resolving the
+  merge conflict in `computeLayout` applied the identical trim to the boot
+  partition, so `--boot-size` gets the same self-consistency guarantee
+  `--data-size` does. Verified by hand that the 256MiB default, and every
+  boot/data size this PR's own tests use (32MiB, 128MiB, 4MiB, 1MiB), fall
+  outside the trim's affected bands, so no existing golden churns; one size
+  originally used in a new fixture (64MiB) does fall in an affected band and
+  was swapped for 128MiB to keep that test an exact-equality check rather
+  than a trim-aware one.
