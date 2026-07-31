@@ -1,7 +1,9 @@
 package gadget
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -18,6 +20,15 @@ func (s *stubFunction) Name() string { return s.name }
 func (s *stubFunction) Create(_ writableFS, _ string) error {
 	s.created = true
 	return nil
+}
+
+// failingFunction's Create always errors, so tests can force materialize()
+// to fail partway through a multi-function gadget.
+type failingFunction struct{ name string }
+
+func (s *failingFunction) Name() string { return s.name }
+func (s *failingFunction) Create(_ writableFS, _ string) error {
+	return fmt.Errorf("stub: Create fails")
 }
 
 func seedUDC(f *fakeFS, name string) {
@@ -146,6 +157,67 @@ func TestApplyFailsWithNoUDC(t *testing.T) {
 			t.Errorf("UDC should never be written when no controller is present")
 		}
 	}
+}
+
+// assertNoGadgetState fails t if any file, symlink or directory under
+// gadgetRoot survives in f — used to confirm a failed Apply's unwind left no
+// configfs state behind (gosd-0r40).
+func assertNoGadgetState(t *testing.T, f *fakeFS) {
+	t.Helper()
+	if f.dirs[gadgetRoot] {
+		t.Errorf("gadget root %s still exists", gadgetRoot)
+	}
+	for path := range f.files {
+		if strings.HasPrefix(path, gadgetRoot) {
+			t.Errorf("file %s still exists", path)
+		}
+	}
+	for path := range f.links {
+		if strings.HasPrefix(path, gadgetRoot) {
+			t.Errorf("symlink %s still exists", path)
+		}
+	}
+	for path := range f.dirs {
+		if strings.HasPrefix(path, gadgetRoot+"/") {
+			t.Errorf("directory %s still exists", path)
+		}
+	}
+}
+
+// TestApplyUnwindsOnMissingUDC is the regression test for gosd-0r40: a
+// failed Apply (here, failing at the UDC step because no controller is
+// present) must leave no configfs state behind, so a second Apply — once the
+// underlying condition is fixed — succeeds instead of hitting EEXIST on the
+// function symlink materialize() re-creates.
+func TestApplyUnwindsOnMissingUDC(t *testing.T) {
+	f := newFakeFS()
+	g := testGadget(ACM{})
+
+	if err := applyWithFake(t, g, f); err == nil {
+		t.Fatal("Apply() = nil, want error when no UDC is present")
+	}
+	assertNoGadgetState(t, f)
+
+	seedUDC(f, "20980000.usb")
+	g2 := testGadget(ACM{})
+	if err := applyWithFake(t, g2, f); err != nil {
+		t.Fatalf("second Apply() after unwind = %v, want nil", err)
+	}
+}
+
+// TestApplyUnwindsPartialMaterializeFailure covers the other failure shape
+// the bean calls out: materialize() itself failing mid-tree (here, the
+// second of two functions failing to Create after the first was fully
+// created and linked) must unwind just as cleanly as a UDC-step failure.
+func TestApplyUnwindsPartialMaterializeFailure(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	g := testGadget(&stubFunction{name: "stub.a"}, &failingFunction{name: "stub.b"})
+
+	if err := applyWithFake(t, g, f); err == nil {
+		t.Fatal("Apply() = nil, want error when a Function fails to Create")
+	}
+	assertNoGadgetState(t, f)
 }
 
 func TestApplyTwiceWithoutCloseFails(t *testing.T) {
@@ -304,6 +376,30 @@ func TestApplyDefaultsConfigurationWhenProductEmpty(t *testing.T) {
 	got := string(f.files[gadgetRoot+"/configs/c.1/strings/0x409/configuration"])
 	if got != "gosd\n" {
 		t.Errorf("configuration = %q, want %q", got, "gosd\n")
+	}
+}
+
+// TestFakeFSSymlinkFailsOnExistingTarget pins fakeFS.Symlink's os.Symlink-
+// matching EEXIST behavior (gosd-0r40's test prerequisite): without it, a
+// second Symlink call to a path a stranded prior Apply already linked would
+// silently overwrite instead of failing the way real configfs does, making
+// the unwind regression tests above unable to catch a re-Apply hitting
+// EEXIST.
+func TestFakeFSSymlinkFailsOnExistingTarget(t *testing.T) {
+	f := newFakeFS()
+	if err := f.MkdirAll("/some/dir", 0o755); err != nil {
+		t.Fatalf("MkdirAll() = %v, want nil", err)
+	}
+	if err := f.Symlink("/target", "/some/dir/link"); err != nil {
+		t.Fatalf("first Symlink() = %v, want nil", err)
+	}
+
+	err := f.Symlink("/other-target", "/some/dir/link")
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second Symlink() to the same path = %v, want error wrapping fs.ErrExist", err)
+	}
+	if got := f.links["/some/dir/link"]; got != "/target" {
+		t.Errorf("failed second Symlink() overwrote the link target: got %q, want %q", got, "/target")
 	}
 }
 

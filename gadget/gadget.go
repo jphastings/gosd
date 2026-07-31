@@ -81,19 +81,33 @@ func (g *Gadget) apply(fsys writableFS) error {
 	}
 
 	if err := g.materialize(fsys); err != nil {
-		return err
+		return g.failApply(fsys, err)
 	}
 
 	udc, err := firstUDC(fsys)
 	if err != nil {
-		return err
+		return g.failApply(fsys, err)
 	}
 	if err := fsys.WriteFile(gadgetRoot+"/UDC", []byte(udc+"\n"), 0o644); err != nil {
-		return fmt.Errorf("gadget: binding UDC %q: %w", udc, err)
+		return g.failApply(fsys, fmt.Errorf("gadget: binding UDC %q: %w", udc, err))
 	}
 
 	g.fs, g.udc = fsys, udc
 	return nil
+}
+
+// failApply unwinds any configfs state materialize() already wrote, using
+// the same canonical teardown sequence Close() uses (removeConfigfsTree),
+// before returning applyErr — so a failed Apply leaves no state behind and,
+// per the documented contract, needs no Close. No UDC bind ever succeeded on
+// any path that reaches here, so there's nothing to unbind first, unlike
+// Close(). Any error removeConfigfsTree hits is discarded: applyErr is what
+// the caller needs to act on, and the sequence still attempts — and
+// completes — every remaining step regardless of one step's node never
+// having existed (e.g. because materialize() failed before reaching it).
+func (g *Gadget) failApply(fsys writableFS, applyErr error) error {
+	_ = removeConfigfsTree(fsys, g.Functions)
+	return applyErr
 }
 
 // materialize writes every configfs file/directory/symlink Apply needs,
@@ -180,6 +194,37 @@ func (g *Gadget) Close() error {
 	}
 	fsys := g.fs
 
+	// Unbind before removing anything: the kernel refuses to tear down a
+	// bound gadget's functions/configs out from under it. Removal is
+	// attempted regardless of whether this succeeds, matching the
+	// continue-past-errors behavior documented above.
+	unbindErr := fsys.WriteFile(gadgetRoot+"/UDC", []byte("\n"), 0o644)
+	teardownErr := removeConfigfsTree(fsys, g.Functions)
+
+	g.fs, g.udc = nil, ""
+
+	if unbindErr != nil {
+		return unbindErr
+	}
+	return teardownErr
+}
+
+// removeConfigfsTree removes every user-created directory/symlink under
+// gadgetRoot for fns, in the canonical configfs gadget teardown order (see
+// Documentation/usb/gadget_configfs.rst): each function's symlink out of
+// configs/c.1, the config's strings and the config itself, each function's
+// own directory, then the gadget's strings and the gadget root itself.
+// "configs", "functions" and "strings" under the gadget, and "strings"
+// under a config, are configfs "default groups" the kernel's gadget driver
+// creates alongside their parent, not nodes materialize()'s MkdirAll put
+// there — configfs refuses a direct rmdir on a default group (EPERM), and
+// removing its parent tears it down for free, so none of the four are
+// rmdir'd here. Shared by Close() (tearing down a successfully applied
+// gadget) and failApply() (unwinding one that failed partway), it attempts
+// every step regardless of an earlier failure — including a step whose node
+// was never created — and returns the first error encountered, or nil if
+// every step succeeded.
+func removeConfigfsTree(fsys writableFS, fns []Function) error {
 	var firstErr error
 	fail := func(err error) {
 		if err != nil && firstErr == nil {
@@ -187,29 +232,16 @@ func (g *Gadget) Close() error {
 		}
 	}
 
-	// Unbind before removing anything: the kernel refuses to tear down a
-	// bound gadget's functions/configs out from under it.
-	fail(fsys.WriteFile(gadgetRoot+"/UDC", []byte("\n"), 0o644))
-
-	// This is the canonical configfs gadget teardown sequence (see
-	// Documentation/usb/gadget_configfs.rst): it removes only the nodes
-	// materialize() itself created. "configs", "functions" and "strings"
-	// under the gadget, and "strings" under a config, are configfs
-	// "default groups" the kernel's gadget driver creates alongside their
-	// parent, not nodes materialize()'s MkdirAll put there — configfs
-	// refuses a direct rmdir on a default group (EPERM), and removing its
-	// parent tears it down for free, so none of the four are rmdir'd here.
-	for _, fn := range g.Functions {
+	for _, fn := range fns {
 		fail(fsys.Remove(gadgetRoot + "/configs/c.1/" + fn.Name()))
 	}
 	fail(fsys.Remove(gadgetRoot + "/configs/c.1/strings/0x409"))
 	fail(fsys.Remove(gadgetRoot + "/configs/c.1"))
-	for _, fn := range g.Functions {
+	for _, fn := range fns {
 		fail(fsys.Remove(gadgetRoot + "/functions/" + fn.Name()))
 	}
 	fail(fsys.Remove(gadgetRoot + "/strings/0x409"))
 	fail(fsys.Remove(gadgetRoot))
 
-	g.fs, g.udc = nil, ""
 	return firstErr
 }
