@@ -356,6 +356,14 @@ The price is real but small: each durable write costs a few extra small
 writes to the card. Don't do this in a tight loop on data you'd be happy to
 lose — batch it, or accept steps 1-2 only.
 
+GoSD deliberately leaves that choice to you. It would be possible to mount
+`/data` with `dirsync`, making every directory operation synchronous so that
+steps 3-4 were never needed — but on SD and eMMC a small synchronous write
+means the card rewriting a whole erase block, so that would tax every write
+by every app to protect the few that need durability, and it *still*
+wouldn't remove the need to sync file data. So the mount stays as it is and
+the decision is the app's.
+
 For a worked example, `examples/hello` persists a boot counter to `/data`
 with exactly this sequence (`writeFileDurably` in its `main.go`), and
 reports "no-data-partition" when the write comes back `EROFS`. CI's

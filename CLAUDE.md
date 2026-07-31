@@ -106,6 +106,14 @@ say so in the bean rather than silently diverging.
 - **gosd-init has no interactive surface**: no shell, no SSH, no remote debug,
   ever. Serial console output and app logs only. The only network listeners in
   gosd-init are mDNS (and, later, the explicitly-designed update endpoint).
+- **`/data` durability is the app's choice (decided 2026-07-31):** the data
+  partition is mounted without `dirsync`, so a write that must survive an
+  immediate power cut uses the four-step fsync/rename pattern in
+  `docs/runtime.md`. `dirsync` would tax every card write by every app —
+  small synchronous writes are an erase-block rewrite on SD/eMMC — and still
+  wouldn't remove the need to fsync file data. Don't relitigate without new
+  evidence (e.g. third-party apps repeatedly getting it wrong); bean
+  `gosd-0nk4` records the analysis and the one-word change site.
 - **WiFi scope:** WPA2-PSK and open networks only through v0.x. WPA3/EAP are
   out of scope — log clearly when encountered.
 - **Supported CLI hosts:** macOS and Linux (amd64/arm64), enforced by CI.
