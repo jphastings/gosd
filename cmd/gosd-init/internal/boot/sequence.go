@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
@@ -104,6 +105,17 @@ type Deps struct {
 	// and halts the device.
 	ExpandData func(bootPartitionDevice string, log func(format string, args ...any)) error
 
+	// ProvisionSnapshot, if non-nil, is called once the data partition is
+	// mounted and this boot's provisioning has settled: it keeps the
+	// snapshot in /data up to date and, on the first boot after a reflash,
+	// restores the operator's provisioning from it (see
+	// cmd/gosd-init/internal/provsnapshot and docs/design/upgrade-path.md
+	// §3). Everything it does is best-effort — it returns the gosd.toml
+	// config the rest of the boot should use, which is simply the one it
+	// was given whenever there's nothing to restore or anything at all
+	// goes wrong. Nil-checked like the other optional deps.
+	ProvisionSnapshot func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result
+
 	// WriteBootFailure records a fatal, human-actionable failure as
 	// boot-failure.log at the root of the GOSD-BOOT partition (briefly
 	// remounting it read-write), so whoever collects an unattended device
@@ -184,6 +196,15 @@ func Run(deps Deps, opts Options) error {
 	// is optional) - nothing to eyeball on those, so nothing is logged.
 	if cfg.Identity != "" {
 		log("image identity: %s", cfg.ShortIdentity())
+	}
+	// The baked defaults, captured before cloud-init or gosd.toml override
+	// anything: what this image would provision the device with on its own,
+	// and so the yardstick the provisioning snapshot measures an operator's
+	// hand-edits against (see provsnapshot).
+	baked := provsnapshot.Provisioning{
+		Hostname: cfg.Hostname,
+		Wifi:     gosdtoml.Wifi{SSID: cfg.Wifi.SSID, Passphrase: cfg.Wifi.Passphrase},
+		Env:      cfg.Env,
 	}
 
 	// Only reachable now that /proc is mounted (mountEarly above), which
@@ -268,6 +289,41 @@ func Run(deps Deps, opts Options) error {
 		log("hostname set to %q (cloud-init applied)", cfg.Hostname)
 	}
 
+	if cfg.DataExpand && deps.ExpandData != nil {
+		if err := deps.ExpandData(bootDevice, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
+			return haltForDataCorruption(deps, log, err)
+		} else if err != nil {
+			log("expanding the data partition failed; continuing without it: %v", err)
+		}
+	}
+	mountData(deps, opts, log)
+
+	// Provisioning has settled, and /data — where the snapshot lives — is
+	// as mounted as it's going to get, so this is the first and last moment
+	// a reflash can be healed. It runs before the WiFi/env decisions below
+	// so that anything it restores takes effect on this boot rather than
+	// only the next one.
+	if deps.ProvisionSnapshot != nil {
+		snapshot := deps.ProvisionSnapshot(provsnapshot.Input{
+			Identity:  cfg.Identity,
+			Baked:     baked,
+			CloudInit: provsnapshot.CloudInit{Hostname: provisionResult.Hostname, Wifi: provisionResult.Wifi},
+			GosdToml:  gosdToml,
+		}, log)
+		gosdToml = snapshot.GosdToml
+		if snapshot.HostnameRestored {
+			cfg.Hostname = gosdToml.Hostname
+			if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
+				// Best-effort, like everything else the snapshot does: the
+				// device keeps the hostname it already had rather than
+				// failing to boot over a self-heal.
+				log("applying the restored hostname failed, continuing without it: %v", err)
+			} else {
+				log("hostname set to %q (restored from the provisioning snapshot)", cfg.Hostname)
+			}
+		}
+	}
+
 	switch {
 	case gosdToml.Wifi.SSID != "":
 		log("wifi from gosd.toml")
@@ -284,14 +340,6 @@ func Run(deps Deps, opts Options) error {
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
 	}
-	if cfg.DataExpand && deps.ExpandData != nil {
-		if err := deps.ExpandData(bootDevice, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
-			return haltForDataCorruption(deps, log, err)
-		} else if err != nil {
-			log("expanding the data partition failed; continuing without it: %v", err)
-		}
-	}
-	mountData(deps, opts, log)
 	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
 
 	guard := PanicGuard{Rebooter: deps.Rebooter, Sleep: deps.Sleep, Log: log}

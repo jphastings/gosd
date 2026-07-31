@@ -27,6 +27,7 @@ func NewPlatform() *Platform {
 		OpenConsole:           func() (io.WriteCloser, error) { return nil, errUnsupportedPlatform },
 		IgnoreShutdownSignals: func() {},
 		WriteBootFailure:      func(string, string) error { return errUnsupportedPlatform },
+		WriteBootFile:         func(string, string, []byte) error { return errUnsupportedPlatform },
 	}
 }
 

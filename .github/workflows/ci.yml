@@ -268,11 +268,16 @@ jobs:
           # The image is 272MiB; a real card is bigger. truncate models
           # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
           truncate -s +1G dist/hello-qemu-virt.img
+      # The provisioning snapshot (docs/design/upgrade-path.md §3) is written
+      # to the data partition as soon as there is one, so this boot is also
+      # the proof it reaches a real FAT filesystem rather than only the fakes
+      # in provsnapshot's unit tests.
       - name: "First boot: creates, formats and mounts the data partition"
         run: |
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
             "data partition created, filling the card" \
-            "data partition mounted read-write at /data"
+            "data partition mounted read-write at /data" \
+            "provisioning snapshot saved"
       # boots=2 is the durability assertion (bean gosd-0nk4): the first
       # boot's counter write was seconds old when qemu was killed, so it
       # only reads back here if hello's write-fsync-rename really reached
@@ -282,6 +287,7 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
             "data partition already present" \
             "data partition mounted read-write at /data" \
+            "provisioning snapshot unchanged" \
             "boots=2"
       # An upgrade, as an operator performs it: Imager writes the image over
       # the front of the card and stops at its end, so the MBR loses

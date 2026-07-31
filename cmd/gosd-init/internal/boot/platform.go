@@ -23,4 +23,11 @@ type Platform struct {
 	// root of the GOSD-BOOT partition mounted (read-only) at target,
 	// briefly remounting it read-write to do so.
 	WriteBootFailure func(target, msg string) error
+
+	// WriteBootFile durably writes name at the root of the GOSD-BOOT
+	// partition mounted (read-only) at target, briefly remounting it
+	// read-write, and restores the read-only mount afterwards. Unlike
+	// WriteBootFailure this happens on a device that carries on booting,
+	// so the restoring remount is part of the result, not best-effort.
+	WriteBootFile func(target, name string, data []byte) error
 }

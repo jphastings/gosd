@@ -12,6 +12,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 )
 
 // NewPlatform wires up the real, Linux-syscall-backed implementations of
@@ -26,6 +28,7 @@ func NewPlatform() *Platform {
 		OpenConsole:           openConsole,
 		IgnoreShutdownSignals: ignoreShutdownSignals,
 		WriteBootFailure:      writeBootFailure,
+		WriteBootFile:         writeBootFile,
 	}
 }
 
@@ -88,6 +91,30 @@ func writeBootFailure(target, msg string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// writeBootFile durably writes name at the root of the read-only GOSD-BOOT
+// partition mounted at target: remount read-write, write through the
+// four-step durable sequence FAT needs (see provsnapshot.WriteFileDurably),
+// then remount read-only again. The device keeps running afterwards — this
+// is the provisioning self-heal's write-back, not a last gasp — so failing
+// to restore the read-only mount is reported rather than swallowed: leaving
+// GOSD-BOOT writable under a live app is exactly the exposure the read-only
+// mount exists to prevent.
+func writeBootFile(target, name string, data []byte) error {
+	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_NOSUID, ""); err != nil {
+		return fmt.Errorf("remounting %s read-write: %w", target, err)
+	}
+
+	writeErr := provsnapshot.WriteFileDurably(filepath.Join(target, name), data)
+
+	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, ""); err != nil {
+		if writeErr != nil {
+			return fmt.Errorf("writing %s: %w (and remounting %s read-only afterwards also failed: %v)", name, writeErr, target, err)
+		}
+		return fmt.Errorf("remounting %s read-only after writing %s: %w", target, name, err)
+	}
+	return writeErr
 }
 
 func openConsole() (io.WriteCloser, error) {
