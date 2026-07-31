@@ -183,10 +183,15 @@ func TestFormatAndMountSurfacesErrRefusedFormat(t *testing.T) {
 }
 
 func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
-	_, err := blockmount.Run(storage(blockmount.Deps{}), diskfmt.FAT32, "WAYTOOLONGFORFAT", "/storage", false)
+	// "APPDATA " has a trailing space: a label that provably cannot round-trip
+	// through format→Inspect (both filesystems strip it on read), which without
+	// this check reformats — and destroys — the app's own data on every boot.
+	for _, label := range []string{"WAYTOOLONGFORFAT", "APPDATA "} {
+		_, err := blockmount.Run(storage(blockmount.Deps{}), diskfmt.FAT32, label, "/storage", false)
 
-	if err == nil || !strings.HasPrefix(err.Error(), "disk: ") {
-		t.Fatalf("error = %v, want a disk-prefixed label complaint", err)
+		if err == nil || !strings.HasPrefix(err.Error(), "disk: ") {
+			t.Fatalf("error for %q = %v, want a disk-prefixed label complaint", label, err)
+		}
 	}
 }
 
