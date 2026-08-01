@@ -150,8 +150,19 @@ func remedyFor(fs diskfmt.FS) string {
 // both strip an edge space on read-back, so comparing against the untrimmed
 // caller string would otherwise reformat the device — and destroy the app's
 // own data — on every single boot.
+//
+// The same belt-and-braces applies to ValidateLabel's other round-trip rule,
+// the FAT-only byte-7 short-name/extension split (see fatShortNameSplit and
+// fatDirectoryEntryRoundTrip): a bypassed label of that shape is also
+// checked against what a real FAT32 read-back would actually produce.
 func labelMatches(contents diskfmt.Contents, label string) bool {
-	return contents.FS != "" && strings.EqualFold(contents.Label, trimLabel(label))
+	if contents.FS == "" {
+		return false
+	}
+	if strings.EqualFold(contents.Label, trimLabel(label)) {
+		return true
+	}
+	return contents.FS == diskfmt.FAT32 && strings.EqualFold(contents.Label, fatDirectoryEntryRoundTrip(label))
 }
 
 // trimLabel mirrors the edge padding both diskfmt readers strip on read-back
@@ -159,6 +170,31 @@ func labelMatches(contents diskfmt.Contents, label string) bool {
 // applied to both edges here since ValidateLabel refuses a leading space too.
 func trimLabel(label string) string {
 	return strings.Trim(label, " \x00")
+}
+
+// fatShortNameSplit is the 0-based byte offset of the short-name field's
+// last byte within an 11-byte FAT 8.3 label — see ValidateLabel and
+// fatDirectoryEntryRoundTrip for the mechanism this pins.
+const fatShortNameSplit = 7
+
+// fatDirectoryEntryRoundTrip simulates go-diskfs's FAT directory-entry
+// parser (fat12.parseDirEntries) end to end, from a raw label as Format
+// would write it: SetLabel right-pads the label to 11 bytes and writes it as
+// an 8-byte short-name field followed by a 3-byte extension field; on
+// read-back, the parser trims trailing spaces off each field independently
+// before Label() concatenates them with no separator. Unlike trimLabel's
+// edge-only approximation, this reproduces the exact on-disk transform, so
+// it also catches the class ValidateLabel's byte-7 rule refuses: a space at
+// byte index 7 that is real label content (for any label longer than 8
+// bytes) rather than padding.
+func fatDirectoryEntryRoundTrip(label string) string {
+	if len(label) > maxLabelLen {
+		label = label[:maxLabelLen]
+	}
+	padded := label + strings.Repeat(" ", maxLabelLen-len(label))
+	short := strings.TrimRight(padded[:fatShortNameSplit+1], " ")
+	ext := strings.TrimRight(padded[fatShortNameSplit+1:maxLabelLen], " ")
+	return short + ext
 }
 
 // describe renders what is on the device for the "refusing to reformat" error.
@@ -185,6 +221,24 @@ func describe(c diskfmt.Contents) string {
 // makes Run's idempotency check fail forever, reformatting — and destroying —
 // the app's own data on every single boot. NUL is refused too, but by the
 // printable-ASCII check below: it is a control character, not printable.
+//
+// A space at byte index 7 (fatShortNameSplit) is refused too, for labels
+// longer than 8 bytes: go-diskfs's FAT directory-entry parser writes an
+// 11-byte label as an 8-byte short-name field (bytes 0-7) followed by a
+// 3-byte extension field (bytes 8-10), and trims trailing spaces off each
+// field independently before concatenating them on read-back. For a label of
+// 8 bytes or fewer, byte 7 is padding, and trimming it is correct — but for a
+// longer label, byte 7 is the short-name field's own last byte, which that
+// per-field trim cannot tell apart from padding, so a space there silently
+// vanishes on read-back — the same round-trip failure and destroy-on-boot
+// consequence as an edge space, just one byte position narrower than the
+// edges the check above already catches. No other byte position is affected:
+// the extension field (bytes 8-10) is only ever padded at its own trailing
+// edge, which the existing edge-space rule already forbids landing on: see
+// fatDirectoryEntryRoundTrip and gosd-f83b's exhaustive round-trip test.
+// exFAT stores the label as a single contiguous UTF-16 run with no such
+// split, so it is unaffected — confirmed alongside FAT32 in
+// TestAllPositionsRoundTripOrAreRejected.
 func ValidateLabel(pkg, label string) error {
 	if label == "" {
 		return fmt.Errorf("%s: the volume label must not be empty", pkg)
@@ -197,6 +251,9 @@ func ValidateLabel(pkg, label string) error {
 			return fmt.Errorf("%s: volume label %q is all spaces; pick a label with real characters in it", pkg, label)
 		}
 		return fmt.Errorf("%s: volume label %q has a leading or trailing space; FAT32 and exFAT both strip it when reading the label back, so the device would look re-labelled on every boot — remove the space (or use %q)", pkg, label, trimmed)
+	}
+	if len(label) > fatShortNameSplit+1 && label[fatShortNameSplit] == ' ' {
+		return fmt.Errorf("%s: volume label %q has a space as its 8th character; FAT32 stores an 11-byte label as an 8-byte name plus a 3-byte extension and trims trailing spaces from each independently when reading it back, so this space is indistinguishable from padding and silently disappears — move it, remove it, or replace it with a non-space character", pkg, label)
 	}
 	for _, r := range label {
 		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
