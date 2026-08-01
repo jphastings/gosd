@@ -120,8 +120,8 @@ the people you send them to never need a terminal.
 ## Going further
 
 - **The runtime contract** your app runs under once booted — supervision,
-  environment variables, networking timing, storage, logging:
-  [`docs/runtime.md`](docs/runtime.md)
+  environment variables, networking timing, storage, logging, and what
+  survives an upgrade: [`docs/runtime.md`](docs/runtime.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
   Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in

@@ -425,7 +425,14 @@ published artifact, noted in footnotes where it applies.
     Hardware-exercised on both Pi Zeros during the usbwebsite bench session
     (beans `gosd-4ajn`/`gosd-spjt`, 2026-07-26): on each board the
     partition was found, mounted read-write, and its contents served over
-    HTTP.
+    HTTP. An `expand` partition also survives a reflash to a newer image
+    (re-adoption of the existing `GOSD-DATA` filesystem, gated on a
+    format-completion marker; board-independent, same mechanism
+    everywhere), as long as the new build's `--boot-size` is unchanged
+    from the one that created it — a fixed-size `--data-size` partition
+    is still wiped by every reflash. See `docs/runtime.md`'s "Persistent
+    storage: `/data`" section for the mechanics (bean `gosd-lirl`, PR
+    #158).
 
 [^no-emmc]: No Raspberry Pi board in this table has onboard eMMC — a
     hardware limitation of these boards, not a GoSD gap. The `emmc`
