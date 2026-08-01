@@ -108,6 +108,64 @@ func TestRunClosesCurrentResponderWhenStopped(t *testing.T) {
 	}
 }
 
+func TestRunRateLimitsRestartsUnderRapidChange(t *testing.T) {
+	ns := &fakeNewServer{}
+	ns.script(serverResult{srv: &fakeServer{}})
+	log := &testLog{}
+	changed := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop)
+
+	go Run(Deps{NewServer: ns.NewServer, Changed: changed, Log: log.Printf}, Options{Hostname: "my-device", Stop: stop})
+
+	waitFor(t, func() bool { return ns.callCount() == 1 }, "initial NewServer call never happened")
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		changed <- struct{}{}
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for ns.callCount() != 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("NewServer was called %d times within 3s, want 4", ns.callCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// A rate-limited loop can't finish 3 restarts any faster than
+	// 3*minRestartInterval; an unbounded loop would finish in microseconds.
+	// Comparing against 2*minRestartInterval leaves comfortable margin for
+	// scheduler jitter on either side of that line.
+	if elapsed := time.Since(start); elapsed < 2*minRestartInterval {
+		t.Errorf("3 change notifications produced 3 restarts in %s; want at least %s — minRestartInterval should have paced them", elapsed, 2*minRestartInterval)
+	}
+}
+
+func TestRunStopsPromptlyDuringRateLimitWait(t *testing.T) {
+	ns := &fakeNewServer{}
+	ns.script(serverResult{srv: &fakeServer{}})
+	log := &testLog{}
+	changed := make(chan struct{})
+	stop := make(chan struct{})
+
+	done := make(chan struct{})
+	go func() {
+		Run(Deps{NewServer: ns.NewServer, Changed: changed, Log: log.Printf}, Options{Hostname: "my-device", Stop: stop})
+		close(done)
+	}()
+
+	waitFor(t, func() bool { return ns.callCount() == 1 }, "initial NewServer call never happened")
+	changed <- struct{}{}
+	close(stop)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return promptly when Stop closed during the rate-limit wait")
+	}
+}
+
 // Burst coalescing itself (N Notify calls before a receiver reads collapse
 // to one pending item) is covered deterministically in signal_test.go, in
 // isolation from any consumer. It can't be asserted at the Run level too:

@@ -23,6 +23,22 @@
 // interfaces.
 package mdnsresponder
 
+import "time"
+
+// minRestartInterval floors how often Run will call deps.NewServer in
+// response to deps.Changed. Most real Changed triggers are already paced by
+// something else — a DHCP round trip, wifiup's 3s association poll — but a
+// link that flaps up and down while netup still considers it "active" fires
+// ClearNetworkUp, and so Changed, with no pacing at all (see netup's
+// handleLinkEvent). A failed NewServer call still leaks two of pion/mdns's
+// own unicast sockets even after gosd-o6tp's fix to close pc4/pc6 (upstream
+// v2.1.0 behavior, documented in that bean) — so an unbounded retry rate
+// under flapping still walks PID 1 toward its fd rlimit, just slower. This
+// interval is a defensive floor against that, not a response-time budget:
+// it's short enough that a genuine address change is still answered almost
+// immediately.
+const minRestartInterval = 250 * time.Millisecond
+
 // Deps bundles every dependency the responder restart loop needs.
 // Production wiring (main.go) supplies NewServer (this package's real,
 // pion/mdns-backed implementation); tests supply a fake.
@@ -113,14 +129,23 @@ func Run(deps Deps, opts Options) {
 	}
 
 	restart()
+	lastRestart := time.Now()
 
 	for {
 		select {
 		case <-opts.Stop:
 			return
 		case <-deps.Changed:
+			if wait := minRestartInterval - time.Since(lastRestart); wait > 0 {
+				select {
+				case <-opts.Stop:
+					return
+				case <-time.After(wait):
+				}
+			}
 			deps.Log("mdns: network changed; restarting responder")
 			restart()
+			lastRestart = time.Now()
 		}
 	}
 }

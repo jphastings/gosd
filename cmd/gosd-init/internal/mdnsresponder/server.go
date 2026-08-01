@@ -21,6 +21,13 @@ import (
 // startup or changes what NewServer returns.
 const collisionProbeTimeout = 3 * time.Second
 
+// startResponder is the seam over mdns.Server (exact same signature) so
+// tests can force a post-open failure deterministically — independent of
+// whether this environment can actually join a multicast group — and
+// observe that NewServer closed the sockets it opened. Production always
+// leaves this as mdns.Server itself.
+var startResponder = mdns.Server
+
 // NewServer starts a pion/mdns responder answering hostname+".local" on
 // every interface that's up right now: passing nil Interfaces to
 // mdns.Config makes it call net.Interfaces() itself and filter to FlagUp
@@ -48,11 +55,23 @@ func NewServer(hostname string, log func(format string, args ...any)) (Server, e
 		log("mdns: IPv6 multicast unavailable, answering A only: %v", err6)
 	}
 
-	conn, err := mdns.Server(pc4, pc6, &mdns.Config{
+	conn, err := startResponder(pc4, pc6, &mdns.Config{
 		Name:       "gosd-init",
 		LocalNames: []string{fqdn},
 	})
 	if err != nil {
+		// mdns.Server never closes the pc4/pc6 it was handed on its own
+		// early-return paths (upstream pion/mdns v2.1.0 behavior — see
+		// gosd-o6tp), so that's ours to do here regardless of which of the
+		// two actually opened. Left open, every failed attempt — expected
+		// at boot, and retried on every network change (see Run in
+		// mdnsresponder.go) — leaks fds toward PID 1's rlimit.
+		if pc4 != nil {
+			_ = pc4.Close()
+		}
+		if pc6 != nil {
+			_ = pc6.Close()
+		}
 		return nil, fmt.Errorf("starting mDNS responder for %s: %w", fqdn, err)
 	}
 
