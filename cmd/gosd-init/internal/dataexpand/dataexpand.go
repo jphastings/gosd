@@ -18,11 +18,14 @@
 // partition is inspected and a marked GOSD-DATA filesystem adopted rather
 // than reformatted; an entry over a mountable GOSD-DATA filesystem means
 // everything already happened, and nothing is touched; an entry over
-// anything else means an established partition — possibly carrying app
-// data — has been corrupted, reported as ErrDataCorrupt so the caller can
-// halt the device rather than let anything destroy what might be
-// recoverable. Every other failure is ordinary and non-fatal: the caller
-// logs it and falls back to the read-only /data placeholder for this boot.
+// something a read *successfully* shows to be anything else means an
+// established partition — possibly carrying app data — has been corrupted,
+// reported as ErrDataCorrupt so the caller can halt the device rather than
+// let anything destroy what might be recoverable. Every other failure,
+// including one that stops the read itself from happening at all, is
+// ordinary and non-fatal: the caller logs it and falls back to the
+// read-only /data placeholder for this boot, and the whole check retries
+// next boot.
 package dataexpand
 
 import (
@@ -205,7 +208,9 @@ func Run(deps Deps, opts Options) error {
 	// starts over, and finds either a marked filesystem (adopt) or debris
 	// (reformat); either way it converges. An entry therefore always means a
 	// marker-verified filesystem, which is what lets verifyEstablished treat
-	// anything else under one as real corruption.
+	// a successful read of anything else under one as real corruption (a
+	// read that fails outright is retried, then treated as ordinary — see
+	// verifyEstablished's doc comment).
 	//
 	// Adoption reuses this boot's geometry for a filesystem an earlier boot
 	// sized: same derivation, same device, so the same offset and length.
@@ -266,6 +271,14 @@ func Run(deps Deps, opts Options) error {
 // IS: that combination is a hallmark of a half-written filesystem, and
 // treating it as unadoptable is what keeps an interrupted format
 // self-healing rather than wedging the device forever.
+//
+// This is the same "could not see it, so don't touch it" philosophy
+// verifyEstablished applies to a read failure on the already-established
+// path (see its doc comment): a failed Inspect is never treated as proof of
+// anything, only a successful one is. The two paths part ways on what a
+// *successful* read of the wrong contents means — debris to reformat here,
+// versus ErrDataCorrupt there — because only this path's partition has yet
+// to earn an MBR entry.
 func survivorPresent(deps Deps, partitionDevice string) (bool, error) {
 	contents, err := deps.Inspect(partitionDevice)
 	if err != nil {
@@ -304,19 +317,33 @@ func dataStartLBA(mbr []byte) int64 {
 // flashing an image rewrites the MBR without an entry, so an entry means an
 // established partition that may hold app data. Either it still carries its
 // GOSD-DATA filesystem (the every-later-boot happy path: nothing to do), or
-// something has gone genuinely wrong with data possibly at stake — reported
-// as ErrDataCorrupt, never repaired here.
+// a *successful* read shows something else entirely — reported as
+// ErrDataCorrupt, never repaired here.
+//
+// Getting to that read is itself allowed to fail transiently: there is no
+// udev to synchronize on for the device node (same reasoning as
+// waitForNode), and a card can throw a passing EIO/EBUSY on an otherwise
+// healthy read. Neither is evidence of anything, so both the node's
+// appearance and Inspect are retried with waitForNode's poll shape before
+// giving up. A failure that never clears returns a plain (non-ErrDataCorrupt)
+// error: the caller logs it and falls back to the read-only /data
+// placeholder for this boot, retrying the whole thing next boot — the same
+// "could not see it, so don't touch it" philosophy survivorPresent already
+// applies to a read failure on the creation path (see its doc comment).
+// ErrDataCorrupt is reserved for the one case neither retry nor a future
+// boot can fix on its own: a read that succeeded and definitively shows a
+// non-GOSD-DATA volume where the table says an established one belongs.
 //
 // The marker deliberately plays no part in this check: /data belongs to the
 // app from here on, and an app that tidies away a file it did not expect
 // must not thereby turn its own working partition into a corruption halt.
 func verifyEstablished(deps Deps, opts Options) error {
-	if !deps.PathExists(opts.PartitionDevice) {
-		return fmt.Errorf("%w: the partition table lists it, but its device node %s never appeared", ErrDataCorrupt, opts.PartitionDevice)
+	if !nodeAppears(deps, opts.PartitionDevice, opts.NodeTimeout) {
+		return fmt.Errorf("the partition table lists the data partition, but its device node %s did not appear within %s; leaving /data read-only this boot", opts.PartitionDevice, opts.NodeTimeout)
 	}
-	contents, err := deps.Inspect(opts.PartitionDevice)
+	contents, err := pollInspect(deps, opts.PartitionDevice, opts.NodeTimeout)
 	if err != nil {
-		return fmt.Errorf("%w: reading %s failed: %v", ErrDataCorrupt, opts.PartitionDevice, err)
+		return fmt.Errorf("reading %s failed repeatedly: %w; leaving /data read-only this boot", opts.PartitionDevice, err)
 	}
 	if contents.FS == diskfmt.FAT32 && contents.Label == Label {
 		deps.Log("data partition already present on %s", opts.PartitionDevice)
@@ -406,18 +433,54 @@ func writeDataEntry(mbr []byte, startLBA, sizeLBA uint32) {
 	binary.LittleEndian.PutUint32(entry[12:16], sizeLBA)
 }
 
+// pollInterval is the spacing between attempts for every retry loop in this
+// package: there is no udev (or, for a read retry, any other signal) to
+// synchronize on, so each one polls briefly rather than assuming success or
+// giving up after a single try.
+const pollInterval = 50 * time.Millisecond
+
 // waitForNode polls for the partition's device node: devtmpfs creates it
 // almost immediately after the kernel learns of the partition, but there is
 // no udev to synchronize on, so poll briefly rather than assume.
 func waitForNode(deps Deps, path string, timeout time.Duration) error {
+	if !nodeAppears(deps, path, timeout) {
+		return fmt.Errorf("%s did not appear within %s of the kernel learning about the partition", path, timeout)
+	}
+	return nil
+}
+
+// nodeAppears is waitForNode's poll shape without a caller-specific error
+// message baked in, so verifyEstablished can reuse it for its own node check
+// (the node it's waiting for was never freshly registered this boot, so
+// waitForNode's "of the kernel learning about the partition" wording would
+// be misleading there).
+func nodeAppears(deps Deps, path string, timeout time.Duration) bool {
 	deadline := deps.Now().Add(timeout)
 	for !deps.PathExists(path) {
 		if !deps.Now().Before(deadline) {
-			return fmt.Errorf("%s did not appear within %s of the kernel learning about the partition", path, timeout)
+			return false
 		}
-		deps.Sleep(50 * time.Millisecond)
+		deps.Sleep(pollInterval)
 	}
-	return nil
+	return true
+}
+
+// pollInspect retries deps.Inspect with the same poll shape as nodeAppears,
+// for the same reason: a card can throw a passing I/O error on an otherwise
+// healthy read, and that is not evidence of anything. It returns the last
+// error once timeout elapses without a successful call.
+func pollInspect(deps Deps, path string, timeout time.Duration) (diskfmt.Contents, error) {
+	deadline := deps.Now().Add(timeout)
+	for {
+		contents, err := deps.Inspect(path)
+		if err == nil {
+			return contents, nil
+		}
+		if !deps.Now().Before(deadline) {
+			return diskfmt.Contents{}, err
+		}
+		deps.Sleep(pollInterval)
+	}
 }
 
 // DataPartitionFor derives, from the partition-1 node the boot partition

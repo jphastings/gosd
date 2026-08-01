@@ -24,6 +24,12 @@ type fakeCard struct {
 	sizeBytes  int64
 	contents   diskfmt.Contents
 	inspectErr error
+	// inspectFailCalls, when non-zero, makes Inspect return inspectErr for
+	// only that many calls before returning contents/nil — simulating a
+	// transient I/O hiccup a retry clears. Left zero, a non-nil inspectErr
+	// fails every call, for the persistent-failure tests.
+	inspectFailCalls int
+	inspectCalls     int
 	// marked is whether the partition already carries the completed-format
 	// marker; markerErr makes reading it fail, as a half-written filesystem
 	// with an unreadable root directory would.
@@ -71,7 +77,13 @@ func (c *fakeCard) deps() Deps {
 			}
 			return nil
 		},
-		Inspect:     func(string) (diskfmt.Contents, error) { return c.contents, c.inspectErr },
+		Inspect: func(string) (diskfmt.Contents, error) {
+			c.inspectCalls++
+			if c.inspectErr != nil && (c.inspectFailCalls == 0 || c.inspectCalls <= c.inspectFailCalls) {
+				return diskfmt.Contents{}, c.inspectErr
+			}
+			return c.contents, nil
+		},
 		FormatFAT32: func(_, label string) error { c.actions = append(c.actions, "format-"+label); return nil },
 		CreateMarker: func(string) error {
 			c.actions = append(c.actions, "write-marker")
@@ -364,13 +376,56 @@ func TestRunReportsCorruptionInsteadOfTouchingAnEstablishedPartition(t *testing.
 	}
 }
 
-func TestRunReportsCorruptionWhenTheEstablishedNodeIsMissing(t *testing.T) {
+func TestRunVerifiesAnEstablishedPartitionDespiteATransientReadFailure(t *testing.T) {
+	// An intermittent EIO/EBUSY on an otherwise healthy card is not evidence
+	// of corruption: a retry clears it, and the boot proceeds exactly as if
+	// the read had succeeded first try (bean gosd-6i2a).
+	card := newFakeCard(withDataEntry(1<<21), 8<<30)
+	card.nodeExists = true
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	card.inspectErr = errors.New("EIO")
+	card.inspectFailCalls = 3
+
+	if err := Run(card.deps(), testOptions()); err != nil {
+		t.Fatalf("Run() = %v, want nil (a transient read failure must not halt the device)", err)
+	}
+	if !card.logged("already present") {
+		t.Errorf("logs = %q, want a mention that the partition is already present", card.logs)
+	}
+}
+
+func TestRunFallsBackReadOnlyInsteadOfHaltingOnAPersistentReadFailure(t *testing.T) {
+	// A read failure that never clears is still not proof of anything —
+	// only a *successful* read of the wrong contents is. Boot must fall
+	// through to the read-only /data placeholder (boot.Run's ExpandData
+	// handling treats any non-ErrDataCorrupt error this way) rather than
+	// halt, and retry the whole check next boot.
+	card := newFakeCard(withDataEntry(1<<21), 8<<30)
+	card.nodeExists = true
+	card.inspectErr = errors.New("I/O error")
+
+	err := Run(card.deps(), testOptions())
+	if err == nil {
+		t.Fatal("Run() = nil, want the persistent read failure reported")
+	}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("a persistent read failure must not be reported as corruption")
+	}
+}
+
+func TestRunFallsBackReadOnlyWhenTheEstablishedNodeNeverAppears(t *testing.T) {
+	// Same reasoning as a persistent Inspect failure: a device node that
+	// never turns up is a read failure (nothing was ever seen to judge),
+	// not proof that an established partition was destroyed.
 	card := newFakeCard(withDataEntry(1<<21), 8<<30)
 	card.nodeExists = false
 
 	err := Run(card.deps(), testOptions())
-	if !errors.Is(err, ErrDataCorrupt) {
-		t.Fatalf("Run() = %v, want ErrDataCorrupt", err)
+	if err == nil {
+		t.Fatal("Run() = nil, want the missing node reported")
+	}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("a device node that never appeared must not be reported as corruption")
 	}
 	if len(card.actions) != 0 {
 		t.Errorf("actions = %v, want nothing", card.actions)
