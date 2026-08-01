@@ -81,7 +81,7 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 		Board:          b,
 		AppBinaryPath:  appPath,
 		InitBinaryPath: initPath,
-		Config:         boards.BuildConfig{Hostname: "myhost", WifiSSID: "ssid", WifiPassword: "pass"},
+		Config:         boards.BuildConfig{Hostname: "myhost", HostnameExplicit: true, WifiSSID: "ssid", WifiPassword: "pass"},
 		OutputPath:     imgPath,
 	})
 	if err != nil {
@@ -255,6 +255,59 @@ func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 	}
 	if !strings.Contains(string(gosdToml), `# hostname = "my-device"`) {
 		t.Errorf("gosd.toml = %s, want a commented-out hostname example when unset", gosdToml)
+	}
+}
+
+// TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault is the
+// core regression test for bean gosd-4hz1: a build's sanitized-default
+// hostname (HostnameExplicit left false, as `gosd build` leaves it when
+// --hostname isn't passed) must still land in config.json as the baked
+// fallback, but must NOT be baked uncommented into gosd.toml - otherwise it
+// always shadows an Imager wizard's cloud-init hostname, since gosd.toml
+// outranks cloud-init in the locked precedence chain.
+func TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	imgPath := filepath.Join(dir, "out.img")
+	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		Config: boards.BuildConfig{Hostname: "sanitized-default"},
+	}); err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	if !strings.Contains(string(gosdToml), `# hostname = "sanitized-default"`) {
+		t.Errorf("gosd.toml = %s, want the default hostname shown as a commented-out example", gosdToml)
+	}
+	if strings.Contains(string(gosdToml), "\nhostname = ") {
+		t.Errorf("gosd.toml = %s, want no uncommented hostname line for a non-explicit default hostname", gosdToml)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(config), `"hostname":"sanitized-default"`) {
+		t.Errorf("config.json = %s, want it to still carry the default hostname as the baked fallback", config)
 	}
 }
 

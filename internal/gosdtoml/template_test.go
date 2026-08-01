@@ -8,7 +8,7 @@ import (
 
 func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 	env := map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}
-	out := Render("my-device", "home-network", "hunter2", env)
+	out := Render("my-device", true, "home-network", "hunter2", env)
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 }
 
 func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing.T) {
-	out := Render("", "", "", nil)
+	out := Render("", false, "", "", nil)
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -48,18 +48,43 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 		t.Errorf("Parse(Render(...)) warnings = %v, want none", warnings)
 	}
 	if !reflect.DeepEqual(got, Config{}) {
-		t.Errorf(`Parse(Render("", "", "", nil)) = %+v, want zero Config (all commented out)`, got)
+		t.Errorf(`Parse(Render("", false, "", "", nil)) = %+v, want zero Config (all commented out)`, got)
 	}
 
 	for _, want := range []string{`# hostname = "my-device"`, `# ssid = "MyHomeNetwork"`, `# passphrase = "MyWiFiPassword"`, `# NAME = "value"`} {
 		if !strings.Contains(string(out), want) {
-			t.Errorf(`Render("", "", "", nil) missing example line %q:`+"\n%s", want, out)
+			t.Errorf(`Render("", false, "", "", nil) missing example line %q:`+"\n%s", want, out)
 		}
 	}
 }
 
+// TestRenderWithUnbakedHostnameShowsItAsACommentedExample covers the common
+// build-time case: a computed default hostname (the sanitized package name)
+// that wasn't explicitly chosen via --hostname. It must render commented,
+// like the fully-unset case above, but show the actual default as the
+// example rather than the generic placeholder - and Parse must still see no
+// hostname at all, so a wizard-provided cloud-init hostname is free to take
+// effect (bean gosd-4hz1).
+func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
+	out := Render("default-app-name", false, "", "", nil)
+
+	got, _, err := Parse(out)
+	if err != nil {
+		t.Fatalf("Parse(Render(...)) error: %v", err)
+	}
+	if got.Hostname != "" {
+		t.Errorf("Parse(Render(\"default-app-name\", false, ...)).Hostname = %q, want empty (commented out)", got.Hostname)
+	}
+	if !strings.Contains(string(out), `# hostname = "default-app-name"`) {
+		t.Errorf(`Render("default-app-name", false, "", "", nil) missing commented example line for the default hostname:`+"\n%s", out)
+	}
+	if strings.Contains(string(out), "\nhostname = ") {
+		t.Errorf("Render() baked an uncommented hostname line despite bakeHostname=false:\n%s", out)
+	}
+}
+
 func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
-	out := string(Render("", "", "", nil))
+	out := string(Render("", false, "", "", nil))
 
 	for _, want := range []string{"text editor", "Notepad", "restart it"} {
 		if !strings.Contains(out, want) {
@@ -69,7 +94,7 @@ func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
 }
 
 func TestRenderEnvExactOutputWithoutBakedValues(t *testing.T) {
-	out := string(Render("", "", "", nil))
+	out := string(Render("", false, "", "", nil))
 
 	const want = `
 # Extra settings your app reads when it starts, sometimes called
@@ -100,7 +125,7 @@ ZEBRA = "z"
 `
 
 	for i := 0; i < 5; i++ {
-		out := string(Render("", "", "", env))
+		out := string(Render("", false, "", "", env))
 		if !strings.HasSuffix(out, want) {
 			t.Fatalf("Render() [env] section not sorted/deterministic on iteration %d:\ngot:\n%s\nwant suffix:\n%s", i, out, want)
 		}

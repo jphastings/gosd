@@ -179,7 +179,13 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// here too, so the card shows the developer's defaults for the user to
 	// see and override. It's added before the read-and-hash loop below so
 	// it's covered by the image identity like every other FAT-root file.
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
+	//
+	// The hostname line is only baked in uncommented when the developer
+	// explicitly chose it (opts.Config.HostnameExplicit); the default
+	// (sanitized main-package name) renders commented, like [wifi], so an
+	// Imager wizard's cloud-init hostname isn't always shadowed by it (see
+	// bean gosd-4hz1 and gosdtoml.Render's docstring).
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
 
 	// Read every FAT-root file into memory — both to hash it into the
 	// image identity below and to serve image.Write from a fresh reader

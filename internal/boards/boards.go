@@ -52,7 +52,20 @@ type BoardArtifactsFunc func(ctx context.Context, cacheDir, board string) (strin
 // interface passes BuildConfig through in case a board's boot-time template
 // needs them directly).
 type BuildConfig struct {
-	Hostname     string
+	Hostname string
+
+	// HostnameExplicit marks Hostname as an operator's deliberate choice
+	// (gosd build/run --hostname) rather than the sanitized-main-package
+	// default. The build pipeline uses it to decide how Hostname is baked
+	// into gosd.toml: an explicit hostname renders uncommented (it always
+	// wins, like a hand-edit), the default renders commented out, like the
+	// [wifi] block, so an Imager wizard's cloud-init hostname can take
+	// effect instead of always being shadowed by the baked default (locked
+	// gosd.toml > cloud-init > config.json precedence; see bean gosd-4hz1).
+	// config.json's hostname always carries Hostname either way, as the
+	// last-resort fallback.
+	HostnameExplicit bool
+
 	WifiSSID     string
 	WifiPassword string
 	// UsbGadget is set when --usb-gadget was passed: the board's USB
