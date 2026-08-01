@@ -3,6 +3,7 @@ package initcfg
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseConfig(t *testing.T) {
@@ -68,6 +69,16 @@ func TestParseConfig(t *testing.T) {
 			data:    "{not json",
 			wantErr: true,
 		},
+		{
+			name: "buildTimestamp parses when present",
+			data: `{"hostname":"my-device","buildTimestamp":"2026-07-31T12:00:00Z"}`,
+			want: Config{Hostname: "my-device", BuildTimestamp: "2026-07-31T12:00:00Z"},
+		},
+		{
+			name: "config predating buildTimestamp parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,6 +119,35 @@ func TestConfigShortIdentity(t *testing.T) {
 			cfg := Config{Identity: tt.identity}
 			if got := cfg.ShortIdentity(); got != tt.want {
 				t.Errorf("Config{Identity: %q}.ShortIdentity() = %q, want %q", tt.identity, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigBuildTime(t *testing.T) {
+	tests := []struct {
+		name      string
+		timestamp string
+		want      time.Time
+	}{
+		{name: "empty timestamp (pre-gosd-0esw image) yields the zero time, not the epoch", timestamp: "", want: time.Time{}},
+		{
+			name:      "RFC3339Nano round-trips",
+			timestamp: "2026-07-31T12:00:00.123456789Z",
+			want:      time.Date(2026, 7, 31, 12, 0, 0, 123456789, time.UTC),
+		},
+		{
+			name:      "RFC3339 without a fractional part also parses",
+			timestamp: "2026-07-31T12:00:00Z",
+			want:      time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
+		},
+		{name: "malformed timestamp yields the zero time rather than an error", timestamp: "not-a-time", want: time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{BuildTimestamp: tt.timestamp}
+			if got := cfg.BuildTime(); !got.Equal(tt.want) {
+				t.Errorf("Config{BuildTimestamp: %q}.BuildTime() = %v, want %v", tt.timestamp, got, tt.want)
 			}
 		})
 	}

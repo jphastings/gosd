@@ -239,6 +239,15 @@ your app doesn't need to do anything to make this happen:
   simply retrying TLS-dependent operations on failure both work; either
   way, don't treat an early failure as permanent, since the clock does
   become correct within moments of the network coming up.
+- SNTP is unauthenticated UDP, so `gosd-init` doesn't trust any single
+  result outright: a reply reporting a time before the image was built
+  is refused and logged (the build timestamp is baked into `config.json`
+  alongside `ntpServers`), and once the clock is synced, a later hourly
+  resync that would step it by an implausibly large amount is also
+  refused and logged rather than applied — unless an immediately
+  following resync reports a consistent value too, which is what lets a
+  device that was genuinely powered off for a long time still catch up
+  instead of being stuck refusing forever.
 
 ## Storage
 

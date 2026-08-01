@@ -61,7 +61,7 @@ func TestRunWaitsForNetworkUpBeforeQuerying(t *testing.T) {
 	clock.Advance(2 * time.Second)
 
 	deadline := time.Now().Add(2 * time.Second)
-	for len(sys.sets()) == 0 && time.Now().Before(deadline) {
+	for (len(sys.sets()) == 0 || marked.load() == 0) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if got := sys.sets(); len(got) != 1 || !got[0].Equal(syncedTime) {
@@ -131,7 +131,7 @@ func TestRunRetriesWithBackoffUntilFirstSuccess(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for len(sys.sets()) == 0 && time.Now().Before(deadline) {
+	for (len(sys.sets()) == 0 || marked.load() == 0) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if got := sys.sets(); len(got) != 1 || !got[0].Equal(syncedTime) {
@@ -196,7 +196,7 @@ func TestRunResyncsAfterInterval(t *testing.T) {
 	go Run(deps, defaultOptions([]string{"ntp1"}, stop))
 
 	deadline := time.Now().Add(2 * time.Second)
-	for len(sys.sets()) != 1 && time.Now().Before(deadline) {
+	for (len(sys.sets()) != 1 || marked.load() == 0) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if len(sys.sets()) != 1 {
@@ -222,6 +222,244 @@ func TestRunResyncsAfterInterval(t *testing.T) {
 	// The marker is only ever written once, on the first success.
 	if marked.load() != 1 {
 		t.Errorf("time-synced marker written %d times after resync, want still 1", marked.load())
+	}
+}
+
+// TestRunRefusesPreFloorResultAndRetries is gosd-0esw's floor test: a
+// forged (or badly misbehaving) server reporting a time before the image
+// was ever built must be refused and logged, not applied — and, since
+// that's indistinguishable from any other round where no server could be
+// trusted, must fall straight into the normal backoff retry rather than
+// wedging. The marker must not appear until a result actually clears the
+// floor.
+func TestRunRefusesPreFloorResultAndRetries(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	floor := time.Unix(1700000000, 0)
+	tooEarly := floor.Add(-time.Hour)
+	validTime := floor.Add(time.Hour)
+	ntp.script("ntp1", ntpResult{t: tooEarly}, ntpResult{t: validTime})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, marked := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.Floor = floor
+
+	go Run(deps, opts)
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("no pending backoff timer after the pre-floor attempt")
+	}
+	if got := sys.sets(); len(got) != 0 {
+		t.Fatalf("System.Set called %v after a pre-floor result, want none", got)
+	}
+	if marked.load() != 0 {
+		t.Errorf("time-synced marker written %d times after a pre-floor result, want 0", marked.load())
+	}
+	if !log.contains("before this build's floor") {
+		t.Errorf("log missing floor-refusal message: %v", log.snapshot())
+	}
+
+	clock.Advance(10 * time.Second) // exceeds any backoff delay scripted
+
+	deadline := time.Now().Add(2 * time.Second)
+	for (len(sys.sets()) == 0 || marked.load() == 0) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := sys.sets(); len(got) != 1 || !got[0].Equal(validTime) {
+		t.Fatalf("System.Set calls = %v, want exactly one call with %v", got, validTime)
+	}
+	if marked.load() != 1 {
+		t.Errorf("time-synced marker written %d times, want 1", marked.load())
+	}
+}
+
+// TestRunAppliesOrdinaryResyncStepImmediately confirms a resync well
+// within MaxStep is unaffected by the guard: applied on the very first
+// try, no confirmation round needed.
+func TestRunAppliesOrdinaryResyncStepImmediately(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	first := time.Unix(1700000000, 0)
+	second := first.Add(time.Hour + 30*time.Second) // a normal clock-drift correction
+	ntp.script("ntp1", ntpResult{t: first}, ntpResult{t: second})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.MaxStep = 1000 * time.Second
+
+	go Run(deps, opts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(sys.sets()) != 1 {
+		t.Fatalf("first sync never landed: sets=%v", sys.sets())
+	}
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("resync timer was never registered")
+	}
+	clock.Advance(time.Hour)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := sys.sets()
+	if len(got) != 2 || !got[1].Equal(second) {
+		t.Fatalf("System.Set calls = %v, want a second call with %v applied immediately", got, second)
+	}
+	if log.contains("max-step threshold") {
+		t.Error("an ordinary resync step should never trip the max-step guard")
+	}
+}
+
+// TestRunRefusesOverThresholdStepUntilSecondQueryAgrees is gosd-0esw's
+// step-guard test: a long-powered-off device's first real resync reports
+// a time far ahead of the (still wrong) system clock. That's refused and
+// logged rather than stepped outright — but since the true offset stays
+// essentially constant, the very next scheduled resync reports a
+// consistent value and the guard accepts it, so a genuinely legitimate
+// large step isn't wedged forever.
+func TestRunRefusesOverThresholdStepUntilSecondQueryAgrees(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	first := time.Unix(1700000000, 0)
+	// The true time is ~2 days ahead of the device's clock. Two
+	// consecutive resyncs, an hour (opts.ResyncEvery) apart, both report
+	// a time consistent with that same offset.
+	bigJump1 := first.Add(48 * time.Hour)
+	bigJump2 := bigJump1.Add(time.Hour)
+	ntp.script("ntp1", ntpResult{t: first}, ntpResult{t: bigJump1}, ntpResult{t: bigJump2})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.MaxStep = 1000 * time.Second
+
+	go Run(deps, opts)
+
+	// First sync lands unconditionally: there's no baseline yet to
+	// step-guard against.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(sys.sets()) != 1 {
+		t.Fatalf("first sync never landed: sets=%v", sys.sets())
+	}
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("first resync timer was never registered")
+	}
+	clock.Advance(time.Hour) // first scheduled resync: bigJump1
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !log.contains("max-step threshold") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !log.contains("max-step threshold") {
+		t.Fatalf("log missing over-threshold refusal message: %v", log.snapshot())
+	}
+	if got := sys.sets(); len(got) != 1 {
+		t.Fatalf("System.Set calls = %v, want still exactly 1 after the first over-threshold refusal", got)
+	}
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("second resync timer was never registered")
+	}
+	clock.Advance(time.Hour) // second scheduled resync: bigJump2, agrees with bigJump1
+
+	deadline = time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := sys.sets()
+	if len(got) != 2 || !got[1].Equal(bigJump2) {
+		t.Fatalf("System.Set calls = %v, want a second call with %v once the confirming query agreed", got, bigJump2)
+	}
+	if !log.contains("confirmed by a second") {
+		t.Errorf("log missing step-confirmation message: %v", log.snapshot())
+	}
+}
+
+// TestRunRefusesOverThresholdStepAgainWhenSecondQueryDisagrees confirms
+// the guard doesn't just rubber-stamp any second over-threshold reading:
+// one that doesn't roughly agree with the first is refused again (kept as
+// the new pending candidate for whatever queries next), not treated as a
+// confirmation.
+func TestRunRefusesOverThresholdStepAgainWhenSecondQueryDisagrees(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	first := time.Unix(1700000000, 0)
+	bigJump1 := first.Add(48 * time.Hour)
+	// An hour has passed, but this candidate is nowhere near
+	// bigJump1+1h: two independent forged/erratic readings, not one
+	// consistent story.
+	bigJump2 := bigJump1.Add(30 * 24 * time.Hour)
+	ntp.script("ntp1", ntpResult{t: first}, ntpResult{t: bigJump1}, ntpResult{t: bigJump2})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.MaxStep = 1000 * time.Second
+
+	go Run(deps, opts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !waitForPending(clock, 1) {
+		t.Fatal("first resync timer was never registered")
+	}
+	clock.Advance(time.Hour) // bigJump1: refused, becomes pending
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !log.contains("max-step threshold") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("second resync timer was never registered")
+	}
+	clock.Advance(time.Hour) // bigJump2: still over threshold, disagrees with bigJump1
+
+	// Wait for the second refusal to be logged (proof this resync ran
+	// to completion) rather than a fixed sleep, then check nothing was
+	// applied.
+	deadline = time.Now().Add(2 * time.Second)
+	for log.count("max-step threshold") < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := log.count("max-step threshold"); n != 2 {
+		t.Fatalf("expected two over-threshold refusal log lines, got %d: %v", n, log.snapshot())
+	}
+	if got := sys.sets(); len(got) != 1 {
+		t.Fatalf("System.Set calls = %v, a disagreeing second over-threshold reading must not be applied", got)
 	}
 }
 

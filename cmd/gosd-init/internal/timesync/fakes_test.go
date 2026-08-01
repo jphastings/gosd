@@ -221,12 +221,20 @@ func (l *testLog) snapshot() []string {
 }
 
 func (l *testLog) contains(substr string) bool {
+	return l.count(substr) > 0
+}
+
+// count returns how many logged lines contain substr, so a test can
+// synchronize on ("wait until this has happened twice") rather than just
+// ("has this happened at all").
+func (l *testLog) count(substr string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	n := 0
 	for _, line := range l.lines {
 		if strings.Contains(line, substr) {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }

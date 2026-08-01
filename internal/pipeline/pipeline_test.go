@@ -3,12 +3,14 @@ package pipeline_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/klauspost/compress/zstd"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/image"
+	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
 
@@ -172,6 +175,57 @@ func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
 	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
 	if !strings.Contains(string(config), `"dataExpand":true`) {
 		t.Errorf("config.json = %s, want it to contain %q", config, `"dataExpand":true`)
+	}
+}
+
+// TestAssembleBakesBuildTimestampIntoConfigJSON confirms config.json carries
+// a fresh, parseable build timestamp — timesync's clock floor (gosd-0esw).
+// See TestBuildIdentityIsReproducibleAcrossRebuilds (build_integration_test.go)
+// for the companion proof that a value which necessarily differs on every
+// build never moves the image identity.
+func TestAssembleBakesBuildTimestampIntoConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	before := time.Now().Add(-time.Minute)
+	imgPath := filepath.Join(dir, "out.img")
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: imgPath,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	after := time.Now().Add(time.Minute)
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+
+	var cfg initcfg.Config
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
+	}
+
+	got := cfg.BuildTime()
+	if got.IsZero() {
+		t.Fatalf("config.json's buildTimestamp = %q, want a parseable RFC3339Nano timestamp", cfg.BuildTimestamp)
+	}
+	if got.Before(before) || got.After(after) {
+		t.Errorf("config.json's buildTimestamp = %s, want it between %s and %s (the Assemble call)", got, before, after)
 	}
 }
 
