@@ -224,12 +224,17 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 				continue
 			}
 		}
-		backoff.Reset()
 		// The CONNECT ack only means the kernel accepted the request —
 		// the firmware's scan/auth/assoc/4-way handshake is still in
 		// flight (bean gosd-anyp: logging "associated" here masked a
-		// no-op CONNECT for two bench days). Association is confirmed,
-		// or not, by the poll in watchAssociation.
+		// no-op CONNECT for two bench days), and a wrong PSK leaves that
+		// handshake stuck forever without the CONNECT call itself ever
+		// failing. So the backoff is NOT reset here — only below, once
+		// runUntilDisconnect reports the association was actually
+		// confirmed at least once. Resetting on the ack alone used to
+		// reconnect-storm a wrong-PSK network at a fixed ~3s cadence
+		// forever (bean gosd-vcnr): a cycle that never associates now
+		// takes backoff.Next() like a failed associate.
 		deps.Log("%s: connect accepted for %q; awaiting association", ifi.Name, creds.SSID)
 		if watcher != nil {
 			// Drop any reason events emitted before or during this
@@ -239,7 +244,17 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 			watcher.TakeReason()
 		}
 
-		runUntilDisconnect(deps, ifi, watcher, stop)
+		if associated := runUntilDisconnect(deps, ifi, watcher, stop); associated {
+			backoff.Reset()
+			continue
+		}
+		delay := backoff.Next()
+		deps.Log("%s: %q accepted the connect but association was never confirmed; retrying in %s", ifi.Name, creds.SSID, delay)
+		select {
+		case <-stop:
+			return
+		case <-deps.Clock.After(delay):
+		}
 	}
 }
 
@@ -273,15 +288,21 @@ func associate(deps Deps, ifi Interface, creds Credentials) error {
 
 // runUntilDisconnect runs netup.RunDHCP on ifi until either the
 // association is lost (detected by polling WifiClient.Associated) or
-// stop is closed, then returns so runAssociationLoop can reconnect.
-func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, stop <-chan struct{}) {
+// stop is closed, then returns so runAssociationLoop can reconnect. The
+// returned bool reports whether ifi was ever actually confirmed
+// associated during the run (see watchAssociation) — false means the
+// CONNECT was acked but the handshake never completed (e.g. a wrong
+// PSK), which the caller must treat like a failed associate rather than
+// resetting its backoff.
+func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, stop <-chan struct{}) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var associated bool
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		watchAssociation(deps, ifi, watcher, cancel, stop)
+		associated = watchAssociation(deps, ifi, watcher, cancel, stop)
 	}()
 
 	ndeps := netup.Deps{
@@ -296,6 +317,7 @@ func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, sto
 
 	cancel()
 	<-watchDone
+	return associated
 }
 
 // associationPollPeriod is how often watchAssociation checks whether ifi
@@ -311,13 +333,18 @@ const associationPollPeriod = 3 * time.Second
 // context in runUntilDisconnect) as soon as it's lost, or when stop
 // closes — either way, disconnect must always be called exactly once
 // before this returns, or runUntilDisconnect would block forever waiting
-// on the now-uncancellable DHCP context.
-func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disconnect context.CancelFunc, stop <-chan struct{}) {
+// on the now-uncancellable DHCP context. The returned bool reports
+// whether Associated was ever observed true before returning, so
+// runUntilDisconnect can tell a connect that was acked but never
+// actually associated (e.g. a wrong PSK) apart from a genuine, if
+// brief, association.
+func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disconnect context.CancelFunc, stop <-chan struct{}) bool {
+	var associated bool
 	for {
 		select {
 		case <-stop:
 			disconnect()
-			return
+			return associated
 		case <-deps.Clock.After(associationPollPeriod):
 		}
 
@@ -326,18 +353,20 @@ func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disco
 			deps.Log("checking association on %s failed: %v", ifi.Name, err)
 			continue
 		}
-		if !ok {
-			if reason, observed := takeReason(watcher); observed {
-				deps.Log("%s lost its WiFi association (%s); reconnecting", ifi.Name, reason)
-			} else {
-				deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
-			}
-			if err := deps.ClearNetworkUp(); err != nil {
-				deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
-			}
-			disconnect()
-			return
+		if ok {
+			associated = true
+			continue
 		}
+		if reason, observed := takeReason(watcher); observed {
+			deps.Log("%s lost its WiFi association (%s); reconnecting", ifi.Name, reason)
+		} else {
+			deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
+		}
+		if err := deps.ClearNetworkUp(); err != nil {
+			deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
+		}
+		disconnect()
+		return associated
 	}
 }
 
