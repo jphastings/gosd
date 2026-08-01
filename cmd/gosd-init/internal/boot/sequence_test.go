@@ -15,6 +15,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
 )
 
@@ -768,21 +769,152 @@ func TestRunFatalPathOnEarlyMountFailure(t *testing.T) {
 	assertFatalPathTriggered(t, rebooter, sleeps)
 }
 
-func TestRunFatalPathOnHostnameFailure(t *testing.T) {
+func TestRunSetHostnameFailureIsNotFatal(t *testing.T) {
+	// A wrong hostname is cosmetic; a reboot loop over sethostname(2)
+	// rejecting it is not (gosd-jeaw). SetHostname failing must log and
+	// let boot continue — never trigger the fatal reboot path.
 	mounter := &fakeMounter{}
 	hostname := &fakeHostname{err: errBoom}
 	rebooter := &fakeRebooter{}
+	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
-	var sleeps []time.Duration
+	stop := make(chan struct{})
 
-	deps := testDepsForFatalPath(mounter, hostname, rebooter, clock, &sleeps)
-	opts := testOptions()
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
 
-	err := Run(deps, opts)
-	if err == nil || !strings.Contains(err.Error(), "setting hostname") {
-		t.Fatalf("Run() = %v, want an error about setting hostname", err)
+	deps := Deps{
+		Mounter:     mounter,
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    rebooter,
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Board: "pi-zero-2w", Hostname: "my-device"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       clock.Sleep,
+		Now:         clock.Now,
 	}
-	assertFatalPathTriggered(t, rebooter, sleeps)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a SetHostname failure must not be fatal)", err)
+	}
+	if rebooter.rebooted {
+		t.Error("Run() rebooted after a SetHostname failure")
+	}
+	if !strings.Contains(console.String(), "setting hostname to") || !strings.Contains(console.String(), "failed") {
+		t.Errorf("console output missing the hostname failure log line: %q", console.String())
+	}
+}
+
+func TestRunRejectsOverlongGosdTomlHostname(t *testing.T) {
+	// A hand-edited gosd.toml hostname over naming.MaxLength bytes must
+	// never reach SetHostname: it's rejected, logged, and the previous
+	// (baked-in) hostname is kept for both the initial and re-applied
+	// SetHostname calls (gosd-jeaw).
+	tooLong := strings.Repeat("a", naming.MaxLength+2)
+	mounter := &fakeMounter{}
+	hostname := &fakeHostname{}
+	rebooter := &fakeRebooter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     mounter,
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    rebooter,
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{Hostname: tooLong}, nil, nil
+		},
+		Sleep: clock.Sleep,
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (an invalid gosd.toml hostname is not fatal)", err)
+	}
+	if rebooter.rebooted {
+		t.Error("Run() rebooted over an invalid gosd.toml hostname")
+	}
+
+	wantCalls := []string{"baked-in-name", "baked-in-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v (invalid hostname rejected, previous kept)", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "invalid") || !strings.Contains(console.String(), "gosd.toml") {
+		t.Errorf("console output missing the hostname rejection log line: %q", console.String())
+	}
+}
+
+func TestRunRejectsInvalidCharsetCloudInitHostname(t *testing.T) {
+	// Charset validation shares the same naming.Sanitize semantics as the
+	// length cap, and applies to cloud-init's hostname too, not just
+	// gosd.toml's.
+	hostname := &fakeHostname{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{Hostname: "Not A Valid Host!"}
+		},
+		Sleep: clock.Sleep,
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (an invalid cloud-init hostname is not fatal)", err)
+	}
+
+	wantCalls := []string{"baked-in-name", "baked-in-name"}
+	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
+		t.Errorf("SetHostname calls = %v, want %v (invalid hostname rejected, previous kept)", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "invalid") || !strings.Contains(console.String(), "cloud-init") {
+		t.Errorf("console output missing the hostname rejection log line: %q", console.String())
+	}
 }
 
 func TestRunFatalPathOnBootPartitionMountTimeout(t *testing.T) {
