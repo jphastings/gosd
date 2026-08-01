@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
@@ -1291,6 +1293,79 @@ func testOptions() Options {
 		BootTarget:  "/boot",
 		BootDevices: []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1"},
 		BootTimeout: 10 * time.Second,
+	}
+}
+
+// TestRunAppliesProvisioningRestoredFromTheSnapshot covers the boot
+// sequence's half of the reflash self-heal (bean gosd-ry3b): whatever
+// provsnapshot restores has to reach the running device on this boot, not
+// just the card, so the hostname is re-applied and the app's environment is
+// built from the restored gosd.toml.
+func TestRunAppliesProvisioningRestoredFromTheSnapshot(t *testing.T) {
+	hostname := &fakeHostname{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+	var dataMountedFirst bool
+
+	mounter := &fakeMounter{}
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		gotEnv = env
+		close(stop)
+		return 1, nil
+	})
+
+	var gotInput provsnapshot.Input
+	deps := Deps{
+		Mounter:              mounter,
+		Hostname:             hostname,
+		AppStarter:           appStarter,
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:          func(string, ...any) {},
+		EnsureDataMountpoint: func() error { return nil },
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{
+				Board:    "qemu-virt",
+				Hostname: "hello",
+				Identity: "new",
+				Env:      map[string]string{"API_URL": "https://example.com"},
+			}, nil
+		},
+		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) { return gosdtoml.Config{Hostname: "hello"}, nil, nil },
+		ProvisionSnapshot: func(in provsnapshot.Input, log func(string, ...any)) provsnapshot.Result {
+			gotInput = in
+			dataMountedFirst = mounter.callsFor("/data") > 0
+			return provsnapshot.Result{
+				GosdToml:         gosdtoml.Config{Hostname: "kitchen-pi", Env: map[string]string{"API_URL": "https://mine"}},
+				HostnameRestored: true,
+			}
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !dataMountedFirst {
+		t.Error("the snapshot ran before the data partition it lives on was mounted")
+	}
+	if gotInput.Baked.Hostname != "hello" || gotInput.Baked.Env["API_URL"] != "https://example.com" {
+		t.Errorf("snapshot input baked defaults = %+v, want config.json's, captured before any override", gotInput.Baked)
+	}
+	if last := hostname.set[len(hostname.set)-1]; last != "kitchen-pi" {
+		t.Errorf("final SetHostname = %q, want the restored hostname applied to this boot", last)
+	}
+	for _, want := range []string{"API_URL=https://mine", "GOSD_HOSTNAME=kitchen-pi"} {
+		if !slices.Contains(gotEnv, want) {
+			t.Errorf("app env = %v, missing %q", gotEnv, want)
+		}
 	}
 }
 

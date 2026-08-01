@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/gosdtoml"
@@ -91,6 +93,17 @@ func main() {
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
+		// ProvisionSnapshot needs both partitions mounted — the snapshot
+		// lives on GOSD-DATA and a restore is written back to GOSD-BOOT —
+		// so boot.Run calls it only once the data mount has been attempted.
+		ProvisionSnapshot: func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result {
+			deps := provsnapshot.NewDeps(
+				filepath.Join(dataTarget, provsnapshot.Dir),
+				func(name string, data []byte) error { return platform.WriteBootFile(bootTarget, name, data) },
+				log,
+			)
+			return provsnapshot.Run(deps, in)
+		},
 		WriteBootFailure: func(msg string) error {
 			return platform.WriteBootFailure(bootTarget, msg)
 		},
