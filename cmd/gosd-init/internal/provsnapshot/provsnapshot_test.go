@@ -232,10 +232,14 @@ func TestReflashRestoresHostnameAndWifiOnlyWhenTheFreshBootHasNone(t *testing.T)
 		},
 		Baked: Provisioning{Hostname: "hello"},
 	}
+	// GosdToml.Hostname is empty, not "hello": a non-explicit `gosd build`
+	// ships the hostname line commented out (bean gosd-4hz1), so a real
+	// freshly flashed card's gosd.toml carries no hostname value at all,
+	// same as if the line were absent entirely.
 	newImage := Input{
 		Identity: "new",
 		Baked:    Provisioning{Hostname: "hello"},
-		GosdToml: gosdtoml.Config{Hostname: "hello"},
+		GosdToml: gosdtoml.Config{Hostname: ""},
 	}
 
 	t.Run("wizard skipped", func(t *testing.T) {
@@ -266,8 +270,8 @@ func TestReflashRestoresHostnameAndWifiOnlyWhenTheFreshBootHasNone(t *testing.T)
 		}
 		res := Run(s.deps(), fresh)
 
-		if res.HostnameRestored || res.GosdToml.Hostname != "hello" {
-			t.Errorf("hostname = %q (restored=%v), want the wizard's boot left untouched", res.GosdToml.Hostname, res.HostnameRestored)
+		if res.HostnameRestored || res.GosdToml.Hostname != "" {
+			t.Errorf("hostname = %q (restored=%v), want gosd.toml left untouched (still commented out)", res.GosdToml.Hostname, res.HostnameRestored)
 		}
 		if res.GosdToml.Wifi != (gosdtoml.Wifi{}) {
 			t.Errorf("wifi = %+v, want the wizard's network left to win", res.GosdToml.Wifi)
@@ -275,13 +279,17 @@ func TestReflashRestoresHostnameAndWifiOnlyWhenTheFreshBootHasNone(t *testing.T)
 		if _, ok := s.boot[BootConfigFile]; ok {
 			t.Error("gosd.toml was rewritten even though the wizard provided everything")
 		}
-		// The wizard's network is what the device actually joins, so it is
-		// what the refreshed snapshot records. Its hostname is not, because
-		// the card's own gosd.toml outranks cloud-init in the locked
-		// precedence chain — the snapshot records what took effect, not
-		// what was offered.
-		if snap := s.snapshot(t); snap.Effective.Wifi.SSID != "Office" {
+		// Bean gosd-4hz1: a non-explicit build's gosd.toml carries no
+		// hostname (it ships commented out), so it no longer shadows the
+		// wizard's hostname the way it used to. Both the WiFi network and
+		// the hostname the wizard supplied are what actually took effect,
+		// so both must be what the refreshed snapshot records.
+		snap := s.snapshot(t)
+		if snap.Effective.Wifi.SSID != "Office" {
 			t.Errorf("snapshot effective = %+v, want it refreshed with the wizard's network", snap.Effective)
+		}
+		if snap.Effective.Hostname != "living-room" {
+			t.Errorf("snapshot effective hostname = %q, want the wizard's hostname — it's no longer shadowed by a commented-out gosd.toml default", snap.Effective.Hostname)
 		}
 	})
 

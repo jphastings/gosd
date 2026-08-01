@@ -97,7 +97,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&output, "output", "o", "",
 		"output .img file when building one board, or output directory when building several")
 	cmd.Flags().StringVar(&hostname, "hostname", "",
-		"device hostname (default: sanitized main package name)")
+		"device hostname (default: sanitized main package name); an explicit value is baked into gosd.toml and always wins, while the default is left commented out so an Imager wizard hostname can take effect instead")
 	cmd.Flags().StringVar(&wifiSSID, "wifi-ssid", "", "WiFi SSID to bake into the image")
 	cmd.Flags().StringVar(&wifiPass, "wifi-pass", "", "WiFi password to bake into the image (WPA2-PSK or open networks only)")
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
@@ -174,6 +174,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	hostnameExplicit := hostname != ""
 	deviceHostname := hostname
 	if deviceHostname == "" {
 		deviceHostname = appName
@@ -227,12 +228,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			AppBinaryPath:  bin.appPath,
 			InitBinaryPath: bin.initPath,
 			Config: boards.BuildConfig{
-				Hostname:     deviceHostname,
-				WifiSSID:     wifiSSID,
-				WifiPassword: wifiPass,
-				UsbGadget:    usbGadget,
-				Env:          env,
-				ConsoleBaud:  consoleBaud,
+				Hostname:         deviceHostname,
+				HostnameExplicit: hostnameExplicit,
+				WifiSSID:         wifiSSID,
+				WifiPassword:     wifiPass,
+				UsbGadget:        usbGadget,
+				Env:              env,
+				ConsoleBaud:      consoleBaud,
 			},
 			ArtifactsDir:     artifactsDir,
 			CacheDir:         cacheDir,

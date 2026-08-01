@@ -66,7 +66,7 @@ place and prints its path instead.`,
 	cmd.Flags().BoolVar(&runDisplay, "display", false,
 		"open qemu's default host display window (Cocoa on macOS, GTK on Linux) showing the guest's virtio-gpu output; serial console stays on this terminal")
 	cmd.Flags().StringVar(&runHostname, "hostname", "",
-		"device hostname (default: sanitized main package name)")
+		"device hostname (default: sanitized main package name); an explicit value is baked into gosd.toml and always wins, while the default is left commented out (same as gosd build --hostname)")
 	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
 		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
 	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
@@ -92,6 +92,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	appName := naming.Sanitize(filepath.Base(filepath.Clean(pkgPath)))
+	hostnameExplicit := runHostname != ""
 	deviceHostname := runHostname
 	if deviceHostname == "" {
 		deviceHostname = appName
@@ -142,7 +143,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		AppBinaryPath:  appBinary,
 		InitBinaryPath: initBinary,
 		Config: boards.BuildConfig{
-			Hostname: deviceHostname,
+			Hostname:         deviceHostname,
+			HostnameExplicit: hostnameExplicit,
 		},
 		ArtifactsDir:  runArtifactsDir,
 		CacheDir:      cacheDir,

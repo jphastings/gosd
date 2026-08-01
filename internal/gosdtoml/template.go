@@ -26,14 +26,20 @@ const header = `# These are the settings for this device.
 # (or restart it). Your changes take effect the next time it starts up.
 `
 
-// hostnameCommentedOut is shown when no hostname was baked in at build
-// time — an example for the user to uncomment and edit, not a value that
-// currently does anything.
-const hostnameCommentedOut = `
+// hostnameCommentedTemplate is shown whenever the hostname line should not
+// take effect from gosd.toml itself: either no hostname was baked in at
+// build time, or (the common case) --hostname was left at its
+// sanitized-package-name default rather than chosen explicitly, so an
+// Imager wizard hostname is free to take effect instead (gosd.toml >
+// cloud-init > config.json precedence; see bean gosd-4hz1). The value shown
+// is still the name gosd-init would fall back to (config.json's baked
+// default) if nothing else provides one — an example for the user to
+// uncomment and edit, not a value that currently does anything.
+const hostnameCommentedTemplate = `
 # The name this device uses on your network. To set it, remove the "#"
 # below and change the name between the quotes. Use only letters, numbers
 # and hyphens (-) — no spaces.
-# hostname = "my-device"
+# hostname = %q
 `
 
 const hostnameTemplate = `
@@ -91,13 +97,26 @@ const envHeader = `
 // settings — filled in with the build-time values when set, or left as
 // commented-out examples when they're not, so a hand-edited card always
 // shows the user exactly what to type and where.
-func Render(hostname, wifiSSID, wifiPassphrase string, env map[string]string) []byte {
+//
+// bakeHostname distinguishes an operator-chosen hostname from the sanitized
+// -package-name default: only bakeHostname=true renders the hostname line
+// uncommented (hostname must also be non-empty). A commented default still
+// shows hostname's value as the example, so the card documents what it'll
+// be named without that line taking effect — leaving room for an Imager
+// wizard hostname (cloud-init) to win instead, per the locked
+// gosd.toml > cloud-init > config.json precedence (bean gosd-4hz1). A
+// hand-edit that later uncomments the line always wins, same as today.
+func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string) []byte {
 	out := header
 
-	if hostname == "" {
-		out += hostnameCommentedOut
-	} else {
+	if hostname != "" && bakeHostname {
 		out += fmt.Sprintf(hostnameTemplate, hostname)
+	} else {
+		example := hostname
+		if example == "" {
+			example = "my-device"
+		}
+		out += fmt.Sprintf(hostnameCommentedTemplate, example)
 	}
 
 	if wifiSSID == "" {

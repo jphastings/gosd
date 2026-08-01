@@ -41,12 +41,19 @@
 //     now — a cloud-init hostname or WiFi network left by the Imager wizard
 //     (hostname and WiFi only; cloud-init carries no [env]), or a gosd.toml
 //     value that differs from the running image's baked default. A freshly
-//     flashed card's gosd.toml is the rendered template, so it matches the
-//     baked defaults exactly; any difference is therefore a hand-edit made
-//     before this boot. Fresh intent only blocks a restore — it is never
-//     written into gosd.toml, so the locked precedence chain decides which
-//     of the two actually takes effect, exactly as it would have without
-//     any snapshot.
+//     flashed card's gosd.toml WiFi/[env] are the rendered template, so they
+//     match the baked defaults exactly; any difference is therefore a
+//     hand-edit made before this boot. Hostname is the one field that
+//     usually *doesn't* match at all on a freshly flashed card: a default
+//     (non-explicit) build ships the hostname line commented out (bean
+//     gosd-4hz1), so gosd.toml carries no hostname rather than one equal to
+//     config.json's baked default — freshHostname's own emptiness check
+//     treats a commented-out line the same as a template match, i.e. no
+//     fresh intent, so this doesn't change the classification, only why it
+//     holds for hostname specifically. Fresh intent only blocks a restore —
+//     it is never written into gosd.toml, so the locked precedence chain
+//     decides which of the two actually takes effect, exactly as it would
+//     have without any snapshot.
 //   - *Snapshot intent*: the snapshot's effective value differs from the
 //     baked default recorded in that same snapshot — the contemporaneous
 //     default, i.e. what the image the snapshot was taken from would have
@@ -299,7 +306,12 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 		deps.Log("provisioning snapshot: nowhere to write %s back to; the restore applies to this boot only", BootConfigFile)
 		return Result{GosdToml: merged, HostnameRestored: plan.Hostname != ""}, false
 	}
-	rendered := gosdtoml.Render(merged.Hostname, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env)
+	// bakeHostname is always true here: a restored hostname is provable
+	// operator intent (a hand-edit or a wizard hostname that already took
+	// effect), so it's written back uncommented, exactly like a hand-edit -
+	// gosdtoml.Render itself still leaves the line commented when merged.
+	// Hostname is empty (nothing to restore).
+	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env)
 	if err := deps.WriteBootFile(BootConfigFile, rendered); err != nil {
 		// The values still apply to this boot, so the board comes back
 		// now; leaving the snapshot untouched is what makes the next boot
@@ -451,9 +463,11 @@ func save(deps Deps, in Input, result Result, stored Snapshot, found bool) {
 // locked precedence chain gosd.toml > cloud-init > config.json that
 // boot.Run and wifiup.ConfigCredentials apply. It records what took
 // effect, not what was offered: a cloud-init hostname sits below the
-// card's gosd.toml in that chain, and gosd build always renders a hostname
-// into gosd.toml, so a wizard hostname is only ever the effective one on
-// an image built without a baked hostname.
+// card's gosd.toml in that chain, but gosd build only renders a hostname
+// into gosd.toml uncommented when --hostname was explicitly chosen (see
+// bean gosd-4hz1) - the sanitized-default case ships it commented out, so
+// card.Hostname is empty and a wizard hostname is the effective one, same
+// as it would be with no gosd.toml at all.
 func effective(in Input, card gosdtoml.Config) Provisioning {
 	p := Provisioning{Hostname: in.Baked.Hostname, Wifi: in.Baked.Wifi}
 	if in.CloudInit.Hostname != "" {
@@ -496,9 +510,14 @@ type bakedWifi struct {
 	Passphrase string `json:"passphrase,omitempty"`
 }
 
-// encode renders the two snapshot files, in write order.
+// encode renders the two snapshot files, in write order. bakeHostname is
+// always true: this gosd.toml lives in the snapshot directory, never on
+// GOSD-BOOT, so the "leave it commented for the wizard" concern that
+// gosdtoml.Render's bakeHostname flag exists for doesn't apply here - the
+// snapshot must round-trip whatever Effective.Hostname actually is through
+// decode's gosdtoml.Parse.
 func (s Snapshot) encode() ([]byte, []byte, error) {
-	tomlData := gosdtoml.Render(s.Effective.Hostname, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, s.Effective.Env)
+	tomlData := gosdtoml.Render(s.Effective.Hostname, true, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, s.Effective.Env)
 	meta := snapshotMeta{
 		Schema:   schemaVersion,
 		Identity: s.Identity,
