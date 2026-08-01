@@ -1,6 +1,10 @@
 package wifiup
 
-import "github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+import (
+	"errors"
+
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+)
 
 // onLeaseFor returns the callback netup.RunDHCP invokes for every lease
 // obtained (initial and renewed) on iface: assign the address, set the
@@ -20,7 +24,11 @@ func onLeaseFor(deps Deps, iface string) func(*netup.Lease) {
 			}
 		}
 		if err := deps.WriteResolvConf(lease.DNS); err != nil {
-			deps.Log("writing resolv.conf failed: %v", err)
+			if errors.Is(err, netup.ErrNoDNSServers) {
+				deps.Log("%s: lease had no DNS servers; keeping existing resolv.conf", iface)
+			} else {
+				deps.Log("writing resolv.conf failed: %v", err)
+			}
 		}
 		if err := deps.MarkNetworkUp(); err != nil {
 			deps.Log("marking network up failed: %v", err)
