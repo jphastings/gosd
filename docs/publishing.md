@@ -94,6 +94,51 @@ pre-filled in the card's `gosd.toml [env]` table, so whoever flashes the
 card can see what you've set and override any key by editing that file —
 no rebuild needed on their end.
 
+## Keeping `/data` across upgrades (`--data-size=expand`)
+
+If you expect to ship a second release of this app, build with
+`--data-size=expand` rather than a fixed `--data-size`. A fixed size
+embeds a freshly formatted `GOSD-DATA` partition inside the `.img` file
+itself, so flashing any later version overwrites that region directly —
+`/data` is wiped on every reflash, with no exceptions. `expand` ships no
+data partition at all and has the device grow one on first boot instead;
+because the image never carries those bytes, a later reflash leaves them
+untouched, and the device re-adopts its existing `/data` — plus a
+hand-edited hostname, WiFi network, or `gosd.toml [env]` value — instead
+of starting over. See
+[`docs/runtime.md`'s "Persistent storage: `/data`"
+section](runtime.md#persistent-storage-data) for the full mechanics
+(re-adoption, the provisioning snapshot, and what doesn't survive).
+
+This survival only holds across a reflash that keeps the same
+`--boot-size` the earlier release used — see below.
+
+## Sizing the boot volume (`--boot-size`)
+
+`gosd build`'s `GOSD-BOOT` partition defaults to 256MiB, enough for every
+stock board's kernel and initramfs. An app bundling a large companion
+binary (see [`--with-external`](runtime.md#bundling-a-companion-binary---with-external))
+may need more:
+
+```sh
+gosd build . --board pi-zero-2w --boot-size 1GiB
+```
+
+The build fails with an actionable error naming `--boot-size` if your
+payload still doesn't fit, and every successful build prints a one-line
+usage report (`<board> boot volume: <used> / <size> used (<pct>%)`) so you
+can watch your headroom shrink across releases before it becomes a
+problem.
+
+**The size you ship becomes part of your app's on-disk layout — its
+layout ABI.** It fixes where the data partition starts on the card. A
+later release that changes `--boot-size`, in either direction, moves that
+offset: the device can no longer recognize what's already on the card as
+its own `/data`, and the next reflash formats a fresh one instead of
+adopting it — a clean wipe, not corruption, but real data loss for anyone
+who upgrades. If a release must change `--boot-size`, say so at
+release-notes level, the same as any other breaking change.
+
 ## Device filtering: which boards show up for which device selection
 
 Imager's first wizard page asks the user to pick their device, and then

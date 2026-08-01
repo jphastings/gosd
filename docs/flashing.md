@@ -115,6 +115,17 @@ http://<the name you chose>.local
 For example, if you named your device `my-lamp`, go to `http://my-lamp.local`.
 Your app should appear.
 
+## Upgrading your device
+
+When your app's developer releases a newer version, installing it is no
+different from putting the app on for the first time: just follow this
+guide again from the start, using the same memory card and the new link
+they give you.
+
+Once your device finishes starting up, its name, WiFi details, and any
+other settings you'd already set up come back on their own — there's
+nothing extra to redo.
+
 ## Troubleshooting
 
 **The app doesn't appear in the list (step 6).** Double-check the link you

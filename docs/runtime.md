@@ -22,7 +22,10 @@ does is the whole system.
   at process start — retry instead of treating an early failure as fatal.
 - **The root filesystem is RAM-backed and gone on reboot.** Of the image
   itself, only `/data` (opt-in, FAT32, a fixed path) survives power loss —
-  plus whatever you store via the `emmc`/`disk` packages.
+  plus whatever you store via the `emmc`/`disk` packages. Built with
+  `--data-size=expand`, `/data` — plus a hand-edited hostname, WiFi, or
+  `[env]` value — also survives a *reflash* to a newer version; a
+  fixed-size `--data-size` does not (see "Persistent storage: `/data`").
 - **Logging is stdout/stderr to the serial console**, nothing else. No
   syslog, no log files, no remote shipping.
 - **HTTPS needs a manual CA bundle** — the image ships no root store; see
@@ -306,9 +309,32 @@ then on. Points specific to expand:
   limitation — see [How big the data partition can
   be](#how-big-the-data-partition-can-be)); a bigger card's remainder stays
   unused, with a log line saying so.
-- **Reflashing resets the cycle**: the freshly-flashed image again has no
-  partition 2, so the next first boot re-creates `/data` from scratch —
-  reflashing wipes `/data` exactly as it does for fixed-size images.
+- **A reflash re-adopts the existing partition, contents intact — this is
+  why `--data-size=expand` is the recommended mode for updatable
+  deployments.** Flashing an image rewrites the whole card's MBR, which
+  drops partition 2's entry, but an `expand` image ships no data partition
+  at all, so the flash never touches the bytes beyond the boot partition.
+  On the next first boot, the device looks at what's actually sitting
+  there: if it's a FAT32 filesystem labelled `GOSD-DATA` carrying a
+  hidden completion marker (`gosd-data-established`, at the partition's
+  root — see the marker note below), it's adopted rather than
+  reformatted, and the MBR entry is simply rewritten to record it. The
+  marker matters because a matching label alone isn't proof of a
+  finished format — see below — so the device only ever adopts a
+  partition it can prove an earlier boot completed; anything else (blank
+  space, a foreign filesystem, or the debris of a first-boot format that
+  never finished) is formatted fresh, exactly as a first boot always was.
+- **Changing `--boot-size` between releases breaks the adoption above.**
+  The boot volume's size is baked into the image and fixes where the data
+  partition starts; a later release that changes it (either direction) —
+  see `docs/publishing.md`'s note on `--boot-size` — means the device
+  can't recognize what's on the card as its own `/data`, and the next
+  reflash wipes it cleanly instead of adopting it. That's a
+  release-notes-level breaking change for that app, not corruption.
+- **A fixed-size `--data-size` partition is still wiped by every
+  reflash.** It's formatted and embedded inside the `.img` file itself,
+  so flashing any version overwrites the data region directly — there's
+  nothing to adopt, on any release.
 
 Rules of engagement:
 
@@ -333,14 +359,75 @@ Rules of engagement:
   under "Making a write durable" below.
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
   first time the partition mounts; leave it alone, and don't be
-  surprised by it when listing `/data`.
-- **Reflashing wipes `/data`.** In v0.3, flashing a new image version
-  recreates the data partition from scratch — everything your app
-  stored is gone. This is deliberate for now. The planned app-slot
-  update mechanism (`docs/design/ab-updates.md`) changes only files
-  inside `GOSD-BOOT` and never touches the partition table, so once it
-  lands, over-the-network app updates will leave `GOSD-DATA` intact —
-  it's a full reflash, and only a full reflash, that wipes it.
+  surprised by it when listing `/data`. An `expand` image's partition
+  root also carries `gosd-data-established` (not a dotfile — deliberately,
+  see the reflash bullet above) once its first-boot format completes, and
+  `/data/.gosd/` is reserved for `gosd-init`'s own bookkeeping (currently
+  the provisioning snapshot, below). Leave all three alone; none of them
+  is meant for your app to read, and an app deleting one is never treated
+  as corruption.
+- **Reflashing wipes `/data` for a fixed-size `--data-size` image, every
+  time.** It's embedded in the `.img` file itself, so flashing any later
+  version overwrites the data region directly. Built with
+  `--data-size=expand` instead, `/data` survives a same-`--boot-size`
+  reflash (see above) — this is the one durability difference between the
+  two modes, and the reason to prefer `expand` for anything you expect to
+  update. The planned app-slot update mechanism (`docs/design/ab-updates.md`)
+  is a separate, narrower promise: it changes only files inside
+  `GOSD-BOOT` and never touches the partition table at all, so once it
+  lands, over-the-network app updates leave `GOSD-DATA` intact regardless
+  of `--data-size` mode.
+
+### The provisioning snapshot: surviving a reflash
+
+Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included — so
+without more than the above, every hand-edited `[env]` value and every
+wizard-provided hostname/WiFi credential would be replaced by the new
+image's baked defaults on every upgrade. On a `--data-size=expand` image,
+`gosd-init` closes that gap the same way it protects `/data` itself: once
+provisioning has settled on a successful boot, it writes a snapshot to
+`/data/.gosd/provision-snapshot/` — the effective `gosd.toml` this boot
+settled on, the baked defaults it was compared against, and the image's
+own identity (a content-derived digest `gosd build` bakes into
+`config.json`, logged at boot as `image identity: <short digest>`). No
+data partition means no snapshot and no self-heal — one more reason to
+build with `expand` for anything you expect to update.
+
+On the first boot after a reflash — detected by the running image's
+identity differing from the one the snapshot was taken under — `gosd-init`
+restores what the operator actually chose, freshest intent first:
+
+1. **Whatever this exact boot already provides wins outright.** A
+   hostname or WiFi network entered through the Imager wizard, or a
+   hand-edit already sitting in the new card's `gosd.toml`, is applied as
+   normal — and also refreshes the snapshot, since it's the most recent
+   statement of the operator's intent.
+2. **Failing that, the snapshot restores anything it can prove was a
+   hand-edit**: a hostname, WiFi ssid/passphrase pair, or individual
+   `[env]` key whose snapshotted value differed from the baked default it
+   was compared against at the time. A value that only ever matched the
+   old image's default is never restored — if a new release changes that
+   default, the new default wins, because the operator never actually
+   chose the old one.
+3. **Failing that, the newly-flashed image's own baked defaults apply**,
+   exactly as on a first flash.
+
+The practical effect: an operator who reflashes a device the same way
+they flashed it the first time — including skipping the Imager wizard
+entirely, via "Use custom image" — gets their hostname and WiFi back and
+rejoins the network on its own, and any hand-edited `gosd.toml [env]`
+value survives too, restored (re-rendered from GoSD's own template) into
+the new card's `gosd.toml` so it's still visible and editable there.
+
+What does **not** come back: anything outside hostname/WiFi/`[env]` — the
+Imager wizard's other, RPi-OS-specific settings were never applied in the
+first place (see "Provisioning" above) — nor the schema or contents of
+your app's own `/data` files across versions, which remains the app's
+concern like any other update. A hand-written *comment* in a card's
+`gosd.toml` isn't preserved either, since a restore re-renders the file
+from the template: values come back, prose around them doesn't. Every
+step here is best-effort: a missing, torn, or unreadable snapshot, or a
+read-only/absent `/data`, is logged and skipped — never a boot failure.
 
 ### Making a write durable
 
