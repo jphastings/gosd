@@ -2,6 +2,7 @@ package blockmount
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,6 +310,110 @@ func TestValidateLabelRejectsEdgeSpacesActionably(t *testing.T) {
 func TestValidateLabelAllowsInteriorSpaces(t *testing.T) {
 	if err := ValidateLabel("pkg", "AB CD"); err != nil {
 		t.Errorf("ValidateLabel(%q) = %v, want nil — only edge spaces are the problem", "AB CD", err)
+	}
+}
+
+// TestValidateLabelRejectsByte7SpaceActionably pins the fix for gosd-f83b: a
+// space at byte index 7 (the FAT short-name field's last byte) cannot
+// round-trip once the label is longer than 8 bytes, for a narrower reason
+// than gosd-xq9l's edge-space fix — go-diskfs's FAT directory-entry parser
+// trims the short-name and extension fields independently, so this interior
+// space is indistinguishable from padding to that trim and silently vanishes.
+func TestValidateLabelRejectsByte7SpaceActionably(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		label string
+	}{
+		{"9 bytes", "ABCDEFG H"},
+		{"10 bytes", "ABCDEFG HI"},
+		{"11 bytes", "ABCDEFG HIJ"},
+		{"byte 7 space plus an unaffected interior space", "ABCDEFG H I"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateLabel("pkg", tc.label)
+			if err == nil {
+				t.Fatalf("ValidateLabel(%q) = nil, want an error", tc.label)
+			}
+			if !strings.Contains(err.Error(), "space") || !strings.Contains(err.Error(), "8th character") {
+				t.Errorf("ValidateLabel(%q) = %q, want it to name the problem (a space, and where)", tc.label, err)
+			}
+		})
+	}
+}
+
+// TestValidateLabelAllows8ByteLabelsWithATrailingContentByte confirms the
+// byte-7 rule's own boundary: for a label of 8 bytes or fewer, byte 7 (if it
+// exists at all) is padding, not label content, so a space there is exactly
+// the already-forbidden trailing-space case, not a new one — an 8-byte label
+// ending in a non-space character at that position must stay admitted.
+func TestValidateLabelAllows8ByteLabelsWithATrailingContentByte(t *testing.T) {
+	if err := ValidateLabel("pkg", "ABCDEFGH"); err != nil {
+		t.Errorf("ValidateLabel(%q) = %v, want nil — exactly 8 bytes, byte 7 is real content", "ABCDEFGH", err)
+	}
+}
+
+// TestAllPositionsRoundTripOrAreRejected is the exhaustive round-trip test
+// gosd-f83b asks for: for every label length from 1 to 11 bytes, and every
+// byte position within it, build the shape with a space at that position and
+// distinct printable-ASCII characters everywhere else. Either ValidateLabel
+// must reject it (an edge space, an all-spaces label, or the byte-7 split) or
+// a real format→Inspect round trip — on both FAT32 and exFAT — must recover
+// the label exactly, and labelMatches must recognise it as already
+// provisioned. This proves the rejected set is exactly right: not too wide
+// (nothing round-trippable is refused) and not too narrow (nothing that
+// silently corrupts is admitted).
+func TestAllPositionsRoundTripOrAreRejected(t *testing.T) {
+	const alphabet = "ABCDEFGHIJK" // 11 distinct non-space bytes, one per position
+
+	for n := 1; n <= maxLabelLen; n++ {
+		for p := 0; p < n; p++ {
+			label := []byte(alphabet[:n])
+			label[p] = ' '
+
+			name := fmt.Sprintf("len=%d/space@%d", n, p)
+			t.Run(name, func(t *testing.T) {
+				wantRejected := p == 0 || p == n-1 || (n > fatShortNameSplit+1 && p == fatShortNameSplit)
+
+				err := ValidateLabel("pkg", string(label))
+				if wantRejected {
+					if err == nil {
+						t.Fatalf("ValidateLabel(%q) = nil, want an error — this shape cannot round-trip", label)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("ValidateLabel(%q) = %v, want nil — this shape should round-trip", label, err)
+				}
+
+				for _, fs := range []diskfmt.FS{diskfmt.FAT32, diskfmt.ExFAT} {
+					path := filepath.Join(t.TempDir(), "device.img")
+					f, err := os.Create(path)
+					if err != nil {
+						t.Fatalf("creating backing file: %v", err)
+					}
+					if err := f.Truncate(64 * 1024 * 1024); err != nil {
+						t.Fatalf("sizing backing file: %v", err)
+					}
+					if err := f.Close(); err != nil {
+						t.Fatalf("closing backing file: %v", err)
+					}
+
+					if err := diskfmt.Format(path, string(label), fs); err != nil {
+						t.Fatalf("Format(%q, %s): %v", label, fs, err)
+					}
+					contents, err := diskfmt.Inspect(path)
+					if err != nil {
+						t.Fatalf("Inspect(%s): %v", fs, err)
+					}
+					if contents.Label != string(label) {
+						t.Errorf("%s: label %q round-tripped to %q", fs, label, contents.Label)
+					}
+					if !labelMatches(contents, string(label)) {
+						t.Errorf("%s: labelMatches(%+v, %q) = false, want true", fs, contents, label)
+					}
+				}
+			})
+		}
 	}
 }
 
