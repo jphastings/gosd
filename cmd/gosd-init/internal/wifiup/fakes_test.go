@@ -127,6 +127,21 @@ func (l *testLog) contains(substr string) bool {
 	return false
 }
 
+// count reports how many logged lines contain substr, so a test can wait
+// for a specific occurrence (e.g. the Nth retry) rather than just the
+// first.
+func (l *testLog) count(substr string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, line := range l.lines {
+		if strings.Contains(line, substr) {
+			n++
+		}
+	}
+	return n
+}
+
 // counter is a thread-safe call counter.
 type counter struct {
 	mu sync.Mutex
@@ -156,7 +171,12 @@ type fakeWifiClient struct {
 	interfacesResults [][]Interface
 	interfacesCalls   int
 
-	connectErr      error
+	connectErr error
+	// connectErrs, when non-empty, scripts a per-call sequence of Connect
+	// outcomes (polled in order, repeating the last), taking precedence
+	// over the single static connectErr — used by tests that need a mix
+	// of failed and successful connect attempts across cycles.
+	connectErrs     []error
 	connectCalls    []string // ssids
 	connectPSKErr   error
 	connectPSKCalls []connectPSKCall
@@ -205,7 +225,14 @@ func (f *fakeWifiClient) Interfaces() ([]Interface, error) {
 func (f *fakeWifiClient) Connect(_ Interface, ssid string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	i := len(f.connectCalls)
 	f.connectCalls = append(f.connectCalls, ssid)
+	if len(f.connectErrs) > 0 {
+		if i >= len(f.connectErrs) {
+			i = len(f.connectErrs) - 1
+		}
+		return f.connectErrs[i]
+	}
 	return f.connectErr
 }
 

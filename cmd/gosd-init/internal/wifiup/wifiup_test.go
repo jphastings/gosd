@@ -343,6 +343,220 @@ func TestRunRetriesAssociationWithBackoffOnFailure(t *testing.T) {
 	}
 }
 
+// TestRunNeverAssociatingBacksOffAcrossRepeatedCycles guards gosd-vcnr: a
+// wrong PSK gets its CONNECT acked by the kernel every time (the ack only
+// means the request was accepted, not that the 4-way handshake
+// completed), so association never confirms. Before the fix, the backoff
+// was reset on that ack alone, and the loop's "lost association" path
+// never consulted it at all — retrying at a fixed ~3s cadence (the
+// association poll period) forever. This checks, across two such cycles,
+// that a retry always waits for a backoff timer on top of the poll,
+// never firing in the brief real-time window right after the poll alone
+// elapses.
+func TestRunNeverAssociatingBacksOffAcrossRepeatedCycles(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		// CONNECT is always acked, but Associated never reports true.
+		associatedResults: []bool{false},
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}} // never need a real lease
+	log := &testLog{}
+	creds := Credentials{SSID: "wrong-psk-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	for cycle := 1; cycle <= 2; cycle++ {
+		deadline := time.Now().Add(2 * time.Second)
+		for wifi.connectCallCount() < cycle && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if wifi.connectCallCount() < cycle {
+			t.Fatalf("cycle %d: Connect was never attempted (calls=%d)", cycle, wifi.connectCallCount())
+		}
+
+		if !advanceUntil(clock, associationPollPeriod, func() bool { return wifi.associatedCallCount() >= cycle }) {
+			t.Fatalf("cycle %d: associatedCalls = %d, want >= %d", cycle, wifi.associatedCallCount(), cycle)
+		}
+
+		// Give any immediate (real-time, not fake-clock-gated) retry —
+		// exactly what the pre-fix bug did — a generous window to
+		// happen before asserting it hasn't.
+		time.Sleep(20 * time.Millisecond)
+		if wifi.connectCallCount() != cycle {
+			t.Fatalf("cycle %d: Connect called %d times right after the association poll fired, want %d (a backoff wait must still be pending)", cycle, wifi.connectCallCount(), cycle)
+		}
+
+		if !waitAndAdvancePast(clock, 10*time.Second) {
+			t.Fatalf("cycle %d: backoff retry timer was never registered", cycle)
+		}
+
+		deadline = time.Now().Add(2 * time.Second)
+		for wifi.connectCallCount() <= cycle && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if wifi.connectCallCount() <= cycle {
+			t.Fatalf("cycle %d: Connect was never retried after the backoff elapsed", cycle)
+		}
+	}
+
+	if !log.contains("accepted the connect but association was never confirmed") {
+		t.Errorf("log missing never-confirmed-association retry message: %v", log.snapshot())
+	}
+}
+
+// TestRunDoesNotResetBackoffOnImmediateDisassociation is the minimal,
+// single-cycle version of the gosd-vcnr regression: one CONNECT ack
+// followed immediately by a poll that never saw association must not
+// reset the backoff (equivalently: must not retry without waiting for
+// one).
+func TestRunDoesNotResetBackoffOnImmediateDisassociation(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		associatedResults: []bool{false},
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}} // never need a real lease
+	log := &testLog{}
+	creds := Credentials{SSID: "wrong-psk-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() < 1 {
+		t.Fatal("Connect was never attempted")
+	}
+	if !log.contains("connect accepted") {
+		deadline = time.Now().Add(2 * time.Second)
+		for !log.contains("connect accepted") && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if !log.contains("connect accepted") {
+		t.Fatalf("log missing connect-accepted message: %v", log.snapshot())
+	}
+
+	if !advanceUntil(clock, associationPollPeriod, func() bool { return wifi.associatedCallCount() >= 1 }) {
+		t.Fatalf("associatedCalls = %d, want >= 1", wifi.associatedCallCount())
+	}
+
+	// The pre-fix bug reset the backoff on the ack itself, so the retry
+	// after this immediate disassociation needed no further wait at
+	// all — Connect would already have been called a second time by
+	// now. Give any such immediate retry a generous real-time window to
+	// happen before asserting it hasn't.
+	time.Sleep(20 * time.Millisecond)
+	if wifi.connectCallCount() != 1 {
+		t.Fatalf("Connect called %d times right after the ack-then-immediate-disassociation, want 1 (the backoff must not have been reset/skipped)", wifi.connectCallCount())
+	}
+	if !log.contains("accepted the connect but association was never confirmed") {
+		t.Errorf("log missing never-confirmed-association message: %v", log.snapshot())
+	}
+
+	if !waitAndAdvancePast(clock, 10*time.Second) {
+		t.Fatal("backoff retry timer was never registered")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() < 2 {
+		t.Fatal("Connect was never retried after the backoff elapsed")
+	}
+}
+
+// TestRunResetsBackoffAfterGenuineAssociation checks the other half of
+// gosd-vcnr's fix: a connection that genuinely associates (Associated
+// observed true, even briefly) before being lost must still reset the
+// backoff, so a later unrelated failure doesn't inherit a stale, grown
+// delay. Cycles 1-2 grow the backoff via outright connect failures;
+// cycle 3 genuinely associates and is then lost; cycle 4 fails again
+// immediately after. Backoff.Next's full jitter always draws strictly
+// less than the pre-jitter delay, and a freshly reset backoff's first
+// call uses the base delay — so advancing the clock by exactly that base
+// deterministically triggers cycle 4's retry only if the reset actually
+// happened; a backoff still carrying cycles 1-2's growth would need
+// materially longer far more often than not.
+func TestRunResetsBackoffAfterGenuineAssociation(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		connectErrs:       []error{errBoom, errBoom, nil, errBoom},
+		associatedResults: []bool{true, false},
+	}
+	links := newFakeLinks()
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}} // never need a real lease
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	// Cycles 1-2: two outright connect failures, each gated by a backoff
+	// wait, growing the underlying delay past its base.
+	for cycle := 1; cycle <= 2; cycle++ {
+		deadline := time.Now().Add(2 * time.Second)
+		for wifi.connectCallCount() < cycle && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if wifi.connectCallCount() < cycle {
+			t.Fatalf("cycle %d: Connect was never attempted", cycle)
+		}
+		if !waitAndAdvancePast(clock, 10*time.Second) {
+			t.Fatalf("cycle %d: backoff retry timer was never registered", cycle)
+		}
+	}
+
+	// Cycle 3: the third Connect call succeeds and genuinely associates,
+	// then is lost.
+	deadline := time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() < 3 {
+		t.Fatal("cycle 3: Connect was never attempted")
+	}
+	if !advanceUntil(clock, associationPollPeriod, func() bool { return wifi.associatedCallCount() >= 2 }) {
+		t.Fatalf("associatedCalls = %d, want >= 2", wifi.associatedCallCount())
+	}
+
+	// Cycle 4: wait for its failure to be logged (this is wifiup's own
+	// "associating ... failed" message, distinct from netup's DHCP-retry
+	// logging, which shares the "; retrying in" suffix but not this
+	// prefix) — cycles 1, 2 and 4 each log one, cycle 3 logs none.
+	retryMsg := `associating wlan0 with "home-net" failed`
+	deadline = time.Now().Add(2 * time.Second)
+	for log.count(retryMsg) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := log.count(retryMsg); n < 3 {
+		t.Fatalf("cycle 4's failure was never logged (count=%d, want >= 3): %v", n, log.snapshot())
+	}
+	time.Sleep(10 * time.Millisecond) // let the just-logged retry register its timer
+	clock.Advance(time.Second)        // == the test backoff factory's base delay
+
+	deadline = time.Now().Add(2 * time.Second)
+	for wifi.connectCallCount() < 5 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if wifi.connectCallCount() < 5 {
+		t.Errorf("Connect called %d times, want 5: backoff was not reset after cycle 3's genuine association", wifi.connectCallCount())
+	}
+}
+
 func TestRunReconnectsAfterAssociationIsLost(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	wifi := &fakeWifiClient{
