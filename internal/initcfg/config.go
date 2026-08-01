@@ -11,6 +11,7 @@ package initcfg
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Config is the schema of /etc/gosd/config.json, baked into every image at
@@ -55,6 +56,42 @@ type Config struct {
 	// existed; callers must treat that as "unknown, not comparable"
 	// rather than as a mismatch (see ShortIdentity).
 	Identity string `json:"identity,omitempty"`
+
+	// BuildTimestamp is when gosd build assembled this image (UTC,
+	// RFC3339Nano), baked in by the CLI. It's gosd-init's timesync
+	// package's clock floor (see BuildTime and gosd-0esw): neither board
+	// has a battery-backed RTC, so the clock starts every boot near the
+	// Unix epoch, and an SNTP result reporting a time before the image
+	// was even built can only be wrong — a forged or badly misbehaving
+	// server, never a legitimate one.
+	//
+	// Deliberately excluded from ComputeIdentity's payload without any
+	// special-casing: that function's docstring already excludes
+	// config.json in its entirety (not just Identity), so a value that
+	// changes on every rebuild lives here safely — it never touches
+	// build reproducibility.
+	//
+	// Optional: empty for every config.json baked before this field
+	// existed; BuildTime returns the zero time.Time in that case, which
+	// callers must treat as "no floor available," not as "before the
+	// epoch."
+	BuildTimestamp string `json:"buildTimestamp,omitempty"`
+}
+
+// BuildTime parses BuildTimestamp, returning the zero time.Time if it's
+// empty or malformed (e.g. a config.json baked before this field
+// existed) — callers must treat that as "no floor available," exactly
+// how ShortIdentity treats an empty Identity as "unknown, not
+// comparable."
+func (c Config) BuildTime() time.Time {
+	if c.BuildTimestamp == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, c.BuildTimestamp)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // shortIdentityLen is how many leading hex characters of Identity

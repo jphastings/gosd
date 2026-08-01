@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/jphastings/gosd/internal/artifacts"
 	"github.com/jphastings/gosd/internal/boards"
@@ -243,6 +244,12 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		Env:        opts.Config.Env,
 		DataExpand: opts.DataExpand,
 		Identity:   identity,
+		// Wall-clock, taken here rather than threaded in via Options: it
+		// must vary build-to-build (that's the whole point, as
+		// timesync's clock floor), and config.json is excluded from
+		// ComputeIdentity's payload entirely, so it can't move Identity
+		// - see BuildTimestamp's doc.
+		BuildTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)

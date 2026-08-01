@@ -129,6 +129,16 @@ func main() {
 					Servers:               ntpServers(cfg),
 					ResyncEvery:           timesync.DefaultResyncInterval,
 					NetworkUpPollInterval: timesync.DefaultNetworkUpPollInterval,
+					// Floor/MaxStep are gosd-0esw's guards against an
+					// unauthenticated SNTP reply setting the clock to an
+					// arbitrary value: Floor refuses anything before this
+					// image was built, MaxStep bounds how far a resync
+					// may step the clock outright (see timesync's
+					// package doc). cfg.BuildTime is the zero time.Time
+					// for a config.json baked before that field existed,
+					// which disables the floor rather than misfiring.
+					Floor:   cfg.BuildTime(),
+					MaxStep: timesync.DefaultMaxStep,
 				})
 			})
 			guard.Go("the mDNS responder", func() {

@@ -31,6 +31,11 @@ const (
 	// marker within a couple of seconds of it appearing is more than
 	// good enough.
 	DefaultNetworkUpPollInterval = 2 * time.Second
+
+	// DefaultMaxStep is the post-first-sync step guard's threshold
+	// (Options.MaxStep), matching ntpd's classic ~1000s step/panic
+	// threshold — see stepGuard's doc for the full design (gosd-0esw).
+	DefaultMaxStep = 1000 * time.Second
 )
 
 // DefaultServers is the NTP server list used when config.json doesn't
@@ -84,6 +89,24 @@ type Options struct {
 	// this nil so it runs for the life of the process, as PID 1
 	// requires; tests set it to bound the otherwise-infinite loops.
 	Stop <-chan struct{}
+
+	// Floor is the earliest time Run will ever accept from an NTP
+	// server; any result before it is refused and logged, exactly like a
+	// query that gets no answer at all (see checkFloor). Production
+	// wires this to config.json's baked build timestamp
+	// (initcfg.Config.BuildTime) — see the package doc and gosd-0esw. The
+	// zero time.Time (the default) disables the check entirely, which is
+	// also what a config.json baked before that field existed parses to.
+	Floor time.Time
+
+	// MaxStep bounds how large a step a resync — never the first sync,
+	// see stepGuard's doc — may apply outright. A candidate whose
+	// distance from where the clock should currently read exceeds
+	// MaxStep is refused and logged, applied only once an immediately
+	// following resync reports a value that agrees with it. Zero (the
+	// default) disables the guard. Production wires this to
+	// DefaultMaxStep.
+	MaxStep time.Duration
 }
 
 // Run waits for the network-up marker, then synchronizes the system
@@ -100,7 +123,13 @@ func Run(deps Deps, opts Options) {
 		return
 	}
 
-	if !syncUntilSuccess(deps, opts) {
+	// guard is created before the first sync (not just before the resync
+	// loop) so that first sync anchors it — see stepGuard's doc: every
+	// resync's step is measured against wherever the clock should be
+	// given the most recently *applied* sync, and the first sync is the
+	// only source of that anchor before any resync has ever run.
+	guard := &stepGuard{}
+	if !syncUntilSuccess(deps, opts, guard) {
 		return
 	}
 
@@ -109,7 +138,7 @@ func Run(deps Deps, opts Options) {
 		case <-opts.Stop:
 			return
 		case <-deps.Clock.After(opts.ResyncEvery):
-			resync(deps, opts)
+			guard.resync(deps, opts)
 		}
 	}
 }
@@ -135,15 +164,21 @@ func waitForNetworkUp(deps Deps, opts Options) bool {
 }
 
 // syncUntilSuccess queries opts.Servers, retrying the whole list with
-// backoff on failure, until one round succeeds or opts.Stop closes. On
-// success it sets the system clock, logs the step change, writes the
+// backoff on failure, until one round produces a result that clears
+// opts.Floor (see checkFloor) or opts.Stop closes. A pre-floor result is
+// treated exactly like a round with no answer at all: logged and retried
+// after backoff, never applied. On a result that does clear the floor, it
+// sets the system clock, logs the step change, anchors guard for the
+// resync loop to measure steps against (see stepGuard's doc), writes the
 // time-synced marker, and returns true. It returns false only if
 // opts.Stop closed first.
-func syncUntilSuccess(deps Deps, opts Options) bool {
+func syncUntilSuccess(deps Deps, opts Options, guard *stepGuard) bool {
 	backoff := deps.NewBackoff()
 	for {
-		if newTime, ok := queryServers(deps, opts.Servers); ok {
-			applySync(deps, newTime)
+		if newTime, ok := queryServers(deps, opts.Servers); ok && checkFloor(deps, opts, newTime) {
+			old := deps.Clock.Now()
+			stepClock(deps, old, newTime)
+			guard.setAnchor(old, newTime)
 			if err := deps.MarkTimeSynced(); err != nil {
 				deps.Log("writing time-synced marker failed: %v", err)
 			}
@@ -162,14 +197,40 @@ func syncUntilSuccess(deps Deps, opts Options) bool {
 
 // resync re-queries opts.Servers once — no backoff, since the next
 // attempt is only opts.ResyncEvery away regardless — applying and
-// logging the adjustment on success, or just logging the failure so the
-// next scheduled resync tries again.
-func resync(deps Deps, opts Options) {
-	if newTime, ok := queryServers(deps, opts.Servers); ok {
-		applySync(deps, newTime)
+// logging the adjustment once a result clears both guards: the build
+// floor (checkFloor) and, unlike the first sync, g's max-step
+// confirmation (stepGuard.check). Any refusal, and any round where no
+// server answered, is just logged so the next scheduled resync tries
+// again.
+func (g *stepGuard) resync(deps Deps, opts Options) {
+	newTime, ok := queryServers(deps, opts.Servers)
+	if !ok {
+		deps.Log("scheduled NTP resync failed on every configured server; will retry at the next resync")
 		return
 	}
-	deps.Log("scheduled NTP resync failed on every configured server; will retry at the next resync")
+	if !checkFloor(deps, opts, newTime) {
+		return
+	}
+
+	old := deps.Clock.Now()
+	if !g.check(deps, opts, old, newTime) {
+		return
+	}
+	stepClock(deps, old, newTime)
+	g.setAnchor(old, newTime)
+}
+
+// checkFloor reports whether newTime clears opts.Floor, logging and
+// refusing otherwise. The zero Floor (config.json baked before gosd-0esw,
+// or before the build-timestamp field existed) disables the check
+// entirely — see Options.Floor's doc.
+func checkFloor(deps Deps, opts Options, newTime time.Time) bool {
+	if opts.Floor.IsZero() || !newTime.Before(opts.Floor) {
+		return true
+	}
+	deps.Log("NTP result %s is before this build's floor of %s; refusing (a forged or misbehaving server?)",
+		newTime.Format(time.RFC3339), opts.Floor.Format(time.RFC3339))
+	return false
 }
 
 // queryServers tries each server in order, returning the first one that
@@ -189,10 +250,12 @@ func queryServers(deps Deps, servers []string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// applySync sets the system clock to newTime and logs the step change
-// (old time -> new time), per the bean.
-func applySync(deps Deps, newTime time.Time) {
-	old := deps.Clock.Now()
+// stepClock sets the system clock to newTime and logs the step change
+// (old -> new), per the bean. old is the deps.Clock reading immediately
+// before the step, passed in by the caller (rather than read again here)
+// so a resync's step-guard measurement and the logged "old" value are
+// exactly the same reading.
+func stepClock(deps Deps, old, newTime time.Time) {
 	if err := deps.System.Set(newTime); err != nil {
 		deps.Log("setting system clock failed: %v", err)
 		return

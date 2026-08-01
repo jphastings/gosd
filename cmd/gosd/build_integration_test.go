@@ -1793,6 +1793,32 @@ func TestBuildIdentityUnaffectedByDataExpand(t *testing.T) {
 	}
 }
 
+// TestBuildTimestampVariesButIdentityDoesNotAcrossRebuilds is gosd-0esw's
+// reproducibility proof: config.json's buildTimestamp (timesync's clock
+// floor - see internal/initcfg.Config.BuildTime) necessarily differs on
+// every build, by design, and unlike --data-size=expand's DataExpand it
+// deliberately has no footprint in gosd.toml or anywhere else in the
+// hashed payload either (see ComputeIdentity's docstring and
+// BuildTimestamp's own doc). Identity staying equal here, alongside a
+// buildTimestamp that provably moved, is the strongest evidence that
+// adding it never put a dent in
+// TestBuildIdentityIsReproducibleAcrossRebuilds' guarantee.
+func TestBuildTimestampVariesButIdentityDoesNotAcrossRebuilds(t *testing.T) {
+	dir := t.TempDir()
+	cfg1 := buildConfigJSON(t, filepath.Join(dir, "build1.img"))
+	cfg2 := buildConfigJSON(t, filepath.Join(dir, "build2.img"))
+
+	if cfg1.BuildTimestamp == "" {
+		t.Fatal("first build's config.json has an empty buildTimestamp")
+	}
+	if cfg1.BuildTimestamp == cfg2.BuildTimestamp {
+		t.Fatalf("buildTimestamp stayed %q across two separate builds, want it to differ", cfg1.BuildTimestamp)
+	}
+	if cfg1.Identity != cfg2.Identity {
+		t.Errorf("identity differed across rebuilds that only differed by buildTimestamp: %q vs %q", cfg1.Identity, cfg2.Identity)
+	}
+}
+
 // TestBuildRejectsReservedEnvKeyActionably confirms `gosd build --env
 // GOSD_FOO=bar` fails fast with an actionable error naming the reserved
 // namespace, rather than silently baking a key gosd-init would ignore.
