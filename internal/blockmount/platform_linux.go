@@ -83,6 +83,23 @@ func MountedSources() (map[string]bool, error) {
 	return sources, nil
 }
 
+// MountedTargets returns every currently mounted device node mapped to where
+// it is mounted, e.g. "/dev/mmcblk1p1" -> "/storage" — the same /proc/mounts
+// data as MountedSources, kept alongside its mountpoint so a caller can name
+// it in an actionable error (see gadget.MassStorage.Create's mounted-device
+// rejection).
+func MountedTargets() (map[string]string, error) {
+	entries, err := parseMounts()
+	if err != nil {
+		return nil, err
+	}
+	targets := make(map[string]string, len(entries))
+	for _, e := range entries {
+		targets[e.source] = e.target
+	}
+	return targets, nil
+}
+
 // Unmount releases the filesystem mounted at mountpoint. Unmounting an
 // already-unmounted mountpoint reports EINVAL, which callers switching modes
 // can treat as already-released.
