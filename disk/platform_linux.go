@@ -13,12 +13,13 @@ import (
 // Discover is replaced per call, since FormatAndMountDevice names its device.
 func newPlatformDeps() blockmount.Deps {
 	return blockmount.Deps{
-		MountedAt: blockmount.MountedAt,
-		Discover:  discover,
-		Inspect:   diskfmt.Inspect,
-		Format:    diskfmt.Format,
-		Mount:     blockmount.Mount,
-		Mountable: blockmount.Mountable,
+		MountedAt:      blockmount.MountedAt,
+		Discover:       discover,
+		Inspect:        diskfmt.Inspect,
+		Format:         diskfmt.Format,
+		Mount:          blockmount.Mount,
+		Mountable:      blockmount.Mountable,
+		MountedSources: blockmount.MountedSources,
 	}
 }
 

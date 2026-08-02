@@ -13,12 +13,13 @@ import (
 // internal/blockmount.
 func newPlatformDeps() blockmount.Deps {
 	return blockmount.Deps{
-		MountedAt: blockmount.MountedAt,
-		Discover:  discoverEMMC,
-		Inspect:   diskfmt.Inspect,
-		Format:    diskfmt.Format,
-		Mount:     blockmount.Mount,
-		Mountable: blockmount.Mountable,
+		MountedAt:      blockmount.MountedAt,
+		Discover:       discoverEMMC,
+		Inspect:        diskfmt.Inspect,
+		Format:         diskfmt.Format,
+		Mount:          blockmount.Mount,
+		Mountable:      blockmount.Mountable,
+		MountedSources: blockmount.MountedSources,
 	}
 }
 

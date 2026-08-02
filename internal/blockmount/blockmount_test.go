@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -21,6 +22,10 @@ type fakeDeps struct {
 	inspErr     error
 	formatErr   error
 	mountErr    error
+	// mountedAfterDiscover simulates something other than a sibling Run call
+	// — a udev rule, another process — mounting the device in the window
+	// between Discover choosing it and Format writing to it.
+	mountedAfterDiscover bool
 
 	formatted   bool
 	formatLabel string
@@ -59,6 +64,12 @@ func (f *fakeDeps) storage() Storage {
 				return f.mountErr
 			},
 			Mountable: func(fs diskfmt.FS) (bool, error) { return fs != f.unmountable, nil },
+			MountedSources: func() (map[string]bool, error) {
+				if f.mountedAfterDiscover {
+					return map[string]bool{fakeDevice: true}, nil
+				}
+				return map[string]bool{}, nil
+			},
 		},
 	}
 }
@@ -213,6 +224,137 @@ func TestRunIsIdempotentWhenAlreadyMounted(t *testing.T) {
 	}
 	if f.formatted || f.didMount {
 		t.Error("did work despite the storage already being mounted")
+	}
+}
+
+// TestRunRefusesWhenDeviceBecomesMountedBetweenDiscoverAndFormat pins the
+// second half of the gosd-45bv fix. runMu only rules out a sibling call to
+// Run; it says nothing about the device being mounted by something else
+// entirely (a udev rule, another process) in the window between Discover
+// choosing it and Format writing to it. That window exists even for a
+// single, uncontested Run call, so it needs its own re-check rather than
+// relying on the mutex.
+func TestRunRefusesWhenDeviceBecomesMountedBetweenDiscoverAndFormat(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{Blank: true}, mountedAfterDiscover: true}
+
+	_, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", false)
+	if err == nil {
+		t.Fatal("Run succeeded despite the device becoming mounted after Discover")
+	}
+	if f.formatted {
+		t.Error("formatted a device that became mounted after Discover — exactly the corruption the re-check exists to prevent")
+	}
+}
+
+// sharedFakeDevice is a single candidate device shared by two concurrent Run
+// calls, standing in for the eMMC that both emmc.FormatAndMount and
+// disk.FormatAndMount would discover on a Rockchip board (gosd-45bv). Its
+// fields are deliberately unguarded: when runMu correctly serialises Run,
+// only one goroutine is ever inside Discover..Mount at a time, so plain reads
+// and writes are safe (runMu's Lock/Unlock give -race the happens-before
+// edges it needs); if runMu ever failed to do that, concurrent unguarded
+// access to these same fields is exactly the kind of race -race is run to
+// catch.
+type sharedFakeDevice struct {
+	mounted  bool
+	contents diskfmt.Contents
+	formats  int
+}
+
+var errNoCandidateFake = errors.New("fake: no candidate device available")
+
+func (d *sharedFakeDevice) deps(t *testing.T) Deps {
+	// gate is the deterministic proof the bean asks for: rather than
+	// inferring serialisation from timing (racy — a goroutine that simply
+	// hasn't been scheduled yet looks identical to one correctly blocked on
+	// a lock), it directly inspects runMu, which this test file shares the
+	// package with. TryLock succeeding means nobody holds runMu, i.e. this
+	// Discover call is running outside Run's critical section — impossible
+	// if Run's locking is intact, and reported as a test failure the instant
+	// it happens rather than only when it happens to corrupt the outcome.
+	gate := func() {
+		if runMu.TryLock() {
+			runMu.Unlock()
+			t.Error("Discover ran without runMu held — a sibling Run call could interleave with this one")
+		}
+	}
+	return Deps{
+		MountedAt: func(string) (string, bool, error) { return "", false, nil },
+		Discover: func() (string, error) {
+			gate()
+			if d.mounted {
+				return "", errNoCandidateFake
+			}
+			return fakeDevice, nil
+		},
+		Inspect:   func(string) (diskfmt.Contents, error) { return d.contents, nil },
+		Mountable: func(diskfmt.FS) (bool, error) { return true, nil },
+		MountedSources: func() (map[string]bool, error) {
+			if d.mounted {
+				return map[string]bool{fakeDevice: true}, nil
+			}
+			return map[string]bool{}, nil
+		},
+		Format: func(_, label string, fs diskfmt.FS) error {
+			d.formats++
+			d.contents = diskfmt.Contents{FS: fs, Label: label}
+			return nil
+		},
+		Mount: func(string, string, diskfmt.FS) error {
+			d.mounted = true
+			return nil
+		},
+	}
+}
+
+// TestRunSerializesConcurrentCallsForTheSameDevice is the gosd-45bv
+// regression test: two goroutines calling Run concurrently for the same
+// underlying candidate device — standing in for emmc.FormatAndMount and
+// disk.FormatAndMount racing over one idle eMMC — must never both format it.
+//
+// Both calls are released together off a start barrier (a gate, not a sleep)
+// so they genuinely contend rather than happening to run one after the
+// other; sharedFakeDevice.deps's own gate then deterministically fails the
+// test the instant either Discover call runs without runMu held, regardless
+// of how the scheduler actually interleaved the two goroutines. Run with
+// -race as a second, independent check: if runMu ever let the two calls
+// overlap, their concurrent unguarded access to sharedFakeDevice's fields
+// would also be reported as a data race.
+func TestRunSerializesConcurrentCallsForTheSameDevice(t *testing.T) {
+	dev := &sharedFakeDevice{contents: diskfmt.Contents{Blank: true}}
+	start := make(chan struct{})
+	results := make([]error, 2)
+	var wg sync.WaitGroup
+
+	run := func(i int, pkg, noun, label, mountpoint string) {
+		defer wg.Done()
+		<-start
+		_, results[i] = Run(Storage{Pkg: pkg, Noun: noun, Deps: dev.deps(t)}, diskfmt.FAT32, label, mountpoint, false)
+	}
+
+	wg.Add(2)
+	go run(0, "emmcfake", "eMMC", "APPDATA", "/storage-a")
+	go run(1, "diskfake", "disk", "BULK", "/storage-b")
+	close(start)
+	wg.Wait()
+
+	if dev.formats != 1 {
+		t.Fatalf("device was formatted %d times, want exactly 1", dev.formats)
+	}
+
+	var successes, refusals int
+	for _, err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, errNoCandidateFake):
+			refusals++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || refusals != 1 {
+		t.Fatalf("results = %v, want exactly one success (it formatted) and one refusal (the device was already in use by the time it ran)", results)
 	}
 }
 
