@@ -42,8 +42,14 @@ type Deps struct {
 	NewBackoff func() *netup.Backoff
 
 	WriteResolvConf func(dns []net.IP) error
-	MarkNetworkUp   func() error
-	ClearNetworkUp  func() error
+	// MarkNetworkUp and ClearNetworkUp report ifi as up or down. This is
+	// the same shared, refcounted marker netup.Deps uses — see that
+	// type's doc for why (bean gosd-akk4): production wiring (main.go)
+	// routes both packages through one netup.UpSet keyed by interface
+	// name, so WiFi going down never clobbers a still-up Ethernet link
+	// (or vice versa) on a dual-interface board.
+	MarkNetworkUp  func(iface string) error
+	ClearNetworkUp func(iface string) error
 
 	Log func(format string, args ...any)
 }
@@ -362,7 +368,7 @@ func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disco
 		} else {
 			deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
 		}
-		if err := deps.ClearNetworkUp(); err != nil {
+		if err := deps.ClearNetworkUp(ifi.Name); err != nil {
 			deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
 		}
 		disconnect()

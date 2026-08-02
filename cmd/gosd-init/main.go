@@ -117,13 +117,26 @@ func main() {
 			// already builds for them (see netupDeps/wifiupDeps).
 			mdnsChanged := mdnsresponder.NewSignal()
 
+			// upSet refcounts the shared /run/gosd/network-up marker
+			// across netup (wired interfaces) and wifiup (WiFi): both
+			// packages' MarkNetworkUp/ClearNetworkUp calls, each keyed
+			// by their own interface name, route through this single
+			// instance so a dual-interface board (e.g. pi-3b's Ethernet
+			// + WiFi) doesn't have one medium going down clear a marker
+			// the other medium still needs (bean gosd-akk4). See
+			// netup.UpSet's doc.
+			upSet := netup.NewUpSet(
+				func() error { return netup.MarkNetworkUp(netup.DefaultNetworkUpPath) },
+				func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
+			)
+
 			// Each of these loops runs for the life of the device, and a
 			// panic escaping any of them would take PID 1 with it — so
 			// they run guarded, logging the stack and rebooting instead
 			// (see boot.PanicGuard and gosd-fkkr).
 			guard := boot.PanicGuard{Rebooter: platform.Rebooter, Sleep: time.Sleep, Log: log}
 
-			guard.Go("netup", func() { netup.Run(netupDeps(log, mdnsChanged), netup.Options{}) })
+			guard.Go("netup", func() { netup.Run(netupDeps(log, mdnsChanged, upSet), netup.Options{}) })
 			guard.Go("timesync", func() {
 				timesync.Run(timesyncDeps(log), timesync.Options{
 					Servers:               ntpServers(cfg),
@@ -153,7 +166,7 @@ func main() {
 				return
 			}
 			guard.Guard("wifiup", func() {
-				wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged), wifiup.Options{})
+				wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged, upSet), wifiup.Options{})
 			})
 		},
 	}
@@ -284,8 +297,12 @@ func fallbackLog(format string, args ...any) {
 // logging through log (boot's console logger, once available). changed is
 // notified alongside every real MarkNetworkUp/ClearNetworkUp call so the
 // mDNS responder restarts on link-down and on every lease (initial or
-// renewed) — see mdnsresponderDeps and gosd-r796.
-func netupDeps(log func(format string, args ...any), changed *mdnsresponder.Signal) netup.Deps {
+// renewed) — see mdnsresponderDeps and gosd-r796; that notification fires
+// on every call regardless of upSet's own refcount decision, matching the
+// pre-existing "restart on every lease/link event" mDNS behavior. upSet is
+// the same instance wifiupDeps wires WiFi through — see its construction
+// in StartNetworking and netup.UpSet's doc (bean gosd-akk4).
+func netupDeps(log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet) netup.Deps {
 	platform := netup.NewPlatform()
 	return netup.Deps{
 		Links:           platform.Links,
@@ -293,13 +310,13 @@ func netupDeps(log func(format string, args ...any), changed *mdnsresponder.Sign
 		Clock:           netup.NewRealClock(),
 		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
 		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
-		MarkNetworkUp: func() error {
-			err := netup.MarkNetworkUp(netup.DefaultNetworkUpPath)
+		MarkNetworkUp: func(iface string) error {
+			err := upSet.Up(iface)
 			changed.Notify()
 			return err
 		},
-		ClearNetworkUp: func() error {
-			err := netup.ClearNetworkUp(netup.DefaultNetworkUpPath)
+		ClearNetworkUp: func(iface string) error {
+			err := upSet.Down(iface)
 			changed.Notify()
 			return err
 		},
@@ -343,9 +360,10 @@ func ntpServers(cfg initcfg.Config) []string {
 // wireless — and the credential source, in locked precedence order:
 // gosd.toml's hand-edited network, else the first network cloud-init's
 // network-config named (provisionWifi), else config.json's baked-in wifi
-// block. changed is wired the same way netupDeps wires it: see that
+// block. changed and upSet are wired the same way netupDeps wires them
+// (the same *mdnsresponder.Signal and *netup.UpSet instances): see that
 // function's doc.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, provisionWifi []provision.WifiNetwork, log func(format string, args ...any), changed *mdnsresponder.Signal) wifiup.Deps {
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, provisionWifi []provision.WifiNetwork, log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
@@ -355,13 +373,13 @@ func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.
 		Clock:           netup.NewRealClock(),
 		NewBackoff:      func() *netup.Backoff { return netup.NewBackoff(netup.DefaultBackoffBase, netup.DefaultBackoffCap) },
 		WriteResolvConf: func(dns []net.IP) error { return netup.WriteResolvConf(netup.DefaultResolvConfPath, dns) },
-		MarkNetworkUp: func() error {
-			err := netup.MarkNetworkUp(netup.DefaultNetworkUpPath)
+		MarkNetworkUp: func(iface string) error {
+			err := upSet.Up(iface)
 			changed.Notify()
 			return err
 		},
-		ClearNetworkUp: func() error {
-			err := netup.ClearNetworkUp(netup.DefaultNetworkUpPath)
+		ClearNetworkUp: func(iface string) error {
+			err := upSet.Down(iface)
 			changed.Notify()
 			return err
 		},

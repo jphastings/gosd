@@ -35,11 +35,11 @@ func newTestRunDeps(clock *fakeClock, links *fakeLinks, dhcp *fakeDHCP, log *tes
 		WriteResolvConf: func(dns []net.IP) error {
 			return nil
 		},
-		MarkNetworkUp: func() error {
+		MarkNetworkUp: func(_ string) error {
 			marked.inc()
 			return nil
 		},
-		ClearNetworkUp: func() error {
+		ClearNetworkUp: func(_ string) error {
 			cleared.inc()
 			return nil
 		},

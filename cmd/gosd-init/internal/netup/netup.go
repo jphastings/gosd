@@ -36,12 +36,17 @@ type Deps struct {
 	// design choice.
 	WriteResolvConf func(dns []net.IP) error
 
-	// MarkNetworkUp and ClearNetworkUp create/remove the
-	// /run/gosd/network-up marker file (empty-file existence check) that
-	// the rest of gosd-init (and eventually /app) can use to tell
-	// whether an address is currently assigned.
-	MarkNetworkUp  func() error
-	ClearNetworkUp func() error
+	// MarkNetworkUp and ClearNetworkUp report iface as up or down. The
+	// /run/gosd/network-up marker file (empty-file existence check) they
+	// back is shared with wifiup — a dual-interface board (e.g. pi-3b's
+	// Ethernet + WiFi) can have both up at once, so production wiring
+	// (main.go) routes both packages' calls through one netup.UpSet that
+	// refcounts by iface: the marker is created only when the first
+	// interface comes up and removed only once every interface has gone
+	// down, so one medium's link-down never clobbers another's still-up
+	// state (bean gosd-akk4).
+	MarkNetworkUp  func(iface string) error
+	ClearNetworkUp func(iface string) error
 
 	// Log records what the networking state machine is doing. Never
 	// nil in production (wired to boot's console logger).
@@ -146,8 +151,10 @@ func handleLinkEvent(deps Deps, ev LinkEvent, active map[string]context.CancelFu
 		// write the marker on lease assignment), but leaving a stale
 		// network-up marker after the cable is pulled would be
 		// actively misleading to anything that checks it, so we clear
-		// it on link-down too.
-		if err := deps.ClearNetworkUp(); err != nil {
+		// it on link-down too. ClearNetworkUp is keyed by ev.Name so a
+		// dual-interface board's other still-up interface (e.g. wlan0)
+		// keeps the shared marker — see the UpSet doc on Deps.
+		if err := deps.ClearNetworkUp(ev.Name); err != nil {
 			deps.Log("clearing network-up marker for %s failed: %v", ev.Name, err)
 		}
 		deps.Log("%s went down; DHCP stopped, will resume automatically when the link returns", ev.Name)
@@ -171,7 +178,7 @@ func onLeaseFor(deps Deps, iface string) func(*Lease) {
 		if err := deps.WriteResolvConf(lease.DNS); err != nil {
 			deps.Log("writing resolv.conf failed: %v", err)
 		}
-		if err := deps.MarkNetworkUp(); err != nil {
+		if err := deps.MarkNetworkUp(iface); err != nil {
 			deps.Log("marking network up failed: %v", err)
 		}
 		deps.Log("%s: lease %s via gateway %s (dns %v)", iface, lease.Address, lease.Gateway, lease.DNS)

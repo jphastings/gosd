@@ -21,11 +21,11 @@ func newTestDeps(clock *fakeClock, wifi *fakeWifiClient, links *fakeLinks, dhcp 
 		WriteResolvConf: func([]net.IP) error {
 			return nil
 		},
-		MarkNetworkUp: func() error {
+		MarkNetworkUp: func(_ string) error {
 			marked.inc()
 			return nil
 		},
-		ClearNetworkUp: func() error {
+		ClearNetworkUp: func(_ string) error {
 			cleared.inc()
 			return nil
 		},
