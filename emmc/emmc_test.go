@@ -108,3 +108,22 @@ func TestChooseEMMCIgnoresNonMMCStorage(t *testing.T) {
 		t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
 	}
 }
+
+// TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions pins the sysfs quirk
+// chooseEMMC's doc comment relies on (see gosd-f226/gosd-ix38): a GP hardware
+// partition's gendisk reports no device/type, so Kind is "" rather than
+// "MMC" — accidentally, not by an explicit exclusion like disk.rank's. If a
+// future kernel or sysfs change ever gave these Kind == "MMC", this test
+// would start failing and say exactly why.
+func TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions(t *testing.T) {
+	devices := []blockmount.Device{
+		{Name: "mmcblk0", Kind: "MMC", Partitions: []string{"mmcblk0p1"}},
+		{Name: "mmcblk0gp0", Kind: ""},
+		{Name: "mmcblk0gp1", Kind: ""},
+	}
+	mounted := map[string]bool{"/dev/mmcblk0p1": true}
+
+	if _, err := chooseEMMC(devices, mounted); !errors.Is(err, ErrNoEMMC) {
+		t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
+	}
+}

@@ -32,6 +32,7 @@ package disk
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jphastings/gosd/internal/blockmount"
@@ -222,10 +223,12 @@ var deviceClasses = []string{
 }
 
 // rank accepts a block device as a format target and orders it against the
-// others. Beyond the class allowlist it rejects an eMMC's boot/RPMB hardware
-// partitions (which hold boot code, not general storage), a device reporting no
-// medium (an empty card-reader slot still enumerates), and a write-protected
-// device — better to report ErrNoDisk than to fail deep inside a format.
+// others. Beyond the class allowlist it rejects an eMMC's boot/RPMB/GP
+// hardware partitions (which hold boot code, replay-protected data or
+// vendor-managed content such as DRM keys and calibration — never general
+// storage), a device reporting no medium (an empty card-reader slot still
+// enumerates), and a write-protected device — better to report ErrNoDisk than
+// to fail deep inside a format.
 func rank(dev blockmount.Device) (int, bool) {
 	if dev.SizeSectors == 0 || dev.ReadOnly || isMMCHardwarePartition(dev.Name) {
 		return 0, false
@@ -244,15 +247,29 @@ func hasClassPrefix(name, prefix string) bool {
 	return len(name) > len(prefix) && strings.HasPrefix(name, prefix)
 }
 
-// isMMCHardwarePartition spots an eMMC's boot and replay-protected areas, which
-// the kernel exposes as their own block devices alongside the user area.
+// mmcHardwarePartitionRE matches the block-device names the kernel's MMC
+// block driver registers for an eMMC's hardware partitions: boot0/boot1 (boot
+// code), rpmb (replay-protected storage) and gp0-gp3 (vendor general-purpose
+// areas — on a Rockchip board these typically hold DRM keys, calibration data
+// or other secure storage the vendor put there, per gosd-f226). Each is its
+// own /sys/block gendisk alongside the user-data area (e.g. mmcblk0gp0 next to
+// mmcblk0), so it must be excluded structurally rather than by growing a
+// suffix list: a suffix check risks a false positive against a plain
+// partition name that happens to end the same way, and would need a new entry
+// every time the kernel's naming grows. The digit groups use \d+ rather than
+// a literal 0-3/0-1 so an unexpected shape (a double-digit device number, an
+// index the kernel doesn't use today) is still caught defensively; the
+// anchors keep a name that merely contains "boot"/"rpmb"/"gp" from matching
+// by accident. Partitions of the user area (mmcblk0p1) are never mistaken for
+// a hardware partition — "p1" is not one of "boot\d+", "rpmb" or "gp\d+" —
+// though they are excluded from candidacy for other reasons (see rank).
+var mmcHardwarePartitionRE = regexp.MustCompile(`^mmcblk\d+(boot\d+|rpmb|gp\d+)$`)
+
+// isMMCHardwarePartition spots an eMMC's boot, replay-protected and
+// general-purpose hardware partitions, which the kernel exposes as their own
+// block devices alongside the user area.
 func isMMCHardwarePartition(name string) bool {
-	for _, suffix := range []string{"boot0", "boot1", "rpmb"} {
-		if len(name) > len(suffix) && strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
+	return mmcHardwarePartitionRE.MatchString(name)
 }
 
 // choose picks the disk to format from the block devices present: the

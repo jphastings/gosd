@@ -109,6 +109,14 @@ func storage(d blockmount.Deps) blockmount.Storage {
 // never a format target. mountedSources holds the device nodes currently
 // mounted (e.g. "/dev/mmcblk1p1"), so booting from the eMMC safely yields
 // ErrNoEMMC rather than a wiped system.
+//
+// Unlike disk.rank (see gosd-f226), this has no explicit exclusion for an
+// eMMC's hardware partitions (boot0/boot1/rpmb/gp0-gp3). It does not need one
+// today only because of a sysfs-topology quirk: those gendisks' device/type
+// attribute reads empty, not "MMC", so Kind == "MMC" already excludes them —
+// see gosd-ix38, which tracks folding this rank (and disk's SizeSectors/
+// ReadOnly checks) into a shared blockmount.Usable so both packages stop
+// depending on that quirk rather than an explicit guard.
 func chooseEMMC(devices []blockmount.Device, mountedSources map[string]bool) (string, error) {
 	rank := func(dev blockmount.Device) (int, bool) { return 0, dev.Kind == "MMC" }
 	return blockmount.Choose(devices, mountedSources, rank, ErrNoEMMC)
