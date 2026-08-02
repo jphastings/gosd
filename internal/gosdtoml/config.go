@@ -22,6 +22,18 @@ type Config struct {
 	Hostname string            `toml:"hostname"`
 	Wifi     Wifi              `toml:"wifi"`
 	Env      map[string]string `toml:"env"`
+
+	// DataFlush overrides config.json's baked vfat "flush" mount-option
+	// default (gosd build --data-flush, see internal/initcfg.Config.
+	// DataFlush) for this specific device. nil means "absent — use the
+	// baked value", the same absent-means-inherit convention as every
+	// other gosd.toml key; a hand-edited data_flush always wins, whichever
+	// way it points (bean gosd-9m1k). Unlike Hostname/Wifi/Env, it isn't
+	// restored by the provisioning snapshot across a reflash (see
+	// cmd/gosd-init/internal/provsnapshot) — docs/runtime.md's "What does
+	// not come back" already covers it as "anything outside
+	// hostname/WiFi/[env]".
+	DataFlush *bool
 }
 
 // Wifi holds the WPA2-PSK or open network a user has hand-entered into
@@ -39,9 +51,10 @@ type Wifi struct {
 // instead. Going through map[string]any lets coerceEnv apply gosd.toml's
 // own, more forgiving rules.
 type rawConfig struct {
-	Hostname string         `toml:"hostname"`
-	Wifi     Wifi           `toml:"wifi"`
-	Env      map[string]any `toml:"env"`
+	Hostname  string         `toml:"hostname"`
+	Wifi      Wifi           `toml:"wifi"`
+	Env       map[string]any `toml:"env"`
+	DataFlush any            `toml:"data_flush"`
 }
 
 // Parse parses gosd.toml's contents into a Config. Missing data (nil or
@@ -59,7 +72,12 @@ type rawConfig struct {
 // (an array, an inline table, a datetime) is dropped — neither ever fails
 // the parse of the rest of the file. Both are reported back as warnings for
 // the caller to log (never silently), since gosd-init has no interactive
-// surface to surface them any other way.
+// surface to surface them any other way. data_flush gets the mirror-image
+// leniency (see coerceDataFlush): it's meant to be written as a bare
+// boolean, so a quoted "true"/"false" is coerced with a warning, and
+// anything else is dropped (falling back to config.json's baked default)
+// with a warning of its own — a malformed override must never stop boot
+// (bean gosd-9m1k).
 func Parse(data []byte) (Config, []string, error) {
 	if len(data) == 0 {
 		return Config{}, nil, nil
@@ -71,12 +89,52 @@ func Parse(data []byte) (Config, []string, error) {
 	}
 
 	env, warnings := coerceEnv(raw.Env)
+	dataFlush, dataFlushWarning := coerceDataFlush(raw.DataFlush)
+	if dataFlushWarning != "" {
+		warnings = append([]string{dataFlushWarning}, warnings...)
+	}
 	cfg := Config{
-		Hostname: raw.Hostname,
-		Wifi:     raw.Wifi,
-		Env:      env,
+		Hostname:  raw.Hostname,
+		Wifi:      raw.Wifi,
+		Env:       env,
+		DataFlush: dataFlush,
 	}
 	return cfg, warnings, nil
+}
+
+// coerceDataFlush turns the raw data_flush value into a *bool override, or
+// nil ("absent — use config.json's baked default") plus a warning to log —
+// [env]'s coercion leniency, mirrored the other way around: data_flush is
+// meant to be written as a bare TOML boolean (data_flush = true), so that
+// form is used as-is; a quoted "true"/"false" (an easy mistake, since [env]
+// values must be quoted) is still honored, with a warning; anything else —
+// a number, an array, a misspelled string — is dropped, keeping the baked
+// default, so a malformed override can never stop boot or silently apply
+// the wrong value (see gosd-9m1k).
+func coerceDataFlush(raw any) (*bool, string) {
+	switch v := raw.(type) {
+	case nil:
+		return nil, ""
+	case bool:
+		return &v, ""
+	case string:
+		if v == "true" || v == "false" {
+			b := v == "true"
+			return &b, fmt.Sprintf(
+				"gosd.toml data_flush is a quoted %q, not a bare boolean; using %t — remove the quotes to silence this warning",
+				v, b,
+			)
+		}
+		return nil, fmt.Sprintf(
+			"gosd.toml data_flush %q is not true or false; using the baked default",
+			v,
+		)
+	default:
+		return nil, fmt.Sprintf(
+			"gosd.toml data_flush isn't a plain boolean (found %s); using the baked default",
+			tomlTypeName(v),
+		)
+	}
 }
 
 // coerceEnv turns a raw, freely-typed [env] table into the quoted-strings-

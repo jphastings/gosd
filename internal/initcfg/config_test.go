@@ -42,6 +42,16 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Hostname: "my-device", DataExpand: true},
 		},
 		{
+			name: "dataFlush marks a build with --data-flush baked in",
+			data: `{"hostname":"my-device","dataFlush":true}`,
+			want: Config{Hostname: "my-device", DataFlush: true},
+		},
+		{
+			name: "config predating dataFlush parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
 			name: "identity parses when present",
 			data: `{"hostname":"my-device","identity":"deadbeef"}`,
 			want: Config{Hostname: "my-device", Identity: "deadbeef"},

@@ -178,6 +178,41 @@ func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
 	}
 }
 
+func TestAssembleBakesDataFlushIntoConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	imgPath := filepath.Join(dir, "out.img")
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: imgPath,
+		DataFlush:  true,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(config), `"dataFlush":true`) {
+		t.Errorf("config.json = %s, want it to contain %q", config, `"dataFlush":true`)
+	}
+}
+
 // TestAssembleBakesBuildTimestampIntoConfigJSON confirms config.json carries
 // a fresh, parseable build timestamp — timesync's clock floor (gosd-0esw).
 // See TestBuildIdentityIsReproducibleAcrossRebuilds (build_integration_test.go)

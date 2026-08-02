@@ -44,6 +44,30 @@ type Config struct {
 	// expansion, exactly like --data-size=0.
 	DataExpand bool `json:"dataExpand,omitempty"`
 
+	// DataFlush marks whether gosd-init mounts GOSD-DATA, and blockmount
+	// mounts any emmc/disk vfat volume, with the vfat "flush" option: it
+	// pushes a file's data and metadata to the card promptly on close(2),
+	// at a real write-throughput cost. Baked in by gosd build --data-flush;
+	// default false, since normal Linux writeback (~30s dirty_expire) is
+	// fast and "flush" was never enough for rename durability anyway
+	// (bean gosd-0nk4) — apps that need durability already use the
+	// fsync/rename sequence documented in docs/runtime.md's "Making a
+	// write durable", which behaves identically either way. Overridable
+	// per-device via gosd.toml's data_flush key (absent there means "use
+	// this baked value" — see gosdtoml.Config.DataFlush and
+	// cmd/gosd-init/internal/boot/sequence.go's effectiveDataFlush).
+	// Optional: false for every config.json baked before this field
+	// existed, which is exactly this field's own default.
+	//
+	// Deliberately excluded from ComputeIdentity's payload, along with the
+	// rest of config.json (see ComputeIdentity's docstring): flipping
+	// --data-flush between builds changes nothing else in the boot
+	// payload, so — like DataExpand, and unlike Hostname/Wifi/Env, which
+	// are also baked into the hashed gosd.toml template — it can never
+	// move Identity. Pinned by
+	// TestBuildIdentityUnaffectedByDataFlush (cmd/gosd/build_integration_test.go).
+	DataFlush bool `json:"dataFlush,omitempty"`
+
 	// Identity is a content-derived digest of this build's boot payload,
 	// baked in by gosd build (see ComputeIdentity's docstring for the
 	// exact recipe, and internal/pipeline for where it's computed).

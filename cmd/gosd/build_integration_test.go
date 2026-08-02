@@ -1793,6 +1793,31 @@ func TestBuildIdentityUnaffectedByDataExpand(t *testing.T) {
 	}
 }
 
+// TestBuildIdentityUnaffectedByDataFlush is TestBuildIdentityUnaffectedByData
+// Expand's counterpart for gosd-9m1k's --data-flush flag: it only sets
+// config.json's DataFlush field (config.json is entirely excluded from the
+// hashed payload, and DataFlush has no footprint in gosd.toml or anywhere
+// else in the payload, unlike Hostname/Wifi/Env), so it's another build flag
+// that changes config.json without moving Identity.
+func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
+	dir := t.TempDir()
+	withoutFlush := buildConfigJSON(t, filepath.Join(dir, "no-flush.img"))
+	withFlush := buildConfigJSON(t, filepath.Join(dir, "flush.img"), "--data-flush")
+
+	if !withFlush.DataFlush {
+		t.Fatal("config.json's dataFlush is false after --data-flush")
+	}
+	if withoutFlush.DataFlush {
+		t.Fatal("config.json's dataFlush is true without --data-flush")
+	}
+	if withoutFlush.Identity == "" {
+		t.Fatal("the --data-flush build's identity is empty")
+	}
+	if withoutFlush.Identity != withFlush.Identity {
+		t.Errorf("identity differed across builds that only differed by --data-flush: %q vs %q", withoutFlush.Identity, withFlush.Identity)
+	}
+}
+
 // TestBuildTimestampVariesButIdentityDoesNotAcrossRebuilds is gosd-0esw's
 // reproducibility proof: config.json's buildTimestamp (timesync's clock
 // floor - see internal/initcfg.Config.BuildTime) necessarily differs on

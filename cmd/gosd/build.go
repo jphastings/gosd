@@ -70,6 +70,7 @@ var (
 	kernelCfgPath  string
 	withExternal   []string
 	consoleBaud    int
+	dataFlush      bool
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -122,6 +123,8 @@ func newBuildCmd() *cobra.Command {
 		"prebuilt static executable to bundle into the image at <path>[:<dest>] (repeatable); dest must be absolute, default /bin/<basename of path>; the binary must be a fully static ELF matching each selected board's architecture")
 	cmd.Flags().IntVar(&consoleBaud, "console-baud", 0,
 		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
+	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
+		"mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
 
 	return cmd
 }
@@ -241,6 +244,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			OutputPath:       outputs[b.Name()],
 			DataSizeBytes:    dataSizeBytes,
 			DataExpand:       dataExpand,
+			DataFlush:        dataFlush,
 			BootSizeBytes:    bootSizeBytes,
 			ExtraFirmware:    extraFirmware,
 			ExtraExecutables: extraExecutables,

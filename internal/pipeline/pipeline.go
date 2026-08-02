@@ -104,6 +104,15 @@ type Options struct {
 	// card on first boot.
 	DataExpand bool
 
+	// DataFlush is gosd build --data-flush's value, baked straight into
+	// config.json's DataFlush field: whether GOSD-DATA (and any emmc/disk
+	// vfat mount) uses the vfat "flush" mount option by default. Default
+	// false (see internal/initcfg.Config.DataFlush and bean gosd-9m1k);
+	// overridable per-device via gosd.toml's data_flush key at boot, which
+	// is why this is a plain baked default and not a template value like
+	// Config.Env — gosd-init computes the effective setting itself.
+	DataFlush bool
+
 	// BootSizeBytes is the size of the FAT32 GOSD-BOOT partition, passed
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
@@ -249,6 +258,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		},
 		Env:        opts.Config.Env,
 		DataExpand: opts.DataExpand,
+		DataFlush:  opts.DataFlush,
 		Identity:   identity,
 		// Wall-clock, taken here rather than threaded in via Options: it
 		// must vary build-to-build (that's the whole point, as

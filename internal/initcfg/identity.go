@@ -39,8 +39,9 @@ type PayloadFile struct {
 // one field, keeps the recipe simple to state and to re-derive, at the
 // cost of Identity being blind to whatever config.json carries that
 // appears nowhere else in the payload. In practice that's just
-// Config.DataExpand: Board/Hostname/Wifi/Env are also baked into
-// config.json, but they're baked into the rendered gosd.toml template too
+// Config.DataExpand and Config.DataFlush: Board/Hostname/Wifi/Env are also
+// baked into config.json, but they're baked into the rendered gosd.toml
+// template too
 // (a real, hashed FAT-root file — see pipeline.Assemble), so changing
 // --hostname/--wifi-ssid/--wifi-pass/--env still moves Identity via
 // gosd.toml even though config.json's own copies of those values are
