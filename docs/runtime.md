@@ -1041,8 +1041,14 @@ interface, no WiFi/cable needed at all) is planned for later.
   file on the board as a removable-drive-style disk on the host (one
   LUN, with read-only and removable flags). While it's applied the
   *host* owns that storage outright — never mount or write the backing
-  path from the app at the same time; expose or mount, not both. It
-  needs `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
+  path from the app at the same time; expose or mount, not both.
+  `Apply()` enforces this: it refuses (and unwinds cleanly) if `Path` is
+  currently mounted, is a partition of a currently-mounted device, or is
+  the parent device of a currently-mounted partition, naming the
+  mountpoint to `Unmount` first — so a forgotten `Unmount` before handing
+  a still-mounted `disk`/`emmc` `BlockDevice` to `MassStorage` fails
+  loudly instead of corrupting the volume. It needs
+  `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
   COMPATIBILITY.md's USB gadget footnote for per-board status.
 - See `examples/usbwebsite` for a worked example: it serves a storage
   volume as a static website, but presents that same volume as a USB
