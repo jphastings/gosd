@@ -364,18 +364,29 @@ func (f fakeCredentials) Credentials() (Credentials, bool, error) {
 	return f.creds, f.ok, f.err
 }
 
-// fakeLinks records SetUp/AddAddr/ReplaceDefaultRoute calls; Watch is
-// never used by wifiup so it's not implemented here.
+// fakeLinks records SetUp/AddAddr/FlushAddrs/ReplaceDefaultRoute calls;
+// Watch is never used by wifiup so it's not implemented here. AddAddr and
+// FlushAddrs model the real netlink semantics they stand in for (mirrors
+// netup's own fakeLinks — see that type's doc): AddAddr (AddrReplace)
+// replaces an existing address only if it's identical and otherwise adds
+// alongside it, so an interface can accumulate more than one address here
+// exactly as it can for real; FlushAddrs empties an interface's address
+// list entirely, without touching any other interface's.
 type fakeLinks struct {
 	mu sync.Mutex
 
-	setUp  []string
-	addrs  map[string]net.IPNet
-	routes map[string]net.IP
+	setUp      []string
+	addrs      map[string][]net.IPNet
+	routes     map[string]net.IP
+	flushCalls map[string]int
 }
 
 func newFakeLinks() *fakeLinks {
-	return &fakeLinks{addrs: map[string]net.IPNet{}, routes: map[string]net.IP{}}
+	return &fakeLinks{
+		addrs:      map[string][]net.IPNet{},
+		routes:     map[string]net.IP{},
+		flushCalls: map[string]int{},
+	}
 }
 
 func (l *fakeLinks) SetUp(name string) error {
@@ -388,7 +399,21 @@ func (l *fakeLinks) SetUp(name string) error {
 func (l *fakeLinks) AddAddr(name string, addr net.IPNet) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.addrs[name] = addr
+	for i, existing := range l.addrs[name] {
+		if existing.String() == addr.String() {
+			l.addrs[name][i] = addr
+			return nil
+		}
+	}
+	l.addrs[name] = append(l.addrs[name], addr)
+	return nil
+}
+
+func (l *fakeLinks) FlushAddrs(name string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.addrs, name)
+	l.flushCalls[name]++
 	return nil
 }
 
@@ -414,11 +439,30 @@ func (l *fakeLinks) sawSetUp(name string) bool {
 	return false
 }
 
+// addrFor returns the most recently applied address for name.
 func (l *fakeLinks) addrFor(name string) (net.IPNet, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	a, ok := l.addrs[name]
-	return a, ok
+	addrs := l.addrs[name]
+	if len(addrs) == 0 {
+		return net.IPNet{}, false
+	}
+	return addrs[len(addrs)-1], true
+}
+
+// addrsFor returns every address currently assigned to name.
+func (l *fakeLinks) addrsFor(name string) []net.IPNet {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]net.IPNet, len(l.addrs[name]))
+	copy(out, l.addrs[name])
+	return out
+}
+
+func (l *fakeLinks) flushCountFor(name string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.flushCalls[name]
 }
 
 // fakeDHCP scripts DHCP Request/Renew outcomes; wifiup only depends on

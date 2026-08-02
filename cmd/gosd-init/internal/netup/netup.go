@@ -148,6 +148,16 @@ func handleLinkEvent(deps Deps, ev LinkEvent, active map[string]context.CancelFu
 		cancel := active[ev.Name]
 		cancel()
 		delete(active, ev.Name)
+		// Leaving the last lease's address assigned to a downed
+		// interface is worse than merely stale: AddrReplace (see
+		// AddAddr) only replaces an identical address/prefix, so
+		// without this the next lease on replug would pile up
+		// alongside it rather than replace it (bean gosd-1lx7).
+		// FlushAddrs is keyed by ev.Name, so it never touches another
+		// still-up interface's addresses.
+		if err := deps.Links.FlushAddrs(ev.Name); err != nil {
+			deps.Log("flushing addresses on %s failed: %v", ev.Name, err)
+		}
 		// Not explicitly required by the bean (which only says to
 		// write the marker on lease assignment), but leaving a stale
 		// network-up marker after the cable is pulled would be
@@ -164,13 +174,28 @@ func handleLinkEvent(deps Deps, ev LinkEvent, active map[string]context.CancelFu
 
 // onLeaseFor returns the callback RunDHCP invokes for every lease obtained
 // (initial and renewed) on iface: assign the address, set the default
-// route, write resolv.conf, and mark the network up.
+// route, write resolv.conf, and mark the network up. The returned closure
+// tracks the address it last applied (starting from nothing, since
+// link-down already flushed whatever was there before) so a lease that
+// changes the address — a renewal landing on a different address, or a
+// fresh DHCP cycle after a lost lease, without an intervening link-down —
+// flushes the old one first; AddAddr's AddrReplace only replaces an
+// identical address/prefix and otherwise adds alongside (bean gosd-1lx7).
+// A renewal that keeps the same address skips the flush, so it causes no
+// connectivity blip.
 func onLeaseFor(deps Deps, iface string) func(*Lease) {
+	var current *net.IPNet
 	return func(lease *Lease) {
+		if current != nil && current.String() != lease.Address.String() {
+			if err := deps.Links.FlushAddrs(iface); err != nil {
+				deps.Log("flushing stale addresses on %s failed: %v", iface, err)
+			}
+		}
 		if err := deps.Links.AddAddr(iface, lease.Address); err != nil {
 			deps.Log("assigning %s to %s failed: %v", lease.Address, iface, err)
 			return
 		}
+		current = &lease.Address
 		if lease.Gateway != nil {
 			if err := deps.Links.ReplaceDefaultRoute(iface, lease.Gateway); err != nil {
 				deps.Log("setting default route via %s on %s failed: %v", lease.Gateway, iface, err)

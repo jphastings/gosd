@@ -71,6 +71,18 @@ type Links interface {
 	SetUp(name string) error
 	// AddAddr assigns addr to name.
 	AddAddr(name string, addr net.IPNet) error
+	// FlushAddrs removes every IPv4 address currently assigned to name.
+	// Used to clear addresses left over from a previous lease — on
+	// link-down (so a stale address never lingers on a downed
+	// interface) and before assigning a lease whose address differs
+	// from the one currently applied (so AddAddr, which only replaces
+	// an identical address/prefix, doesn't leave the old one assigned
+	// alongside the new one — see bean gosd-1lx7). Removing an
+	// interface's addresses also drops any routes that depended on
+	// them (including a default route whose gateway was only
+	// reachable via the flushed prefix), which is the Linux kernel's
+	// own behavior, not something callers need to replicate.
+	FlushAddrs(name string) error
 	// ReplaceDefaultRoute installs (or replaces) the default route via gw
 	// on name.
 	ReplaceDefaultRoute(name string, gw net.IP) error

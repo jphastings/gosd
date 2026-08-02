@@ -87,23 +87,31 @@ func (c *fakeClock) Advance(d time.Duration) {
 	}
 }
 
-// fakeLinks records SetUp/AddAddr/ReplaceDefaultRoute calls and lets tests
-// drive Watch's event stream manually.
+// fakeLinks records SetUp/AddAddr/FlushAddrs/ReplaceDefaultRoute calls and
+// lets tests drive Watch's event stream manually. AddAddr and FlushAddrs
+// model the real netlink semantics they stand in for (see platform_linux.go):
+// AddAddr (AddrReplace) replaces an existing address only if it's identical
+// (same IP and mask) and otherwise adds alongside it — so an interface can
+// accumulate more than one address here, exactly as it can on a real
+// netlink.AddrReplace call — and FlushAddrs (AddrList + AddrDel) empties an
+// interface's address list entirely, without touching any other interface's.
 type fakeLinks struct {
 	mu sync.Mutex
 
-	setUp    []string
-	addrs    map[string]net.IPNet
-	routes   map[string]net.IP
-	events   chan LinkEvent
-	watchErr error
+	setUp      []string
+	addrs      map[string][]net.IPNet
+	routes     map[string]net.IP
+	flushCalls map[string]int
+	events     chan LinkEvent
+	watchErr   error
 }
 
 func newFakeLinks() *fakeLinks {
 	return &fakeLinks{
-		addrs:  make(map[string]net.IPNet),
-		routes: make(map[string]net.IP),
-		events: make(chan LinkEvent, 16),
+		addrs:      make(map[string][]net.IPNet),
+		routes:     make(map[string]net.IP),
+		flushCalls: make(map[string]int),
+		events:     make(chan LinkEvent, 16),
 	}
 }
 
@@ -117,7 +125,21 @@ func (l *fakeLinks) SetUp(name string) error {
 func (l *fakeLinks) AddAddr(name string, addr net.IPNet) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.addrs[name] = addr
+	for i, existing := range l.addrs[name] {
+		if existing.String() == addr.String() {
+			l.addrs[name][i] = addr
+			return nil
+		}
+	}
+	l.addrs[name] = append(l.addrs[name], addr)
+	return nil
+}
+
+func (l *fakeLinks) FlushAddrs(name string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.addrs, name)
+	l.flushCalls[name]++
 	return nil
 }
 
@@ -146,11 +168,34 @@ func (l *fakeLinks) sawSetUp(name string) bool {
 	return false
 }
 
+// addrFor returns the most recently applied address for name, for tests
+// that only care about the latest lease. ok is false once FlushAddrs has
+// emptied name's address list (or nothing was ever assigned).
 func (l *fakeLinks) addrFor(name string) (net.IPNet, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	a, ok := l.addrs[name]
-	return a, ok
+	addrs := l.addrs[name]
+	if len(addrs) == 0 {
+		return net.IPNet{}, false
+	}
+	return addrs[len(addrs)-1], true
+}
+
+// addrsFor returns every address currently assigned to name, so tests can
+// assert an interface doesn't accumulate stale addresses across a replug
+// or a lease change.
+func (l *fakeLinks) addrsFor(name string) []net.IPNet {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]net.IPNet, len(l.addrs[name]))
+	copy(out, l.addrs[name])
+	return out
+}
+
+func (l *fakeLinks) flushCountFor(name string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.flushCalls[name]
 }
 
 func (l *fakeLinks) routeFor(name string) (net.IP, bool) {

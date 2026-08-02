@@ -368,6 +368,14 @@ func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disco
 		} else {
 			deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
 		}
+		// Mirrors netup's link-down teardown (bean gosd-1lx7): once
+		// associated is confirmed lost, the address DHCP assigned for
+		// the old association is no longer valid, and leaving it
+		// would let AddrReplace stack the next lease's address
+		// alongside it instead of replacing it.
+		if err := deps.Links.FlushAddrs(ifi.Name); err != nil {
+			deps.Log("flushing addresses on %s failed: %v", ifi.Name, err)
+		}
 		if err := deps.ClearNetworkUp(ifi.Name); err != nil {
 			deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
 		}

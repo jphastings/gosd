@@ -45,6 +45,28 @@ func (netlinkLinks) AddAddr(name string, addr net.IPNet) error {
 	return nil
 }
 
+// FlushAddrs removes every IPv4 address currently on name. AddrReplace
+// (used by AddAddr) only replaces an address identical to one already
+// present and otherwise adds alongside it, so this is the only way to
+// guarantee an interface ends up carrying just the address it's about to
+// be given.
+func (netlinkLinks) FlushAddrs(name string) error {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("looking up link %s: %w", name, err)
+	}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("listing addresses on %s: %w", name, err)
+	}
+	for _, addr := range addrs {
+		if err := netlink.AddrDel(link, &addr); err != nil {
+			return fmt.Errorf("removing %s from %s: %w", addr.IPNet, name, err)
+		}
+	}
+	return nil
+}
+
 func (netlinkLinks) ReplaceDefaultRoute(name string, gw net.IP) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
