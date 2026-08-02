@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -58,7 +59,26 @@ type Deps struct {
 	Mount func(device, mountpoint string, fs diskfmt.FS) error
 	// Mountable reports whether this kernel can mount a filesystem of kind fs.
 	Mountable func(fs diskfmt.FS) (bool, error)
+	// MountedSources returns the set of device nodes currently mounted, e.g.
+	// {"/dev/mmcblk1p1": true}. Run calls this a second time, immediately
+	// before Format, to re-check that the device Discover chose is still
+	// free — see the call site for why one check at Discover time is not
+	// enough.
+	MountedSources func() (map[string]bool, error)
 }
+
+// runMu serialises every call to Run, across both public packages: emmc and
+// disk are thin parameterisations of this one function, so a process-wide
+// lock here closes the race between them, not just within one. Discovery,
+// inspection, formatting and mounting are once-per-boot operations on a
+// human timescale (a format is seconds; everything else is instant), so
+// serialising them costs nothing that matters — the alternative is two
+// callers discovering the same idle device before either has mounted it,
+// and both formatting it: guaranteed corruption (gosd-45bv). This mutex
+// protects only against a sibling call to Run; it says nothing about a
+// device being mounted by anything else in the meantime, which is what the
+// MountedSources re-check right before Format is for.
+var runMu sync.Mutex
 
 // Storage is one kind of mass storage, as the shared orchestration sees it.
 type Storage struct {
@@ -79,6 +99,14 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 	if err := ValidateLabel(s.Pkg, label); err != nil {
 		return "", err
 	}
+
+	// See runMu's doc comment: this is the whole fix's first half. Held for
+	// the rest of the function, including the mount at the very end, so a
+	// second call to Run — for this device or any other — cannot even start
+	// discovering until this one has either mounted its device (making it
+	// show up as in-use to the next Discover) or failed.
+	runMu.Lock()
+	defer runMu.Unlock()
 
 	// Warm restart (app relaunched without a reboot): the storage is still
 	// mounted, so there is nothing to do but report the device behind it.
@@ -121,6 +149,16 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 	}
 
 	if format {
+		// runMu only rules out a sibling call to Run; it says nothing about
+		// something outside blockmount entirely — a udev rule, another
+		// process — mounting device in the window since Discover chose it.
+		// Re-checking here, right before the write that would corrupt
+		// whatever that mount is using, is the second half of the fix.
+		if mountedSources, err := s.Deps.MountedSources(); err != nil {
+			return "", err
+		} else if mountedSources[device] {
+			return "", fmt.Errorf("the %s at %s was mounted by something else while it was being prepared; refusing to format it — retry once whatever mounted it is done", s.Noun, device)
+		}
 		if err := s.Deps.Format(device, label, fs); err != nil {
 			return "", fmt.Errorf("%s the %s at %s as %s failed: %w", action, s.Noun, device, fs, err)
 		}
