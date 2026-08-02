@@ -30,7 +30,7 @@ func onLeaseFor(deps Deps, iface string) func(*netup.Lease) {
 				deps.Log("writing resolv.conf failed: %v", err)
 			}
 		}
-		if err := deps.MarkNetworkUp(); err != nil {
+		if err := deps.MarkNetworkUp(iface); err != nil {
 			deps.Log("marking network up failed: %v", err)
 		}
 		deps.Log("%s: lease %s via gateway %s (dns %v)", iface, lease.Address, lease.Gateway, lease.DNS)
