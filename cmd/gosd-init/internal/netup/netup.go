@@ -14,6 +14,7 @@ package netup
 
 import (
 	"context"
+	"errors"
 	"net"
 )
 
@@ -169,7 +170,11 @@ func onLeaseFor(deps Deps, iface string) func(*Lease) {
 			}
 		}
 		if err := deps.WriteResolvConf(lease.DNS); err != nil {
-			deps.Log("writing resolv.conf failed: %v", err)
+			if errors.Is(err, ErrNoDNSServers) {
+				deps.Log("%s: lease had no DNS servers; keeping existing resolv.conf", iface)
+			} else {
+				deps.Log("writing resolv.conf failed: %v", err)
+			}
 		}
 		if err := deps.MarkNetworkUp(); err != nil {
 			deps.Log("marking network up failed: %v", err)
