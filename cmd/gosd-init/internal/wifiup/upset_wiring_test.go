@@ -41,6 +41,8 @@ func (l *wiringLinks) SetUp(name string) error {
 
 func (l *wiringLinks) AddAddr(string, net.IPNet) error { return nil }
 
+func (l *wiringLinks) FlushAddrs(string) error { return nil }
+
 func (l *wiringLinks) ReplaceDefaultRoute(string, net.IP) error { return nil }
 
 func (l *wiringLinks) Watch(<-chan struct{}) (<-chan netup.LinkEvent, error) {

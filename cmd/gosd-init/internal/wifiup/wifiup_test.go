@@ -662,6 +662,79 @@ func newLossScriptedTest(clock *fakeClock) (*fakeWifiClient, *fakeLinks, *fakeDH
 	return wifi, newFakeLinks(), &fakeDHCP{requestResults: []requestResult{{lease: lease}}}
 }
 
+// TestRunAssociationLossFlushesAddressesBeforeReconnectLease mirrors
+// netup's link-down teardown for bean gosd-1lx7: losing the WiFi
+// association must flush the stale lease's address (not just cancel DHCP
+// and clear the marker), and a reconnect that lands a different lease
+// address must end up with only the new address, not both stacked up.
+func TestRunAssociationLossFlushesAddressesBeforeReconnectLease(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{
+		interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}},
+		associatedResults: []bool{true, false},
+	}
+	links := newFakeLinks()
+	first := &netup.Lease{
+		Address:     net.IPNet{IP: net.IPv4(10, 1, 1, 2), Mask: net.CIDRMask(24, 32)},
+		ObtainedAt:  clock.Now(),
+		RenewAfter:  time.Hour,
+		RebindAfter: 2 * time.Hour,
+		ExpireAfter: 3 * time.Hour,
+	}
+	second := &netup.Lease{
+		Address:     net.IPNet{IP: net.IPv4(10, 1, 1, 9), Mask: net.CIDRMask(24, 32)},
+		ObtainedAt:  clock.Now(),
+		RenewAfter:  time.Hour,
+		RebindAfter: 2 * time.Hour,
+		ExpireAfter: 3 * time.Hour,
+	}
+	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: first}, {lease: second}}}
+	log := &testLog{}
+	creds := Credentials{SSID: "home-net", Open: true}
+	deps, marked, cleared := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for marked.load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if addr, ok := links.addrFor("wlan0"); !ok || !addr.IP.Equal(first.Address.IP) {
+		t.Fatalf("wlan0 address after first association = %v, ok=%v, want %v", addr, ok, first.Address.IP)
+	}
+
+	if !advanceUntil(clock, associationPollPeriod, func() bool { return wifi.associatedCallCount() >= 2 }) {
+		t.Fatalf("associatedCalls = %d, want >= 2", wifi.associatedCallCount())
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for cleared.load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := links.flushCountFor("wlan0"); got == 0 {
+		t.Error("wlan0 addresses were never flushed after the association was lost")
+	}
+	// Not asserting the address is gone here: the fake DHCP client
+	// resolves synchronously, so the automatic reconnect (fired by the
+	// same loss that triggered the flush) may already have landed the
+	// second lease's address by the time this line runs. The flush
+	// having happened at least once, plus the exactly-one-address check
+	// below, together prove no stale accumulation occurred.
+
+	deadline = time.Now().Add(2 * time.Second)
+	for marked.load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if marked.load() < 2 {
+		t.Fatal("network was never marked up again after reconnecting")
+	}
+	addrs := links.addrsFor("wlan0")
+	if len(addrs) != 1 || !addrs[0].IP.Equal(second.Address.IP) {
+		t.Errorf("wlan0 addresses after reconnect = %v, want exactly [%v]", addrs, second.Address)
+	}
+}
+
 func TestRunLogsDisconnectReasonWhenObserved(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	wifi, links, dhcp := newLossScriptedTest(clock)

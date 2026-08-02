@@ -29,6 +29,7 @@ type unsupportedLinks struct{}
 
 func (unsupportedLinks) SetUp(string) error              { return errUnsupportedPlatform }
 func (unsupportedLinks) AddAddr(string, net.IPNet) error { return errUnsupportedPlatform }
+func (unsupportedLinks) FlushAddrs(string) error         { return errUnsupportedPlatform }
 func (unsupportedLinks) ReplaceDefaultRoute(string, net.IP) error {
 	return errUnsupportedPlatform
 }
