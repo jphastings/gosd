@@ -123,6 +123,56 @@ BAD = [1, 2, 3]
 			want:         Config{Hostname: "my-device"},
 			wantWarnings: []string{`gosd.toml [env] BAD isn't a plain value (found array); ignoring it`},
 		},
+		{
+			name: "data_flush true enables the flush override",
+			data: `data_flush = true`,
+			want: Config{DataFlush: boolPtr(true)},
+		},
+		{
+			name: "data_flush false disables the flush override",
+			data: `data_flush = false`,
+			want: Config{DataFlush: boolPtr(false)},
+		},
+		{
+			name: "missing data_flush leaves the baked default in effect",
+			data: `hostname = "my-device"`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
+			name: "a quoted data_flush is coerced, with a warning",
+			data: `data_flush = "true"`,
+			want: Config{DataFlush: boolPtr(true)},
+			wantWarnings: []string{
+				`gosd.toml data_flush is a quoted "true", not a bare boolean; using true — remove the quotes to silence this warning`,
+			},
+		},
+		{
+			name: "a data_flush that isn't true/false falls back to the baked default, with a warning",
+			data: `data_flush = "yes"`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml data_flush "yes" is not true or false; using the baked default`,
+			},
+		},
+		{
+			name: "a non-boolean data_flush falls back to the baked default, with a warning",
+			data: `data_flush = 1`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml data_flush isn't a plain boolean (found number); using the baked default`,
+			},
+		},
+		{
+			name: "a malformed data_flush still lets hostname parse",
+			data: `
+hostname = "my-device"
+data_flush = [1, 2, 3]
+`,
+			want: Config{Hostname: "my-device"},
+			wantWarnings: []string{
+				`gosd.toml data_flush isn't a plain boolean (found array); using the baked default`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -146,3 +196,5 @@ BAD = [1, 2, 3]
 		})
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }

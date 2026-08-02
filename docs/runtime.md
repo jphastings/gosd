@@ -58,13 +58,14 @@ starts `/app` and supervises it for the rest of the device's life:
 
 ## Environment variables
 
-`gosd-init` sets two environment variables before starting `/app` (see
+`gosd-init` sets three environment variables before starting `/app` (see
 `cmd/gosd-init/internal/boot/sequence.go`):
 
 | Variable | Value |
 |---|---|
 | `GOSD_BOARD` | The board ID the image was built for (e.g. `pi-zero-2w`), from `config.json` — overridable at boot via the `gosd.board=` kernel command-line parameter. |
 | `GOSD_HOSTNAME` | The hostname `gosd-init` just applied via `sethostname(2)`. |
+| `GOSD_DATA_FLUSH` | `1` if `/data` (and any `emmc`/`disk` vfat mount your app makes) uses the vfat `flush` mount option, `0` otherwise — `gosd build --data-flush`'s baked default, overridden by `gosd.toml`'s `data_flush` key when the card sets one. The `emmc`/`disk` packages read this themselves (see "Storage" below); most apps never need to. |
 
 There's deliberately no `GOSD_DATA`: persistent storage always lives at
 the fixed path `/data` (see "Storage" below), so there's nothing to
@@ -102,8 +103,8 @@ Your app's environment is otherwise a clean slate: it gets exactly the
 `gosd-init`'s own environment (`os.Environ()`).
 
 **Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace
-(`GOSD_BOARD`, `GOSD_HOSTNAME`, and any future `GOSD_*` var) can never be
-set this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
+(`GOSD_BOARD`, `GOSD_HOSTNAME`, `GOSD_DATA_FLUSH`, and any future `GOSD_*`
+var) can never be set this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
 actionable error, before it ever reaches an image. A `GOSD_*` key
 hand-written into a card's `gosd.toml [env]` is logged and ignored at
 boot instead — your app always gets `gosd-init`'s real value for those,
@@ -360,12 +361,26 @@ Rules of engagement:
 - **It's FAT32, with FAT32's limits.** No unix permissions, no
   ownership, no symlinks or hard links, 4GiB max file size, coarse (2s)
   mtime granularity. Don't design around any of those existing.
-- **It is not power-loss-robust.** FAT has no journal. The partition is
-  mounted with the `flush` option so data reaches the card promptly, but a
-  power cut mid-write can still corrupt the file being written (and, less
-  commonly, the filesystem). Never rewrite your only copy of something in
-  place — write durable state the boring, robust way, described in full
-  under "Making a write durable" below.
+- **It is not power-loss-robust.** FAT has no journal, and a power cut
+  mid-write can corrupt the file being written (and, less commonly, the
+  filesystem) whether or not the `flush` mount option below is on. Never
+  rewrite your only copy of something in place — write durable state the
+  boring, robust way, described in full under "Making a write durable"
+  below.
+- **The `flush` mount option is opt-in, and off by default.** `gosd build
+  --data-flush` (default `false`) bakes in whether `/data` — and any
+  `emmc`/`disk` vfat mount your app makes — uses vfat's `flush` option,
+  which pushes a file's data and metadata to the card promptly on
+  `close(2)`. The default leaves it off: normal Linux writeback (~30s
+  `dirty_expire_centisecs`) is fast, and `flush` was never enough for
+  durability on its own anyway — a `rename` involves no `close`, so it
+  doesn't touch the gap "Making a write durable" below closes. Turning it
+  on trades write throughput for prompter (but still not durable by
+  itself) writeback; a hand-edited `gosd.toml`'s top-level `data_flush =
+  true`/`false` overrides the baked default per device, absent meaning
+  "use the baked value" (see the `GOSD_DATA_FLUSH` env var above, which is
+  how `emmc`/`disk` — mounting from your app's own process — learn the
+  effective setting).
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
   first time the partition mounts; leave it alone, and don't be
   surprised by it when listing `/data`. An `expand` image's partition
@@ -466,10 +481,13 @@ What each half buys you:
   which the file silently reverts to its old contents, because a `rename`
   only dirties directory blocks, and dirty FAT directory blocks wait for
   the kernel's normal writeback expiry (`dirty_expire_centisecs`, 30s) to be
-  written. The `flush` mount option doesn't cover this: it flushes a file's
-  data and metadata on `close(2)`, and a rename involves no close. This bit
-  us for real — `examples/hello`'s boot counter never survived a power cut
-  less than ~30s after boot (bean `gosd-0nk4`).
+  written. The `flush` mount option (opt-in, see "Persistent storage" above)
+  doesn't cover this even when it's on: it flushes a file's data and
+  metadata on `close(2)`, and a rename involves no close. This bit us for
+  real, back when `flush` was mounted unconditionally —
+  `examples/hello`'s boot counter never survived a power cut less than
+  ~30s after boot (bean `gosd-0nk4`), which is exactly why steps 3-4 exist
+  regardless of the mount option.
 - **Step 3 is not optional, and is the surprising one.** The rename writes
   the new directory entry with a zero start cluster and size; only the
   *file's* own `fsync` (or, eventually, writeback) fills those in. `fsync`
@@ -570,7 +588,10 @@ on it only once your app actually needs the storage.
   `/data`: no unix permissions, ownership, symlinks, or hard links, and it is
   not power-loss-robust. Write durable state with the same sequence
   described under "Making a write durable" above — including the two syncs
-  after the rename, which FAT needs wherever it's mounted.
+  after the rename, which FAT needs wherever it's mounted. It also honors
+  the same `GOSD_DATA_FLUSH` setting as `/data` (see "Persistent storage"
+  above): `gosd build --data-flush`/`gosd.toml`'s `data_flush` govern this
+  mount too, not just the data partition.
 - **On a board with no onboard eMMC** (the Pi boards, a Rockchip board
   whose only eMMC turns out to be the boot device, or an unfitted ROCK
   4SE module), `FormatAndMount`'s channel yields `emmc.ErrNoEMMC` — check
@@ -628,7 +649,9 @@ ASCII characters, FAT's own limit (and equally valid as an exFAT label).
   mount happily. The FAT caveats from `/data` apply unchanged to both
   filesystems: no unix permissions, ownership, symlinks or hard links, and
   not power-loss-robust (write with the sequence under "Making a write
-  durable" above).
+  durable" above). A FAT32 volume also honors the same `GOSD_DATA_FLUSH`
+  setting as `/data` (`gosd build --data-flush`/`gosd.toml`'s `data_flush`);
+  exFAT never took the `flush` mount option and is unaffected either way.
 - **When nothing suitable is attached**, `FormatAndMount`'s channel yields
   `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
   here" rather than a fatal error, exactly as `examples/emmcstorage` does for

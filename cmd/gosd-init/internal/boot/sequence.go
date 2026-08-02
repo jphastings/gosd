@@ -289,6 +289,18 @@ func Run(deps Deps, opts Options) error {
 		applyHostname(deps, log, cfg.Hostname, "cloud-init")
 	}
 
+	// Computed now, from gosdToml as read straight off the card: /data's
+	// mount below and the GOSD_DATA_FLUSH env var built further down both
+	// have to agree, and a ProvisionSnapshot restore (below) can go on to
+	// reset gosdToml.DataFlush to nil (plan.apply only ever carries
+	// forward Hostname/Wifi/Env — DataFlush isn't part of the provisioning
+	// snapshot, see gosdtoml.Config.DataFlush's doc) — so this value, not
+	// a re-derived one, is what both later steps use.
+	dataFlush, dataFlushSource := effectiveDataFlush(cfg.DataFlush, gosdToml.DataFlush)
+	if dataFlushSource != "" {
+		log("data partition flush: %t (%s)", dataFlush, dataFlushSource)
+	}
+
 	if cfg.DataExpand && deps.ExpandData != nil {
 		if err := deps.ExpandData(bootDevice, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
 			return haltForDataCorruption(deps, log, err)
@@ -296,7 +308,7 @@ func Run(deps Deps, opts Options) error {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
 	}
-	mountData(deps, opts, log)
+	mountData(deps, opts, dataFlush, log)
 
 	// Provisioning has settled, and /data — where the snapshot lives — is
 	// as mounted as it's going to get, so this is the first and last moment
@@ -339,6 +351,7 @@ func Run(deps Deps, opts Options) error {
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
+		"GOSD_DATA_FLUSH=" + dataFlushEnvValue(dataFlush),
 	}
 	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
 
@@ -376,14 +389,40 @@ func RunAndReboot(deps Deps, opts Options) {
 	guard.Reboot(fmt.Sprintf("the boot sequence returned (%v)", err))
 }
 
+// effectiveDataFlush resolves the vfat "flush" mount option's effective
+// value for this boot: gosd.toml's data_flush key, when the operator set
+// one (override non-nil), else config.json's baked gosd build --data-flush
+// default. It also reports the source, "" when nothing overrode the baked
+// value, purely so Run can log an override without logging every ordinary
+// boot that just uses the baked default (bean gosd-9m1k).
+func effectiveDataFlush(baked bool, override *bool) (flush bool, source string) {
+	if override != nil {
+		return *override, "gosd.toml"
+	}
+	return baked, ""
+}
+
+// dataFlushEnvValue formats the effective data-flush setting for
+// GOSD_DATA_FLUSH, the reserved env var blockmount's emmc/disk vfat mounts
+// read it back from (see internal/blockmount's vfatMountOption) since that
+// package mounts from the app's own process, which has no access to
+// config.json or gosd.toml directly.
+func dataFlushEnvValue(flush bool) string {
+	if flush {
+		return "1"
+	}
+	return "0"
+}
+
 // mountData mounts the GOSD-DATA partition read-write at opts.DataTarget when
 // it exists, and otherwise mounts an empty read-only tmpfs there so that app
 // writes fail loudly with EROFS instead of silently landing in the RAM-backed
 // rootfs and vanishing on reboot (see MountDataReadOnlyFallback). Nothing here
 // is ever fatal: a missing partition (an image built with --data-size=0, or
 // from before the partition existed) or a failing mount just means no
-// persistent storage this boot.
-func mountData(deps Deps, opts Options, log func(format string, args ...any)) {
+// persistent storage this boot. flush is the effective data-flush setting
+// (see effectiveDataFlush), passed through to MountDataPartition.
+func mountData(deps Deps, opts Options, flush bool, log func(format string, args ...any)) {
 	if opts.DataTarget == "" {
 		return
 	}
@@ -397,7 +436,7 @@ func mountData(deps Deps, opts Options, log func(format string, args ...any)) {
 		}
 	}
 
-	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, deps.Sleep, deps.Now); err != nil {
+	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, flush, deps.Sleep, deps.Now); err != nil {
 		if errors.Is(err, ErrDataPartitionMissing) {
 			log("no data partition on this image; mounting %s read-only", opts.DataTarget)
 		} else {

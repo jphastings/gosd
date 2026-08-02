@@ -70,6 +70,13 @@ const bootSentinelFile = "gosd.toml"
 // reaches this step (no udev is available to wait on), so failures are
 // retried for up to timeout before giving up.
 //
+// Unlike MountDataPartition, this mount is never given the vfat "flush"
+// option — deliberately out of gosd-9m1k's data-flush scope, and unaffected
+// by --data-flush/gosd.toml's data_flush either way: it's read-only, so
+// close(2)-triggered writeback is moot, and its own write traffic (the
+// provisioning-snapshot restore, boot-failure.log) is already bracketed
+// with its own syncs where it matters.
+//
 // A candidate that mounts as valid FAT is not accepted on that basis alone:
 // with an eMMC fitted, its first partition can sort before the SD card's in
 // device-name order (mmcblk0 vs mmcblk1) and, if it happens to already hold
@@ -179,12 +186,31 @@ func onDisk(dev, disk string) bool {
 // treat this as "no persistent storage", never as a boot failure.
 var ErrDataPartitionMissing = errors.New("no data partition device exists")
 
+// dataMountOption maps the effective data-flush setting (config.json's
+// baked gosd build --data-flush default, overridable per-device via
+// gosd.toml's data_flush key — see sequence.go's effectiveDataFlush) to the
+// vfat mount(2) option string MountDataPartition passes for /data. Kept as
+// its own pure function — this file has no build tag, so it's tested
+// without a Linux host — so the mapping can't silently drift from
+// internal/blockmount's identical one for emmc/disk vfat mounts (see that
+// package's vfatMountOption, which reads the same decision back out of the
+// GOSD_DATA_FLUSH env var this process exports to /app).
+func dataMountOption(flush bool) string {
+	if flush {
+		return "flush"
+	}
+	return ""
+}
+
 // MountDataPartition mounts the GOSD-DATA FAT partition read-write at
 // target, trying each candidate device in turn with the same retry pattern
-// as MountBootPartition. The vfat "flush" option makes the driver push file
-// data to storage promptly after writes — FAT has no journal, so the less
-// time dirty data sits in RAM on a device with no clean-shutdown story, the
-// better.
+// as MountBootPartition. flush selects the vfat "flush" mount option, which
+// pushes a file's data and metadata to storage promptly on close(2) — FAT
+// has no journal, so the less time dirty data sits in RAM on a device with
+// no clean-shutdown story, the better — at a real write-throughput cost;
+// default false (see dataMountOption) trades that for normal Linux
+// writeback (~30s dirty_expire), which is enough for apps using the
+// documented durable-write sequence either way (bean gosd-9m1k).
 //
 // A round in which every candidate fails with "no such file or directory"
 // means the device nodes simply don't exist. This step runs only after the
@@ -198,13 +224,13 @@ var ErrDataPartitionMissing = errors.New("no data partition device exists")
 // from is the one already known-scanned, and only real hardware/VM ever
 // exposes one of them at a time, so "every candidate" and "the one that
 // matters" are the same check in practice.
-func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, sleep func(time.Duration), now func() time.Time) error {
+func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, flush bool, sleep func(time.Duration), now func() time.Time) error {
 	deadline := now().Add(timeout)
 	var lastErr error
 	for {
 		allMissing := true
 		for _, dev := range devices {
-			err := m.Mount(dev, target, "vfat", msNoSuid|msNoDev, "flush")
+			err := m.Mount(dev, target, "vfat", msNoSuid|msNoDev, dataMountOption(flush))
 			if err == nil {
 				return nil
 			}

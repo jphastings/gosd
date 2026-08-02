@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	sysBlockDir      = "/sys/block"
-	procMounts       = "/proc/mounts"
-	procFilesystems  = "/proc/filesystems"
-	vfatMountOptions = "flush" // push writes to a journal-less FAT promptly
+	sysBlockDir     = "/sys/block"
+	procMounts      = "/proc/mounts"
+	procFilesystems = "/proc/filesystems"
 )
 
 // mountEntry is one line of /proc/mounts: the device node and where it is
@@ -128,10 +127,13 @@ func Mount(device, mountpoint string, fs diskfmt.FS) error {
 
 // mountData is the comma-separated option string for a filesystem. The options
 // are per-driver and mount(2) rejects one it does not know, so "flush" — which
-// only Linux's vfat driver has — must not reach exfat.
+// only Linux's vfat driver has — must not reach exfat. The vfat option itself
+// comes from vfatMountOption, keyed off GOSD_DATA_FLUSH — gosd-init's
+// computed effective setting, the only channel this process has to it (see
+// that function's doc and bean gosd-9m1k).
 func mountData(fs diskfmt.FS) string {
 	if fs == diskfmt.FAT32 {
-		return vfatMountOptions
+		return vfatMountOption(os.Getenv)
 	}
 	return ""
 }

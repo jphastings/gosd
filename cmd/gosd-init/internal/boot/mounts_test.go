@@ -201,11 +201,14 @@ func TestFilterBootDevicesDoesNotClaimLongerDiskNames(t *testing.T) {
 	}
 }
 
-func TestMountDataPartitionMountsReadWriteWithFlush(t *testing.T) {
+func TestMountDataPartitionMountsReadWriteWithoutFlushByDefault(t *testing.T) {
+	// gosd-9m1k: default is no flush - normal Linux writeback is fast
+	// enough, and apps needing durability already use the documented
+	// fsync/rename sequence, which behaves identically either way.
 	m := &fakeMounter{}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, false, clock.Sleep, clock.Now)
 	if err != nil {
 		t.Fatalf("MountDataPartition() = %v, want nil", err)
 	}
@@ -214,11 +217,26 @@ func TestMountDataPartitionMountsReadWriteWithFlush(t *testing.T) {
 	if call.flags&msRdOnly != 0 {
 		t.Error("data partition was mounted read-only; want read-write")
 	}
-	if call.data != "flush" {
-		t.Errorf("data partition mount options = %q, want \"flush\"", call.data)
+	if call.data != "" {
+		t.Errorf("data partition mount options = %q, want \"\" (no flush by default)", call.data)
 	}
 	if call.fstype != "vfat" {
 		t.Errorf("data partition fstype = %q, want vfat", call.fstype)
+	}
+}
+
+func TestMountDataPartitionMountsWithFlushWhenRequested(t *testing.T) {
+	m := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, true, clock.Sleep, clock.Now)
+	if err != nil {
+		t.Fatalf("MountDataPartition() = %v, want nil", err)
+	}
+
+	call := m.calls[0]
+	if call.data != "flush" {
+		t.Errorf("data partition mount options = %q, want \"flush\"", call.data)
 	}
 }
 
@@ -252,7 +270,7 @@ func TestMountDataPartitionRetriesTransientFailures(t *testing.T) {
 	}}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, false, clock.Sleep, clock.Now)
 	if err != nil {
 		t.Fatalf("MountDataPartition() = %v, want nil after retrying transient failures", err)
 	}
@@ -268,7 +286,7 @@ func TestMountDataPartitionReportsMissingPartitionImmediately(t *testing.T) {
 	m := &fakeMounter{fn: func(mountCall) error { return fs.ErrNotExist }}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2"}, 10*time.Second, false, clock.Sleep, clock.Now)
 	if !errors.Is(err, ErrDataPartitionMissing) {
 		t.Fatalf("MountDataPartition() = %v, want ErrDataPartitionMissing", err)
 	}
@@ -286,7 +304,7 @@ func TestMountDataPartitionReportsMissingPartitionImmediatelyWithThreeCandidates
 	clock := newFakeClock(time.Unix(0, 0))
 
 	devices := []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
-	err := MountDataPartition(m, "/data", devices, 10*time.Second, clock.Sleep, clock.Now)
+	err := MountDataPartition(m, "/data", devices, 10*time.Second, false, clock.Sleep, clock.Now)
 	if !errors.Is(err, ErrDataPartitionMissing) {
 		t.Fatalf("MountDataPartition() = %v, want ErrDataPartitionMissing", err)
 	}
@@ -302,7 +320,7 @@ func TestMountDataPartitionGivesUpAfterTimeout(t *testing.T) {
 	m := &fakeMounter{fn: func(mountCall) error { return errBoom }}
 	clock := newFakeClock(time.Unix(0, 0))
 
-	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, clock.Sleep, clock.Now)
+	err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, false, clock.Sleep, clock.Now)
 	if err == nil {
 		t.Fatal("MountDataPartition() = nil, want error after exhausting the timeout")
 	}

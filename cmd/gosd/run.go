@@ -34,6 +34,7 @@ var (
 	runArtifactsDir string
 	runGosdInitSrc  string
 	runBootSize     string
+	runDataFlush    bool
 )
 
 func newRunCmd() *cobra.Command {
@@ -73,6 +74,8 @@ place and prints its path instead.`,
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
 	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
 		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
+	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
+		"same flag as gosd build's --data-flush: mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
 
 	return cmd
 }
@@ -150,6 +153,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		CacheDir:      cacheDir,
 		OutputPath:    imgPath,
 		DataSizeBytes: dataSizeBytes,
+		DataFlush:     runDataFlush,
 		BootSizeBytes: bootSizeBytes,
 	}
 	report, err := pipeline.Assemble(ctx, opts)

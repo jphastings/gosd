@@ -75,8 +75,8 @@ func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
 			t.Errorf("early mount of %s never happened", target)
 		}
 	}
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device"}
-	if len(gotEnv) != len(wantEnv) || gotEnv[0] != wantEnv[0] || gotEnv[1] != wantEnv[1] {
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0"}
+	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
 	}
 	if rebooter.rebooted {
@@ -706,8 +706,8 @@ func TestRunAppliesCmdlineBoardOverrideAndLogsDebug(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device"}
-	if len(gotEnv) != len(wantEnv) || gotEnv[0] != wantEnv[0] || gotEnv[1] != wantEnv[1] {
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0"}
+	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v (cmdline gosd.board should override config.json)", gotEnv, wantEnv)
 	}
 	if !strings.Contains(console.String(), "debug mode enabled") {
@@ -747,8 +747,8 @@ func TestRunFallsBackToDefaultsWhenConfigAndCmdlineFail(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil (a missing config/cmdline is not fatal)", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=", "GOSD_HOSTNAME="}
-	if len(gotEnv) != len(wantEnv) || gotEnv[0] != wantEnv[0] || gotEnv[1] != wantEnv[1] {
+	wantEnv := []string{"GOSD_BOARD=", "GOSD_HOSTNAME=", "GOSD_DATA_FLUSH=0"}
+	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v (zero-value defaults)", gotEnv, wantEnv)
 	}
 }
@@ -1068,6 +1068,157 @@ func TestRunMountsReadOnlyDataWhenPartitionIsMissing(t *testing.T) {
 	}
 }
 
+// dataFlushTestDeps builds the Deps needed to exercise the data-flush
+// override: a baked config.json DataFlush value, and, if override is
+// non-nil, a gosd.toml carrying a data_flush key.
+func dataFlushTestDeps(mounter *fakeMounter, console *bytes.Buffer, clock *fakeClock, stop chan struct{}, baked bool, override *bool, gotEnv *[]string) Deps {
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		*gotEnv = env
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:              mounter,
+		Hostname:             &fakeHostname{},
+		AppStarter:           appStarter,
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataFlush: baked}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		Sleep:                func(d time.Duration) { clock.Sleep(d) },
+		Now:                  clock.Now,
+	}
+	if override != nil {
+		deps.ReadGosdToml = func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{DataFlush: override}, nil, nil
+		}
+	}
+	return deps
+}
+
+// TestRunDataFlushDefaultsToNoFlush covers gosd-9m1k's locked default: with
+// no --data-flush baked in and no gosd.toml override, /data is mounted
+// without the vfat "flush" option, and the app sees GOSD_DATA_FLUSH=0.
+func TestRunDataFlushDefaultsToNoFlush(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+
+	deps := dataFlushTestDeps(mounter, console, clock, stop, false, nil, &gotEnv)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].data != "" {
+		t.Errorf("/data mount options = %+v, want no flush option by default", calls)
+	}
+	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=0") {
+		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=0", gotEnv)
+	}
+	if strings.Contains(console.String(), "data partition flush:") {
+		t.Errorf("console output logged a data-flush line though nothing overrode the baked default: %q", console.String())
+	}
+}
+
+// TestRunDataFlushBakedTrueAppliesToMountAndEnv covers a build made with
+// --data-flush: the baked default alone, with no gosd.toml override, must
+// reach both the /data mount and GOSD_DATA_FLUSH.
+func TestRunDataFlushBakedTrueAppliesToMountAndEnv(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+
+	deps := dataFlushTestDeps(mounter, console, clock, stop, true, nil, &gotEnv)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].data != "flush" {
+		t.Errorf("/data mount options = %+v, want the flush option (config.json's baked --data-flush)", calls)
+	}
+	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=1") {
+		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=1", gotEnv)
+	}
+}
+
+// TestRunGosdTomlDataFlushOverridesBakedDefault covers the card-editable
+// override turning flush ON despite a baked default of false, and reaching
+// both the /data mount and the app's environment.
+func TestRunGosdTomlDataFlushOverridesBakedDefault(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+	override := true
+
+	deps := dataFlushTestDeps(mounter, console, clock, stop, false, &override, &gotEnv)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].data != "flush" {
+		t.Errorf("/data mount options = %+v, want the flush option (gosd.toml override)", calls)
+	}
+	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=1") {
+		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=1", gotEnv)
+	}
+	if !strings.Contains(console.String(), "data partition flush: true (gosd.toml)") {
+		t.Errorf("console output missing the data-flush override log line: %q", console.String())
+	}
+}
+
+// TestRunGosdTomlDataFlushOverridesBakedTrueToDisable is the reverse of the
+// above: gosd.toml can turn flush back OFF even when --data-flush baked it
+// in.
+func TestRunGosdTomlDataFlushOverridesBakedTrueToDisable(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotEnv []string
+	override := false
+
+	deps := dataFlushTestDeps(mounter, console, clock, stop, true, &override, &gotEnv)
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].data != "" {
+		t.Errorf("/data mount options = %+v, want no flush option (gosd.toml disabled it)", calls)
+	}
+	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=0") {
+		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=0", gotEnv)
+	}
+	if !strings.Contains(console.String(), "data partition flush: false (gosd.toml)") {
+		t.Errorf("console output missing the data-flush override log line: %q", console.String())
+	}
+}
+
 // envDeps builds the minimal Deps needed to exercise app-env merging: a
 // baked config.json (with the given Env), and, if gosdToml is non-nil, a
 // gosd.toml with the given Env/warnings. gotEnv is populated with whatever
@@ -1113,7 +1264,7 @@ func TestRunInjectsBakedEnvWhenNoGosdTomlOverride(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "FOO=baked-foo"}
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "FOO=baked-foo"}
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
 	}
@@ -1134,7 +1285,7 @@ func TestRunInjectsGosdTomlEnvWhenNoBakedDefaults(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "FOO=card-foo"}
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "FOO=card-foo"}
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
 	}
@@ -1158,7 +1309,7 @@ func TestRunGosdTomlEnvOverridesBakedPerKey(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "BAR=card-bar", "BAZ=card-baz", "FOO=baked-foo"}
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "BAR=card-bar", "BAZ=card-baz", "FOO=baked-foo"}
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v (gosd.toml wins per-key over baked)", gotEnv, wantEnv)
 	}
@@ -1184,7 +1335,7 @@ func TestRunRejectsReservedEnvKeysFromGosdToml(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "SAFE=card-safe"}
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "SAFE=card-safe"}
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v (reserved keys dropped, real GOSD_* intact)", gotEnv, wantEnv)
 	}
@@ -1225,7 +1376,7 @@ func TestRunAppEnvIsUnchangedWhenNoUserEnvIsSet(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device"}
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0"}
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v (no user env vars set anywhere)", gotEnv, wantEnv)
 	}
