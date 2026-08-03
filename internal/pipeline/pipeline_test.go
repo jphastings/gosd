@@ -19,6 +19,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/inject"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
 
@@ -477,6 +478,106 @@ func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Assemble() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestAssembleRendersPlaceholdersAndReportsTheirRanges is the acceptance
+// test for the pipeline half of the image-injection contract (gosd-49it):
+// a --placeholder lands at the FAT root alongside gosd.toml, renders with
+// the documented header, and comes back in image.WriteReport.FileRanges
+// summing to exactly its SizeBytes.
+func TestAssembleRendersPlaceholdersAndReportsTheirRanges(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	placeholder := inject.Placeholder{Path: "backupist.yaml", SizeBytes: 4096}
+	imgPath := filepath.Join(dir, "out.img")
+	report, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath:   imgPath,
+		Placeholders: []inject.Placeholder{placeholder},
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	ranges, ok := report.FileRanges[placeholder.Path]
+	if !ok {
+		t.Fatalf("report.FileRanges has no entry for %q; got %v", placeholder.Path, report.FileRanges)
+	}
+	var total int64
+	for _, r := range ranges {
+		total += r.LengthBytes
+	}
+	if total != placeholder.SizeBytes {
+		t.Errorf("report.FileRanges[%q] totals %d bytes, want %d (SizeBytes)", placeholder.Path, total, placeholder.SizeBytes)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+
+	got, err := fs.ReadFile(placeholder.Path)
+	if err != nil {
+		t.Fatalf("reading %s back from the FAT root: %v", placeholder.Path, err)
+	}
+	if int64(len(got)) != placeholder.SizeBytes {
+		t.Errorf("%s is %d bytes, want exactly %d (SizeBytes)", placeholder.Path, len(got), placeholder.SizeBytes)
+	}
+	if !strings.HasPrefix(string(got), "# GOSD-PLACEHOLDER v1 path=") {
+		t.Errorf("%s does not start with the documented header; got %q", placeholder.Path, got[:min(len(got), 40)])
+	}
+}
+
+// TestAssembleRejectsPlaceholderCollidingWithABoardBootFile confirms a
+// --placeholder path that collides with a path the board's own BootFiles
+// already claims is refused, rather than silently overwriting it.
+func TestAssembleRejectsPlaceholderCollidingWithABoardBootFile(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"} // BootFiles returns "initramfs.cpio.zst"
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath:   filepath.Join(dir, "out.img"),
+		Placeholders: []inject.Placeholder{{Path: "initramfs.cpio.zst", SizeBytes: 4096}},
+	})
+	if err == nil {
+		t.Fatal("Assemble() with a placeholder colliding with a board boot file succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "initramfs.cpio.zst") {
+		t.Errorf("error = %q, want it to name the colliding path", err)
+	}
+}
+
+// TestAssembleRejectsPlaceholderCollidingWithGosdTomlCaseInsensitively
+// confirms the FAT-case-insensitivity rule extends to gosd.toml, the one
+// FAT-root file the pipeline itself adds rather than a board.
+func TestAssembleRejectsPlaceholderCollidingWithGosdTomlCaseInsensitively(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath:   filepath.Join(dir, "out.img"),
+		Placeholders: []inject.Placeholder{{Path: "GOSD.TOML", SizeBytes: 4096}},
+	})
+	if err == nil {
+		t.Fatal("Assemble() with a placeholder differing from gosd.toml only by case succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "GOSD.TOML") {
+		t.Errorf("error = %q, want it to name the offending placeholder path", err)
 	}
 }
 

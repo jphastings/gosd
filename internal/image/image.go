@@ -46,6 +46,7 @@ import (
 	"github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
+	"github.com/diskfs/go-diskfs/filesystem/fat12"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -87,6 +88,11 @@ type RawWrite struct {
 	Content     io.Reader
 }
 
+// ByteRange is a contiguous absolute byte range within the image file.
+type ByteRange struct {
+	OffsetBytes, LengthBytes int64
+}
+
 // Spec describes the contents to write into a flashable SD-card image: the
 // FAT32 boot partition's contents, any raw writes into the unpartitioned gap
 // ahead of it, and the optional writable data partition.
@@ -117,6 +123,15 @@ type Spec struct {
 	// go-diskfs formats into a self-consistent FAT32 volume (at most two
 	// clusters less) - the same trim DataSizeBytes gets.
 	BootSizeBytes int64
+
+	// ReportRanges lists BootFiles paths (FAT-root, forward-slash
+	// separated) whose on-disk content byte ranges the caller wants
+	// reported back in WriteReport.FileRanges - e.g. so a provisioning
+	// tool can splice same-length replacement bytes into a placeholder
+	// file's content without any FAT tooling (see internal/inject and
+	// docs/image-injection.md). Every entry must be a key of BootFiles;
+	// Write checks this up front, before any image bytes exist.
+	ReportRanges []string
 }
 
 // WriteReport summarizes what a Write call actually wrote, so a caller can
@@ -135,6 +150,14 @@ type WriteReport struct {
 	// count - but it's close enough to watch headroom shrink release over
 	// release.
 	BootPartitionPayloadBytes int64
+
+	// FileRanges holds, for each of Spec.ReportRanges, the ordered,
+	// absolute, exact-content-length byte ranges its content occupies in
+	// the image file - nil when Spec.ReportRanges was empty. A path's
+	// ranges' lengths sum to exactly its written content length, even
+	// though the FAT filesystem allocates it in whole clusters
+	// underneath.
+	FileRanges map[string][]ByteRange
 }
 
 // layout is the concrete geometry one Write call resolves Spec.BootSizeBytes
@@ -214,6 +237,10 @@ func computeLayout(bootSizeBytes, dataSizeBytes int64) (layout, error) {
 // Write assembles a flashable MBR + FAT32 .img file at imgPath from spec. It
 // is pure Go and requires no root privileges.
 func Write(imgPath string, spec Spec) (report WriteReport, err error) {
+	if err := validateReportRanges(spec.ReportRanges, spec.BootFiles); err != nil {
+		return WriteReport{}, err
+	}
+
 	lay, err := computeLayout(spec.BootSizeBytes, spec.DataSizeBytes)
 	if err != nil {
 		return WriteReport{}, fmt.Errorf("computing image layout for %s failed: %w", imgPath, err)
@@ -263,9 +290,20 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		return WriteReport{}, fmt.Errorf("formatting the %s FAT32 boot partition failed: %w", bootPartitionLabel, err)
 	}
 
-	payloadBytes, err := writeBootFiles(fs, spec.BootFiles)
+	fileSizes, payloadBytes, err := writeBootFiles(fs, spec.BootFiles)
 	if err != nil {
 		return WriteReport{}, wrapBootPartitionFullError(err, lay.bootPartitionSizeBytes)
+	}
+
+	var fileRanges map[string][]ByteRange
+	if len(spec.ReportRanges) > 0 {
+		// Collected from the same live fat32 handle the files were just
+		// written through, so the ranges describe exactly what
+		// writeBootFiles put down - no re-open/re-parse of the image.
+		fileRanges, err = collectFileRanges(fs, spec.ReportRanges, fileSizes, lay)
+		if err != nil {
+			return WriteReport{}, err
+		}
 	}
 
 	if lay.hasDataPartition {
@@ -285,7 +323,21 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 	return WriteReport{
 		BootPartitionSizeBytes:    lay.bootPartitionSizeBytes,
 		BootPartitionPayloadBytes: payloadBytes,
+		FileRanges:                fileRanges,
 	}, nil
+}
+
+// validateReportRanges checks that every path in reportRanges is a key of
+// bootFiles, before any image bytes exist (computeLayout, diskfs.Create,
+// ...), so a typo'd --placeholder path fails cheaply instead of after a
+// full build.
+func validateReportRanges(reportRanges []string, bootFiles map[string]io.Reader) error {
+	for _, p := range reportRanges {
+		if _, ok := bootFiles[p]; !ok {
+			return fmt.Errorf("Spec.ReportRanges names %q, which is not a Spec.BootFiles key; report only paths the boot files actually contain", p)
+		}
+	}
+	return nil
 }
 
 // bootPartitionFullMarker is the exact, unexported error text go-diskfs's
@@ -310,43 +362,131 @@ func wrapBootPartitionFullError(err error, bootPartitionSizeBytes int64) error {
 }
 
 // writeBootFiles copies each of files into the FAT32 filesystem fs, creating
-// any parent directories the path requires, and returns the total bytes
-// copied (WriteReport.BootPartitionPayloadBytes).
-func writeBootFiles(fs filesystem.FileSystem, files map[string]io.Reader) (int64, error) {
+// any parent directories the path requires, and returns each path's written
+// byte count (sizes - used to clip Spec.ReportRanges to exact content
+// length in collectFileRanges) along with their total
+// (WriteReport.BootPartitionPayloadBytes).
+func writeBootFiles(fs filesystem.FileSystem, files map[string]io.Reader) (sizes map[string]int64, total int64, err error) {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
 
-	var totalBytes int64
+	sizes = make(map[string]int64, len(files))
 	for _, p := range paths {
 		if p == "" {
-			return totalBytes, errors.New("boot file path must not be empty")
+			return sizes, total, errors.New("boot file path must not be empty")
 		}
 
 		if dir := path.Dir(p); dir != "." {
 			if err := fs.Mkdir(dir); err != nil {
-				return totalBytes, fmt.Errorf("creating boot partition directory %q failed: %w", dir, err)
+				return sizes, total, fmt.Errorf("creating boot partition directory %q failed: %w", dir, err)
 			}
 		}
 
 		f, err := fs.OpenFile(p, os.O_CREATE|os.O_RDWR)
 		if err != nil {
-			return totalBytes, fmt.Errorf("creating boot partition file %q failed: %w", p, err)
+			return sizes, total, fmt.Errorf("creating boot partition file %q failed: %w", p, err)
 		}
 		n, err := io.Copy(f, files[p])
-		totalBytes += n
+		sizes[p] = n
+		total += n
 		if err != nil {
 			_ = f.Close()
-			return totalBytes, fmt.Errorf("writing boot partition file %q failed: %w", p, err)
+			return sizes, total, fmt.Errorf("writing boot partition file %q failed: %w", p, err)
 		}
 		if err := f.Close(); err != nil {
-			return totalBytes, fmt.Errorf("closing boot partition file %q failed: %w", p, err)
+			return sizes, total, fmt.Errorf("closing boot partition file %q failed: %w", p, err)
 		}
 	}
 
-	return totalBytes, nil
+	return sizes, total, nil
+}
+
+// fileRanger is implemented by go-diskfs's *fat12.File - the concrete type
+// fs.OpenFile returns from the fat32.FileSystem Write formats, since
+// fat32.FileSystem embeds *fat12.FileSystem (verified against go-diskfs
+// v1.9.3). GetDiskRanges returns coalesced, whole-cluster,
+// partition-relative byte ranges.
+type fileRanger interface {
+	GetDiskRanges() ([]fat12.DiskRange, error)
+}
+
+// collectFileRanges opens each of paths read-only on fs and returns its
+// absolute, exact-content-length byte ranges within the image (for
+// WriteReport.FileRanges). sizes holds each path's written byte count, from
+// writeBootFiles; lay describes the partition layout every range must fall
+// inside.
+func collectFileRanges(fs filesystem.FileSystem, paths []string, sizes map[string]int64, lay layout) (map[string][]ByteRange, error) {
+	result := make(map[string][]ByteRange, len(paths))
+	for _, p := range paths {
+		f, err := fs.OpenFile(p, 0)
+		if err != nil {
+			return nil, fmt.Errorf("reopening boot file %q to report its disk ranges failed: %w", p, err)
+		}
+
+		ranger, ok := f.(fileRanger)
+		if !ok {
+			_ = f.Close()
+			return nil, fmt.Errorf("boot file %q opened as %T, which has no GetDiskRanges method; this should be impossible with go-diskfs's FAT32 filesystem", p, f)
+		}
+
+		diskRanges, err := ranger.GetDiskRanges()
+		_ = f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("getting disk ranges for boot file %q failed: %w", p, err)
+		}
+
+		ranges, err := absoluteContentRanges(diskRanges, sizes[p], lay)
+		if err != nil {
+			return nil, fmt.Errorf("boot file %q: %w", p, err)
+		}
+		result[p] = ranges
+	}
+	return result, nil
+}
+
+// absoluteContentRanges converts diskRanges - partition-relative, whole
+// clusters, from (*fat12.File).GetDiskRanges - into absolute ByteRanges
+// clipped to exactly contentSize bytes: the injection manifest contract
+// needs exact content ranges, not the whole clusters FAT32 rounds a file's
+// storage up to. Every range must lie entirely inside partition 1
+// ([bootPartitionOffsetBytes, +lay.bootPartitionSizeBytes)), and the
+// ranges' total length must be at least contentSize (go-diskfs's cluster
+// allocation always covers at least the file's written size).
+func absoluteContentRanges(diskRanges []fat12.DiskRange, contentSize int64, lay layout) ([]ByteRange, error) {
+	bootPartitionEndBytes := bootPartitionOffsetBytes + lay.bootPartitionSizeBytes
+
+	absolute := make([]ByteRange, len(diskRanges))
+	var total int64
+	for i, dr := range diskRanges {
+		offset := bootPartitionOffsetBytes + int64(dr.Offset)
+		length := int64(dr.Length)
+		if offset < bootPartitionOffsetBytes || offset+length > bootPartitionEndBytes {
+			return nil, fmt.Errorf("disk range [%d, %d) falls outside the boot partition [%d, %d)",
+				offset, offset+length, bootPartitionOffsetBytes, bootPartitionEndBytes)
+		}
+		absolute[i] = ByteRange{OffsetBytes: offset, LengthBytes: length}
+		total += length
+	}
+	if total < contentSize {
+		return nil, fmt.Errorf("disk ranges total %d bytes, less than the file's %d written bytes", total, contentSize)
+	}
+
+	clipped := make([]ByteRange, 0, len(absolute))
+	var seen int64
+	for _, r := range absolute {
+		if seen >= contentSize {
+			break
+		}
+		if remaining := contentSize - seen; r.LengthBytes > remaining {
+			r.LengthBytes = remaining
+		}
+		clipped = append(clipped, r)
+		seen += r.LengthBytes
+	}
+	return clipped, nil
 }
 
 // resolvedRawWrite is a RawWrite whose content has been read into memory, so

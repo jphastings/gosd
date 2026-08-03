@@ -23,6 +23,7 @@ import (
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
+	"github.com/jphastings/gosd/internal/inject"
 )
 
 // roundTripFunc adapts a function into an http.RoundTripper, so the test
@@ -1862,6 +1863,166 @@ func TestBuildRejectsReservedEnvKeyActionably(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "GOSD_") {
 		t.Errorf("error = %q, want it to mention the reserved GOSD_ namespace", err.Error())
+	}
+}
+
+// TestBuildWithPlaceholdersWritesAPatchableInjectManifest is the end-to-end
+// acceptance test for the image-injection contract (gosd-49it): `gosd
+// build --placeholder` writes a <image>.inject.json manifest whose reported
+// byte ranges can be overwritten with same-length bytes via plain
+// os.WriteAt (no FAT tooling) and read back patched at the FAT level -
+// exactly what a browser-side provisioning tool (docs/image-injection.md)
+// does.
+func TestBuildWithPlaceholdersWritesAPatchableInjectManifest(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--placeholder", "backupist.yaml=32KiB",
+		"--placeholder", "network-config=4KiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	pristineImg, err := os.ReadFile(imgPath)
+	if err != nil {
+		t.Fatalf("reading the built image: %v", err)
+	}
+	wantImgSum := sha256.Sum256(pristineImg)
+
+	manifestPath := inject.ManifestPath(imgPath)
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("reading the injection manifest %s: %v", manifestPath, err)
+	}
+	var manifest inject.Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+
+	if manifest.GosdInject != 1 {
+		t.Errorf("gosd_inject = %d, want 1", manifest.GosdInject)
+	}
+	if manifest.Board != "pi-zero-2w" {
+		t.Errorf("board = %q, want pi-zero-2w", manifest.Board)
+	}
+	if manifest.Image.Filename != filepath.Base(imgPath) {
+		t.Errorf("image.filename = %q, want %q", manifest.Image.Filename, filepath.Base(imgPath))
+	}
+	if manifest.Image.Size != int64(len(pristineImg)) {
+		t.Errorf("image.size = %d, want %d", manifest.Image.Size, len(pristineImg))
+	}
+	if manifest.Image.SHA256 != hex.EncodeToString(wantImgSum[:]) {
+		t.Errorf("image.sha256 = %q, want %q", manifest.Image.SHA256, hex.EncodeToString(wantImgSum[:]))
+	}
+	if len(manifest.Placeholders) != 2 {
+		t.Fatalf("len(placeholders) = %d, want 2", len(manifest.Placeholders))
+	}
+
+	imgFile, err := os.OpenFile(imgPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("opening the image for range reads/patches: %v", err)
+	}
+	defer func() { _ = imgFile.Close() }()
+
+	var allRanges []inject.Range
+	for _, p := range manifest.Placeholders {
+		pristineContent := readRangesAt(t, imgFile, p.Ranges)
+		gotSum := sha256.Sum256(pristineContent)
+		if hex.EncodeToString(gotSum[:]) != p.SHA256 {
+			t.Errorf("placeholder %q: content at its reported ranges hashes to %x, want its manifest sha256 %s", p.Path, gotSum, p.SHA256)
+		}
+		if !strings.HasPrefix(string(pristineContent), "# GOSD-PLACEHOLDER v1 path=") {
+			t.Errorf("placeholder %q: content at its reported ranges = %q, want it to start with the documented header", p.Path, pristineContent[:min(len(pristineContent), 40)])
+		}
+		allRanges = append(allRanges, p.Ranges...)
+	}
+	assertRangesDontOverlap(t, allRanges)
+
+	patched := map[string][]byte{
+		"backupist.yaml": bytes.Repeat([]byte("BACKUPIST-PATCH-"), (32*1024/16)+1)[:32*1024],
+		"network-config": bytes.Repeat([]byte("NETCFG-PATCH-"), (4*1024/13)+1)[:4*1024],
+	}
+	for _, p := range manifest.Placeholders {
+		writeRangesAt(t, imgFile, p.Ranges, patched[p.Path])
+	}
+	if err := imgFile.Close(); err != nil {
+		t.Fatalf("closing the image after patching: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the patched image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	for path, want := range patched {
+		got, err := fs.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading patched %s back at the FAT level: %v", path, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("patched FAT-level content of %s does not match the patch bytes written via os.WriteAt", path)
+		}
+	}
+}
+
+// readRangesAt reads and concatenates ranges from f, in order.
+func readRangesAt(t *testing.T, f *os.File, ranges []inject.Range) []byte {
+	t.Helper()
+	var out []byte
+	for _, r := range ranges {
+		buf := make([]byte, r.Length)
+		if _, err := f.ReadAt(buf, r.Offset); err != nil {
+			t.Fatalf("ReadAt(offset=%d, len=%d): %v", r.Offset, r.Length, err)
+		}
+		out = append(out, buf...)
+	}
+	return out
+}
+
+// writeRangesAt slices content across ranges, in order, and writes each
+// slice to f via plain WriteAt - exactly the splice a browser-side
+// provisioning tool performs, with no FAT code involved.
+func writeRangesAt(t *testing.T, f *os.File, ranges []inject.Range, content []byte) {
+	t.Helper()
+	var consumed int64
+	for _, r := range ranges {
+		if _, err := f.WriteAt(content[consumed:consumed+r.Length], r.Offset); err != nil {
+			t.Fatalf("WriteAt(offset=%d, len=%d): %v", r.Offset, r.Length, err)
+		}
+		consumed += r.Length
+	}
+}
+
+// assertRangesDontOverlap fails the test if any two ranges in ranges
+// intersect.
+func assertRangesDontOverlap(t *testing.T, ranges []inject.Range) {
+	t.Helper()
+	for i := 0; i < len(ranges); i++ {
+		iEnd := ranges[i].Offset + ranges[i].Length
+		for j := i + 1; j < len(ranges); j++ {
+			jEnd := ranges[j].Offset + ranges[j].Length
+			if ranges[i].Offset < jEnd && ranges[j].Offset < iEnd {
+				t.Errorf("ranges overlap: [%d, %d) and [%d, %d)", ranges[i].Offset, iEnd, ranges[j].Offset, jEnd)
+			}
+		}
 	}
 }
 

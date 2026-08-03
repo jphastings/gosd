@@ -38,6 +38,7 @@ published artifact, noted in footnotes where it applies.
 | Published artifacts (kernel/bootloader) | ✅ | ✅ | ✅ [^pi3b-artifacts] | ✅ | ✅ [^nanopi-artifacts] | ✅ [^rock4se-artifacts] |
 | Custom kernel (`gosd build-kernel`) | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] | ✅ [^custom-kernel] |
 | Bundle prebuilt static binary (`--with-external`) | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] | ✅ [^with-external] |
+| Image injection (`--placeholder`) | ✅ [^placeholder] | ✅ [^placeholder] | ✅ [^placeholder] | ✅ [^placeholder] | ✅ [^placeholder] | ✅ [^placeholder] |
 | Ethernet | ➖ [^pi-no-eth] | ➖ [^pi-no-eth] | ✅ [^pi3b-eth] | ✅ [^eth-verified] | ✅ [^eth-verified] | ✅ [^eth-verified] |
 | WiFi (WPA2-PSK / open) | ✅ [^pi-zero-2w-wifi] | ✅ [^pi-zero-w-wifi] | ✅ [^pi3b-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
 | Hidden-SSID WiFi | ✅ [^hidden-ssid] | ✅ [^hidden-ssid] | ✅ [^hidden-ssid][^pi3b-wifi] | ➖ [^no-radio] | ➖ [^nanopi-wifi] | ❌ [^rock4se-wifi] |
@@ -145,6 +146,21 @@ published artifact, noted in footnotes where it applies.
     recipe inside Docker/Podman, arch-keyed rather than per-board (an
     arm64 build covers every board except the armv6 pi-zero-w alike), so it
     isn't its own row in this per-board table.
+
+[^placeholder]: `gosd build --placeholder <path>=<size>` (repeatable)
+    reserves a fixed-size, comment-padded placeholder file on `GOSD-BOOT`
+    and writes a `<image>.inject.json` manifest recording the absolute byte
+    ranges its content occupies, so a downstream tool can splice in
+    per-deployment configuration after the image is built (see
+    `docs/image-injection.md`). Purely an `internal/image`/FAT32 mechanism
+    with no board-specific code path, so it applies uniformly to every
+    board. Fake-artifact-tested end to end (build → read the manifest →
+    patch the reported ranges with `os.WriteAt` → reopen with `diskfs` and
+    confirm the FAT-level file reads back patched — the same splice a
+    downstream tool performs), but not yet exercised on physical hardware
+    (boot a patched image and confirm the app reads the injected file, and
+    that a pristine one reads as absent — tracked as a deferred bench pass
+    on bean `gosd-49it`).
 
 [^nanopi-artifacts]: The NanoPi Zero2's kernel and U-Boot are both built and
     published by CI (`nanopi-zero2-kernel` and `nanopi-zero2-uboot` jobs,

@@ -137,3 +137,10 @@ the people you send them to never need a terminal.
   binary from a `gosd-external.toml` recipe, and `gosd build
   --with-external` bundles it into the image:
   [`docs/externals.md`](docs/externals.md)
+- **Injecting per-user config after the image is built**
+  (`gosd build --placeholder <path>=<size>`) — distributing a per-deployment
+  secret or identity (an API key, a device's WiFi credentials) without
+  building a different image per recipient? Reserve a placeholder file at
+  build time and a downstream tool (typically a browser, between the CDN
+  and the user's disk) can splice real content into the declared byte
+  ranges with no FAT32 code at all: [`docs/image-injection.md`](docs/image-injection.md)
