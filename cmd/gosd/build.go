@@ -24,6 +24,7 @@ import (
 	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
+	"github.com/jphastings/gosd/internal/inject"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
@@ -71,6 +72,7 @@ var (
 	withExternal   []string
 	consoleBaud    int
 	dataFlush      bool
+	placeholders   []string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -125,6 +127,8 @@ func newBuildCmd() *cobra.Command {
 		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
 	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
 		"mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
+	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
+		"reserve a fixed-size comment-padded placeholder file on GOSD-BOOT at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 
 	return cmd
 }
@@ -152,6 +156,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	bootSizeBytes, err := parseBootSize(bootSize)
+	if err != nil {
+		return err
+	}
+
+	placeholderSpecs, err := parsePlaceholderFlags(placeholders)
 	if err != nil {
 		return err
 	}
@@ -248,6 +257,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			BootSizeBytes:    bootSizeBytes,
 			ExtraFirmware:    extraFirmware,
 			ExtraExecutables: extraExecutables,
+			Placeholders:     placeholderSpecs,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
 		if err != nil {
@@ -257,6 +267,14 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
 		}
 		printBootVolumeUsage(cmd, b.Name(), report)
+
+		if len(placeholderSpecs) > 0 {
+			manifestPath, err := inject.WriteManifest(outputs[b.Name()], b.Name(), placeholderSpecs, report.FileRanges)
+			if err != nil {
+				return fmt.Errorf("writing the injection manifest for %s (%s) failed: %w", appName, b.Name(), err)
+			}
+			cmd.PrintErrf("gosd build: %s inject manifest: %s\n", b.Name(), manifestPath)
+		}
 	}
 
 	if catalogFlag {
@@ -389,6 +407,49 @@ func parseBootSize(s string) (int64, error) {
 			s, size, (size+bootSizeAlignmentBytes/2)/bootSizeAlignmentBytes)
 	}
 	return size, nil
+}
+
+// parsePlaceholderFlags turns the repeated --placeholder <path>=<size> flag
+// values into inject.Placeholder specs. Each is split on the FIRST '=' (a
+// size can't contain one; splitting on the first keeps this consistent with
+// --env's strings.Cut), sized via parseSizeBytes (the same binary-unit
+// parser --data-size/--boot-size share), and validated (path shape,
+// minimum/maximum size - see inject.Placeholder.Validate) before any
+// compilation starts, so a bad --placeholder fails fast. A path given more
+// than once, case-insensitively (FAT paths are case-insensitive), is
+// rejected outright - the same "duplicate is more likely a mistake than
+// intent" call parseEnvFlags makes for --env.
+func parsePlaceholderFlags(flags []string) ([]inject.Placeholder, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]inject.Placeholder, 0, len(flags))
+	seen := make(map[string]string, len(flags))
+	for _, flag := range flags {
+		pathPart, sizePart, ok := strings.Cut(flag, "=")
+		if !ok {
+			return nil, fmt.Errorf("--placeholder %q is invalid; use --placeholder <path>=<size> (e.g. --placeholder backupist.yaml=32KiB)", flag)
+		}
+
+		size, err := parseSizeBytes("--placeholder", sizePart)
+		if err != nil {
+			return nil, err
+		}
+
+		p := inject.Placeholder{Path: pathPart, SizeBytes: size}
+		if err := p.Validate(); err != nil {
+			return nil, err
+		}
+
+		if existing, dup := seen[strings.ToLower(p.Path)]; dup {
+			return nil, fmt.Errorf("--placeholder path %q was given more than once (as %q); FAT paths are case-insensitive, so pick a distinct path for each --placeholder", p.Path, existing)
+		}
+		seen[strings.ToLower(p.Path)] = p.Path
+
+		placeholders = append(placeholders, p)
+	}
+	return placeholders, nil
 }
 
 // humanizeBinaryBytes renders a byte count the way a developer thinks about

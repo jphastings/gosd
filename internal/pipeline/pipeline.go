@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/internal/artifacts"
@@ -22,6 +23,7 @@ import (
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/initramfs"
+	"github.com/jphastings/gosd/internal/inject"
 )
 
 const (
@@ -117,6 +119,15 @@ type Options struct {
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
 	BootSizeBytes int64
+
+	// Placeholders are `gosd build --placeholder <path>=<size>` entries:
+	// rendered deterministically (see inject.Render), they land at the
+	// FAT root of GOSD-BOOT alongside gosd.toml, are covered by the image
+	// identity exactly like every other FAT-root file, and their content
+	// byte ranges are reported back in the image.WriteReport's
+	// FileRanges - the raw material for cmd/gosd's <image>.inject.json
+	// sidecar (see internal/inject.WriteManifest).
+	Placeholders []inject.Placeholder
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -196,6 +207,30 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// Imager wizard's cloud-init hostname isn't always shadowed by it (see
 	// bean gosd-4hz1 and gosdtoml.Render's docstring).
 	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
+
+	// opts.Placeholders land at the FAT root the same way, right after
+	// gosd.toml and still before the read-and-hash loop below, so they're
+	// covered by the image identity exactly like every other FAT-root
+	// file. FAT is case-insensitive, so a placeholder path colliding with
+	// any existing boot file (gosd.toml included) or an earlier
+	// placeholder is refused case-insensitively — two directory entries
+	// differing only by case can't coexist on the card anyway. Checking
+	// against bootFiles itself (mutated as the loop adds each rendered
+	// placeholder) catches both kinds of collision with one check.
+	reportRanges := make([]string, 0, len(opts.Placeholders))
+	for _, p := range opts.Placeholders {
+		for existing := range bootFiles {
+			if strings.EqualFold(existing, p.Path) {
+				return image.WriteReport{}, fmt.Errorf("--placeholder %s collides with an existing boot file %q (FAT paths are case-insensitive); choose a different --placeholder path", p.Path, existing)
+			}
+		}
+		rendered, err := inject.Render(p)
+		if err != nil {
+			return image.WriteReport{}, fmt.Errorf("rendering --placeholder %s failed: %w", p.Path, err)
+		}
+		bootFiles[p.Path] = bytes.NewReader(rendered)
+		reportRanges = append(reportRanges, p.Path)
+	}
 
 	// Read every FAT-root file into memory — both to hash it into the
 	// image identity below and to serve image.Write from a fresh reader
@@ -296,6 +331,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		RawWrites:     opts.Board.RawWrites(resolved),
 		DataSizeBytes: opts.DataSizeBytes,
 		BootSizeBytes: opts.BootSizeBytes,
+		ReportRanges:  reportRanges,
 	})
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)

@@ -367,6 +367,128 @@ func TestWriteWithBootSizeMovesTheDataPartitionOffset(t *testing.T) {
 	}
 }
 
+// TestWriteReportsExactAbsoluteFileRanges is the acceptance test for the
+// image-injection contract's core mechanism (gosd-49it): Spec.ReportRanges
+// must come back as absolute, ordered, exact-content-length byte ranges
+// that a caller can overwrite with a plain os.WriteAt and have the change
+// visible at the FAT level - no FAT tooling involved on the writing side at
+// all, exactly what a provisioning tool does.
+func TestWriteReportsExactAbsoluteFileRanges(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	const placeholderName = "placeholder.yaml"
+	original := bytes.Repeat([]byte("0123456789"), 500) // exactly 5000 bytes
+
+	report, err := image.Write(imgPath, image.Spec{
+		BootFiles: map[string]io.Reader{
+			"gosd.toml":     strings.NewReader("hostname = \"x\"\n"),
+			placeholderName: bytes.NewReader(original),
+		},
+		ReportRanges: []string{placeholderName, "gosd.toml"},
+	})
+	if err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+
+	ranges, ok := report.FileRanges[placeholderName]
+	if !ok {
+		t.Fatalf("report.FileRanges has no entry for %q; got %v", placeholderName, report.FileRanges)
+	}
+	if len(ranges) == 0 {
+		t.Fatal("report.FileRanges has an empty range list")
+	}
+
+	// Two files can never share clusters on a consistent FAT volume, so
+	// the placeholder's reported ranges must be disjoint from gosd.toml's
+	// - the injection splice must not be able to clobber a neighbor.
+	for _, pr := range ranges {
+		for _, gr := range report.FileRanges["gosd.toml"] {
+			if pr.OffsetBytes < gr.OffsetBytes+gr.LengthBytes && gr.OffsetBytes < pr.OffsetBytes+pr.LengthBytes {
+				t.Errorf("placeholder range [%d, %d) overlaps gosd.toml's range [%d, %d)",
+					pr.OffsetBytes, pr.OffsetBytes+pr.LengthBytes, gr.OffsetBytes, gr.OffsetBytes+gr.LengthBytes)
+			}
+		}
+	}
+
+	var total int64
+	prevEnd := int64(-1)
+	for _, r := range ranges {
+		if r.OffsetBytes < bootPartitionOffsetBytes {
+			t.Errorf("range offset %d is before the boot partition (starts at %d)", r.OffsetBytes, bootPartitionOffsetBytes)
+		}
+		if end := r.OffsetBytes + r.LengthBytes; end > bootPartitionOffsetBytes+image.DefaultBootPartitionSizeBytes {
+			t.Errorf("range [%d, %d) runs past the end of the boot partition (%d bytes)", r.OffsetBytes, end, image.DefaultBootPartitionSizeBytes)
+		}
+		if prevEnd >= 0 && r.OffsetBytes < prevEnd {
+			t.Errorf("ranges are not ordered: a range starting at %d follows one ending at %d", r.OffsetBytes, prevEnd)
+		}
+		prevEnd = r.OffsetBytes + r.LengthBytes
+		total += r.LengthBytes
+	}
+	if total != int64(len(original)) {
+		t.Errorf("ranges total %d bytes, want exactly %d (the file's content length)", total, len(original))
+	}
+
+	// Patch the reported ranges directly in the raw .img with same-length
+	// replacement bytes via plain os.WriteAt - exactly what a browser-side
+	// provisioning tool does, with no FAT code at all.
+	const replacementUnit = "PATCHED-CONTENT-"
+	replacement := bytes.Repeat([]byte(replacementUnit), (len(original)/len(replacementUnit))+1)[:len(original)]
+	f, err := os.OpenFile(imgPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("opening %s for patching: %v", imgPath, err)
+	}
+	var consumed int64
+	for _, r := range ranges {
+		if _, err := f.WriteAt(replacement[consumed:consumed+r.LengthBytes], r.OffsetBytes); err != nil {
+			t.Fatalf("WriteAt(offset=%d, len=%d): %v", r.OffsetBytes, r.LengthBytes, err)
+		}
+		consumed += r.LengthBytes
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing %s after patching: %v", imgPath, err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the patched image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	got, err := fs.ReadFile(placeholderName)
+	if err != nil {
+		t.Fatalf("reading %s back at the FAT level failed: %v", placeholderName, err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Errorf("FAT-level content after patching = %q, want the replacement %q", got, replacement)
+	}
+}
+
+// TestWriteRejectsReportRangesPathNotInBootFiles confirms a typo'd
+// ReportRanges entry fails cheaply, before any image bytes exist, rather
+// than surfacing as an obscure go-diskfs error mid-write.
+func TestWriteRejectsReportRangesPathNotInBootFiles(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	_, err := image.Write(imgPath, image.Spec{
+		BootFiles:    map[string]io.Reader{"gosd.toml": strings.NewReader("hostname = \"x\"\n")},
+		ReportRanges: []string{"not-a-boot-file.yaml"},
+	})
+	if err == nil {
+		t.Fatal("Write() with a ReportRanges path absent from BootFiles succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "not-a-boot-file.yaml") {
+		t.Errorf("error = %q, want it to mention the offending path", err)
+	}
+	if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
+		t.Errorf("Write() wrote %s despite refusing ReportRanges; the refusal must come before any image bytes are written", imgPath)
+	}
+}
+
 // TestWriteWrapsGoDiskfsDiskFullError is the acceptance test for gosd-m70t's
 // fit reporting: a boot partition too small for its BootFiles must fail with
 // image.ErrBootPartitionFull, not go-diskfs's bare "no space left on device"

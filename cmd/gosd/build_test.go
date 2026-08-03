@@ -14,6 +14,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
+	"github.com/jphastings/gosd/internal/inject"
 )
 
 func TestResolveBoardsDefaultsToAll(t *testing.T) {
@@ -611,6 +612,64 @@ func TestParseEnvFlagsRejectsDuplicateKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "FOO") {
 		t.Errorf("error = %q, want it to mention the duplicate key FOO", err.Error())
+	}
+}
+
+func TestParsePlaceholderFlagsNil(t *testing.T) {
+	got, err := parsePlaceholderFlags(nil)
+	if err != nil {
+		t.Fatalf("parsePlaceholderFlags(nil): %v", err)
+	}
+	if got != nil {
+		t.Errorf("parsePlaceholderFlags(nil) = %v, want nil", got)
+	}
+}
+
+func TestParsePlaceholderFlagsValid(t *testing.T) {
+	got, err := parsePlaceholderFlags([]string{"backupist.yaml=32KiB", "network-config=4096"})
+	if err != nil {
+		t.Fatalf("parsePlaceholderFlags: %v", err)
+	}
+	want := []inject.Placeholder{
+		{Path: "backupist.yaml", SizeBytes: 32 * 1024},
+		{Path: "network-config", SizeBytes: 4096},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parsePlaceholderFlags = %v, want %v", got, want)
+	}
+}
+
+func TestParsePlaceholderFlagsRejectsMissingEquals(t *testing.T) {
+	_, err := parsePlaceholderFlags([]string{"backupist.yaml"})
+	if err == nil {
+		t.Fatal("parsePlaceholderFlags([backupist.yaml]) succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "--placeholder <path>=<size>") {
+		t.Errorf("error = %q, want it to show the expected shape", err.Error())
+	}
+}
+
+func TestParsePlaceholderFlagsRejectsBadSize(t *testing.T) {
+	_, err := parsePlaceholderFlags([]string{"backupist.yaml=not-a-size"})
+	if err == nil {
+		t.Fatal("parsePlaceholderFlags with an unparseable size succeeded, want an error")
+	}
+}
+
+func TestParsePlaceholderFlagsRejectsSizeBelowMinimum(t *testing.T) {
+	_, err := parsePlaceholderFlags([]string{"backupist.yaml=1"})
+	if err == nil {
+		t.Fatal("parsePlaceholderFlags with a 1-byte size succeeded, want an error (too small for the rendered header)")
+	}
+}
+
+func TestParsePlaceholderFlagsRejectsDuplicatePathDifferingOnlyByCase(t *testing.T) {
+	_, err := parsePlaceholderFlags([]string{"backupist.yaml=32KiB", "Backupist.Yaml=32KiB"})
+	if err == nil {
+		t.Fatal("parsePlaceholderFlags with paths differing only by case succeeded, want an error (FAT is case-insensitive)")
+	}
+	if !strings.Contains(err.Error(), "backupist.yaml") || !strings.Contains(err.Error(), "Backupist.Yaml") {
+		t.Errorf("error = %q, want it to name both colliding paths", err.Error())
 	}
 }
 
