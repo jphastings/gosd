@@ -37,6 +37,12 @@ say so in the bean rather than silently diverging.
   survivors with `gh pr edit N --base main`, and verify the content actually
   reached main (`git show origin/main:<file>` or grep for it) rather than
   trusting a badge.
+- **A CONFLICTING PR gets no CI at all.** GitHub can't create the test-merge
+  commit, so `pull_request` workflows silently never trigger and
+  `gh pr checks` reports "no checks reported" — which reads like an Actions
+  outage but isn't (PRs #157 and #160 both lost time to this). When checks
+  don't appear, check `gh pr view --json mergeable` FIRST; rebase onto main
+  and CI starts on the push.
 - Never open a PR against a repository outside the `jphastings` account
   without JP's explicit permission — upstream dependencies included. Prepare
   the patch in a local clone and record it in the bean instead; JP decides
@@ -88,6 +94,20 @@ say so in the bean rather than silently diverging.
   exFAT is a `disk` option (bean `gosd-1ici`) and needs `CONFIG_EXFAT_FS`
   in the board's kernel, checked against `/proc/filesystems` before any
   write.
+- **Layout ABI (decided 2026-07-31, docs/design/upgrade-path.md):** the boot
+  volume size is per-app (`gosd build --boot-size`, default 256MiB) and is
+  that app's on-card ABI — changing it in a later release erases GOSD-DATA
+  on upgrade (cleanly, via the adoption gate) and is a release-notes-level
+  breaking change. Nothing on-device may assume a fixed data-partition
+  offset: derive it from the flashed MBR (partition 1 start + size), the way
+  dataexpand does. Plain Imager reflash is the baseline upgrade path:
+  `--data-size=expand` images keep GOSD-DATA via first-boot re-adoption, and
+  the provisioning snapshot in /data self-heals gosd.toml hand-edits.
+- **vfat `flush` is opt-in, default off (decided 2026-08-02, bean
+  gosd-9m1k):** normal writeback everywhere (`gosd build --data-flush` /
+  gosd.toml `data_flush` / env `GOSD_DATA_FLUSH` to opt in). Durability
+  comes from docs/runtime.md's fsync sequence, never from `flush` — do not
+  reintroduce it as a correctness measure.
 - **gosd-init source location:** `gosd build` builds gosd-init from a local
   checkout when one's found (current directory's module, or the checkout gosd
   itself was compiled from), otherwise from `github.com/jphastings/gosd` at
@@ -237,6 +257,16 @@ say so in the bean rather than silently diverging.
 - If `golangci-lint` reports a finding referencing a path in a worktree that no
   longer exists, it's a stale-cache false positive from a removed sibling
   worktree: `golangci-lint cache clean` and re-run before believing it.
+- Run the gates — and any `gh pr checks` polling — in the FOREGROUND and read
+  the results directly. Agents that parked on background monitors for a test
+  run or CI watch stalled repeatedly (2026-08: six separate stalls, each
+  leaving finished work unpushed until nudged). Poll CI with plain
+  `sleep 60 && gh pr checks <n>` loops.
+- Bizarre build failures while sibling agents/worktrees run on this machine —
+  stdlib packages "not in std", ENOSPC, evicted cache entries — mean the
+  shared Go build cache is contended or corrupted, not that your change is
+  broken: re-run with an isolated `GOCACHE` (plus `golangci-lint cache
+  clean`) before believing any of it.
 
 ## Code conventions
 
@@ -245,6 +275,20 @@ say so in the bean rather than silently diverging.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
 - Comments only where code can't explain itself; docstrings on exported API.
 - Board or feature status changes must update COMPATIBILITY.md in the same PR.
+- Anything that formats, adopts, or commits on-disk state needs an explicit
+  crash-ordering argument (what is provably durable before the commit record
+  lands) and an adversarial review pass BEFORE requesting JP's review. A
+  filesystem probe is never proof a write completed — an interrupted format
+  can leave probe-passing debris. The pattern that survives review is
+  write → sync → marker → sync (dataexpand's `gosd-data-established`, the
+  provisioning snapshot's digest-last `snapshot.json`); both exist because
+  review caught probe-only gates adopting debris (gosd-lirl's rejection).
+- FAT32 work goes through `internal/diskfmt`'s wrappers, never go-diskfs
+  directly: go-diskfs under-sizes FATs at ~0.8% of volume sizes (mitigated in
+  diskfmt; upstream patch recorded in gosd-e3e3), silently drops label spaces
+  to per-field 8.3 trims (gosd-xq9l, gosd-f83b), and makes leading-dot
+  filenames invisible to its own directory listings (documented on
+  `diskfmt.CreateEmptyFile`).
 - Raw netlink via `mdlayher/netlink` MUST OR `netlink.Request` into
   Execute/Send flags — the library does not add it, and the kernel silently
   SKIPS non-Request messages while still returning a success ack when
