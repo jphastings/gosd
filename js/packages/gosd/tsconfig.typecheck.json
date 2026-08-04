@@ -5,9 +5,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": [
-    "src/downloads/**/*.ts",
-    "integration/**/*.ts",
-    "vitest.config.ts"
-  ]
+  "include": ["src/downloads/**/*.ts", "integration/**/*.ts", "vite.config.ts"]
 }

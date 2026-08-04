@@ -12,24 +12,21 @@ package fetches that manifest, fetches the image, verifies both against it, and 
 declared ranges in place while the image is still streaming to disk.
 
 ```sh
-npm install gosd
+npm install @jphastings/gosd
 ```
 
 ## Quickstart
 
 ```ts
-import { withPlaceholders } from "gosd/downloads";
+import { withPlaceholders } from "@jphastings/gosd/downloads";
 
 // Call this directly from a click handler, not after an earlier `await` —
 // see "Save tiers" below for why.
 async function onDownloadClick() {
-  const result = await withPlaceholders(
-    "https://dl.example.com/app-rock-4se.img",
-    {
-      "backupist.yaml": renderConfigYaml(userInput),
-      "network-config": renderNetworkConfig(wifi),
-    },
-  );
+  const result = await withPlaceholders("https://dl.example.com/app-rock-4se.img", {
+    "backupist.yaml": renderConfigYaml(userInput),
+    "network-config": renderNetworkConfig(wifi),
+  });
   console.log(`saved via ${result.savedVia}, sha256 ${result.sha256}`);
 }
 ```
@@ -95,11 +92,11 @@ that point nothing has been fetched yet.
 ### Tier 2: Service worker (`service-worker`, opt-in)
 
 Not auto-selected unless you pass `options.serviceWorker = { url, scope }`. This package
-ships an import-free worker script at the `gosd/downloads/service-worker.js` export subpath
+ships an import-free worker script at the `@jphastings/gosd/downloads/service-worker.js` export subpath
 — **you host it yourself**, same-origin:
 
 ```ts
-// e.g. copy dist/sw/gosd-download-sw.js from node_modules/gosd to your
+// e.g. copy dist/sw/gosd-download-sw.js from node_modules/@jphastings/gosd to your
 // public/ directory as part of your build, or serve it directly if your
 // bundler supports `?url` imports of package subpaths.
 await navigator.serviceWorker.register("/gosd-download-sw.js", { scope: "/" });
@@ -152,7 +149,7 @@ Every failure is a `GosdError` subclass with a stable, machine-readable `code`:
 | `GosdCancelledError`              | `cancelled`                | The user dismissed the fs-access save picker. Nothing had been fetched yet.                                 |
 
 ```ts
-import { GosdError } from "gosd/downloads";
+import { GosdError } from "@jphastings/gosd/downloads";
 
 try {
   await withPlaceholders(imageURL, files);
@@ -182,7 +179,7 @@ import {
   checkImageResponse, // the ETag/Content-Length precondition checks
   runDownload, // fetch -> check -> patch -> pipe into any SaveSink -> commit
   Sha256, // the vendored streaming hasher itself
-} from "gosd/downloads";
+} from "@jphastings/gosd/downloads";
 ```
 
 A `SaveSink` is just `{ kind, writable, commit(), abort(reason) }` — write your own to drive

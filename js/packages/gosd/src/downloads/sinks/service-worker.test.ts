@@ -12,15 +12,9 @@ const packageRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("service-worker handshake protocol", () => {
   it("PROTOCOL matches the literal in ../../sw/gosd-download-sw.ts", () => {
-    const workerSource = readFileSync(
-      path.join(packageRoot, "src/sw/gosd-download-sw.ts"),
-      "utf8",
-    );
+    const workerSource = readFileSync(path.join(packageRoot, "src/sw/gosd-download-sw.ts"), "utf8");
     const match = workerSource.match(/const PROTOCOL = (\d+);/);
-    expect(
-      match,
-      "gosd-download-sw.ts should declare `const PROTOCOL = <n>;`",
-    ).not.toBeNull();
+    expect(match, "gosd-download-sw.ts should declare `const PROTOCOL = <n>;`").not.toBeNull();
     expect(Number(match![1])).toBe(PROTOCOL);
   });
 });
@@ -60,11 +54,7 @@ describe("gosd-download-sw.ts build output", () => {
 describe("createPumpWritable (Safari fallback backpressure)", () => {
   function pumpPair(ackTimeoutMs?: number) {
     const channel = new MessageChannel();
-    const writable = createPumpWritable(
-      channel.port1,
-      "fixture.img",
-      ackTimeoutMs,
-    );
+    const writable = createPumpWritable(channel.port1, "fixture.img", ackTimeoutMs);
     return { channel, writer: writable.getWriter() };
   }
 
@@ -100,9 +90,7 @@ describe("createPumpWritable (Safari fallback backpressure)", () => {
   it("fails the write when no ack arrives within the timeout", async () => {
     const { channel, writer } = pumpPair(50);
     channel.port2.onmessage = () => {}; // a worker that never acks
-    await expect(writer.write(new Uint8Array([1]))).rejects.toThrow(
-      GosdSaveFailedError,
-    );
+    await expect(writer.write(new Uint8Array([1]))).rejects.toThrow(GosdSaveFailedError);
     channel.port1.close();
     channel.port2.close();
   });
@@ -115,9 +103,7 @@ describe("createPumpWritable (Safari fallback backpressure)", () => {
         channel.port2.postMessage({ type: "error", reason: "disk full" });
       }
     };
-    await expect(writer.write(new Uint8Array([1]))).rejects.toThrow(
-      /disk full/,
-    );
+    await expect(writer.write(new Uint8Array([1]))).rejects.toThrow(/disk full/);
     channel.port1.close();
     channel.port2.close();
   });

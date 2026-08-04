@@ -83,9 +83,7 @@ describe("runDownload", () => {
     expect(result.sha256).toBe(manifest.image.sha256);
     expect(sink.committed).toBe(true);
     expect(sink.aborts).toHaveLength(0);
-    const written = new Uint8Array(
-      sink.writes.reduce((sum, c) => sum + c.length, 0),
-    );
+    const written = new Uint8Array(sink.writes.reduce((sum, c) => sum + c.length, 0));
     let offset = 0;
     for (const c of sink.writes) {
       written.set(c, offset);
@@ -140,8 +138,7 @@ describe("runDownload", () => {
       runDownload({
         manifest,
         padded: new Map(),
-        fetchImage: async () =>
-          new Response(image, { headers: { "content-length": "1" } }),
+        fetchImage: async () => new Response(image, { headers: { "content-length": "1" } }),
         sink,
       }),
     ).rejects.toThrow(GosdImagePreconditionError);

@@ -67,11 +67,15 @@ jobs:
           version: v2.12.2
 
   js:
+    # The full vp toolchain needs Node >= 22 (vite-plus 0.2.x's tsdown
+    # bundle calls Promise.withResolvers despite its engines claim), so this
+    # job matrixes 22/24; the package's own Node >= 20 engines claim is
+    # covered separately by js-node20-runtime below.
     name: js (node ${{ matrix.node }})
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "24"]
+        node: ["22", "24"]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -79,24 +83,65 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # js/packages/gosd's cross-implementation integration test proves the
-      # TypeScript client against a real gosd-built image: `npm run
+      # TypeScript client against a real gosd-built image: `pnpm run
       # genfixture` shells out to `go run ./internal/cmd/injectfixture`, so
       # this job needs a Go toolchain alongside Node, not just Node.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+          # pnpm 11 itself needs Node >= 22.13 (it uses node:sqlite);
+          # standalone ships pnpm with its own embedded runtime, decoupling
+          # the pnpm CLI from the matrix Node the scripts run on.
+          standalone: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: js/package-lock.json
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      - run: npm run test:integration
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - run: pnpm test
+      - run: pnpm run test:integration
+
+  js-node20-runtime:
+    # Proves the PACKAGE (not the toolchain) still works on Node 20, its
+    # engines floor: the whole test suite — unit and the real-image
+    # integration round-trip — runs on a Node 20 process via vitest
+    # directly, using vitest.node20.config.ts (which must not import
+    # vite-plus; loading vp's config would pull Node-22-only code into the
+    # process — see that file's header). The vp-driven build/lint/format
+    # gates live in the `js` job above on Node 22/24.
+    name: js (node 20 runtime)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+          standalone: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @jphastings/gosd exec vitest run --config vitest.node20.config.ts --project unit
+      - run: pnpm --filter @jphastings/gosd run genfixture
+      - run: pnpm --filter @jphastings/gosd exec vitest run --config vitest.node20.config.ts --project integration
 
   smoke-build:
     name: cross-compile smoke build

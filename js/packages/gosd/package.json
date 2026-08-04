@@ -1,26 +1,20 @@
 {
-  "name": "gosd",
+  "name": "@jphastings/gosd",
   "version": "0.1.0",
   "description": "Download a gosd-built SD-card image, verify it, and splice per-deployment config into its reserved placeholder files as it streams to disk.",
   "license": "MIT",
-  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jphastings/gosd.git",
     "directory": "js/packages/gosd"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "sideEffects": false,
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
+  "type": "module",
+  "sideEffects": false,
   "exports": {
     "./downloads": {
       "types": "./dist/downloads/index.d.ts",
@@ -29,12 +23,24 @@
     "./downloads/service-worker.js": "./dist/sw/gosd-download-sw.js",
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json",
+    "build": "rm -rf dist && vp pack",
     "typecheck": "tsc -p tsconfig.core.json && tsc -p tsconfig.sw.json --noEmit && tsc -p tsconfig.typecheck.json",
-    "test": "vitest run --project unit",
+    "test": "vp test --project unit",
     "genfixture": "go run ../../../internal/cmd/injectfixture ./integration/fixture",
-    "test:integration": "npm run genfixture && vitest run --project integration",
-    "prepack": "npm run build"
+    "test:integration": "pnpm run genfixture && vp test --project integration",
+    "lint": "vp lint",
+    "format": "vp fmt",
+    "format:check": "vp fmt --check",
+    "prepack": "rm -rf dist && vp pack"
+  },
+  "devDependencies": {
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

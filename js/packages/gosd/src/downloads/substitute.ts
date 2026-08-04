@@ -67,14 +67,12 @@ function buildPlan(
   manifest: Manifest,
   padded: Map<string, Uint8Array>,
 ): { segments: Segment[]; placeholderStates: PlaceholderState[] } {
-  const placeholderStates: PlaceholderState[] = manifest.placeholders.map(
-    (p) => ({
-      path: p.path,
-      sha256: p.sha256,
-      hasher: new Sha256(),
-      remaining: p.size,
-    }),
-  );
+  const placeholderStates: PlaceholderState[] = manifest.placeholders.map((p) => ({
+    path: p.path,
+    sha256: p.sha256,
+    hasher: new Sha256(),
+    remaining: p.size,
+  }));
 
   const segments: Segment[] = [];
   manifest.placeholders.forEach((p, placeholderIndex) => {
@@ -85,9 +83,7 @@ function buildPlan(
         start: r.offset,
         end: r.offset + r.length,
         placeholderIndex,
-        replacement: replacement
-          ? replacement.subarray(consumed, consumed + r.length)
-          : null,
+        replacement: replacement ? replacement.subarray(consumed, consumed + r.length) : null,
       });
       consumed += r.length;
     }
@@ -174,10 +170,7 @@ export function createSubstitutionTransform(
           if (seg.replacement) {
             if (!out) out = chunk.slice();
             out.set(
-              seg.replacement.subarray(
-                intersectStart - seg.start,
-                intersectEnd - seg.start,
-              ),
+              seg.replacement.subarray(intersectStart - seg.start, intersectEnd - seg.start),
               localStart,
             );
           }
@@ -218,7 +211,5 @@ export function patchStream(
   padded: Map<string, Uint8Array>,
   options: SubstitutionOptions = {},
 ): ReadableStream<Uint8Array> {
-  return source.pipeThrough(
-    createSubstitutionTransform(manifest, padded, options),
-  );
+  return source.pipeThrough(createSubstitutionTransform(manifest, padded, options));
 }

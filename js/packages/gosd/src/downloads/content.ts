@@ -6,10 +6,7 @@
 // are left untouched (read as absent, per the placeholder contract) but are
 // still hash-verified during the substitution pass in substitute.ts.
 
-import {
-  GosdContentTooLargeError,
-  GosdUnknownPlaceholderError,
-} from "./errors.js";
+import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
 import type { Manifest } from "./manifest.js";
 
 /** UTF-8 encodes and pads each entry of `files` to its placeholder's exact
@@ -32,15 +29,13 @@ export function padContents(
     const placeholder = byPath.get(path);
     if (!placeholder) {
       const available =
-        manifest.placeholders.map((p) => p.path).join(", ") ||
-        "(this image has no placeholders)";
+        manifest.placeholders.map((p) => p.path).join(", ") || "(this image has no placeholders)";
       throw new GosdUnknownPlaceholderError(
         `withPlaceholders: "${path}" is not a placeholder in this image's manifest; available placeholders: ${available}`,
       );
     }
 
-    const body =
-      typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const body = typeof content === "string" ? new TextEncoder().encode(content) : content;
     if (body.length > placeholder.size) {
       throw new GosdContentTooLargeError(
         `withPlaceholders: content for "${path}" is ${body.length} bytes, which does not fit in its ${placeholder.size}-byte reserved placeholder; shorten the content, or reserve a larger placeholder with --placeholder at build time`,

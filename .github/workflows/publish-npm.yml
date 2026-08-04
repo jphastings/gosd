@@ -1,24 +1,28 @@
 # Staged npm publishing for the js/packages/* workspace (see js/PUBLISHING.md
 # for the full procedure and the one-time npmjs.com/GitHub setup).
 #
-# Trigger: push a tag shaped `npm/<package>/v<version>` (e.g. npm/gosd/v0.1.0)
-# for a package at js/packages/<package>. The pipeline is deliberately staged:
+# Trigger: push a tag shaped `npm/<dir>/v<version>` (e.g. npm/gosd/v0.1.0) for
+# a package at js/packages/<dir> — <dir> is always the DIRECTORY name, which
+# may differ from the package's npm `name` (e.g. dir "gosd" publishes as
+# "@jphastings/gosd"; a `@`/extra `/` in a scoped name would break the tag
+# parse, so tags never carry it). The pipeline is deliberately staged:
 #
 #   verify  — re-runs every js quality gate at the tagged commit, checks the
 #             tag's version against package.json, confirms the commit is on
-#             main, and shows exactly what files the tarball would ship.
+#             main, reads the real npm name out of the manifest, and shows
+#             exactly what files the tarball would ship.
 #   publish — gated by the `npm-publish` GitHub environment (protect it with
 #             a required reviewer: that approval is the human stage gate).
 #             Publishes via npm trusted publishing (OIDC — no long-lived npm
 #             token exists anywhere) with a provenance attestation, and ONLY
 #             ever to the `next` dist-tag. CI cannot change what a plain
-#             `npm install <package>` resolves to.
+#             `npm install <name>` resolves to.
 #   smoke   — installs the just-published version from the real registry into
 #             a scratch project, verifies its provenance signature, and
 #             prints the one promotion command.
 #
 # Promotion to `latest` is intentionally NOT automated: a human runs
-# `npm dist-tag add <package>@<version> latest` with their own 2FA'd npm
+# `npm dist-tag add <name>@<version> latest` with their own 2FA'd npm
 # login after whatever bake time they want. A compromised workflow can
 # therefore at worst publish an opt-in `next` version, never silently
 # replace what users install by default.
@@ -41,7 +45,8 @@ jobs:
     name: verify tag & package
     runs-on: ubuntu-latest
     outputs:
-      package: ${{ steps.tag.outputs.package }}
+      dir: ${{ steps.tag.outputs.dir }}
+      name: ${{ steps.tag.outputs.name }}
       version: ${{ steps.tag.outputs.version }}
     defaults:
       run:
@@ -58,26 +63,28 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on origin/main; publish tags must be cut from merged history"
             exit 1
           }
+      # Tags are keyed on the package's DIRECTORY under js/packages/, not its
+      # npm name — a scoped name (@jphastings/gosd) can't itself appear in a
+      # `npm/<x>/v<version>` tag (the `@`/extra `/` would break the parse
+      # below). The real npm name is read out of the manifest and threaded to
+      # the publish/smoke jobs via the `name` output.
       - name: Parse and cross-check the tag
         id: tag
         run: |
-          pkg="$(echo "$GITHUB_REF_NAME" | cut -d/ -f2)"
+          dir="$(echo "$GITHUB_REF_NAME" | cut -d/ -f2)"
           version="${GITHUB_REF_NAME##*/v}"
-          test -f "packages/$pkg/package.json" || {
-            echo "::error::tag names package \"$pkg\" but js/packages/$pkg/package.json does not exist"
+          test -f "packages/$dir/package.json" || {
+            echo "::error::tag names directory \"$dir\" but js/packages/$dir/package.json does not exist"
             exit 1
           }
-          name="$(node -p "require('./packages/$pkg/package.json').name")"
-          manifest_version="$(node -p "require('./packages/$pkg/package.json').version")"
-          test "$name" = "$pkg" || {
-            echo "::error::tag names package \"$pkg\" but js/packages/$pkg/package.json declares name \"$name\""
-            exit 1
-          }
+          name="$(node -p "require('./packages/$dir/package.json').name")"
+          manifest_version="$(node -p "require('./packages/$dir/package.json').version")"
           test "$manifest_version" = "$version" || {
-            echo "::error::tag says v$version but js/packages/$pkg/package.json says $manifest_version; bump the version (in its own PR) before tagging"
+            echo "::error::tag says v$version but js/packages/$dir/package.json says $manifest_version; bump the version (in its own PR) before tagging"
             exit 1
           }
-          echo "package=$pkg" >> "$GITHUB_OUTPUT"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       # The integration test consumes a real gosd-built image via
       # `go run ./internal/cmd/injectfixture`, so Go is needed alongside Node
@@ -86,21 +93,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+          # pnpm 11 itself needs Node >= 22.13 (it uses node:sqlite);
+          # standalone ships pnpm with its own embedded runtime so the pnpm
+          # CLI works on every matrix leg, while the actual scripts (vp,
+          # vitest, tsc) still run on the matrix Node - keeping node 20 a
+          # real test of the package's engines claim.
+          standalone: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: js/package-lock.json
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      - run: npm run test:integration
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - run: pnpm test
+      - run: pnpm run test:integration
       # Show exactly which files would ship, so the approval on the publish
       # environment is informed by more than a version number.
       - name: List the tarball contents
-        working-directory: js/packages/${{ steps.tag.outputs.package }}
+        working-directory: js/packages/${{ steps.tag.outputs.dir }}
         run: npm pack --dry-run
 
   publish:
@@ -118,23 +135,39 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+          # pnpm 11 itself needs Node >= 22.13 (it uses node:sqlite);
+          # standalone ships pnpm with its own embedded runtime so the pnpm
+          # CLI works on every matrix leg, while the actual scripts (vp,
+          # vitest, tsc) still run on the matrix Node - keeping node 20 a
+          # real test of the package's engines claim.
+          standalone: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: js/package-lock.json
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
       # Trusted publishing needs npm >= 11.5.1; Node 24's bundled npm is 11.x
       # but not guaranteed new enough on every runner image.
       - run: npm install -g npm@^11.5.1
-      - run: npm ci
+      # pnpm only installs dependencies here (prepack needs `vp` on PATH to
+      # build fresh output below) — pnpm itself never touches the registry:
+      # it has no OIDC trusted-publishing support (pnpm/pnpm#9812), so the
+      # actual publish step stays on the npm CLI.
+      - run: pnpm install --frozen-lockfile
         working-directory: js
       # prepack runs the build, so this publishes freshly-compiled output of
       # the verified commit. --tag next is the staged-release property: CI
       # never writes the `latest` dist-tag. --provenance is explicit because
       # relying on trusted publishing's implicit provenance has been flaky.
+      # --access public is load-bearing for a scoped name (@jphastings/gosd
+      # defaults private otherwise); publishConfig.access also sets it, but
+      # this makes the guarantee explicit at the call site too.
       - name: Publish
-        working-directory: js/packages/${{ needs.verify.outputs.package }}
-        run: npm publish --provenance --tag next
+        working-directory: js/packages/${{ needs.verify.outputs.dir }}
+        run: npm publish --provenance --access public --tag next
 
   smoke:
     name: install & verify from the registry
@@ -146,19 +179,22 @@ jobs:
           node-version: "24"
       - name: Install the published version into a scratch project
         env:
-          PKG: ${{ needs.verify.outputs.package }}
+          NAME: ${{ needs.verify.outputs.name }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           mkdir smoke && cd smoke
           npm init -y > /dev/null
           # The registry can lag a fresh publish by a few seconds.
           for i in $(seq 1 12); do
-            npm view "$PKG@$VERSION" version > /dev/null 2>&1 && break
-            echo "waiting for $PKG@$VERSION to appear in the registry ($i)"
+            npm view "$NAME@$VERSION" version > /dev/null 2>&1 && break
+            echo "waiting for $NAME@$VERSION to appear in the registry ($i)"
             sleep 10
           done
-          npm install "$PKG@$VERSION"
-          installed="$(node -p "require('$PKG/package.json').version")"
+          npm install "$NAME@$VERSION"
+          # The "./package.json" export (required of every js/packages/*
+          # package, see PUBLISHING.md) resolves for scoped names exactly
+          # like it does for bare ones.
+          installed="$(node -p "require('$NAME/package.json').version")"
           test "$installed" = "$VERSION" || {
             echo "::error::installed $installed, expected $VERSION"
             exit 1
@@ -167,12 +203,13 @@ jobs:
           npm audit signatures
       - name: Promotion reminder
         env:
-          PKG: ${{ needs.verify.outputs.package }}
+          NAME: ${{ needs.verify.outputs.name }}
+          DIR: ${{ needs.verify.outputs.dir }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          echo "Published $PKG@$VERSION to the 'next' dist-tag with provenance."
-          echo "After verifying it (npm install $PKG@next), promote it with:"
+          echo "Published $NAME@$VERSION (tag npm/$DIR/v$VERSION) to the 'next' dist-tag with provenance."
+          echo "After verifying it (npm install $NAME@next), promote it with:"
           echo ""
-          echo "    npm dist-tag add $PKG@$VERSION latest"
+          echo "    npm dist-tag add $NAME@$VERSION latest"
           echo ""
           echo "See js/PUBLISHING.md for the full procedure and rollback."

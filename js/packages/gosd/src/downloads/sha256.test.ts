@@ -23,9 +23,7 @@ describe("Sha256", () => {
       "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
     ],
   ])("matches the NIST vector for %j", (input, expected) => {
-    expect(
-      new Sha256().update(new TextEncoder().encode(input)).digestHex(),
-    ).toBe(expected);
+    expect(new Sha256().update(new TextEncoder().encode(input)).digestHex()).toBe(expected);
   });
 
   it("matches the NIST vector for one million repeated 'a'", () => {
@@ -36,27 +34,13 @@ describe("Sha256", () => {
   });
 
   it("cross-checks random-length random inputs against crypto.subtle.digest", async () => {
-    for (const length of [
-      0,
-      1,
-      55,
-      56,
-      63,
-      64,
-      65,
-      127,
-      128,
-      1000,
-      65536 + 37,
-    ]) {
+    for (const length of [0, 1, 55, 56, 63, 64, 65, 127, 128, 1000, 65536 + 37]) {
       const input = new Uint8Array(length);
       crypto.getRandomValues(input.subarray(0, Math.min(length, 65536)));
       for (let i = 65536; i < length; i++) input[i] = (i * 2654435761) % 256;
 
       const expected = await subtleDigestHex(input);
-      expect(new Sha256().update(input).digestHex(), `length ${length}`).toBe(
-        expected,
-      );
+      expect(new Sha256().update(input).digestHex(), `length ${length}`).toBe(expected);
     }
   });
 
@@ -106,9 +90,7 @@ describe("Sha256", () => {
   it("throws if update() is called after digest()", () => {
     const hasher = new Sha256().update(new TextEncoder().encode("x"));
     hasher.digest();
-    expect(() => hasher.update(new TextEncoder().encode("y"))).toThrow(
-      /after digest/,
-    );
+    expect(() => hasher.update(new TextEncoder().encode("y"))).toThrow(/after digest/);
   });
 
   it("digest() is idempotent", () => {

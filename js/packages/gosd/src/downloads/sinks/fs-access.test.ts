@@ -14,9 +14,7 @@ describe("fsAccessAvailable", () => {
   });
 
   it("is true when the target exposes a showSaveFilePicker function", () => {
-    expect(fsAccessAvailable({ showSaveFilePicker: async () => ({}) })).toBe(
-      true,
-    );
+    expect(fsAccessAvailable({ showSaveFilePicker: async () => ({}) })).toBe(true);
   });
 });
 
@@ -27,10 +25,7 @@ describe("createFsAccessSink", () => {
       createWritable: async () => writable.stream,
     }));
 
-    await createFsAccessSink(
-      { suggestedName: "app.img" },
-      { showSaveFilePicker },
-    );
+    await createFsAccessSink({ suggestedName: "app.img" }, { showSaveFilePicker });
 
     expect(showSaveFilePicker).toHaveBeenCalledWith({
       suggestedName: "app.img",
@@ -46,15 +41,15 @@ describe("createFsAccessSink", () => {
       },
     };
 
-    await expect(
-      createFsAccessSink({ suggestedName: "app.img" }, target),
-    ).rejects.toThrow(GosdCancelledError);
+    await expect(createFsAccessSink({ suggestedName: "app.img" }, target)).rejects.toThrow(
+      GosdCancelledError,
+    );
   });
 
   it("throws GosdSaveFailedError when showSaveFilePicker isn't available", async () => {
-    await expect(
-      createFsAccessSink({ suggestedName: "app.img" }, {}),
-    ).rejects.toThrow(GosdSaveFailedError);
+    await expect(createFsAccessSink({ suggestedName: "app.img" }, {})).rejects.toThrow(
+      GosdSaveFailedError,
+    );
   });
 
   it("throws GosdSaveFailedError for a non-cancellation picker failure", async () => {
@@ -63,9 +58,9 @@ describe("createFsAccessSink", () => {
         throw new Error("disk full");
       },
     };
-    await expect(
-      createFsAccessSink({ suggestedName: "app.img" }, target),
-    ).rejects.toThrow(GosdSaveFailedError);
+    await expect(createFsAccessSink({ suggestedName: "app.img" }, target)).rejects.toThrow(
+      GosdSaveFailedError,
+    );
   });
 
   it("commit() closes the underlying writable", async () => {

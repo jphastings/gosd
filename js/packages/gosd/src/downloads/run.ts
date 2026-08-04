@@ -36,9 +36,7 @@ export interface RunDownloadResult {
  * substitution/verification, or the sink itself — the sink is aborted before
  * the error is rethrown; `sink.commit()` is only ever called after the patched
  * stream has fully and successfully piped into it. */
-export async function runDownload(
-  options: RunDownloadOptions,
-): Promise<RunDownloadResult> {
+export async function runDownload(options: RunDownloadOptions): Promise<RunDownloadResult> {
   try {
     let response: Response;
     try {
@@ -66,12 +64,9 @@ export async function runDownload(
       );
     }
 
-    const patched = patchStream(
-      response.body,
-      options.manifest,
-      options.padded,
-      { onProgress: options.onProgress },
-    );
+    const patched = patchStream(response.body, options.manifest, options.padded, {
+      onProgress: options.onProgress,
+    });
     await patched.pipeTo(options.sink.writable, { signal: options.signal });
   } catch (err) {
     await options.sink.abort(err);

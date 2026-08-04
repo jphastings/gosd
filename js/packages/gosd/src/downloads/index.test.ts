@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sha256 } from "./sha256.js";
-import {
-  GosdCancelledError,
-  GosdUnknownPlaceholderError,
-  withPlaceholders,
-} from "./index.js";
+import { GosdCancelledError, GosdUnknownPlaceholderError, withPlaceholders } from "./index.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -26,10 +22,7 @@ function fixture(): {
   return { image, manifestJSON: JSON.stringify(manifest), manifest };
 }
 
-function fakeFetch(
-  image: Uint8Array<ArrayBuffer>,
-  manifestJSON: string,
-): typeof fetch {
+function fakeFetch(image: Uint8Array<ArrayBuffer>, manifestJSON: string): typeof fetch {
   return (async (url: string | URL | Request) => {
     const href = url instanceof Request ? url.url : String(url);
     if (href.endsWith(".inject.json")) {
@@ -59,8 +52,7 @@ describe("withPlaceholders: fs-access gesture ordering", () => {
     stubShowSaveFilePicker(async () => {
       order.push("picker");
       return {
-        createWritable: async () =>
-          new WritableStream({ write() {}, close() {} }),
+        createWritable: async () => new WritableStream({ write() {}, close() {} }),
       };
     });
 
@@ -100,11 +92,7 @@ describe("withPlaceholders: fs-access gesture ordering", () => {
     }) as typeof fetch;
 
     await expect(
-      withPlaceholders(
-        "https://dl.example.com/app.img",
-        {},
-        { fetch: fetchFn },
-      ),
+      withPlaceholders("https://dl.example.com/app.img", {}, { fetch: fetchFn }),
     ).rejects.toThrow(GosdCancelledError);
     expect(fetchCalled).toBe(false);
   });
@@ -168,8 +156,6 @@ describe("withPlaceholders: tier forcing and content validation", () => {
     );
 
     expect(fetchCalls).toEqual(["https://dl.example.com/app.img"]);
-    expect(result.sha256).toBe(
-      (manifest as { image: { sha256: string } }).image.sha256,
-    );
+    expect(result.sha256).toBe((manifest as { image: { sha256: string } }).image.sha256);
   });
 });
