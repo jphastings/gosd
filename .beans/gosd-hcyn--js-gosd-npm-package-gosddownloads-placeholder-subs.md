@@ -1,7 +1,7 @@
 ---
 # gosd-hcyn
 title: 'js/: gosd npm package — gosd/downloads placeholder-substituting downloader'
-status: in-progress
+status: completed
 type: feature
 created_at: 2026-08-04T08:57:17Z
 updated_at: 2026-08-04T08:57:17Z
@@ -23,15 +23,25 @@ Add a JavaScript/TypeScript area (js/, npm workspaces) and an npm package named 
 
 ## Todos
 
-- [ ] Scaffold js/ workspace (root package.json + lockfile, tsconfig.base, prettier config) + .gitignore entries
-- [ ] Core modules test-first: errors, sha256 (NIST vectors + WebCrypto cross-check), manifest/deriveManifestURL, content padding, substitute (chunk-boundary matrix vs naive reference), preconditions (ETag/Content-Length), run orchestration
-- [ ] Sinks: memory, fs-access (gesture-safe ordering + call-order test), service-worker client + src/sw worker script + protocol tests
-- [ ] internal/cmd/injectfixture + vitest integration test + npm scripts
-- [ ] CI: js job in .github/workflows/ci.yml (node 20/24 matrix, SHA-pinned actions)
-- [ ] Docs: packages/gosd/README.md, docs/image-injection.md pointer, root README bullet, CLAUDE.md carve-out + quality-gates line
-- [ ] Quality gates: full Go set AND cd js && npm ci && format:check && typecheck && build && test && test:integration
+- [x] Scaffold js/ workspace (root package.json + lockfile, tsconfig.base, prettier config) + .gitignore entries
+- [x] Core modules test-first: errors, sha256 (NIST vectors + WebCrypto cross-check), manifest/deriveManifestURL, content padding, substitute (chunk-boundary matrix vs naive reference), preconditions (ETag/Content-Length), run orchestration
+- [x] Sinks: memory, fs-access (gesture-safe ordering + call-order test), service-worker client + src/sw worker script + protocol tests
+- [x] internal/cmd/injectfixture + vitest integration test + npm scripts
+- [x] CI: js job in .github/workflows/ci.yml (node 20/24 matrix, SHA-pinned actions)
+- [x] Docs: packages/gosd/README.md, docs/image-injection.md pointer, root README bullet, CLAUDE.md carve-out + quality-gates line
+- [x] Quality gates: full Go set AND cd js && npm ci && format:check && typecheck && build && test && test:integration
 
-## Follow-ups to create as beans
+## Follow-ups (created)
 
-- Download resuming (FS-Access tier: Range/If-Range, persisted handle, IndexedDB state, partial-file re-verification)
-- npm publishing (JP registers the gosd name; manual publish first, automation later)
+- gosd-bs9s — download resuming (FS-Access tier: Range/If-Range, persisted handle, IndexedDB state, partial-file re-verification)
+- gosd-xe3r — npm publishing (JP registers the gosd name; manual publish first, automation later)
+
+## Summary of Changes
+
+- New `js/` npm-workspaces area (root package.json/lockfile, shared strict tsconfig.base, Prettier) and the `gosd` package at `js/packages/gosd` with subpath export `gosd/downloads`. Zero runtime dependencies; plain-tsc build (separate DOM and WebWorker programs); a third `tsconfig.core.json --noEmit` program compiles the core against `lib: ES2022` only, mechanically enforcing that everything below the sink layer runs on Node 20.
+- **Core**: typed `GosdError` subclasses with literal codes; `deriveManifestURL` (Go `filepath.Ext` semantics); `parseManifest`/`fetchManifest` (structural validation naming JSON paths, Σranges==size, in-bounds, global overlap check, optional sha256 pin — normalized + shape-checked); `padContents` (trailing-`0x0A` padding to exact size — review caught the subagent zero-filling, which would have put NUL bytes into YAML); vendored streaming `Sha256` (NIST CAVP vectors, WebCrypto cross-checks, chunked==one-shot, clone()); `createSubstitutionTransform` (globally sorted segment plan, original-bytes hashing, mid-stream per-placeholder pristine verification the instant each placeholder's last byte passes, copy-on-write only for chunks a replacement touches, short/overlong-stream errors, final whole-image digest at flush); `checkImageResponse` (fail-fast ETag/Content-Length, never skipping the streamed hash); `runDownload` (sink aborted on every failure path, commit only after a full successful pipe).
+- **Save tiers**: fs-access (picker synchronously within the user gesture — before any await; swap-file semantics mean failures never leave partial bytes), opt-in service-worker streaming (shipped import-free classic worker at the `gosd/downloads/service-worker.js` subpath; MessageChannel handshake with PROTOCOL literal match test; transferable-stream path plus a pump fallback that got push-with-ack backpressure in review — one chunk in flight, ack timeout doubling as the dead-worker watchdog), and memory+Blob (all verification completes before anything is saved).
+- **Cross-implementation proof**: `internal/cmd/injectfixture` (Go, module code) builds a real 24MiB image + manifest via internal/image + internal/inject; the vitest integration project patches it through the core with an injected fetch and byte-compares everything (patched ranges exact, all other bytes identical, untouched placeholder pristine, corruption cases typed).
+- **CI**: `js` job (node 20/24 matrix, SHA-pinned setup-node v7.0.0 — pin verified against the tag via git ls-remote — plus setup-go for the fixture) running format:check/typecheck/build/test/test:integration.
+- Docs: js/packages/gosd/README.md (quickstart, threat model, tier table, SW hosting, error codes), docs/image-injection.md pointer, root README bullet, CLAUDE.md carve-out + js quality-gates line, .gitignore entries.
+- 111 unit + 4 integration tests; all Go gates unaffected and green.

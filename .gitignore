@@ -7,3 +7,9 @@
 
 # Don't track any built images
 *.img
+
+# js/ npm workspace
+node_modules/
+js/**/dist/
+js/**/*.tsbuildinfo
+js/packages/gosd/integration/fixture/
