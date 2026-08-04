@@ -68,7 +68,10 @@ say so in the bean rather than silently diverging.
   and `crypto.subtle.digest` cross-checks, since WebCrypto alone can't hash
   a stream incrementally. Its cross-implementation integration test's
   fixture generator, `internal/cmd/injectfixture`, IS Go module code and
-  runs under the normal Go gates below.
+  runs under the normal Go gates below. npm publishing is staged and
+  tokenless (`npm/<package>/vX.Y.Z` tag → OIDC trusted publishing with
+  provenance → the `next` dist-tag only; a human promotes to `latest`) —
+  procedure in `js/PUBLISHING.md`; never publish from CI to `latest`.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
   pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt,
   and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
