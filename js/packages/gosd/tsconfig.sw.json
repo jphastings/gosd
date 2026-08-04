@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "outDir": "dist/sw",
+    "rootDir": "src/sw",
+    // gosd-download-sw.ts is deliberately a classic script with zero
+    // import/export statements (module service workers aren't universally
+    // supported) — isolatedModules would otherwise reject it as an
+    // ambiguous "global script" file (TS1208) unless it carried a no-op
+    // `export {}`, which tsc would then emit verbatim into the compiled
+    // output, breaking the "no import/export tokens in dist" contract.
+    "isolatedModules": false,
+    // Without this, "module": "nodenext" (inherited from tsconfig.base)
+    // treats every file as a module purely because package.json says
+    // "type": "module" — even one with no import/export — and tsc then
+    // emits a no-op `export {};` to match, right back into the "no
+    // import/export tokens" problem above. "legacy" module detection goes
+    // by syntax alone: no import/export in the source means a script.
+    "moduleDetection": "legacy",
+    // The source comments themselves mention "import"/"export" in prose
+    // (see the file's doc comment) — stripping comments on emit is what
+    // keeps that prose out of the compiled worker, which is what
+    // service-worker.test.ts actually greps for. Smaller shipped file too.
+    "removeComments": true
+  },
+  "include": ["src/sw/**/*.ts"]
+}

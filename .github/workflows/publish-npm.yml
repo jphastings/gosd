@@ -1,0 +1,178 @@
+# Staged npm publishing for the js/packages/* workspace (see js/PUBLISHING.md
+# for the full procedure and the one-time npmjs.com/GitHub setup).
+#
+# Trigger: push a tag shaped `npm/<package>/v<version>` (e.g. npm/gosd/v0.1.0)
+# for a package at js/packages/<package>. The pipeline is deliberately staged:
+#
+#   verify  — re-runs every js quality gate at the tagged commit, checks the
+#             tag's version against package.json, confirms the commit is on
+#             main, and shows exactly what files the tarball would ship.
+#   publish — gated by the `npm-publish` GitHub environment (protect it with
+#             a required reviewer: that approval is the human stage gate).
+#             Publishes via npm trusted publishing (OIDC — no long-lived npm
+#             token exists anywhere) with a provenance attestation, and ONLY
+#             ever to the `next` dist-tag. CI cannot change what a plain
+#             `npm install <package>` resolves to.
+#   smoke   — installs the just-published version from the real registry into
+#             a scratch project, verifies its provenance signature, and
+#             prints the one promotion command.
+#
+# Promotion to `latest` is intentionally NOT automated: a human runs
+# `npm dist-tag add <package>@<version> latest` with their own 2FA'd npm
+# login after whatever bake time they want. A compromised workflow can
+# therefore at worst publish an opt-in `next` version, never silently
+# replace what users install by default.
+
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - "npm/*/v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+
+jobs:
+  verify:
+    name: verify tag & package
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.tag.outputs.package }}
+      version: ${{ steps.tag.outputs.version }}
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Releases must come from reviewed history: refuse a tag whose commit
+      # never landed on main (tags themselves can point anywhere).
+      - name: Check the tagged commit is on main
+        working-directory: .
+        run: |
+          git fetch --no-tags --depth=200 origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on origin/main; publish tags must be cut from merged history"
+            exit 1
+          }
+      - name: Parse and cross-check the tag
+        id: tag
+        run: |
+          pkg="$(echo "$GITHUB_REF_NAME" | cut -d/ -f2)"
+          version="${GITHUB_REF_NAME##*/v}"
+          test -f "packages/$pkg/package.json" || {
+            echo "::error::tag names package \"$pkg\" but js/packages/$pkg/package.json does not exist"
+            exit 1
+          }
+          name="$(node -p "require('./packages/$pkg/package.json').name")"
+          manifest_version="$(node -p "require('./packages/$pkg/package.json').version")"
+          test "$name" = "$pkg" || {
+            echo "::error::tag names package \"$pkg\" but js/packages/$pkg/package.json declares name \"$name\""
+            exit 1
+          }
+          test "$manifest_version" = "$version" || {
+            echo "::error::tag says v$version but js/packages/$pkg/package.json says $manifest_version; bump the version (in its own PR) before tagging"
+            exit 1
+          }
+          echo "package=$pkg" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The integration test consumes a real gosd-built image via
+      # `go run ./internal/cmd/injectfixture`, so Go is needed alongside Node
+      # (same as the js job in ci.yml).
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:integration
+      # Show exactly which files would ship, so the approval on the publish
+      # environment is informed by more than a version number.
+      - name: List the tarball contents
+        working-directory: js/packages/${{ steps.tag.outputs.package }}
+        run: npm pack --dry-run
+
+  publish:
+    name: publish to the `next` dist-tag
+    needs: verify
+    runs-on: ubuntu-latest
+    # Protect this environment with a required reviewer (repo Settings →
+    # Environments → npm-publish): that approval is the staged release gate.
+    # The npmjs.com trusted-publisher config also pins this environment name.
+    environment: npm-publish
+    permissions:
+      contents: read
+      # Lets the npm CLI mint a short-lived OIDC credential for trusted
+      # publishing — the whole reason no npm token is stored in this repo.
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      # Trusted publishing needs npm >= 11.5.1; Node 24's bundled npm is 11.x
+      # but not guaranteed new enough on every runner image.
+      - run: npm install -g npm@^11.5.1
+      - run: npm ci
+        working-directory: js
+      # prepack runs the build, so this publishes freshly-compiled output of
+      # the verified commit. --tag next is the staged-release property: CI
+      # never writes the `latest` dist-tag. --provenance is explicit because
+      # relying on trusted publishing's implicit provenance has been flaky.
+      - name: Publish
+        working-directory: js/packages/${{ needs.verify.outputs.package }}
+        run: npm publish --provenance --tag next
+
+  smoke:
+    name: install & verify from the registry
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install the published version into a scratch project
+        env:
+          PKG: ${{ needs.verify.outputs.package }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir smoke && cd smoke
+          npm init -y > /dev/null
+          # The registry can lag a fresh publish by a few seconds.
+          for i in $(seq 1 12); do
+            npm view "$PKG@$VERSION" version > /dev/null 2>&1 && break
+            echo "waiting for $PKG@$VERSION to appear in the registry ($i)"
+            sleep 10
+          done
+          npm install "$PKG@$VERSION"
+          installed="$(node -p "require('$PKG/package.json').version")"
+          test "$installed" = "$VERSION" || {
+            echo "::error::installed $installed, expected $VERSION"
+            exit 1
+          }
+          # Fails if the package lacks a verifiable provenance attestation.
+          npm audit signatures
+      - name: Promotion reminder
+        env:
+          PKG: ${{ needs.verify.outputs.package }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          echo "Published $PKG@$VERSION to the 'next' dist-tag with provenance."
+          echo "After verifying it (npm install $PKG@next), promote it with:"
+          echo ""
+          echo "    npm dist-tag add $PKG@$VERSION latest"
+          echo ""
+          echo "See js/PUBLISHING.md for the full procedure and rollback."

@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // lib is ES2022 ONLY — no "DOM" — so this program mechanically enforces
+    // that the core files it lists never reach for a browser-only global
+    // (window, document, localStorage, indexedDB, ...). "types": ["node"]
+    // still resolves web-standard globals the core legitimately needs
+    // (fetch, Response, ReadableStream/WritableStream/TransformStream,
+    // TextEncoder/TextDecoder, crypto) because @types/node ambiently
+    // declares those itself when the "dom" lib is absent — it does NOT add
+    // any browser-only global.
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "src/downloads/errors.ts",
+    "src/downloads/manifest.ts",
+    "src/downloads/content.ts",
+    "src/downloads/sha256.ts",
+    "src/downloads/substitute.ts",
+    "src/downloads/preconditions.ts",
+    "src/downloads/run.ts",
+    "src/downloads/sinks/types.ts"
+  ]
+}

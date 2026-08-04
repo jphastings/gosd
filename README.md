@@ -143,4 +143,7 @@ the people you send them to never need a terminal.
   building a different image per recipient? Reserve a placeholder file at
   build time and a downstream tool (typically a browser, between the CDN
   and the user's disk) can splice real content into the declared byte
-  ranges with no FAT32 code at all: [`docs/image-injection.md`](docs/image-injection.md)
+  ranges with no FAT32 code at all: [`docs/image-injection.md`](docs/image-injection.md).
+  The official `gosd` npm package does this end to end in one call —
+  `import { withPlaceholders } from "gosd/downloads"` — see
+  [`js/packages/gosd/README.md`](js/packages/gosd/README.md)

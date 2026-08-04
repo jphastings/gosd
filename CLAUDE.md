@@ -58,7 +58,20 @@ say so in the bean rather than silently diverging.
   compiles, see `docs/custom-kernels.md`) and `gosd build-external` (opt-in
   companion-binary cross-compiles, see `docs/externals.md`) each require
   Docker or Podman, by design, and say so in their own `--help` text and
-  errors.
+  errors. **Carve-out:** `js/` (bean gosd-hcyn) is a separate npm-workspaces
+  area — the `gosd` npm package (`gosd/downloads`, a browser/Node
+  placeholder-substituting downloader for images built with `--placeholder`)
+  — and is never part of any Go build or `go test ./...` run. TypeScript
+  strict, plain `tsc` (no bundler), Vitest, Prettier; zero runtime
+  dependencies, including a vendored streaming SHA-256
+  (`js/packages/gosd/src/downloads/sha256.ts`) pinned by NIST CAVP vectors
+  and `crypto.subtle.digest` cross-checks, since WebCrypto alone can't hash
+  a stream incrementally. Its cross-implementation integration test's
+  fixture generator, `internal/cmd/injectfixture`, IS Go module code and
+  runs under the normal Go gates below. npm publishing is staged and
+  tokenless (`npm/<package>/vX.Y.Z` tag → OIDC trusted publishing with
+  provenance → the `next` dist-tag only; a human promotes to `latest`) —
+  procedure in `js/PUBLISHING.md`; never publish from CI to `latest`.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
   pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt,
   and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
@@ -257,6 +270,9 @@ say so in the bean rather than silently diverging.
 - If `golangci-lint` reports a finding referencing a path in a worktree that no
   longer exists, it's a stale-cache false positive from a removed sibling
   worktree: `golangci-lint cache clean` and re-run before believing it.
+- When a change touches `js/`: also run `cd js && npm ci && npm run
+  format:check && npm run typecheck && npm run build && npm test && npm run
+  test:integration` (the last needs Go, for the fixture generator).
 - Run the gates — and any `gh pr checks` polling — in the FOREGROUND and read
   the results directly. Agents that parked on background monitors for a test
   run or CI watch stalled repeatedly (2026-08: six separate stalls, each
