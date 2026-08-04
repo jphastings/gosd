@@ -164,7 +164,7 @@ try {
 ## Node / core API
 
 Everything except the three save tiers and `withPlaceholders` itself runs in plain Node
-(20+) — no DOM, no `fetch` polyfill needed beyond what Node already provides globally. This
+(22+) — no DOM, no `fetch` polyfill needed beyond what Node already provides globally. This
 is what the package's own tests build on, and it's there for anyone assembling their own
 pipeline (a CLI provisioning tool, a CI job that pre-patches images, etc.):
 

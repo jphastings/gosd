@@ -1,6 +1,6 @@
 {
   "name": "@jphastings/gosd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Download a gosd-built SD-card image, verify it, and splice per-deployment config into its reserved placeholder files as it streams to disk.",
   "license": "MIT",
   "repository": {
@@ -41,6 +41,6 @@
     "vitest": "4.1.10"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
