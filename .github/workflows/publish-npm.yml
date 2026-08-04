@@ -96,11 +96,9 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.20.0
-          # pnpm 11 itself needs Node >= 22.13 (it uses node:sqlite);
+          # pnpm 11 needs Node >= 22.13 exactly (it uses node:sqlite);
           # standalone ships pnpm with its own embedded runtime so the pnpm
-          # CLI works on every matrix leg, while the actual scripts (vp,
-          # vitest, tsc) still run on the matrix Node - keeping node 20 a
-          # real test of the package's engines claim.
+          # CLI is independent of the job's Node.
           standalone: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -138,11 +136,9 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.20.0
-          # pnpm 11 itself needs Node >= 22.13 (it uses node:sqlite);
+          # pnpm 11 needs Node >= 22.13 exactly (it uses node:sqlite);
           # standalone ships pnpm with its own embedded runtime so the pnpm
-          # CLI works on every matrix leg, while the actual scripts (vp,
-          # vitest, tsc) still run on the matrix Node - keeping node 20 a
-          # real test of the package's engines claim.
+          # CLI is independent of the job's Node.
           standalone: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
