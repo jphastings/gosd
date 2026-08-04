@@ -21,11 +21,7 @@ export type GosdErrorCode =
 export class GosdError extends Error {
   readonly code: GosdErrorCode;
 
-  constructor(
-    code: GosdErrorCode,
-    message: string,
-    options?: { cause?: unknown },
-  ) {
+  constructor(code: GosdErrorCode, message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.code = code;
     this.name = "GosdError";

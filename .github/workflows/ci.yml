@@ -79,24 +79,28 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # js/packages/gosd's cross-implementation integration test proves the
-      # TypeScript client against a real gosd-built image: `npm run
+      # TypeScript client against a real gosd-built image: `pnpm run
       # genfixture` shells out to `go run ./internal/cmd/injectfixture`, so
       # this job needs a Go toolchain alongside Node, not just Node.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: js/package-lock.json
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      - run: npm run test:integration
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - run: pnpm test
+      - run: pnpm run test:integration
 
   smoke-build:
     name: cross-compile smoke build

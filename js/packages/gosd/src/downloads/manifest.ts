@@ -115,10 +115,9 @@ export async function fetchManifest(
   try {
     data = JSON.parse(new TextDecoder().decode(bytes));
   } catch (cause) {
-    throw new GosdManifestInvalidError(
-      `the injection manifest at ${url} is not valid JSON`,
-      { cause },
-    );
+    throw new GosdManifestInvalidError(`the injection manifest at ${url} is not valid JSON`, {
+      cause,
+    });
   }
 
   return parseManifest(data);
@@ -132,10 +131,7 @@ export async function fetchManifest(
 export function parseManifest(data: unknown): Manifest {
   const obj = expectRecord(data, "manifest");
   const image = parseImageInfo(expectRecord(obj.image, "manifest.image"));
-  const placeholders = expectArray(
-    obj.placeholders,
-    "manifest.placeholders",
-  ).map((p, i) =>
+  const placeholders = expectArray(obj.placeholders, "manifest.placeholders").map((p, i) =>
     parsePlaceholderInfo(p, `manifest.placeholders[${i}]`, image.size),
   );
   checkNoOverlaps(placeholders, "manifest.placeholders");
@@ -156,26 +152,18 @@ function parseImageInfo(obj: Record<string, unknown>): ImageInfo {
   };
 }
 
-function parsePlaceholderInfo(
-  value: unknown,
-  at: string,
-  imageSize: number,
-): PlaceholderInfo {
+function parsePlaceholderInfo(value: unknown, at: string, imageSize: number): PlaceholderInfo {
   const obj = expectRecord(value, at);
   const size = expectNonNegativeInt(obj.size, `${at}.size`);
   const ranges = expectArray(obj.ranges, `${at}.ranges`).map((r, i) =>
     parseByteRange(r, `${at}.ranges[${i}]`, imageSize),
   );
   if (ranges.length === 0) {
-    throw new GosdManifestInvalidError(
-      `${at}.ranges: must have at least one range`,
-    );
+    throw new GosdManifestInvalidError(`${at}.ranges: must have at least one range`);
   }
   const total = ranges.reduce((sum, r) => sum + r.length, 0);
   if (total !== size) {
-    throw new GosdManifestInvalidError(
-      `${at}: ranges sum to ${total} bytes but size is ${size}`,
-    );
+    throw new GosdManifestInvalidError(`${at}: ranges sum to ${total} bytes but size is ${size}`);
   }
   return {
     path: expectString(obj.path, `${at}.path`),
@@ -185,11 +173,7 @@ function parsePlaceholderInfo(
   };
 }
 
-function parseByteRange(
-  value: unknown,
-  at: string,
-  imageSize: number,
-): ByteRange {
+function parseByteRange(value: unknown, at: string, imageSize: number): ByteRange {
   const obj = expectRecord(value, at);
   const offset = expectNonNegativeInt(obj.offset, `${at}.offset`);
   const length = expectNonNegativeInt(obj.length, `${at}.length`);
@@ -237,25 +221,19 @@ function describe(value: unknown): string {
 
 function expectRecord(value: unknown, at: string): Record<string, unknown> {
   if (!isRecord(value))
-    throw new GosdManifestInvalidError(
-      `${at}: expected an object, got ${describe(value)}`,
-    );
+    throw new GosdManifestInvalidError(`${at}: expected an object, got ${describe(value)}`);
   return value;
 }
 
 function expectArray(value: unknown, at: string): unknown[] {
   if (!Array.isArray(value))
-    throw new GosdManifestInvalidError(
-      `${at}: expected an array, got ${describe(value)}`,
-    );
+    throw new GosdManifestInvalidError(`${at}: expected an array, got ${describe(value)}`);
   return value;
 }
 
 function expectString(value: unknown, at: string): string {
   if (typeof value !== "string")
-    throw new GosdManifestInvalidError(
-      `${at}: expected a string, got ${describe(value)}`,
-    );
+    throw new GosdManifestInvalidError(`${at}: expected a string, got ${describe(value)}`);
   return value;
 }
 
@@ -278,11 +256,7 @@ function expectSha256Hex(value: unknown, at: string): string {
   return s;
 }
 
-function expectLiteral<T extends number>(
-  value: unknown,
-  expected: T,
-  at: string,
-): T {
+function expectLiteral<T extends number>(value: unknown, expected: T, at: string): T {
   if (value !== expected) {
     throw new GosdManifestInvalidError(
       `${at}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(value)}`,

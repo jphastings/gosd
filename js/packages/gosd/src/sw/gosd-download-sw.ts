@@ -58,9 +58,7 @@ function sweepExpiredEntries(): void {
   for (const [id, entry] of pending) {
     if (!entry.fetched && now - entry.createdAt > ENTRY_TTL_MS) {
       pending.delete(id);
-      entry.writer
-        .abort(new Error("gosd: download expired before being fetched"))
-        .catch(() => {});
+      entry.writer.abort(new Error("gosd: download expired before being fetched")).catch(() => {});
     }
   }
 }
@@ -142,9 +140,7 @@ function handlePortMessage(
         entry.writer
           .write(data.chunk)
           .then(() => port.postMessage({ type: "ack" }))
-          .catch((err: unknown) =>
-            port.postMessage({ type: "error", reason: String(err) }),
-          );
+          .catch((err: unknown) => port.postMessage({ type: "error", reason: String(err) }));
       }
       return;
     case "end":
@@ -160,10 +156,7 @@ function handlePortMessage(
   }
 }
 
-function pumpTransferredStream(
-  entry: PendingEntry,
-  stream: ReadableStream<Uint8Array>,
-): void {
+function pumpTransferredStream(entry: PendingEntry, stream: ReadableStream<Uint8Array>): void {
   const reader = stream.getReader();
   void (async () => {
     try {
@@ -195,9 +188,7 @@ self.addEventListener("fetch", (event) => {
   fe.respondWith(handleDownloadFetch(match.id, match.filename));
 });
 
-function matchDownloadURL(
-  href: string,
-): { id: string; filename: string } | null {
+function matchDownloadURL(href: string): { id: string; filename: string } | null {
   const prefix = `${sw.registration.scope}gosd/`;
   if (!href.startsWith(prefix)) return null;
   const rest = href.slice(prefix.length);
@@ -209,10 +200,7 @@ function matchDownloadURL(
   };
 }
 
-async function handleDownloadFetch(
-  id: string,
-  filename: string,
-): Promise<Response> {
+async function handleDownloadFetch(id: string, filename: string): Promise<Response> {
   const entry = pending.get(id);
   if (!entry || entry.filename !== filename) {
     return new Response(

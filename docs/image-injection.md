@@ -106,8 +106,8 @@ A tool consuming this manifest to splice in real configuration should:
 
 No step requires understanding FAT32, MBR partitioning, or any other part
 of the image format — every byte range needed is already in the manifest.
-For browser/Node JavaScript, the official `gosd` npm package's
-`gosd/downloads` subpath (`js/packages/gosd` in this repo) implements this
+For browser/Node JavaScript, the official `@jphastings/gosd` npm package's
+`@jphastings/gosd/downloads` subpath (`js/packages/gosd` in this repo) implements this
 whole algorithm — fetch, verify, splice, save — behind one call,
 `withPlaceholders(imageURL, files)`; see its README for the quickstart,
 threat model, and save-tier details. A worked implementation (browser-side,

@@ -99,9 +99,7 @@ function readableFrom(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   });
 }
 
-async function collect(
-  readable: ReadableStream<Uint8Array>,
-): Promise<Uint8Array> {
+async function collect(readable: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
   const reader = readable.getReader();
   for (;;) {
@@ -145,9 +143,7 @@ describe("createSubstitutionTransform: chunk-boundary matrix", () => {
   const framings: Record<string, number[]> = {
     "a single giant chunk": [2000],
     "1-byte chunks": [1],
-    "chunks aligned exactly to range boundaries": [
-      100, 50, 350, 30, 70, 20, 380, 1, 997, 2,
-    ],
+    "chunks aligned exactly to range boundaries": [100, 50, 350, 30, 70, 20, 380, 1, 997, 2],
     "chunks unaligned to any range": [37],
     "a few large chunks, several ranges each": [900, 900, 200],
     "a seeded pseudo-random partition": [7, 13, 29, 3, 101, 2, 17, 41],
@@ -156,11 +152,7 @@ describe("createSubstitutionTransform: chunk-boundary matrix", () => {
   for (const [name, sizes] of Object.entries(framings)) {
     it(`produces byte-identical output to a naive splice: ${name}`, async () => {
       const output = await collect(
-        patchStream(
-          readableFrom(chunksOfSizes(image, sizes)),
-          manifest,
-          padded,
-        ),
+        patchStream(readableFrom(chunksOfSizes(image, sizes)), manifest, padded),
       );
       expect(output).toEqual(expected);
     });
@@ -254,13 +246,7 @@ describe("createSubstitutionTransform: stream length", () => {
   it("throws GosdImageSizeError on a short stream", async () => {
     const { image, manifest } = buildFixture(500, []);
     await expect(
-      collect(
-        patchStream(
-          readableFrom([image.subarray(0, 400)]),
-          manifest,
-          new Map(),
-        ),
-      ),
+      collect(patchStream(readableFrom([image.subarray(0, 400)]), manifest, new Map())),
     ).rejects.toThrow(GosdImageSizeError);
   });
 
@@ -269,11 +255,7 @@ describe("createSubstitutionTransform: stream length", () => {
     const overlong = new Uint8Array(600);
     overlong.set(image);
 
-    const reader = patchStream(
-      readableFrom([overlong]),
-      manifest,
-      new Map(),
-    ).getReader();
+    const reader = patchStream(readableFrom([overlong]), manifest, new Map()).getReader();
     await expect(reader.read()).rejects.toThrow(GosdImageSizeError);
   });
 });
@@ -282,19 +264,13 @@ describe("createSubstitutionTransform: degenerate manifests", () => {
   it("handles a manifest with no placeholders at all", async () => {
     const { image, manifest } = buildFixture(200, []);
     const output = await collect(
-      patchStream(
-        readableFrom(chunksOfSizes(image, [17])),
-        manifest,
-        new Map(),
-      ),
+      patchStream(readableFrom(chunksOfSizes(image, [17])), manifest, new Map()),
     );
     expect(output).toEqual(image);
   });
 
   it("verifies a zero-size placeholder immediately, without waiting for any bytes", async () => {
-    const { image, manifest } = buildFixture(200, [
-      { path: "empty", ranges: [] },
-    ]);
+    const { manifest } = buildFixture(200, [{ path: "empty", ranges: [] }]);
     manifest.placeholders[0]!.size = 0;
     manifest.placeholders[0]!.sha256 = sha256Hex(new Uint8Array(0));
     manifest.placeholders[0]!.ranges = [];

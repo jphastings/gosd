@@ -37,10 +37,7 @@ export function checkImageResponse(
     const etagHeader = response.headers.get("etag");
     if (etagHeader !== null) {
       const stripped = etagHeader.replace(/^W\//, "").replace(/^"(.*)"$/, "$1");
-      if (
-        HEX64.test(stripped) &&
-        stripped.toLowerCase() !== manifest.image.sha256.toLowerCase()
-      ) {
+      if (HEX64.test(stripped) && stripped.toLowerCase() !== manifest.image.sha256.toLowerCase()) {
         throw new GosdImagePreconditionError(
           `the image response's ETag (${stripped}) does not match the manifest's expected sha256 (${manifest.image.sha256}); the CDN may be serving stale or mismatched content for this URL. Pass options.ignoreETag to bypass this check (not recommended — the full download is still hashed either way)`,
         );
@@ -52,10 +49,7 @@ export function checkImageResponse(
     const contentLengthHeader = response.headers.get("content-length");
     if (contentLengthHeader !== null) {
       const contentLength = Number(contentLengthHeader);
-      if (
-        Number.isFinite(contentLength) &&
-        contentLength !== manifest.image.size
-      ) {
+      if (Number.isFinite(contentLength) && contentLength !== manifest.image.size) {
         throw new GosdImagePreconditionError(
           `the image response's Content-Length (${contentLengthHeader}) does not match the manifest's declared image size (${manifest.image.size}); the download would end up truncated or overlong`,
         );

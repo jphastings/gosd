@@ -1,4 +1,4 @@
-// Public entry point: `import { withPlaceholders } from "gosd/downloads"`.
+// Public entry point: `import { withPlaceholders } from "@jphastings/gosd/downloads"`.
 // One call fetches a gosd-built image, verifies it against its
 // `<image>.inject.json` manifest, splices your content into its
 // placeholder byte ranges as it streams, and saves it — auto-selecting the
@@ -38,7 +38,7 @@ export interface WithPlaceholdersOptions {
   saveVia?: SaveTier;
   /** Required to use (or auto-select) the service-worker tier: the
    * same-origin location of the worker script this package ships at the
-   * `gosd/downloads/service-worker.js` export subpath. */
+   * `@jphastings/gosd/downloads/service-worker.js` export subpath. */
   serviceWorker?: ServiceWorkerLocation;
   /** The filename offered to the save picker / browser download. Defaults
    * to the image URL's last path segment. */
@@ -88,8 +88,7 @@ export async function withPlaceholders(
 ): Promise<WithPlaceholdersResult> {
   const filename = options.suggestedName ?? deriveFilenameFromURL(imageURL);
   const forced = options.saveVia;
-  const preferFsAccess =
-    forced === "fs-access" || (!forced && fsAccessAvailable());
+  const preferFsAccess = forced === "fs-access" || (!forced && fsAccessAvailable());
 
   // MUST run before any other `await` in this function: showSaveFilePicker
   // needs "transient user activation", which a synchronous call chain from
@@ -132,19 +131,10 @@ export async function withPlaceholders(
       sink = createMemorySink({ filename });
       tier = "memory";
     } else if (forced) {
-      throw new GosdSaveFailedError(
-        `withPlaceholders: unknown save tier "${String(forced)}"`,
-      );
-    } else if (
-      options.serviceWorker &&
-      (await serviceWorkerAvailable(options.serviceWorker))
-    ) {
+      throw new GosdSaveFailedError(`withPlaceholders: unknown save tier "${String(forced)}"`);
+    } else if (options.serviceWorker && (await serviceWorkerAvailable(options.serviceWorker))) {
       try {
-        sink = await createServiceWorkerSinkChecked(
-          options,
-          filename,
-          manifest,
-        );
+        sink = await createServiceWorkerSinkChecked(options, filename, manifest);
         tier = "service-worker";
       } catch (err) {
         console.warn(
@@ -162,8 +152,7 @@ export async function withPlaceholders(
     const result = await runDownload({
       manifest,
       padded,
-      fetchImage: () =>
-        (options.fetch ?? fetch)(imageURL, { signal: options.signal }),
+      fetchImage: () => (options.fetch ?? fetch)(imageURL, { signal: options.signal }),
       sink,
       ignoreETag: options.ignoreETag,
       signal: options.signal,
@@ -214,20 +203,13 @@ export type {
 export { padContents } from "./content.js";
 
 export { createSubstitutionTransform, patchStream } from "./substitute.js";
-export type {
-  SubstitutionProgress,
-  SubstitutionOptions,
-} from "./substitute.js";
+export type { SubstitutionProgress, SubstitutionOptions } from "./substitute.js";
 
 export { checkImageResponse } from "./preconditions.js";
 export type { CheckImageResponseOptions } from "./preconditions.js";
 
 export { runDownload } from "./run.js";
-export type {
-  RunDownloadOptions,
-  RunDownloadResult,
-  ImageResponseProvider,
-} from "./run.js";
+export type { RunDownloadOptions, RunDownloadResult, ImageResponseProvider } from "./run.js";
 
 export { Sha256 } from "./sha256.js";
 

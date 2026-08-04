@@ -35,18 +35,11 @@ interface ShowSaveFilePickerOptions {
   suggestedName?: string;
 }
 
-type ShowSaveFilePicker = (
-  options?: ShowSaveFilePickerOptions,
-) => Promise<FileSystemFileHandle>;
+type ShowSaveFilePicker = (options?: ShowSaveFilePickerOptions) => Promise<FileSystemFileHandle>;
 
-function getShowSaveFilePicker(
-  target: unknown,
-): ShowSaveFilePicker | undefined {
-  const picker = (target as { showSaveFilePicker?: unknown })
-    .showSaveFilePicker;
-  return typeof picker === "function"
-    ? (picker as ShowSaveFilePicker)
-    : undefined;
+function getShowSaveFilePicker(target: unknown): ShowSaveFilePicker | undefined {
+  const picker = (target as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+  return typeof picker === "function" ? (picker as ShowSaveFilePicker) : undefined;
 }
 
 /** True when `target` (defaults to `globalThis`) exposes
@@ -79,15 +72,13 @@ export async function createFsAccessSink(
     handle = await showSaveFilePicker({ suggestedName: options.suggestedName });
   } catch (cause) {
     if ((cause as { name?: string } | undefined)?.name === "AbortError") {
-      throw new GosdCancelledError(
-        "the save dialog was dismissed before anything was downloaded",
-        { cause },
-      );
+      throw new GosdCancelledError("the save dialog was dismissed before anything was downloaded", {
+        cause,
+      });
     }
-    throw new GosdSaveFailedError(
-      `opening the save dialog for "${options.suggestedName}" failed`,
-      { cause },
-    );
+    throw new GosdSaveFailedError(`opening the save dialog for "${options.suggestedName}" failed`, {
+      cause,
+    });
   }
 
   const writable = await handle.createWritable();

@@ -9,34 +9,18 @@ import { Sha256 } from "./sha256.js";
 
 describe("deriveManifestURL", () => {
   it.each([
-    [
-      "https://dl.example.com/app-rock-4se.img",
-      "https://dl.example.com/app-rock-4se.inject.json",
-    ],
-    [
-      "https://dl.example.com/archive.img.gz",
-      "https://dl.example.com/archive.img.inject.json",
-    ],
-    [
-      "https://dl.example.com/dir/.img",
-      "https://dl.example.com/dir/.inject.json",
-    ],
-    [
-      "https://dl.example.com/no-extension",
-      "https://dl.example.com/no-extension.inject.json",
-    ],
+    ["https://dl.example.com/app-rock-4se.img", "https://dl.example.com/app-rock-4se.inject.json"],
+    ["https://dl.example.com/archive.img.gz", "https://dl.example.com/archive.img.inject.json"],
+    ["https://dl.example.com/dir/.img", "https://dl.example.com/dir/.inject.json"],
+    ["https://dl.example.com/no-extension", "https://dl.example.com/no-extension.inject.json"],
     ["https://dl.example.com/a.b.c", "https://dl.example.com/a.b.inject.json"],
   ])("derives %s -> %s", (input, expected) => {
     expect(deriveManifestURL(input).toString()).toBe(expected);
   });
 
   it("preserves the query string and drops the fragment", () => {
-    const url = deriveManifestURL(
-      "https://dl.example.com/app.img?token=abc#section",
-    );
-    expect(url.toString()).toBe(
-      "https://dl.example.com/app.inject.json?token=abc",
-    );
+    const url = deriveManifestURL("https://dl.example.com/app.img?token=abc#section");
+    expect(url.toString()).toBe("https://dl.example.com/app.inject.json?token=abc");
   });
 });
 
@@ -104,9 +88,7 @@ describe("parseManifest", () => {
   it("rejects placeholders whose ranges don't sum to size", () => {
     const m = validManifest();
     m.placeholders[0]!.size = 999;
-    expect(() => parseManifest(m)).toThrow(
-      /manifest\.placeholders\[0\]: ranges sum to/,
-    );
+    expect(() => parseManifest(m)).toThrow(/manifest\.placeholders\[0\]: ranges sum to/);
   });
 
   it("rejects a placeholder with zero ranges", () => {
@@ -130,35 +112,27 @@ describe("parseManifest", () => {
     const m = validManifest();
     m.placeholders[1]!.ranges = [{ offset: 250, length: 50 }];
     m.placeholders[1]!.size = 50;
-    expect(() => parseManifest(m)).toThrow(
-      /overlaps placeholder "config.yaml"/,
-    );
+    expect(() => parseManifest(m)).toThrow(/overlaps placeholder "config.yaml"/);
   });
 
   it("rejects a non-array placeholders field", () => {
     const m = validManifest();
     (m as unknown as { placeholders: unknown }).placeholders = {};
-    expect(() => parseManifest(m)).toThrow(
-      /manifest\.placeholders: expected an array/,
-    );
+    expect(() => parseManifest(m)).toThrow(/manifest\.placeholders: expected an array/);
   });
 });
 
 describe("fetchManifest", () => {
   function response(body: unknown, init?: ResponseInit): Response {
-    return new Response(
-      typeof body === "string" ? body : JSON.stringify(body),
-      init,
-    );
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), init);
   }
 
   it("fetches and parses a valid manifest", async () => {
     const fake = validManifest();
     const fetchFn = async () => response(fake);
-    const manifest = await fetchManifest(
-      "https://dl.example.com/app.inject.json",
-      { fetch: fetchFn },
-    );
+    const manifest = await fetchManifest("https://dl.example.com/app.inject.json", {
+      fetch: fetchFn,
+    });
     expect(manifest.board).toBe("pi-zero-2w");
   });
 

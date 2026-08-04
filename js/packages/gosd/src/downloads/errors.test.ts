@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as errors from "./errors.js";
 
-const classesByCode: Record<
-  errors.GosdErrorCode,
-  new (message: string) => errors.GosdError
-> = {
+const classesByCode: Record<errors.GosdErrorCode, new (message: string) => errors.GosdError> = {
   "manifest-fetch": errors.GosdManifestFetchError,
   "manifest-invalid": errors.GosdManifestInvalidError,
   "manifest-hash-mismatch": errors.GosdManifestHashMismatchError,

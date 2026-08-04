@@ -74,10 +74,7 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
   });
 
   it("streams, verifies, and patches a real gosd-built image", async () => {
-    const padded = padContents(
-      { "config.yaml": "hello from the integration test\n" },
-      manifest,
-    );
+    const padded = padContents({ "config.yaml": "hello from the integration test\n" }, manifest);
     const sink = collectingSink();
 
     const result = await runDownload({
@@ -85,9 +82,7 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
       padded,
       fetchImage: async () =>
         new Response(
-          Readable.toWeb(
-            createReadStream(imgPath),
-          ) as unknown as ReadableStream<Uint8Array>,
+          Readable.toWeb(createReadStream(imgPath)) as unknown as ReadableStream<Uint8Array>,
           {
             headers: {
               "content-type": "application/octet-stream",
@@ -109,21 +104,12 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
       const replacement = padded.get(placeholder.path);
       let consumed = 0;
       for (const range of placeholder.ranges) {
-        const slice = output.subarray(
-          range.offset,
-          range.offset + range.length,
-        );
+        const slice = output.subarray(range.offset, range.offset + range.length);
         if (replacement) {
-          expect(slice).toEqual(
-            replacement.subarray(consumed, consumed + range.length),
-          );
+          expect(slice).toEqual(replacement.subarray(consumed, consumed + range.length));
         } else {
-          expect(new TextDecoder().decode(slice.subarray(0, 40))).toMatch(
-            /^# GOSD-PLACEHOLDER/,
-          );
-          expect(slice).toEqual(
-            pristine.subarray(range.offset, range.offset + range.length),
-          );
+          expect(new TextDecoder().decode(slice.subarray(0, 40))).toMatch(/^# GOSD-PLACEHOLDER/);
+          expect(slice).toEqual(pristine.subarray(range.offset, range.offset + range.length));
         }
         consumed += range.length;
       }
@@ -134,19 +120,12 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
     // the pristine bytes directly, and compare the whole buffer at once.
     const expected = Uint8Array.from(pristine);
     for (const [placeholderPath, replacement] of padded) {
-      const placeholder = manifest.placeholders.find(
-        (p) => p.path === placeholderPath,
-      );
+      const placeholder = manifest.placeholders.find((p) => p.path === placeholderPath);
       if (!placeholder)
-        throw new Error(
-          `test setup error: no placeholder named ${placeholderPath}`,
-        );
+        throw new Error(`test setup error: no placeholder named ${placeholderPath}`);
       let consumed = 0;
       for (const range of placeholder.ranges) {
-        expected.set(
-          replacement.subarray(consumed, consumed + range.length),
-          range.offset,
-        );
+        expected.set(replacement.subarray(consumed, consumed + range.length), range.offset);
         consumed += range.length;
       }
     }
@@ -158,13 +137,8 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
   });
 
   it("rejects a copy corrupted inside a placeholder's range with GosdPlaceholderNotPristineError", async () => {
-    const placeholder = manifest.placeholders.find(
-      (p) => p.path === "config.yaml",
-    );
-    if (!placeholder)
-      throw new Error(
-        "test setup error: fixture has no config.yaml placeholder",
-      );
+    const placeholder = manifest.placeholders.find((p) => p.path === "config.yaml");
+    if (!placeholder) throw new Error("test setup error: fixture has no config.yaml placeholder");
     const corrupted = Uint8Array.from(pristine);
     corrupted[placeholder.ranges[0]!.offset + 1] ^= 0xff;
 

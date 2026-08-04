@@ -1,8 +1,8 @@
 // Tier 2 (opt-in): stream the patched image to a same-origin service worker
 // so the browser shows a real download-manager entry with progress, without
 // holding the whole image in memory. The integrator hosts the worker script
-// this package ships at the `gosd/downloads/service-worker.js` export
-// subpath (see package.json's exports map) at a same-origin URL and passes
+// this package ships at the `@jphastings/gosd/downloads/service-worker.js`
+// export subpath (see package.json's exports map) at a same-origin URL and passes
 // `options.serviceWorker = { url, scope }` — see the package README's "SW
 // hosting" section.
 //
@@ -49,7 +49,7 @@ const ACK_TIMEOUT_MS = 60_000;
 
 export interface ServiceWorkerLocation {
   /** Same-origin URL of the worker script this package ships at the
-   * `gosd/downloads/service-worker.js` export subpath. */
+   * `@jphastings/gosd/downloads/service-worker.js` export subpath. */
   url: string;
   scope: string;
 }
@@ -64,16 +64,11 @@ interface MinimalServiceWorkerContainer {
   controller: {
     postMessage(message: unknown, transfer: Transferable[]): void;
   } | null;
-  register(
-    url: string,
-    options?: { scope?: string },
-  ): Promise<{ active: unknown }>;
+  register(url: string, options?: { scope?: string }): Promise<{ active: unknown }>;
   ready: Promise<{ active: unknown }>;
 }
 
-function getServiceWorkerContainer(
-  nav: unknown,
-): MinimalServiceWorkerContainer | undefined {
+function getServiceWorkerContainer(nav: unknown): MinimalServiceWorkerContainer | undefined {
   const sw = (nav as { serviceWorker?: unknown } | undefined)?.serviceWorker;
   return sw as MinimalServiceWorkerContainer | undefined;
 }
@@ -108,11 +103,7 @@ function randomId(): string {
  * Safari as of this writing) by actually attempting a transfer on a scratch
  * MessageChannel — the authoritative test, since feature flags drift. */
 function canTransferReadableStream(): boolean {
-  if (
-    typeof MessageChannel === "undefined" ||
-    typeof ReadableStream === "undefined"
-  )
-    return false;
+  if (typeof MessageChannel === "undefined" || typeof ReadableStream === "undefined") return false;
   const { port1, port2 } = new MessageChannel();
   try {
     const probe = new ReadableStream();
@@ -184,9 +175,7 @@ export function createPumpWritable(
             reject(err);
           },
         };
-        port.postMessage({ type: "chunk", chunk }, [
-          chunk.buffer as unknown as Transferable,
-        ]);
+        port.postMessage({ type: "chunk", chunk }, [chunk.buffer as unknown as Transferable]);
       });
     },
     close() {
@@ -203,13 +192,11 @@ export function createPumpWritable(
 export async function createServiceWorkerSink(
   options: CreateServiceWorkerSinkOptions,
 ): Promise<SaveSink> {
-  const sw = getServiceWorkerContainer(
-    typeof navigator === "undefined" ? undefined : navigator,
-  );
+  const sw = getServiceWorkerContainer(typeof navigator === "undefined" ? undefined : navigator);
   const controller = sw?.controller;
   if (!sw || !controller) {
     throw new GosdSaveFailedError(
-      "the service-worker save tier needs an active, controlling service worker; register the worker this package ships at gosd/downloads/service-worker.js first — see the package README's SW hosting section",
+      "the service-worker save tier needs an active, controlling service worker; register the worker this package ships at @jphastings/gosd/downloads/service-worker.js first — see the package README's SW hosting section",
     );
   }
 
@@ -221,14 +208,13 @@ export async function createServiceWorkerSink(
       channel.port1.onmessage = null;
       reject(
         new GosdSaveFailedError(
-          `the service worker never acknowledged download "${options.filename}" within ${READY_TIMEOUT_MS}ms; confirm gosd/downloads/service-worker.js is registered and active at scope ${options.serviceWorker.scope}`,
+          `the service worker never acknowledged download "${options.filename}" within ${READY_TIMEOUT_MS}ms; confirm @jphastings/gosd/downloads/service-worker.js is registered and active at scope ${options.serviceWorker.scope}`,
         ),
       );
     }, READY_TIMEOUT_MS);
 
     channel.port1.onmessage = (event: MessageEvent) => {
-      const data = event.data as
-        { type?: string; protocol?: number } | undefined;
+      const data = event.data as { type?: string; protocol?: number } | undefined;
       if (data?.type !== "ready") return;
       clearTimeout(timeout);
       if (data.protocol !== PROTOCOL) {
@@ -274,10 +260,9 @@ export async function createServiceWorkerSink(
   let writable: WritableStream<Uint8Array>;
   if (canTransferReadableStream()) {
     const passthrough = new TransformStream<Uint8Array, Uint8Array>();
-    channel.port1.postMessage(
-      { type: "stream", stream: passthrough.readable },
-      [passthrough.readable as unknown as Transferable],
-    );
+    channel.port1.postMessage({ type: "stream", stream: passthrough.readable }, [
+      passthrough.readable as unknown as Transferable,
+    ]);
     writable = passthrough.writable;
   } else {
     writable = createPumpWritable(channel.port1, options.filename);

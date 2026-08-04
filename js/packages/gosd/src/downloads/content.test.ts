@@ -1,14 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { padContents } from "./content.js";
-import {
-  GosdContentTooLargeError,
-  GosdUnknownPlaceholderError,
-} from "./errors.js";
+import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
 import type { Manifest } from "./manifest.js";
 
-function manifestWith(
-  placeholders: { path: string; size: number }[],
-): Manifest {
+function manifestWith(placeholders: { path: string; size: number }[]): Manifest {
   return {
     gosd_inject: 1,
     board: "pi-zero-2w",
@@ -65,10 +60,7 @@ describe("padContents", () => {
 
   it("accepts raw Uint8Array content unchanged (aside from padding)", () => {
     const manifest = manifestWith([{ path: "config.yaml", size: 4 }]);
-    const padded = padContents(
-      { "config.yaml": new Uint8Array([1, 2]) },
-      manifest,
-    );
+    const padded = padContents({ "config.yaml": new Uint8Array([1, 2]) }, manifest);
     expect(Array.from(padded.get("config.yaml")!)).toEqual([1, 2, 0x0a, 0x0a]);
   });
 
@@ -77,9 +69,7 @@ describe("padContents", () => {
     expect(() => padContents({ "config.yaml": "toolong" }, manifest)).toThrow(
       GosdContentTooLargeError,
     );
-    expect(() => padContents({ "config.yaml": "toolong" }, manifest)).toThrow(
-      /7 bytes.*4-byte/s,
-    );
+    expect(() => padContents({ "config.yaml": "toolong" }, manifest)).toThrow(/7 bytes.*4-byte/s);
   });
 
   it("throws GosdUnknownPlaceholderError listing available placeholders", () => {
@@ -87,12 +77,8 @@ describe("padContents", () => {
       { path: "config.yaml", size: 4 },
       { path: "net.cfg", size: 8 },
     ]);
-    expect(() => padContents({ typo: "x" }, manifest)).toThrow(
-      GosdUnknownPlaceholderError,
-    );
-    expect(() => padContents({ typo: "x" }, manifest)).toThrow(
-      /config\.yaml, net\.cfg/,
-    );
+    expect(() => padContents({ typo: "x" }, manifest)).toThrow(GosdUnknownPlaceholderError);
+    expect(() => padContents({ typo: "x" }, manifest)).toThrow(/config\.yaml, net\.cfg/);
   });
 
   it("leaves placeholders not named in files untouched (not present in the result map)", () => {
@@ -107,8 +93,6 @@ describe("padContents", () => {
 
   it("reports the unknown-placeholder error even with no placeholders at all", () => {
     const manifest = manifestWith([]);
-    expect(() => padContents({ x: "y" }, manifest)).toThrow(
-      /this image has no placeholders/,
-    );
+    expect(() => padContents({ x: "y" }, manifest)).toThrow(/this image has no placeholders/);
   });
 });
