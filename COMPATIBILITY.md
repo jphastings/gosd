@@ -31,6 +31,7 @@ published artifact, noted in footnotes where it applies.
 | Radxa Zero 3E | In progress — app boot, DHCP, mDNS proven; boot-time baseline, power-cycle, gadget, and peripherals still open | `gosd-nlzf` |
 | NanoPi Zero2 | Complete | `gosd-odp7` |
 | Radxa ROCK 4SE | Complete | `gosd-sz6p` |
+| Radxa Cubie A5E | Not started — board profile registered internal-only (`--board=cubie-a5e` only); no kernel or U-Boot artifacts exist yet [^cubie-a5e-scope] | `gosd-h1wv` |
 
 | Feature | Raspberry Pi Zero 2W | Raspberry Pi Zero W | Raspberry Pi 3B | Radxa Zero 3E | NanoPi Zero2 | Radxa ROCK 4SE |
 |---|---|---|---|---|---|---|
@@ -679,6 +680,28 @@ published artifact, noted in footnotes where it applies.
     deliberately deferred priority, explicitly gated on v0.2 shipping first.
     No board-specific work is expected here: the design is single,
     board-agnostic mechanism.
+
+[^cubie-a5e-scope]: The Radxa Cubie A5E (Allwinner A527, epic `gosd-h1wv`)
+    is gosd's first Allwinner board. Only its `internal/boards` profile
+    exists so far (bean `gosd-o7jv`) — registered via `RegisterInternal`,
+    the same de-facto-prerequisite-for-the-kernel-build pattern rock-4se's
+    profile followed, so it is reachable only via an explicit
+    `--board=cubie-a5e` and has no kernel or U-Boot to actually build with
+    yet. Research (bean `gosd-jpc8`, GO/NO-GO gate) confirmed the following
+    scope at the mainline fleet kernel tag once those pipelines land:
+    **Ethernet** — one port (EMAC0, `dwmac-sun8i`) is in scope; the second
+    GbE port needs a newer GMAC200 driver than the pinned tag carries, so
+    it's out. **USB gadget** — in scope: the board DT already pins
+    `usb_otg`'s `dr_mode` to `"peripheral"` (mainline MUSB), no DTS patch
+    needed, but this is a research finding, not yet hardware-verified
+    (bench bean `gosd-6pfn`). **WiFi/BT** — out: the onboard module's
+    driver isn't mainline. **SPI** — out: the board's device tree has no
+    SPI nodes at all at the pinned tag, so there's nothing to patch a
+    `spidev` child onto (unlike the other Rockchip/Allwinner boards' header
+    SPI). **NVMe/PCIe (M.2)** — out: no PCIe node at the pinned tag (A523
+    PCIe isn't mainlined yet). **eMMC** — out: no eMMC node enabled in the
+    board DT at the pinned tag. See epic `gosd-h1wv`'s locked decisions and
+    bean `gosd-jpc8`'s findings for primary-source citations.
 
 ---
 
