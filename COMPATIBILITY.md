@@ -60,6 +60,8 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] |
 | USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ |
 | Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
+| ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
+| exFAT on the eMMC | ➖ | ➖ | ➖ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ❌ [^cubie-emmc] |
 | NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] |
 | ext4 on attached disks (the default) | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
 | exFAT on attached disks | ✅ | ✅ | ✅ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ✅ |
@@ -109,6 +111,12 @@ board · ❌ not supported (see footnote).
 
 [^emmc-optional]: eMMC is an optional module/SKU on these boards; with
     none fitted, `emmc.FormatAndMount` returns `ErrNoEMMC`.
+
+[^emmc-ext4]: `emmc.Options.Filesystem`'s zero value (bean `gosd-9sc4`,
+    mirroring `disk`'s default, epic `gosd-lfu0`) — every board with a
+    working onboard eMMC already has `CONFIG_EXT4_FS` (same Rockchip
+    arm64 defconfig inheritance as "ext4 on attached disks" below), so
+    there is no eMMC-having board where the default fails.
 
 [^pi-ext4]: Enabled in these boards' kernel fragments (bean `gosd-19kw`) but
     not yet in a published artifacts release; until then asking for ext4 —

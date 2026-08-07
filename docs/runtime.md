@@ -598,26 +598,42 @@ on it only once your app actually needs the storage.
   microSD card the board is currently running from — the boot device is
   never a format target, so there's no risk of an app wiping the card
   it's running on.
-- **Formatting is idempotent, keyed on the label you pass.** An eMMC
-  already carrying a FAT filesystem labelled `label` is only mounted,
-  never reformatted — this is how a second run (or every run after the
-  first) avoids wiping its own data. A blank eMMC (no filesystem at all)
-  is always formatted, even with `destructive` set to `false`.
-- **`destructive` guards everything else.** If the eMMC holds *other*
-  data — a FAT volume under a different label, or non-FAT content —
-  `false` makes `FormatAndMount` refuse and return an error rather than
-  touch it; `true` wipes and reformats it. `label` is limited to 11
-  ASCII characters (FAT's own volume-label limit) and is stored
-  upper-cased.
-- **It's a whole-device FAT filesystem** — the mount source is the raw
+- **Formatting is idempotent, keyed on the label AND filesystem you pass.**
+  An eMMC already carrying a volume labelled `label` *and* formatted as the
+  requested filesystem is only mounted, never reformatted (nor re-grown,
+  for ext4 — see below) — this is how a second run (or every run after the
+  first) avoids wiping its own data. A blank eMMC (no filesystem at all) is
+  always formatted, even with `destructive` set to `false`.
+- **`destructive` guards everything else**, including a label match against
+  a *different* filesystem than requested — e.g. an eMMC an earlier build
+  of your app formatted before ext4 became the default, or a previous
+  `emmc.Options.Filesystem` choice. `false` makes `FormatAndMount` refuse
+  and return an error naming both filesystems rather than touch it; `true`
+  wipes and reformats it as what was asked for.
+- **ext4 is the default** (`Options.Filesystem`'s zero value, `emmc.EXT4` —
+  a deliberate breaking change from `emmc`'s earlier FAT32-only default,
+  bean `gosd-9sc4`, mirroring `disk`'s own flip token-for-token): journaled
+  and crash-safe, unlike FAT32/exFAT, which is exactly what matters for an
+  internal, non-removable eMMC. FAT32 and exFAT remain available as
+  explicit `emmc.Options{Filesystem: emmc.FAT32}` (or `emmc.ExFAT`)
+  choices. Everything under ["ext4 by default, or FAT32/exFAT for
+  removable media"](#ext4-by-default-or-fat32exfat-for-removable-media)
+  below — the golden-image format/grow/adopt mechanism, the
+  `CONFIG_EXT4_FS`/`CONFIG_EXFAT_FS` kernel preflight and
+  `ErrUnsupportedFS`, the FAT-family ceilings, and the 16-byte-vs-11-byte
+  label limit — applies to `emmc` identically; swap in
+  `emmc.FormatAndMountWith`/`emmc.Options` for `disk`'s equivalents. Unlike
+  `disk`, there's no `emmc.Devices`/`FormatAndMountDevice`: `emmc` always
+  addresses the board's one onboard eMMC.
+- **It's a whole-device filesystem** — the mount source is the raw
   `/dev/mmcblkN` device, not a partition on it — with the same limits as
-  `/data`: no unix permissions, ownership, symlinks, or hard links, and it is
-  not power-loss-robust. Write durable state with the same sequence
-  described under "Making a write durable" above — including the two syncs
-  after the rename, which FAT needs wherever it's mounted. It also honors
-  the same `GOSD_DATA_FLUSH` setting as `/data` (see "Persistent storage"
-  above): `gosd build --data-flush`/`gosd.toml`'s `data_flush` govern this
-  mount too, not just the data partition.
+  `/data`: no unix permissions, ownership, symlinks, or hard links. Only
+  ext4's journal buys crash *consistency*, and only for its own metadata —
+  write durable state with the same four-step sequence described under
+  "Making a write durable" above regardless of which filesystem is in
+  play. A FAT32 mount also honors the same `GOSD_DATA_FLUSH` setting as
+  `/data` (see "Persistent storage" above); ext4 and exFAT never took the
+  `flush` mount option and are unaffected either way.
 - **On a board with no onboard eMMC** (the Pi boards, a Rockchip board
   whose only eMMC turns out to be the boot device, or an unfitted ROCK
   4SE module), `FormatAndMount`'s channel yields `emmc.ErrNoEMMC` — check
@@ -683,10 +699,16 @@ a blank disk is always formatted; `destructive` gates everything else.
 
 ### ext4 by default, or FAT32/exFAT for removable media
 
+Written in terms of `disk`, but this whole section applies identically to
+`emmc` (see "Onboard eMMC storage" above) — read `emmc.FormatAndMountWith`/
+`emmc.Options`/`emmc.EXT4`/`emmc.FAT32`/`emmc.ExFAT` for `disk`'s
+equivalents throughout.
+
 `FormatAndMount`'s zero value — and `FormatAndMountWith`'s
 `Options{}` — formats **ext4**, not FAT32: a deliberate breaking change
 from `disk`'s earlier default, called out in the release notes of the
-version that shipped it (epic `gosd-lfu0`). Internal drives are what
+version that shipped it (epic `gosd-lfu0`; `emmc` followed identically,
+bean `gosd-9sc4`). Internal drives are what
 `disk` is almost always used for, where host-OS readability doesn't
 matter and crash-safety does, so that's what the zero value now buys
 you. Formatting writes a pristine, checked-in golden ext4 image
