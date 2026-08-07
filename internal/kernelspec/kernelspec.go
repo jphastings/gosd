@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"sort"
 
+	cubiea5ekernel "github.com/jphastings/gosd/build/boards/cubie-a5e/kernel"
 	nanopikernel "github.com/jphastings/gosd/build/boards/nanopi-zero2/kernel"
 	pi3bmanifest "github.com/jphastings/gosd/build/boards/pi-3b"
 	pizero2wmanifest "github.com/jphastings/gosd/build/boards/pi-zero-2w"
@@ -260,8 +261,10 @@ const (
 )
 
 // fleetKernelTag and fleetKernelRepo pin the same mainline stable LTS tag
-// across every Rockchip-family board (radxa-zero-3e, nanopi-zero2,
-// qemu-virt) - see build/boards/radxa-zero-3e/kernel/README.md.
+// across every mainline-fleet board (radxa-zero-3e, nanopi-zero2, rock-4se,
+// qemu-virt, and cubie-a5e - the fleet's first Allwinner member, joining a
+// previously Rockchip-only fleet, bean gosd-axtv) - see
+// build/boards/radxa-zero-3e/kernel/README.md.
 const (
 	fleetKernelTag  = "v6.18.37"
 	fleetKernelRepo = "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
@@ -556,6 +559,79 @@ var specs = map[string]KernelSpec{
 			"CONFIG_SERIAL_8250_DW",
 		},
 		ModulesDisabled: true,
+	},
+
+	// "cubie-a5e" is the fleet's first Allwinner member (epic gosd-h1wv):
+	// same fleet kernel tag, but a different SoC family entirely - see
+	// build/boards/cubie-a5e/kernel/README.md and bean gosd-jpc8's
+	// research findings for the verified compatible->driver map this
+	// spec's ConfigFragment/RequiredY were built from. No DTSPatches:
+	// header I2C/SPI enablement is deferred to a post-bring-up follow-up
+	// (locked in bean gosd-axtv) - the dtsi has no SPI nodes at this
+	// kernel tag at all, so there's nothing for an SPI patch to attach to
+	// yet.
+	"cubie-a5e": {
+		BoardID: "cubie-a5e",
+		Source: Source{
+			Repo:    fleetKernelRepo,
+			Ref:     fleetKernelTag,
+			RefKind: TagRef,
+		},
+		Defconfig: "defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: cubiea5ekernel.ConfigFragment,
+
+		DTB: &DTB{
+			MakeTarget: "allwinner/sun55i-a527-cubie-a5e.dtb",
+			SourcePath: "arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dtb",
+			Filename:   "sun55i-a527-cubie-a5e.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "Image",
+
+		// See the radxa-zero-3e RequiredY comment above - same origin, now
+		// a hand-maintained literal list. Every Rockchip-specific symbol
+		// the nanopi-zero2 template fragment carried (CONFIG_ARCH_ROCKCHIP,
+		// the dw_mmc/dwcmshc storage pair, CONFIG_GPIO_ROCKCHIP,
+		// CONFIG_I2C_RK3X, CONFIG_SPI_ROCKCHIP, CONFIG_DWMAC_ROCKCHIP) is
+		// dropped rather than carried over - none of it applies to the
+		// A527. Pinctrl doubles as this SoC's GPIO driver (no separate
+		// GPIO_SUNXI symbol exists); the MUSB gadget path replaces the
+		// Rockchip fleet's DWC3 one (the board DT already pins usb_otg's
+		// dr_mode to "peripheral", so no DTS patch was needed to get
+		// there); the AXP717/AXP323 PMIC stack is a hard boot dependency,
+		// not an optional peripheral - mmc0's vmmc-supply is the AXP717's
+		// cldo3 rail, so without it the SD card vanishes mid-boot (bean
+		// gosd-jpc8).
+		RequiredY: []string{
+			"CONFIG_ARCH_SUNXI",
+			"CONFIG_PINCTRL_SUN55I_A523",
+			"CONFIG_PINCTRL_SUN55I_A523_R",
+			"CONFIG_MMC_SUNXI",
+			"CONFIG_EXFAT_FS",
+			"CONFIG_STMMAC_ETH",
+			"CONFIG_DWMAC_SUN8I",
+			"CONFIG_REALTEK_PHY",
+			"CONFIG_USB_MUSB_HDRC",
+			"CONFIG_USB_MUSB_SUNXI",
+			"CONFIG_NOP_USB_XCEIV",
+			"CONFIG_PHY_SUN4I_USB",
+			"CONFIG_USB_EHCI_HCD",
+			"CONFIG_USB_EHCI_HCD_PLATFORM",
+			"CONFIG_USB_OHCI_HCD",
+			"CONFIG_USB_OHCI_HCD_PLATFORM",
+			"CONFIG_I2C_MV64XXX",
+			"CONFIG_MFD_AXP20X_I2C",
+			"CONFIG_REGULATOR_AXP20X",
+			"CONFIG_RTC_DRV_SUN6I",
+			"CONFIG_SERIAL_8250_DW",
+		},
+		ModulesDisabled: true,
+		// Reproducibility left zero: this board's build doesn't set any of
+		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
 	},
 
 	"qemu-virt": {

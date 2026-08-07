@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/boards/cubiea5e"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
 	"github.com/jphastings/gosd/internal/boards/pi3b"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
@@ -18,7 +19,7 @@ import (
 	"github.com/jphastings/gosd/internal/kernelspec"
 )
 
-var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "pi-3b", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "qemu-virt"}
+var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "pi-3b", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "cubie-a5e", "qemu-virt"}
 
 func TestBoardIDsListsExactlyTheKernelBuildingBoards(t *testing.T) {
 	got := kernelspec.BoardIDs()
@@ -102,6 +103,7 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 		"radxa-zero-3e": radxazero3e.New(),
 		"nanopi-zero2":  nanopizero2.New(),
 		"rock-4se":      rock4se.New(),
+		"cubie-a5e":     cubiea5e.New(),
 		"qemu-virt":     qemuvirt.New(),
 	}
 
@@ -157,8 +159,12 @@ func TestEmbeddedConfigFragmentsAreNonEmpty(t *testing.T) {
 // TestDTSPatchesOnlyOnExpectedBoards guards against DTS patches silently
 // appearing on (or vanishing from) a board: the Rockchip-family boards carry
 // peripheral-enablement patches, and pi-zero-w carries the peripheral
-// dma-ranges window its mainline-style DT lacks (bean gosd-1ey5). Every
-// other board must build its device tree unpatched.
+// dma-ranges window its mainline-style DT lacks (bean gosd-1ey5). cubie-a5e
+// joins the fleet's non-Rockchip side with NO patches - not an oversight,
+// but a locked decision (bean gosd-axtv): header I2C/SPI enablement is
+// deferred to a post-bring-up follow-up, and at the pinned kernel tag the
+// dtsi has no SPI node at all for a patch to target. Every other board must
+// build its device tree unpatched.
 func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 	wantPatched := map[string]bool{
 		"radxa-zero-3e": true,
