@@ -68,10 +68,9 @@ the people you send them to never need a terminal.
    reports hostname and uptime, and falls back to `:8080` if `:80` is
    unavailable).
 
-   > **Calling an HTTPS API from your app?** GoSD images ship no CA bundle,
-   > so outbound HTTPS fails until you blank-import
-   > `golang.org/x/crypto/x509roots/fallback` — see
-   > [`docs/runtime.md`](docs/runtime.md#https-calls-need-a-ca-bundle-your-app-supplies).
+   > **Calling an HTTPS API from your app?** Every image ships the Mozilla
+   > CA bundle at the standard system path, so it just works — see
+   > [`docs/runtime.md`](docs/runtime.md#https-calls-and-the-ca-bundle).
 
    Need different source per board (different pins, an optional
    peripheral)? `gosd build` passes each selected board's own Go build tag

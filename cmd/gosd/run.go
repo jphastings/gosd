@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/build"
+	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
@@ -141,6 +143,20 @@ func runRun(cmd *cobra.Command, args []string) error {
 	imgPath := filepath.Join(workDir, appName+"-qemu-virt.img")
 
 	ctx := cmd.Context()
+
+	caCertsCache, err := caCertsCacheDir()
+	if err != nil {
+		return err
+	}
+	caCertsPath, err := resolveCACerts(ctx, runArtifactsDir, caCertsCache)
+	if err != nil {
+		return err
+	}
+	caCerts, err := openCACertsForBoard(caCertsPath)
+	if err != nil {
+		return err
+	}
+
 	opts := pipeline.Options{
 		Board:          b,
 		AppBinaryPath:  appBinary,
@@ -155,6 +171,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		DataSizeBytes: dataSizeBytes,
 		DataFlush:     runDataFlush,
 		BootSizeBytes: bootSizeBytes,
+		ExtraFiles:    map[string]io.Reader{cacerts.InitramfsPath: caCerts},
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {
