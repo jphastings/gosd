@@ -117,6 +117,20 @@ type Deps struct {
 	// goes wrong. Nil-checked like the other optional deps.
 	ProvisionSnapshot func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result
 
+	// WriteHosts appends the device's own hostname to /etc/hosts, once
+	// cfg.Hostname is as settled as it's going to get this boot — after
+	// gosd.toml/cloud-init have had a chance to override it and after any
+	// first-boot-after-reflash restore from the provisioning snapshot, so
+	// it never has to run twice. See internal/hostsfile: the static
+	// localhost/loopback lines are already baked into the initramfs by
+	// gosd build, and this call regenerates the whole file from scratch
+	// (hostname included) rather than patching it, which is what keeps
+	// those static lines intact regardless of how many times a hostname
+	// gets re-resolved earlier in Run. Nil-checked like the other optional
+	// deps; a failure here is logged and never fatal, the same as
+	// applyHostname's own SetHostname failures.
+	WriteHosts func(hostname string) error
+
 	// WriteBootFailure records a fatal, human-actionable failure as
 	// boot-failure.log at the root of the GOSD-BOOT partition (briefly
 	// remounting it read-write), so whoever collects an unattended device
@@ -333,6 +347,17 @@ func Run(deps Deps, opts Options) error {
 			} else {
 				log("hostname set to %q (restored from the provisioning snapshot)", cfg.Hostname)
 			}
+		}
+	}
+
+	// cfg.Hostname is now as settled as it's going to get this boot — every
+	// source that can still change it (gosd.toml/cloud-init above, and a
+	// provisioning-snapshot restore just above) has already had its turn —
+	// so this is the one point Run writes the device's 127.0.1.1 line to
+	// /etc/hosts, rather than on every earlier hostname re-resolution.
+	if deps.WriteHosts != nil {
+		if err := deps.WriteHosts(cfg.Hostname); err != nil {
+			log("writing /etc/hosts failed, %q may not resolve to this device's own address: %v", cfg.Hostname, err)
 		}
 	}
 

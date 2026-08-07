@@ -535,6 +535,151 @@ func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
 	}
 }
 
+// TestRunWritesEtcHostsOnceWithTheFinalSettledHostname is the acceptance
+// test for gosd-e3xi part 2: gosd-init writes /etc/hosts exactly once per
+// boot, and only after gosd.toml has had its say — not with config.json's
+// earlier, since-overridden value.
+func TestRunWritesEtcHostsOnceWithTheFinalSettledHostname(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotHostnames []string
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
+			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
+		},
+		WriteHosts: func(hostname string) error {
+			gotHostnames = append(gotHostnames, hostname)
+			return nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if want := []string{"hand-edited-name"}; len(gotHostnames) != len(want) || gotHostnames[0] != want[0] {
+		t.Errorf("WriteHosts calls = %v, want %v (called once, with the final gosd.toml hostname)", gotHostnames, want)
+	}
+}
+
+// TestRunWriteHostsFailureIsNotFatal mirrors
+// TestRunSetHostnameFailureIsNotFatal: a broken /etc/hosts write is
+// cosmetic (DNS still resolves whatever it was going to), not worth a
+// reboot loop over.
+func TestRunWriteHostsFailureIsNotFatal(t *testing.T) {
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "my-device"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		WriteHosts: func(hostname string) error {
+			return errors.New("read-only filesystem")
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (a broken /etc/hosts write is not fatal)", err)
+	}
+	if !strings.Contains(console.String(), "writing /etc/hosts failed") {
+		t.Errorf("console output missing the /etc/hosts failure log line: %q", console.String())
+	}
+}
+
+// TestRunWritesEtcHostsWithProvisioningSnapshotRestoredHostname confirms
+// /etc/hosts reflects a hostname restored by the first-boot-after-reflash
+// self-heal (provsnapshot), which settles even later than gosd.toml/
+// cloud-init: without this, a reflashed board's kernel hostname
+// (sethostname(2)) and its /etc/hosts entry would disagree until the next
+// reboot.
+func TestRunWritesEtcHostsWithProvisioningSnapshotRestoredHostname(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	var gotHostnames []string
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:              &fakeMounter{},
+		Hostname:             &fakeHostname{},
+		AppStarter:           appStarter,
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:          func(string, ...any) {},
+		EnsureDataMountpoint: func() error { return nil },
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name", Identity: "new"}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ProvisionSnapshot: func(in provsnapshot.Input, log func(string, ...any)) provsnapshot.Result {
+			return provsnapshot.Result{
+				GosdToml:         gosdtoml.Config{Hostname: "restored-from-snapshot"},
+				HostnameRestored: true,
+			}
+		},
+		WriteHosts: func(hostname string) error {
+			gotHostnames = append(gotHostnames, hostname)
+			return nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if want := []string{"restored-from-snapshot"}; len(gotHostnames) != len(want) || gotHostnames[0] != want[0] {
+		t.Errorf("WriteHosts calls = %v, want %v (the snapshot-restored hostname, not the earlier baked one)", gotHostnames, want)
+	}
+}
+
 func TestRunPassesCloudInitWifiToStartNetworking(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})

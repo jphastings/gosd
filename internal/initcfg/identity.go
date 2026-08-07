@@ -29,8 +29,9 @@ type PayloadFile struct {
 // partition's root (the kernel image, DTB(s), the board's own boot-config
 // file — config.txt/cmdline.txt or extlinux.conf — any USB-gadget overlay,
 // and the rendered gosd.toml template) or gets packed into the initramfs
-// archive also shipped there (/init, /app, and everything under
-// /lib/firmware) — with one deliberate exception: config.json itself.
+// archive also shipped there (/init, /app, the static /etc/hosts content —
+// see internal/hostsfile — and everything under /lib/firmware) — with one
+// deliberate exception: config.json itself.
 //
 // config.json is excluded entirely, not merely its Identity field. It's
 // baked into that same initramfs, so its final bytes (Identity included)
