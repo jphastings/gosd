@@ -107,6 +107,94 @@ func TestRootFileExistsReportsAnUnreadableFilesystem(t *testing.T) {
 	}
 }
 
+// TestRootFileExistsSurvivesKernelDeletedEntries pins go-diskfs's handling of
+// a directory shape gosd-zzdz found on a real qemu-virt data partition after
+// a boot: examples/hello's write-temp/rename dance (docs/runtime.md) leaves
+// the OLD file's directory slots — two LFN continuation entries plus their
+// SFN — marked deleted the way the Linux kernel's vfat driver does it: the
+// first byte of every slot in the group overwritten with 0xE5, including the
+// LFN slots, in place, with no compaction. A raw capture from that
+// investigation (offsets into the data partition):
+//
+//	0x11100060 LFN seq=e5 'mp'
+//	0x11100080 LFN seq=e5 'hello-boots.t'
+//	0x111000a0 SFN 'åELLO-~1TMP' attr=20   (0xE5 = deleted)
+//	0x111000c0 LFN seq=41 'hello-boots'
+//	0x111000e0 SFN 'HELLO-~1   ' attr=20
+//
+// gosd-zzdz's working theory was that this shape broke go-diskfs's FAT32
+// reader outright ("invalid argument"). Reproducing it byte-for-byte (see
+// deleteLFNGroup below, which patches exactly this pattern into a real
+// go-diskfs-written directory) shows v1.9.3 parses it correctly:
+// parseDirEntries checks a slot's delete marker before it looks at the LFN
+// attribute byte, so a 0xE5'd LFN slot is skipped exactly like a 0xE5'd SFN
+// slot, never mistaken for a malformed chain — go-diskfs's own Rename can't
+// produce this shape to test against, since it always rewrites a directory's
+// entries fresh rather than patching bytes in place, which is why the gap
+// went unnoticed upstream.
+//
+// The literal "invalid argument" string is io/fs.ErrInvalid, which
+// go-diskfs's path validation returns unconditionally for a rooted path like
+// "/" regardless of directory content (see RootFileExists's own "." vs "/"
+// note) — not something this entry shape triggers. No workaround lands here
+// because there is nothing to work around; this test exists so a future
+// go-diskfs bump can't silently regress the correct behaviour, and gosd-e721
+// records the analysis for anyone tempted to send a fix upstream for a bug
+// that turned out not to exist.
+func TestRootFileExistsSurvivesKernelDeletedEntries(t *testing.T) {
+	path := backingFile(t, 64*1024*1024)
+	if err := FormatFAT32(path, "GOSD-DATA"); err != nil {
+		t.Fatalf("FormatFAT32: %v", err)
+	}
+
+	// Two files back to back, the same order the durable-write dance leaves
+	// them in: the temp file first (2 LFN slots + 1 SFN, "hello-boots.tmp"
+	// needs 15 chars), then the file it gets renamed to (1 LFN slot + 1 SFN,
+	// "hello-boots" needs 11).
+	writeThenClose(t, path, "/hello-boots.tmp", []byte("1\n"))
+	writeThenClose(t, path, "/hello-boots", []byte("2\n"))
+
+	deleteLFNGroup(t, path)
+
+	if found, err := RootFileExists(path, "hello-boots"); err != nil || !found {
+		t.Fatalf("RootFileExists(hello-boots) = (%v, %v), want (true, nil)", found, err)
+	}
+	if found, err := RootFileExists(path, "hello-boots.tmp"); err != nil || found {
+		t.Fatalf("RootFileExists(hello-boots.tmp) = (%v, %v), want (false, nil): it is marked deleted", found, err)
+	}
+}
+
+// deleteLFNGroup locates the first "2 LFN slots, SFN, LFN slot, SFN" run of
+// 32-byte directory entries in the image at path — the shape
+// TestRootFileExistsSurvivesKernelDeletedEntries sets up — and overwrites the
+// first byte of the earlier group's 3 slots with 0xE5, the FAT delete
+// marker, leaving the later group untouched.
+func deleteLFNGroup(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading image to find the directory entries: %v", err)
+	}
+
+	const lfnAttr = 0x0f
+	isLFN := func(offset int) bool { return raw[offset+11] == lfnAttr }
+
+	found := -1
+	for i := 0; i+5*32 <= len(raw); i += 32 {
+		if isLFN(i) && isLFN(i+32) && !isLFN(i+64) && isLFN(i+96) && !isLFN(i+128) {
+			found = i
+			break
+		}
+	}
+	if found == -1 {
+		t.Fatal("could not find the expected LFN/SFN, LFN/SFN directory layout")
+	}
+
+	for slot := 0; slot < 3; slot++ {
+		scribble(t, path, int64(found+slot*32), []byte{0xe5})
+	}
+}
+
 func TestInspectBlankDevice(t *testing.T) {
 	got, err := Inspect(backingFile(t, 8*1024*1024))
 	if err != nil {
