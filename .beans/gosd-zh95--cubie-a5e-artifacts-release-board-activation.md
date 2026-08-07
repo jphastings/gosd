@@ -1,11 +1,11 @@
 ---
 # gosd-zh95
 title: 'Cubie A5E: artifacts release + board activation'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-07T16:37:36Z
+updated_at: 2026-08-07T16:38:51Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-o7jv
@@ -22,7 +22,7 @@ Wire cubie-a5e into .github/workflows/build-artifacts.yml (kernel + uboot jobs m
 - [x] workflow_dispatch pre-merge run green on the PR branch (run 31178515476, success)
 - [x] PR 1 (#191) merged; JP pushed artifacts/v0.9.0 (2026-08-07; a stray plain v0.9.0 tag was pushed first and deleted — the artifacts/ prefix is load-bearing for the workflow trigger)
 - [x] Verify the artifact bump three ways (clean-HOME build, offline cache re-run, content spot-check e.g. dtc on the released DTB) — record in this bean
-- [ ] PR 2: artifacts.Version bump + public registration + COMPATIBILITY.md/docs/catalog in one activation PR
+- [x] PR 2: artifacts.Version bump + public registration + COMPATIBILITY.md/docs/catalog in one activation PR (#205)
 
 ## Progress
 
