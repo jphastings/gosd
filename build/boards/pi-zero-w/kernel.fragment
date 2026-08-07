@@ -48,6 +48,14 @@ CONFIG_TMPFS=y
 CONFIG_EXFAT_FS=y
 CONFIG_NLS_UTF8=y
 
+# --- ext4: `disk`'s default filesystem for attached mass storage (epic
+# gosd-lfu0) is ext4; the Pi boards have no eMMC/NVMe, so USB drives are
+# the affected surface here (decision JP 2026-08-07, bean gosd-19kw).
+# fs/ext4/Kconfig's EXT4_FS selects BUFFER_HEAD, JBD2, CRC16, CRC32 and
+# FS_IOMAP at the pinned commit — verified these chain automatically
+# under merge_config.sh + olddefconfig with no companion fragment lines. ---
+CONFIG_EXT4_FS=y
+
 # --- Storage: MMC (BCM2835 SDHOST) ---
 CONFIG_MMC=y
 CONFIG_MMC_BLOCK=y
@@ -146,8 +154,8 @@ CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
 # never has an RP1.
 # CONFIG_MEDIA_SUPPORT is not set
 
-# --- Cut aggressively: no filesystems beyond the above ---
-# CONFIG_EXT4_FS is not set
+# --- Cut aggressively: no filesystems beyond the above (ext4 is enabled
+# separately above) ---
 # CONFIG_EXT2_FS is not set
 # CONFIG_EXT3_FS is not set
 # CONFIG_XFS_FS is not set
