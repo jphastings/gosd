@@ -205,8 +205,8 @@ jobs:
     name: qemu boot-to-HTTP smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -218,7 +218,7 @@ jobs:
       # download error — that error names the missing release and is the
       # actionable signal, not a bug in this job.
       - name: Cache downloaded board artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/gosd/artifacts
           # internal/artifacts.Version pins which release gets downloaded,
@@ -285,13 +285,13 @@ jobs:
     name: qemu first-boot data-partition expansion
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Cache downloaded board artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/gosd/artifacts
           key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
@@ -371,10 +371,8 @@ jobs:
   # reformatted on the very next boot — the counter file in
   # examples/diskstorage only reaches "2" if last boot's fsync'd write
   # (docs/runtime.md's four-step pattern) survived the journal replay.
-  # Mirrors qemu-expand-data's shape. (gosd-vag9 tracks an unrelated
-  # SHA-pinning cleanup shared with that job and qemu-boot; not repeated
-  # here on purpose so this job's discipline doesn't get out of sync with
-  # its own future fix.)
+  # Mirrors qemu-expand-data's shape. (gosd-vag9 brought qemu-boot and
+  # qemu-expand-data up to this job's pre-existing SHA-pinning discipline.)
   qemu-disk-ext4:
     name: "qemu ext4 disk default: format, grow, crash-safe adoption"
     runs-on: ubuntu-latest
