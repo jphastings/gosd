@@ -5,7 +5,7 @@ status: completed
 type: feature
 priority: normal
 created_at: 2026-08-07T19:10:53Z
-updated_at: 2026-08-07T19:45:42Z
+updated_at: 2026-08-07T19:46:37Z
 parent: gosd-lfu0
 ---
 
@@ -50,3 +50,5 @@ Quality gates: `go build ./...`, `go test ./...`, `go vet ./...`, `gofmt -l .` (
 ## Deviations from the locked decisions
 
 None. `emmc.Filesystem` mirrors `disk.Filesystem` exactly as instructed (including exFAT, per "Mirror disk/'s surface exactly ... (ext4/fat32/exfat)"); implementation was pure wiring in emmc/blockmount as anticipated; the fs-match adoption rule required no blockmount changes since it was already generic. The one thing not explicitly anticipated in the bean text was `examples/usbwebsite`'s dependency on the eMMC being host-readable via `gadget.MassStorage` — fixed by pinning it to FAT32 explicitly rather than left to silently pick up the new default and break its documented "plug in, drag files, eject" workflow.
+
+Quality gates + PR (https://github.com/jphastings/gosd/pull/224)
