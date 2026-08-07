@@ -23,11 +23,10 @@ so `--board cubie-a5e` resolves; it stays internal-only (reachable only via
 an explicit `--board=cubie-a5e`, not the default all-boards build) until its
 first artifacts release and activation bean land.
 
-**Not yet built as of bean gosd-axtv's code pass**: this fragment and the
-`internal/kernelspec` entry are reviewable now; the real Docker build (and
-the generated `kernel.config` this README's "Source and configuration"
-section describes) is run separately and pushed to this branch before
-review — see the bean for status.
+First built 2026-08-07 at the fleet tag (bean gosd-axtv): `Image`
+68,459,008 bytes, `sun55i-a527-cubie-a5e.dtb` 16,926 bytes, config surface
+at parity with the rest of the fleet (4,001 `=y` options vs
+nanopi-zero2's 4,000).
 
 Outputs, once built, land in `out/` (gitignored):
 
@@ -55,9 +54,9 @@ Outputs, once built, land in `out/` (gitignored):
   of_device_id/Kconfig tables) — see bean gosd-jpc8's research findings for
   the verified compatible→driver map and gosd-axtv for the fragment-authoring
   pass itself.
-- `kernel.config` — not yet committed (see the "Not yet built" note above).
-  Once a real `gosd build-kernel --board cubie-a5e` run succeeds, its
-  `out/kernel.config` gets copied here, same as every other board.
+- `kernel.config` — the full post-`olddefconfig` configuration the first
+  successful `gosd build-kernel --board cubie-a5e` run actually used
+  (2026-08-07), committed for auditability, same as every other board.
 
 `internal/kernelspec.go`'s `RequiredY` list asserts that the bean's required
 `CONFIG_*` options are still set after `make olddefconfig` resolves
@@ -127,12 +126,13 @@ bump them together.
 
 ## Known limitations
 
-Not yet build-tested (bean gosd-axtv's code pass lands the spec/fragment
-first; the real `gosd build-kernel` run and resulting `kernel.config` +
-config audit follow separately — see the bean) and not boot-tested on
-hardware (bring-up is a later bean under epic gosd-h1wv). Do not treat this
-fragment as proven until a real `gosd build-kernel --board cubie-a5e` run
-succeeds, its `kernel.config` is committed, and the config has been audited
-for defconfig surprises (the Pi-trap lesson in the repo root `CLAUDE.md`:
-`=m`-promoted phantom drivers, gadget-zoo/hwsim contention, silently-assumed
-firmware cmdline injection).
+Build-tested but not yet boot-tested on hardware (bring-up is bean gosd-6pfn
+under epic gosd-h1wv). The committed `kernel.config` passed the defconfig
+surprise audit (the Pi-trap lesson in the repo root `CLAUDE.md`): no legacy
+gadget drivers are built in — the gadget stack is configfs-only, so nothing
+claims the MUSB UDC before `gadget/` can; `SERIAL_8250_RUNTIME_UARTS=4`
+(ttyS0 console safe — contrast the Zero W's `=0` trap); DRM, sound, WLAN,
+Bluetooth and CONFIG_MODULES are all absent. `CONFIG_MEDIA_SUPPORT=y` and
+`CONFIG_BTRFS_FS=y` are present, matching every other mainline-fleet board —
+fleet-wide arm64-defconfig inheritance tracked in bean gosd-10fn, not a
+cubie-a5e regression.
