@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -14,6 +15,10 @@ type realExec struct{}
 
 func (realExec) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
+}
+
+func (realExec) LookupEnv(key string) (string, bool) {
+	return os.LookupEnv(key)
 }
 
 // Run streams stdout/stderr live because os/exec copies from the child

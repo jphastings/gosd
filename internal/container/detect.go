@@ -42,6 +42,13 @@ func (r *Runtime) Name() string { return r.name }
 // all install a `docker` binary that resolves fine on $PATH even when the
 // VM backing it isn't running, so Detect always runs a liveness check
 // (`docker info` / `podman info`) before returning a Runtime.
+//
+// A live daemon still isn't enough on its own: Detect also fails with
+// *RemoteContextError if the runtime's active context (or a
+// DOCKER_HOST/CONTAINER_HOST override) points at a daemon on another
+// machine. gosd build-kernel/build-external bind-mount local host paths
+// into the container, which a remote daemon resolves empty — see
+// checkLocalEndpoint's doc comment.
 func Detect(ctx context.Context, command, preferred string) (*Runtime, error) {
 	return detect(ctx, command, preferred, realExec{})
 }
@@ -58,6 +65,9 @@ func detect(ctx context.Context, command, preferred string, ex execRunner) (*Run
 			continue
 		}
 		if err := checkDaemon(ctx, ex, command, name, path); err != nil {
+			return nil, err
+		}
+		if err := checkLocalEndpoint(ctx, ex, command, name, path); err != nil {
 			return nil, err
 		}
 		return &Runtime{name: name, binary: path, exec: ex}, nil
