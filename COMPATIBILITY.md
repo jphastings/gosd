@@ -51,6 +51,7 @@ published artifact, noted in footnotes where it applies.
 | Persistent `/data` partition | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] | ✅ [^data-opt-in] |
 | Onboard eMMC format/mount (`emmc` package) | ➖ [^no-emmc] | ➖ [^no-emmc] | ➖ [^no-emmc] | ✅ [^emmc] | ✅ [^emmc] | ✅ [^emmc][^rock4se-emmc] |
 | Attached disk format/mount (`disk` package) | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] | ✅ [^disk] |
+| ext4 on attached disks (default) | ❌ [^ext4] | ❌ [^ext4] | ❌ [^ext4] | ✅ [^ext4] | ✅ [^ext4] | ✅ [^ext4] |
 | exFAT on attached disks | ✅ [^exfat] | ✅ [^exfat] | ✅ [^exfat] | 🚧 [^exfat] | 🚧 [^exfat] | ✅ [^exfat] |
 | USB gadget (serial/Ethernet/mass storage) | ✅ [^usb-gadget][^pi-dwc2] | ✅ [^usb-gadget][^pi-dwc2] | ➖ [^pi3b-no-gadget] | ✅ [^usb-gadget] | ❌ [^nanopi-usb] | ✅ [^usb-gadget][^rock4se-otg] |
 | NVMe SSD (M.2) + exFAT | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ➖ [^no-m2] | ✅ [^rock4se-nvme] |
@@ -490,17 +491,31 @@ published artifact, noted in footnotes where it applies.
     disk storage" section, bean `gosd-yggd`) is the general-purpose sibling
     of `emmc`: it discovers whatever mass storage is attached and is *not*
     the media the board booted from — an NVMe SSD, a USB drive, an SD card
-    in a reader — and formats/mounts it under the same whole-device-FAT,
+    in a reader — and formats/mounts it under the same whole-device,
     label-keyed, idempotent rules. Every board in this table has a USB host
     port, so the USB-drive case applies to all of them; NVMe applies only to
     the ROCK 4SE (see [^rock4se-nvme]). Carries the same caveat as most rows in this
     table: ✅ means code-complete and unit-tested, with hardware
     verification tracked separately — bean `gosd-yggd`'s bench checklist
     (rock-4se NVMe discover/format/mount/gadget-share, plus a USB drive on
-    any board) is what confirms it on real hardware.
-    FAT32 is what it formats by default; a disk arriving pre-formatted as
-    exFAT (how most SSDs and USB drives ship) is now mounted rather than
-    refused when its label matches the app's — see [^exfat].
+    any board), continued by bean `gosd-vv5o` for ext4 specifically, is what
+    confirms it on real hardware.
+    **ext4 is what `FormatAndMountWith`'s zero-value `Options` formats now**
+    — a deliberate breaking change from the earlier FAT32 default, called
+    out in the release notes of the version that shipped it (epic
+    `gosd-lfu0`). It is journaled and crash-safe, at the cost of needing
+    `CONFIG_EXT4_FS` in the board's kernel — see "ext4 on attached disks",
+    below, for which boards have it. FAT32 and exFAT remain available as
+    explicit `Options.Filesystem` choices for the case ext4's default does
+    not serve: removable media meant to be read on another host. Whichever
+    filesystem is asked for, a disk already carrying a volume under the
+    app's label is mounted, not reformatted — but only when its filesystem
+    also matches; a label match against a *different* filesystem (e.g. a
+    disk formatted before this default existed) is treated like any other
+    foreign content instead of being silently converted. A disk arriving
+    pre-formatted as exFAT (how most SSDs and USB drives ship) and asked
+    for by its own filesystem is mounted rather than refused — see
+    [^exfat].
 
 [^exfat]: `disk` reads, mounts and writes exFAT, not only FAT32 (bean
     `gosd-1ici`), which is what lifts FAT32's hard 4 GiB per-file ceiling on
@@ -525,6 +540,44 @@ published artifact, noted in footnotes where it applies.
     before the disk is touched, which is deliberate (see [^disk] for the
     package, and `docs/runtime.md` for the API). Hardware verification of
     the formatter is tracked in bean `gosd-1ici`'s bench checklist.
+
+[^ext4]: ext4 is `disk.FormatAndMountWith`'s default filesystem (epic
+    `gosd-lfu0`, `Options.Filesystem`'s zero value — see [^disk]),
+    formatted by writing a pristine, checked-in golden ext4 image
+    (`internal/diskfmt/ext4golden`, bean `gosd-u988`) straight to the
+    device and then growing it to the disk's actual size with a single
+    online `EXT4_IOC_RESIZE_FS` ioctl — no `mkfs.ext4` binary, no pure-Go
+    mke2fs, no `resize2fs` running on the device (`internal/blockmount`,
+    bean `gosd-1c0x`). The journal buys metadata crash-consistency and
+    mount-time replay, not data durability — application writes still use
+    the four-step fsync pattern in `docs/runtime.md`'s "Making a write
+    durable" section. Growth happens exactly once, at first establishment;
+    re-mounting an already-established volume adopts it — gated on a
+    hidden completion marker, the same probe-is-never-proof discipline as
+    every other on-disk commit in this codebase (see `docs/runtime.md`) —
+    rather than re-growing or reformatting it.
+    What varies by board is only the *kernel*, which must have
+    `CONFIG_EXT4_FS`: confirmed present (`=y`) in the recorded
+    `kernel.config` for the Radxa Zero 3E, NanoPi Zero2 and ROCK 4SE, and
+    also present for the internal `qemu-virt` profile and the
+    internal-only Radxa Cubie A5E ([^cubie-a5e-scope]) — all of them
+    inherit it from the same mainline arm64 defconfig, so no artifacts
+    release was needed to turn this on. Confirmed absent
+    (`# CONFIG_EXT4_FS is not set`) on all three Pi boards; asking for
+    ext4 there — including via the silent zero-value default — fails with
+    `disk.ErrUnsupportedFS` before the disk is touched, naming the gap,
+    the same preflight [^exfat] describes for exFAT.
+    Code-complete and unit-tested, including the crash-safe
+    establishment/adoption state machine exercised against simulated crash
+    debris (golden image partially written, grown-but-unmarked, marker
+    present), plus QEMU-tested end to end by CI's `qemu-disk-ext4` job
+    (`.github/workflows/ci.yml`): format, grow, a hard qemu kill with no
+    clean shutdown, reboot, and assertions that the volume was adopted
+    (not reformatted) with its file content intact through the journal
+    replay, and that the grow persisted (filesystem size tracking the
+    attached disk, not the 512MiB golden image). Real-hardware
+    verification — rock-4se NVMe, plus a physical power-cut during
+    sustained writes — is tracked in bean `gosd-vv5o`.
 
 [^usb-gadget]: The kernel config for USB gadget mode (DWC2 on both Pi
     Zeros, DWC3 on the Radxa boards; `CONFIG_USB_GADGET`, configfs,

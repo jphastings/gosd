@@ -110,11 +110,37 @@ say so in the bean rather than silently diverging.
   under `internal/`; `emmc` and `disk` share `internal/blockmount` (the
   format/mount orchestration, label rules and candidate selection) and
   `internal/diskfmt` (pure-Go inspect/format — FAT32 via go-diskfs, exFAT
-  written directly from the Microsoft spec), so a change to one must not
-  silently change the other's semantics. `emmc` is FAT32-only by design;
-  exFAT is a `disk` option (bean `gosd-1ici`) and needs `CONFIG_EXFAT_FS`
-  in the board's kernel, checked against `/proc/filesystems` before any
-  write.
+  written directly from the Microsoft spec, ext4 from a checked-in golden
+  image), so a change to one must not silently change the other's
+  semantics. `emmc` is FAT32-only by design and untouched by `disk`'s
+  filesystem choice, below. `disk` takes a typed `Filesystem` token
+  (`disk.EXT4`/`disk.FAT32`/`disk.ExFAT`) whose zero value is `disk.EXT4`
+  (epic `gosd-lfu0` — see the dedicated locked decision below for the
+  format/grow/adopt mechanism, a one-liner is `internal/blockmount`'s
+  package doc). exFAT and ext4 each need their kernel support
+  (`CONFIG_EXFAT_FS`/`CONFIG_EXT4_FS`) checked against `/proc/filesystems`
+  before any write.
+- **`disk/` defaults to ext4 (decided 2026-08-07, epic `gosd-lfu0`):**
+  `disk.Options.Filesystem`'s zero value is `disk.EXT4` — a deliberate
+  breaking change from the prior FAT32 default, shipped as a minor version
+  bump with a release-notes-level callout (bean `gosd-ucgr`). Formatting
+  writes a checked-in golden ext4 image (`internal/diskfmt/ext4golden`)
+  straight to the device, then grows it online to the disk's actual size
+  exactly once, at first establishment (`EXT4_IOC_RESIZE_FS`,
+  `internal/blockmount`) — no `mkfs`/`resize2fs` ever runs on-device. A
+  later mount of an already-established volume adopts it, gated on a
+  hidden completion marker (the same write → sync → marker → sync
+  discipline as every other on-disk commit in this codebase — see
+  `internal/blockmount`'s package doc for the full crash-ordering
+  argument), never a probe. The journal buys metadata crash-consistency
+  and mount-time replay, not data durability — the four-step fsync
+  pattern (docs/runtime.md) remains the app-facing contract regardless of
+  filesystem. FAT32/exFAT remain available as explicit `Options.Filesystem`
+  tokens for removable media meant to be read on another host, which is
+  the case ext4's default does not serve. `emmc/` is unaffected — stays
+  FAT32-only by design. Proven end-to-end (format, grow, a hard qemu kill
+  with no clean shutdown, reboot, adopt, journal replay) by CI's
+  `qemu-disk-ext4` job; real-hardware verification is bean `gosd-vv5o`.
 - **Layout ABI (decided 2026-07-31, docs/design/upgrade-path.md):** the boot
   volume size is per-app (`gosd build --boot-size`, default 256MiB) and is
   that app's on-card ABI — changing it in a later release erases GOSD-DATA
