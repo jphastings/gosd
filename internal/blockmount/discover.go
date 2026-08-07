@@ -30,8 +30,11 @@ type Rank func(Device) (rank int, ok bool)
 // Candidates returns the device nodes that could be formatted, best first.
 // Anything mounted from a device — the whole device or any of its partitions —
 // makes it in use, which is what keeps the media the board booted from off the
-// list. Ties on rank are broken by device name so the order never depends on
-// kernel enumeration order.
+// list. Usable is checked here, ahead of rank, so a device with no medium or
+// that is write-protected can never become a candidate regardless of what any
+// package's Rank says — see Usable's doc for why that check lives here rather
+// than in each package's Rank. Ties on rank are broken by device name so the
+// order never depends on kernel enumeration order.
 func Candidates(devices []Device, mountedSources map[string]bool, rank Rank) []string {
 	type candidate struct {
 		name string
@@ -40,6 +43,9 @@ func Candidates(devices []Device, mountedSources map[string]bool, rank Rank) []s
 	var found []candidate
 	for _, dev := range devices {
 		if InUse(dev, mountedSources) {
+			continue
+		}
+		if !Usable(dev) {
 			continue
 		}
 		if r, ok := rank(dev); ok {
@@ -81,4 +87,21 @@ func InUse(dev Device, mountedSources map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// Usable reports whether dev could ever be a legitimate format target,
+// independent of any package's class preference: a device reporting no
+// medium (SizeSectors == 0 — an empty card-reader slot still enumerates as a
+// block device) or one that is write-protected (ReadOnly) must never be
+// offered, no matter what a caller's Rank would otherwise say. This lives in
+// Candidates rather than in each package's Rank so the two public packages
+// (emmc and disk) cannot silently diverge on it again: disk.rank enforced
+// both checks explicitly while emmc's rank did not, relying only on a
+// sysfs-topology quirk (an eMMC's hardware partitions read Kind == "" rather
+// than "MMC") to stay safe against write-protected or medium-less
+// candidates it never actually excluded — see gosd-ix38. A package's Rank
+// now only ever needs to express its own class preference; present-medium
+// and writable are enforced here, once, for both.
+func Usable(dev Device) bool {
+	return dev.SizeSectors != 0 && !dev.ReadOnly
 }

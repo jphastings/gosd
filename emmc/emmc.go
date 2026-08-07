@@ -113,10 +113,13 @@ func storage(d blockmount.Deps) blockmount.Storage {
 // Unlike disk.rank (see gosd-f226), this has no explicit exclusion for an
 // eMMC's hardware partitions (boot0/boot1/rpmb/gp0-gp3). It does not need one
 // today only because of a sysfs-topology quirk: those gendisks' device/type
-// attribute reads empty, not "MMC", so Kind == "MMC" already excludes them —
-// see gosd-ix38, which tracks folding this rank (and disk's SizeSectors/
-// ReadOnly checks) into a shared blockmount.Usable so both packages stop
-// depending on that quirk rather than an explicit guard.
+// attribute reads empty, not "MMC", so Kind == "MMC" already excludes them.
+// That quirk is the only thing standing between this rank and a hardware
+// partition; present-medium and write-protected exclusion no longer depend
+// on any such quirk — blockmount.Usable enforces both structurally, for
+// every caller of Choose/Candidates, so this rank need only express eMMC's
+// own class preference (see gosd-ix38, which found disk enforcing
+// SizeSectors/ReadOnly and this rank not).
 func chooseEMMC(devices []blockmount.Device, mountedSources map[string]bool) (string, error) {
 	rank := func(dev blockmount.Device) (int, bool) { return 0, dev.Kind == "MMC" }
 	return blockmount.Choose(devices, mountedSources, rank, ErrNoEMMC)
