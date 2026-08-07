@@ -11,15 +11,24 @@ import (
 // internal/diskfmt (pure go-diskfs, no syscalls); the mount-state check and the
 // mount itself are Linux syscalls/sysfs reads from internal/blockmount.
 // Discover is replaced per call, since FormatAndMountDevice names its device.
+// The last six fields are ext4-only (see blockmount.Deps): unused whenever
+// FormatAndMountWith is called with FAT32 or exFAT, wired here regardless
+// since disk (unlike emmc) can be asked for ext4.
 func newPlatformDeps() blockmount.Deps {
 	return blockmount.Deps{
-		MountedAt:      blockmount.MountedAt,
-		Discover:       discover,
-		Inspect:        diskfmt.Inspect,
-		Format:         diskfmt.Format,
-		Mount:          blockmount.Mount,
-		Mountable:      blockmount.Mountable,
-		MountedSources: blockmount.MountedSources,
+		MountedAt:           blockmount.MountedAt,
+		Discover:            discover,
+		Inspect:             diskfmt.Inspect,
+		Format:              diskfmt.Format,
+		Mount:               blockmount.Mount,
+		Mountable:           blockmount.Mountable,
+		MountedSources:      blockmount.MountedSources,
+		SyncDevice:          blockmount.SyncDevice,
+		Grow:                blockmount.GrowEXT4,
+		EstablishMarker:     blockmount.EstablishEXT4Marker,
+		MarkerEstablished:   blockmount.EXT4MarkerEstablished,
+		RootHasOtherContent: blockmount.RootHasOtherContent,
+		Unmount:             blockmount.Unmount,
 	}
 }
 

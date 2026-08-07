@@ -18,13 +18,19 @@ var errUnsupportedPlatform = errors.New("disk: attached mass storage is only sup
 
 func newPlatformDeps() blockmount.Deps {
 	return blockmount.Deps{
-		MountedAt:      func(string) (string, bool, error) { return "", false, errUnsupportedPlatform },
-		Discover:       discover,
-		Inspect:        diskfmt.Inspect,
-		Format:         diskfmt.Format,
-		Mount:          func(string, string, diskfmt.FS) error { return errUnsupportedPlatform },
-		Mountable:      func(diskfmt.FS) (bool, error) { return false, errUnsupportedPlatform },
-		MountedSources: func() (map[string]bool, error) { return nil, errUnsupportedPlatform },
+		MountedAt:           func(string) (string, bool, error) { return "", false, errUnsupportedPlatform },
+		Discover:            discover,
+		Inspect:             diskfmt.Inspect,
+		Format:              diskfmt.Format,
+		Mount:               func(string, string, diskfmt.FS) error { return errUnsupportedPlatform },
+		Mountable:           func(diskfmt.FS) (bool, error) { return false, errUnsupportedPlatform },
+		MountedSources:      func() (map[string]bool, error) { return nil, errUnsupportedPlatform },
+		SyncDevice:          func(string) error { return errUnsupportedPlatform },
+		Grow:                func(string, string) error { return errUnsupportedPlatform },
+		EstablishMarker:     func(string) error { return errUnsupportedPlatform },
+		MarkerEstablished:   func(string) (bool, error) { return false, errUnsupportedPlatform },
+		RootHasOtherContent: func(string) (bool, error) { return false, errUnsupportedPlatform },
+		Unmount:             func(string) error { return errUnsupportedPlatform },
 	}
 }
 
