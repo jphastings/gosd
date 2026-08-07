@@ -1,11 +1,11 @@
 ---
 # gosd-axtv
 title: 'Cubie A5E: trimmed mainline kernel build'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-07T11:34:54Z
+updated_at: 2026-08-07T12:17:41Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-jpc8
@@ -22,9 +22,9 @@ Registration prereq (CLAUDE.md): `gosd build-kernel --board cubie-a5e` only reso
 
 - [x] kernelspec entry + fragment + embedded assets package
 - [x] Update the three board-enumerating lists in kernelspec_test.go (board count, Rockchip DTS-patch allowlist — note cubie-a5e is NOT Rockchip, check how the allowlist generalizes — and the outputs-vs-Artifacts map)
-- [ ] Header I2C/SPI DTS patches under kernel/patches/ if the research bean says the board DT leaves them disabled (per-SoC convention; verify each applies against the pinned tag)
-- [ ] Audit the resulting kernel.config for defconfig surprises (=m promotions, phantom drivers — the Pi-trap lesson generalizes: grep for gadget zoo/hwsim/console assumptions)
-- [ ] Full gosd build-kernel run (backgrounded, colima up first), record kernel.config + Image/DTB sizes in kernel/README.md
+- [x] Header I2C/SPI DTS patches under kernel/patches/ if the research bean says the board DT leaves them disabled (per-SoC convention; verify each applies against the pinned tag)
+- [x] Audit the resulting kernel.config for defconfig surprises (=m promotions, phantom drivers — the Pi-trap lesson generalizes: grep for gadget zoo/hwsim/console assumptions)
+- [x] Full gosd build-kernel run (backgrounded, colima up first), record kernel.config + Image/DTB sizes in kernel/README.md
 - [x] Quality gates + PR
 
 ## Progress
@@ -36,3 +36,10 @@ Pending, left to the orchestrator per this bean's own todos: the real gosd build
 Base-branch note: PR #184 (bean/gosd-o7jv, this branch's stack base) merged to main mid-task and its branch was deleted; this branch's tip is already an ancestor of main, so no rebase was needed - PR opened against main directly instead of the deleted branch.
 
 PR: https://github.com/jphastings/gosd/pull/189 (opened against main; CI running, not yet checked green - the kernel build + config audit + kernel.config commit still need pushing to this branch before review).
+
+## Summary of Changes
+
+- cubie-a5e KernelSpec (fleet tag, arm64 defconfig + fragment, DTB allwinner/sun55i-a527-cubie-a5e.dtb, no DTS patches — locked: header I2C deferred post-bring-up, no SPI nodes exist at this tag), fleetKernelTag comment reworded for its first non-Rockchip member, kernelspec_test.go board lists updated.
+- kernel-fragment.config: nanopi-zero2 template minus all Rockchip symbols plus the verified sunxi set (pinctrl SUN55I_A523+_R, MMC_SUNXI, DWMAC_SUN8I+REALTEK_PHY, MUSB gadget stack with configfs functions, EHCI/OHCI _PLATFORM hosts, AXP717/AXP323 PMIC+regulators on I2C_MV64XXX — the SD vmmc rail hard-depends on them, RTC_SUN6I, SERIAL_8250_DW).
+- First build completed 2026-08-07 (orchestrator-run, ~35 min): Image 68,459,008 B, DTB 16,926 B; kernel.config committed.
+- Config audit vs the Pi-trap list: NO legacy gadget zoo (configfs-only — the MUSB UDC stays unclaimed for gadget/), RUNTIME_UARTS=4 (console safe), no DRM/SND/WLAN/BT/MODULES. MEDIA_SUPPORT=y + BTRFS_FS=y present but at exact fleet parity (4,001 =y vs nanopi's 4,000) — arm64-defconfig inheritance, recorded in gosd-10fn rather than silently diverging this board from the fleet.
