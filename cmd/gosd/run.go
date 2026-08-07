@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/build"
-	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
@@ -144,15 +142,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	caCertsCache, err := caCertsCacheDir()
+	shared, err := resolveSharedContent(ctx, runArtifactsDir)
 	if err != nil {
 		return err
 	}
-	caCertsPath, err := resolveCACerts(ctx, runArtifactsDir, caCertsCache)
-	if err != nil {
-		return err
-	}
-	caCerts, err := openCACertsForBoard(caCertsPath)
+	extraFiles, err := openSharedContent(shared)
 	if err != nil {
 		return err
 	}
@@ -171,7 +165,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		DataSizeBytes: dataSizeBytes,
 		DataFlush:     runDataFlush,
 		BootSizeBytes: bootSizeBytes,
-		ExtraFiles:    map[string]io.Reader{cacerts.InitramfsPath: caCerts},
+		ExtraFiles:    extraFiles,
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {
