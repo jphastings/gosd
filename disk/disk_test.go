@@ -274,17 +274,20 @@ func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
 	}
 }
 
-// TestOptionsZeroValueIsTheFAT32Default pins the promise that adding the
-// filesystem choice did not change the common path: an empty Options is what
-// FormatAndMount has always done.
-func TestOptionsZeroValueIsTheFAT32Default(t *testing.T) {
+// TestOptionsZeroValueIsTheEXT4Default pins the epic's locked, deliberately
+// breaking default (gosd-lfu0/gosd-1c0x): an empty Options — and FormatAndMount
+// itself, which passes one — formats ext4, not FAT32. FAT32 and exFAT remain
+// reachable as explicit choices, for removable media meant to be read on
+// another host.
+func TestOptionsZeroValueIsTheEXT4Default(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		opts Options
 		want diskfmt.FS
 	}{
-		{"zero value", Options{}, diskfmt.FAT32},
-		{"FAT32 spelled out", Options{Filesystem: FAT32}, diskfmt.FAT32},
+		{"zero value", Options{}, diskfmt.EXT4},
+		{"EXT4 spelled out", Options{Filesystem: EXT4}, diskfmt.EXT4},
+		{"FAT32", Options{Filesystem: FAT32}, diskfmt.FAT32},
 		{"exFAT", Options{Filesystem: ExFAT}, diskfmt.ExFAT},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

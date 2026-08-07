@@ -8,20 +8,27 @@
 // shape, and the same consequences: FormatAndMount writes a whole-device
 // filesystem — no partition table — and is idempotent across runs, so once a
 // disk carries a volume with the app's chosen label, later runs only mount it.
-// Neither FAT32 nor exFAT is power-loss-robust, and neither has unix
-// permissions or symlinks; write with the temp-file-then-rename pattern as for
-// GOSD_DATA.
 //
-// FAT32 is the default, because every host mounts it and every GoSD board's
-// kernel can. Its cost is that no single file may exceed 4 GiB however large
-// the disk is, and that GoSD will only create a FAT32 volume up to 256 GiB —
-// a larger disk is refused before it is touched rather than formatted into a
-// filesystem that would be corrupt. FormatAndMountWith takes
-// Options{Filesystem: ExFAT} for apps that need either limit lifted, on the
-// boards whose kernels can mount it. A disk that
-// already carries an exFAT volume with the app's label is mounted as it is
-// whichever option was passed — the realistic case for an SSD or USB drive,
-// which is exactly the data the app was pointed at.
+// ext4 is the default (Options.Filesystem's zero value, EXT4 — a deliberate
+// breaking change from disk's earlier FAT32 default, ship notes in the
+// release that carries it): it is journaled and crash-safe, which FAT32 and
+// exFAT are neither, and internal drives are exactly where GoSD apps keep
+// state that matters. FAT32 and exFAT remain available as explicit
+// Options.Filesystem choices for the case ext4 does not serve — removable
+// media meant to be read on another host, where FAT32's universal
+// readability (or exFAT's, past FAT32's 4 GiB-per-file/256 GiB-volume
+// ceilings) is the point, not a limitation. Whichever filesystem is in play,
+// none of the three gives unix permissions or symlinks, and none but ext4's
+// journal buys crash consistency for anything but its own metadata — write
+// application data with the temp-file-then-rename pattern as for GOSD_DATA
+// (see docs/runtime.md's fsync pattern).
+//
+// A disk already carrying a volume with the app's chosen label is mounted,
+// not reformatted — but only when its filesystem also matches what was
+// asked for. A label match against a *different* filesystem (a drive that
+// arrived pre-formatted some other way, or an app whose Filesystem option
+// changed across an upgrade) is treated like any other foreign content: see
+// destructive, below.
 //
 // Formatting is destructive, so it is gated: FormatAndMount will format a blank
 // disk freely, but refuses to overwrite anything else (a volume with a
@@ -60,7 +67,7 @@ var ErrRefusedFormat = blockmount.ErrRefusedFormat
 // FAT32 knowing the disk is untouched.
 var ErrUnsupportedFS = blockmount.ErrUnsupportedFS
 
-// FormatAndMount ensures an attached disk carries a FAT filesystem labelled
+// FormatAndMount ensures an attached disk carries an ext4 filesystem labelled
 // label and mounts it read-write at mountpoint, then reports the outcome on the
 // returned channel.
 //
@@ -75,17 +82,22 @@ var ErrUnsupportedFS = blockmount.ErrUnsupportedFS
 //	// res.MountPoint is ready to use; res.BlockDevice is the node behind it.
 //
 // The disk is discovered automatically — see Devices for exactly which block
-// devices qualify and in what order they are preferred. A disk already carrying
-// a volume with this label is only mounted, never reformatted, which is how
-// re-runs of the same app avoid wiping their own data; that holds for an exFAT
-// volume as much as a FAT one, so a drive that arrived exFAT-formatted with a
-// matching label is mounted as it is rather than converted. A blank disk (no
-// filesystem and an all-zero leading region) is always formatted.
+// devices qualify and in what order they are preferred. A disk already
+// carrying an ext4 volume with this label is only mounted, never reformatted
+// (nor re-grown — growth happens exactly once, when the volume is first
+// established), which is how re-runs of the same app avoid wiping their own
+// data. A disk carrying a *different* filesystem under this label — e.g. one
+// formatted by an app built before this default existed, or by a previous
+// FormatAndMountWith(Options{Filesystem: ...}) choice — is treated as other
+// content: see destructive, below. A blank disk (no filesystem and an
+// all-zero leading region) is always formatted.
 //
-// destructive governs only a disk that already holds *other* data: false makes
-// FormatAndMount fail without touching it, wrapping ErrRefusedFormat; true
-// wipes and reformats it. label is limited to 11 ASCII characters (the FAT
-// maximum).
+// destructive governs only a disk that already holds *other* data — content
+// under a different label, or the same label under a different filesystem:
+// false makes FormatAndMount fail without touching it, wrapping
+// ErrRefusedFormat; true wipes and reformats it. label is limited to 16
+// ASCII characters (ext4's limit; FormatAndMountWith with Options{Filesystem:
+// FAT32} or ExFAT caps at 11 instead).
 func FormatAndMount(label, mountpoint string, destructive bool) <-chan Result {
 	return FormatAndMountWith(label, mountpoint, Options{Destructive: destructive})
 }
@@ -103,35 +115,53 @@ func FormatAndMountDevice(device, label, mountpoint string, destructive bool) <-
 type Filesystem string
 
 const (
-	// FAT32 is the default, and what FormatAndMount always uses: every host
-	// mounts it and every GoSD board's kernel can. Its price is a hard 4 GiB
-	// ceiling on any single file, however large the disk, and a 256 GiB
-	// ceiling on the volume GoSD will create — formatting a bigger disk fails
-	// with an error naming the limit, leaving the disk untouched.
+	// EXT4 is the default (Options.Filesystem's zero value) — a deliberate
+	// breaking change from disk's earlier FAT32 default, called out in the
+	// release notes of the version that shipped it. It is journaled and
+	// crash-safe (see docs/runtime.md for what the journal does and does not
+	// buy — metadata consistency and mount-time replay, not data
+	// durability), at the cost of not being natively readable from macOS or
+	// Windows and needing CONFIG_EXT4_FS in the board's kernel — see
+	// COMPATIBILITY.md for which boards have it (the Pi family does not, as
+	// of this writing). Asking for it on a board that lacks it fails with
+	// ErrUnsupportedFS before the disk is touched. Formatting writes GoSD's
+	// checked-in golden ext4 image (see internal/diskfmt), then grows it to
+	// the disk's actual size exactly once, at establishment.
+	EXT4 Filesystem = "ext4"
+	// FAT32 is universal — every host mounts it, and every GoSD board's
+	// kernel can — at the price of a hard 4 GiB ceiling on any single file,
+	// however large the disk, a 256 GiB ceiling on the volume GoSD will
+	// create (formatting a bigger disk fails with an error naming the
+	// limit, leaving the disk untouched), and no crash safety. It remains
+	// available for removable media meant to be read on another host,
+	// which is the case ext4's default does not serve.
 	FAT32 Filesystem = "fat32"
-	// ExFAT lifts both ceilings, at the cost of needing exFAT support in the
-	// board's kernel — see COMPATIBILITY.md for which boards have it. Asking
-	// for it on a board that lacks it fails with ErrUnsupportedFS before the
-	// disk is touched.
+	// ExFAT lifts FAT32's two ceilings while staying widely host-readable,
+	// at the cost of needing exFAT support in the board's kernel — see
+	// COMPATIBILITY.md for which boards have it — and, like FAT32, no crash
+	// safety. Asking for it on a board that lacks it fails with
+	// ErrUnsupportedFS before the disk is touched.
 	ExFAT Filesystem = "exfat"
 )
 
-// Options are the choices FormatAndMountWith makes available. Its zero value is
-// exactly what FormatAndMount does: format FAT32, discover the disk, and refuse
-// to overwrite anything already there.
+// Options are the choices FormatAndMountWith makes available. Its zero value
+// formats ext4, discovers the disk, and refuses to overwrite anything
+// already there.
 type Options struct {
 	// Filesystem is what to format the disk as if formatting is needed. The
-	// zero value is FAT32. It has no say over a disk that already carries a
-	// volume with the app's label: that is mounted as whatever it already is,
-	// never converted.
+	// zero value is EXT4. It has no say over a disk that already carries a
+	// volume with the app's label AND this filesystem: that is mounted, not
+	// reformatted. A label match against a *different* filesystem is not
+	// silently converted — see Destructive.
 	Filesystem Filesystem
 	// Device names one block device to use, e.g. "/dev/nvme0n1", for an app
 	// with more than one disk attached. The zero value discovers one. A named
 	// device that is in use is still refused.
 	Device string
-	// Destructive allows overwriting a disk that holds other content. The zero
-	// value refuses, wrapping ErrRefusedFormat. It has no bearing on a blank
-	// disk, which is always formatted.
+	// Destructive allows overwriting a disk that holds other content —
+	// including a volume under the app's label whose filesystem does not
+	// match Filesystem. The zero value refuses, wrapping ErrRefusedFormat.
+	// It has no bearing on a blank disk, which is always formatted.
 	Destructive bool
 }
 
@@ -173,12 +203,14 @@ func FormatAndMountWith(label, mountpoint string, opts Options) <-chan Result {
 
 func (o Options) filesystem() (diskfmt.FS, error) {
 	switch o.Filesystem {
-	case "", FAT32:
+	case "", EXT4:
+		return diskfmt.EXT4, nil
+	case FAT32:
 		return diskfmt.FAT32, nil
 	case ExFAT:
 		return diskfmt.ExFAT, nil
 	default:
-		return "", fmt.Errorf("disk: %q is not a filesystem GoSD can create; use disk.FAT32 or disk.ExFAT", string(o.Filesystem))
+		return "", fmt.Errorf("disk: %q is not a filesystem GoSD can create; use disk.EXT4, disk.FAT32 or disk.ExFAT", string(o.Filesystem))
 	}
 }
 
@@ -191,7 +223,7 @@ type Result struct {
 	// mountpoint passed to FormatAndMount.
 	MountPoint string
 	// BlockDevice is the device node backing MountPoint, e.g. "/dev/nvme0n1".
-	// The disk carries a whole-device FAT filesystem (no partition table), so
+	// The disk carries a whole-device filesystem (no partition table), so
 	// this whole-device node can be handed straight to gadget.MassStorage to
 	// share over USB — but Unmount MountPoint first: expose the device or mount
 	// it, never both at once.

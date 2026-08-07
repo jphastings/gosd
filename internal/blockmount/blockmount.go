@@ -7,7 +7,21 @@
 // when none is available, and which block devices they consider candidates;
 // everything else (the orchestration, FAT's label rules, the boot-device
 // exclusion, the Linux mount/sysfs primitives) is here so the two can never
-// drift apart.
+// drift apart. emmc only ever asks Run for diskfmt.FAT32, so every ext4-only
+// code path below (runEXT4, and the Grow/EstablishMarker/MarkerEstablished/
+// RootHasOtherContent/SyncDevice/Unmount Deps) is unreachable from it —
+// additive, not a change to its FAT32-only semantics.
+//
+// ext4 (disk only; see disk.Options.Filesystem) is the one filesystem here
+// that is grown and crash-gated rather than just formatted: Run's
+// establishment sequence is write → sync → mount → grow → marker → sync,
+// mirroring the write → sync → marker → sync convention every other
+// on-disk commit in this codebase follows (cmd/gosd-init/internal/
+// dataexpand's EstablishedMarker is the FAT32 sibling of this idea). A
+// device is only ever grown once, at first establishment; adopting an
+// already-established volume mounts it and stops — see runEXT4's doc for
+// the full ordering argument and EXT4EstablishedMarker's doc for why a
+// probe or even a successful mount is not, on its own, proof of anything.
 package blockmount
 
 import (
@@ -39,6 +53,47 @@ var ErrUnsupportedFS = errors.New("filesystem not supported by this board's kern
 // round-trips regardless.
 const maxLabelLen = 11
 
+// ext4MaxLabelLen mirrors internal/diskfmt's ext4LabelBytes: ext4's
+// s_volume_name field is 16 raw bytes, wider than FAT's 11 and enforced
+// independently here (rather than left for diskfmt.FormatEXT4 to discover)
+// so a caller's label is rejected at the API boundary — before any device is
+// touched — the same as every other label rule in this file.
+const ext4MaxLabelLen = 16
+
+// EXT4EstablishedMarker is an empty file EstablishMarker writes into the root
+// of an ext4 filesystem it has just formatted, grown AND fsynced, and that
+// Run looks for before adopting an existing ext4 volume whose label and
+// filesystem already match what was asked for (see runEXT4). It exists
+// because neither a probe-passing superblock nor a successful mount is proof
+// a format finished: diskfmt.FormatEXT4 streams a ~512MiB golden image onto
+// the device before this package ever sees it, and a crash partway through
+// that stream — or between the online grow and this marker — leaves a
+// filesystem that inspects, and often even mounts, perfectly fine over
+// truncated or unwritten backing data (the same probe-vs-proof lesson
+// dataexpand.EstablishedMarker's doc comment records, and the specific
+// failure mode gosd-lirl's review caught: a probe is never proof a format
+// completed). Adopting that debris would hand an app a filesystem it never
+// finished growing, forever. The marker means "the write, the sync, the
+// grow, and the fsync of this file and its parent directory all reached the
+// medium, in that order" — see runEXT4's doc for the full ordering argument.
+//
+// It is reserved: apps must leave it alone. A leading dot hides it from a
+// casual `ls`; unlike dataexpand's FAT32 marker (written raw, unmounted, via
+// go-diskfs, which cannot see a leading-dot name it writes — see
+// diskfmt.CreateEmptyFile), this one is written through the kernel's own
+// mounted ext4, which has no such limitation.
+//
+// Unlike dataexpand's marker, this one is not the *sole* gate: dataexpand's
+// "established" record is an MBR partition-table entry, which nothing
+// running on that partition can reach or delete, so its mere absence is
+// unconditional proof nothing has ever been handed to an app. This marker
+// lives inside the very filesystem it gates, reachable by anything with
+// write access to the mounted volume — so runEXT4 treats its absence as a
+// strong, but not sole, signal: see Deps.RootHasOtherContent for the second
+// opinion that keeps an app's accidental (or deliberate) removal of this
+// file from looking identical to genuine crash debris.
+const EXT4EstablishedMarker = ".gosd-established"
+
 // Deps are the side-effecting operations Run needs, injected so the
 // orchestration can be tested without real storage.
 type Deps struct {
@@ -65,6 +120,43 @@ type Deps struct {
 	// free — see the call site for why one check at Discover time is not
 	// enough.
 	MountedSources func() (map[string]bool, error)
+
+	// The fields below are ext4-only: Run never calls them for FAT32 or
+	// exFAT, so a Deps value that leaves them nil (every emmc caller, and
+	// every disk caller that never asks for diskfmt.EXT4) is exactly as
+	// valid as it always was — see runEXT4.
+
+	// SyncDevice flushes device's page-cache-buffered writes to the medium.
+	// Called once, right after Format writes ext4's golden image and before
+	// the first Mount is asked to trust it.
+	SyncDevice func(device string) error
+	// Grow expands the ext4 filesystem already mounted at mountpoint (backed
+	// by device) to fill the device's actual size, via the kernel's
+	// EXT4_IOC_RESIZE_FS ioctl. Called exactly once, immediately after the
+	// first Mount of a freshly Format-ed volume — never again once
+	// EstablishMarker has recorded that grow as done.
+	Grow func(device, mountpoint string) error
+	// EstablishMarker writes EXT4EstablishedMarker into the root of the
+	// filesystem mounted at mountpoint and fsyncs both the marker file and
+	// its parent directory. Called exactly once, as the last step of
+	// establishing a fresh ext4 volume — see EXT4EstablishedMarker's doc.
+	EstablishMarker func(mountpoint string) error
+	// MarkerEstablished reports whether the filesystem already mounted at
+	// mountpoint carries EXT4EstablishedMarker.
+	MarkerEstablished func(mountpoint string) (bool, error)
+	// RootHasOtherContent reports whether the filesystem mounted at
+	// mountpoint holds anything in its root directory beyond what
+	// diskfmt's golden ext4 image itself ships with (empty except
+	// lost+found) — i.e., whether an app has plausibly written real data
+	// here. Only consulted when EXT4EstablishedMarker is absent: see
+	// runEXT4's doc for why a missing marker alone is not, by itself,
+	// trustworthy proof that nothing of value is at risk.
+	RootHasOtherContent func(mountpoint string) (bool, error)
+	// Unmount releases mountpoint. Only called when an ext4 volume that
+	// looked adoptable (matching label and filesystem) turns out to lack
+	// EXT4EstablishedMarker: runEXT4 unmounts it so the crash-debris repair
+	// can reformat the raw device underneath.
+	Unmount func(mountpoint string) error
 }
 
 // runMu serialises every call to Run, across both public packages: emmc and
@@ -95,8 +187,15 @@ type Storage struct {
 // what is already present, whether to mount-only, format, or refuse. fs is the
 // filesystem to create if formatting turns out to be necessary. It returns the
 // device node backing the mounted filesystem on success.
+//
+// Adoption requires the existing volume's filesystem to match fs, not just
+// its label: a label match against a *different* filesystem is treated the
+// same as any other foreign content (destructive=false refuses with
+// ErrRefusedFormat; destructive=true reformats as fs). Converting it
+// silently, the way earlier versions of this function did, would hand back a
+// volume the caller never asked for.
 func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (string, error) {
-	if err := ValidateLabel(s.Pkg, label); err != nil {
+	if err := ValidateLabel(s.Pkg, fs, label); err != nil {
 		return "", err
 	}
 
@@ -128,11 +227,21 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 
 	format, action := true, "formatting"
 	switch {
+	case labelMatches(contents, label) && contents.FS == fs:
+		// Already provisioned by an earlier run, as the same filesystem —
+		// mount only. Reformatting would destroy the app's own data.
+		format = false
 	case labelMatches(contents, label):
-		// Already provisioned by an earlier run — mount only, and mount it as
-		// whatever filesystem it turned out to be. Reformatting it to the
-		// caller's preferred filesystem would destroy the app's own data.
-		format, fs = false, contents.FS
+		// The label matches, but the filesystem does not: a drive that
+		// arrived pre-formatted differently, or an app whose Filesystem
+		// option changed across an upgrade. Never silently converted —
+		// that would hand back a filesystem the caller never asked for —
+		// so it is treated like any other foreign content.
+		if !destructive {
+			return "", fmt.Errorf("the %s at %s already holds %s, but %s was requested for it; %w it as %s without permission — pass destructive=true to reformat it as %s (or match the filesystem already there)",
+				s.Noun, device, describe(contents), fs, ErrRefusedFormat, fs, fs)
+		}
+		action = "reformatting"
 	case contents.Blank:
 	case !destructive:
 		return "", fmt.Errorf("the %s at %s already holds %s; %w it as %q without permission — pass destructive=true to wipe it", s.Noun, device, describe(contents), ErrRefusedFormat, label)
@@ -146,6 +255,10 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 		return "", err
 	} else if !mountable {
 		return "", fmt.Errorf("the %s at %s needs %s, but this board's kernel has no %s support: %w — %s", s.Noun, device, fs, fs, ErrUnsupportedFS, remedyFor(fs))
+	}
+
+	if fs == diskfmt.EXT4 {
+		return runEXT4(s, device, fs, label, mountpoint, format, action, destructive)
 	}
 
 	if format {
@@ -170,14 +283,150 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 	return device, nil
 }
 
+// runEXT4 is Run's ext4-specific tail, reached once the label rules, the
+// format-vs-mount-only decision and the kernel preflight have already
+// passed. ext4 alone needs two things nothing else in this package does: an
+// online grow to the partition's real size (diskfmt.FormatEXT4's golden
+// image is a fixed ~512MiB seed, never the partition's actual size) and a
+// crash-safe establishment marker, because neither a probe-passing
+// superblock nor even a successful mount is proof a format finished (see
+// EXT4EstablishedMarker's doc — this is gosd-lirl's lesson generalised past
+// the superblock probe itself to the mount that follows it).
+//
+// format and action are the format-vs-mount-only decision and its verb
+// ("formatting"/"reformatting"), exactly as Run computed them — but for
+// ext4, format=false is only a tentative "this looks adoptable", confirmed
+// or overturned below by the marker check. destructive is threaded through
+// unchanged from Run: it governs the RootHasOtherContent fallback below the
+// same way it governs every other "something is already here" decision in
+// this package.
+func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, format bool, action string, destructive bool) (string, error) {
+	if !format {
+		// The label and filesystem both already match — mount it and look
+		// for proof it was ever fully established.
+		if mountErr := s.Deps.Mount(device, mountpoint, fs); mountErr == nil {
+			established, err := s.Deps.MarkerEstablished(mountpoint)
+			if err != nil {
+				return "", fmt.Errorf("checking whether the %s at %s was already established failed: %w", s.Noun, mountpoint, err)
+			}
+			if established {
+				// Adoption: mounted, matched, proven finished. No grow, no
+				// reformat — growth happens exactly once, at establishment.
+				return device, nil
+			}
+			// No marker. On its own this is ambiguous, unlike every other
+			// crash-debris check in GoSD (e.g. dataexpand's identically
+			// shaped one): dataexpand's gate is an MBR partition-table
+			// entry, which an app running on that partition can never
+			// reach or delete, so "no entry yet" is unconditional proof
+			// nothing has ever been handed to an app. EXT4EstablishedMarker
+			// is a plain file *inside* the filesystem it gates — an app
+			// with a "clear my hidden files too" bug (or anything else that
+			// removes it) can make an otherwise perfectly established,
+			// data-bearing volume look identical to fresh debris on the
+			// next boot. RootHasOtherContent is the second opinion that
+			// closes that gap: a root directory holding nothing beyond what
+			// the golden image itself ships with is exactly what an
+			// interrupted establishment leaves (an app can only write here
+			// after Run has already handed the mountpoint back, which never
+			// happened this run), so that case still self-heals with no
+			// consent needed, same as blank media. Real content with no
+			// marker gets the same explicit-consent treatment as any other
+			// foreign content instead of a silent wipe.
+			used, err := s.Deps.RootHasOtherContent(mountpoint)
+			if err != nil {
+				return "", fmt.Errorf("checking whether the %s at %s already holds real content failed: %w", s.Noun, mountpoint, err)
+			}
+			if used && !destructive {
+				return "", fmt.Errorf("the %s at %s already holds a %s volume labelled %q with content in it, but no establishment marker (either an interrupted format, or something removed the marker); %w it without permission — pass destructive=true to overwrite it", s.Noun, device, fs, label, ErrRefusedFormat)
+			}
+			if used {
+				action = "reformatting"
+			}
+			if err := s.Deps.Unmount(mountpoint); err != nil {
+				return "", fmt.Errorf("unmounting the unestablished %s at %s (to reformat it) failed: %w", s.Noun, mountpoint, err)
+			}
+		}
+		// A mount failure here is treated the same way as a clean mount
+		// with no marker and an empty root: a genuinely established ext4
+		// volume — matched label, matched filesystem, proven finished —
+		// always mounts, so a failure at this point is itself evidence of
+		// debris, just discovered one step earlier (before the root
+		// directory could even be read) than the checks above. There is no
+		// way to apply the RootHasOtherContent second opinion here — an
+		// unmountable filesystem's root directory cannot be read at all —
+		// so this remains an unconditional reformat (action stays
+		// "formatting", its value on entry to this block, unless the check
+		// above already promoted it to "reformatting"); see the bean's
+		// adversarial-review notes for why that residual gap (real,
+		// established data that has separately become unmountable through
+		// some unrelated corruption) is accepted rather than fixed here.
+	}
+
+	// See Run's identical re-check for why this happens again immediately
+	// before the write that would corrupt whatever mounted the device in
+	// the meantime — including, here, a sibling process racing the unmount
+	// above.
+	if mountedSources, err := s.Deps.MountedSources(); err != nil {
+		return "", err
+	} else if mountedSources[device] {
+		return "", fmt.Errorf("the %s at %s was mounted by something else while it was being prepared; refusing to format it — retry once whatever mounted it is done", s.Noun, device)
+	}
+
+	// The crash-safe establishment sequence. Every step is provably durable,
+	// in program order, before the next one is trusted:
+	//  1. Format writes the golden image plus a fresh label/UUID to the raw
+	//     device — buffered in the page cache, not yet durable.
+	//  2. SyncDevice flushes that write to the medium, so step 3 never asks
+	//     the kernel to trust anything that could still vanish in a crash.
+	//  3. Mount asks the kernel to interpret what step 2 just made durable.
+	//  4. Grow (EXT4_IOC_RESIZE_FS) is only meaningful against a mounted
+	//     filesystem — which step 3 just proved trustworthy.
+	//  5. EstablishMarker writes EXT4EstablishedMarker and fsyncs first the
+	//     marker file, then its parent directory — recording, as the last
+	//     durable fact, that every step above it reached the medium.
+	// A crash before step 5 leaves debris with no marker: the next boot's
+	// Inspect+Mount still finds a label/filesystem match, finds no marker,
+	// and repeats this whole sequence from step 1 — including the grow,
+	// even if step 4 had already completed once, because an ungrown-again
+	// reformat has overwritten it with the pristine golden image regardless.
+	// That is correct, not merely tolerated: the grow left no trace a future
+	// boot could trust either, so redoing it costs time, never correctness.
+	if err := s.Deps.Format(device, label, fs); err != nil {
+		return "", fmt.Errorf("%s the %s at %s as %s failed: %w", action, s.Noun, device, fs, err)
+	}
+	if err := s.Deps.SyncDevice(device); err != nil {
+		return "", fmt.Errorf("flushing the newly formatted %s at %s to the medium failed: %w", s.Noun, device, err)
+	}
+	if err := s.Deps.Mount(device, mountpoint, fs); err != nil {
+		return "", fmt.Errorf("mounting the %s at %s onto %s failed: %w", s.Noun, device, mountpoint, err)
+	}
+	if err := s.Deps.Grow(device, mountpoint); err != nil {
+		return "", fmt.Errorf("growing the newly formatted %s at %s to its partition size failed: %w", s.Noun, device, err)
+	}
+	if err := s.Deps.EstablishMarker(mountpoint); err != nil {
+		return "", fmt.Errorf("recording the completed format on the %s at %s failed: %w", s.Noun, device, err)
+	}
+	return device, nil
+}
+
 // remedyFor is the actionable half of the unsupported-filesystem error. FAT32
 // is every board's baseline, so it is worth suggesting for anything else — but
 // suggesting it in place of itself would be nonsense.
 func remedyFor(fs diskfmt.FS) string {
-	if fs == diskfmt.FAT32 {
+	switch fs {
+	case diskfmt.FAT32:
 		return "rebuild the board's kernel with it (see docs/custom-kernels.md)"
+	case diskfmt.EXT4:
+		// Named explicitly rather than left to "see COMPATIBILITY.md" alone:
+		// the Pi-family stock kernels have never built CONFIG_EXT4_FS in,
+		// while the Rockchip fleet (Radxa Zero 3E, NanoPi Zero2, ROCK 4SE)
+		// and the Cubie A5E all inherit it from their arm64 defconfig — a
+		// fact worth stating up front rather than sending a caller hunting.
+		return "the Pi-family stock kernels don't build CONFIG_EXT4_FS in; the Rockchip fleet (Radxa Zero 3E, NanoPi Zero2, ROCK 4SE) and the Cubie A5E do — see COMPATIBILITY.md, rebuild the board's kernel with it (see docs/custom-kernels.md), or use FAT32 or exFAT instead"
+	default:
+		return fmt.Sprintf("rebuild the board's kernel with it (see docs/custom-kernels.md), or use %s instead", diskfmt.FAT32)
 	}
-	return fmt.Sprintf("rebuild the board's kernel with it (see docs/custom-kernels.md), or use %s instead", diskfmt.FAT32)
 }
 
 // labelMatches reports whether contents already carries the label the caller
@@ -247,42 +496,64 @@ func describe(c diskfmt.Contents) string {
 	}
 }
 
-// ValidateLabel checks label against the volume-label rules, reporting any
-// problem prefixed with the calling package's name. The rules are FAT's, which
-// is the stricter of the two filesystems GoSD writes — an 11-character
-// printable-ASCII label is equally valid as an exFAT label, so one label works
-// whichever filesystem the caller ends up with.
+// ValidateLabel checks label against fs's volume-label rules, reporting any
+// problem prefixed with the calling package's name.
 //
-// A leading or trailing space is refused outright: both FAT32 and exFAT strip
-// edge padding when they read a label back (see trimLabel), so such a label
-// can never round-trip through format→Inspect. Undetected, that mismatch
-// makes Run's idempotency check fail forever, reformatting — and destroying —
-// the app's own data on every single boot. NUL is refused too, but by the
-// printable-ASCII check below: it is a control character, not printable.
+// FAT32 and exFAT share the stricter of GoSD's rule sets — an 11-character
+// printable-ASCII label with none of the round-trip hazards documented
+// below — so that one label works whichever of the two the caller ends up
+// with. ext4 has neither hazard (its s_volume_name field is NUL-padded, not
+// space-padded, and is a single 16-byte field with no FAT-style short-name/
+// extension split — see internal/diskfmt's trimEXT4Label), so only its own
+// width (ext4MaxLabelLen) and printable-ASCII apply; a label ValidateLabel
+// admits for ext4 need not also satisfy FAT's edge-space or byte-7 rules.
 //
-// A space at byte index 7 (fatShortNameSplit) is refused too, for labels
-// longer than 8 bytes: go-diskfs's FAT directory-entry parser writes an
-// 11-byte label as an 8-byte short-name field (bytes 0-7) followed by a
-// 3-byte extension field (bytes 8-10), and trims trailing spaces off each
-// field independently before concatenating them on read-back. For a label of
-// 8 bytes or fewer, byte 7 is padding, and trimming it is correct — but for a
-// longer label, byte 7 is the short-name field's own last byte, which that
-// per-field trim cannot tell apart from padding, so a space there silently
-// vanishes on read-back — the same round-trip failure and destroy-on-boot
-// consequence as an edge space, just one byte position narrower than the
-// edges the check above already catches. No other byte position is affected:
-// the extension field (bytes 8-10) is only ever padded at its own trailing
-// edge, which the existing edge-space rule already forbids landing on: see
-// fatDirectoryEntryRoundTrip and gosd-f83b's exhaustive round-trip test.
-// exFAT stores the label as a single contiguous UTF-16 run with no such
-// split, so it is unaffected — confirmed alongside FAT32 in
-// TestAllPositionsRoundTripOrAreRejected.
-func ValidateLabel(pkg, label string) error {
+// A leading or trailing space is refused outright for FAT32/exFAT: both
+// strip edge padding when they read a label back (see trimLabel), so such a
+// label can never round-trip through format→Inspect. Undetected, that
+// mismatch makes Run's idempotency check fail forever, reformatting — and
+// destroying — the app's own data on every single boot. NUL is refused too,
+// but by the printable-ASCII check below: it is a control character, not
+// printable.
+//
+// A space at byte index 7 (fatShortNameSplit) is refused too for FAT32/
+// exFAT, for labels longer than 8 bytes: go-diskfs's FAT directory-entry
+// parser writes an 11-byte label as an 8-byte short-name field (bytes 0-7)
+// followed by a 3-byte extension field (bytes 8-10), and trims trailing
+// spaces off each field independently before concatenating them on
+// read-back. For a label of 8 bytes or fewer, byte 7 is padding, and
+// trimming it is correct — but for a longer label, byte 7 is the short-name
+// field's own last byte, which that per-field trim cannot tell apart from
+// padding, so a space there silently vanishes on read-back — the same
+// round-trip failure and destroy-on-boot consequence as an edge space, just
+// one byte position narrower than the edges the check above already
+// catches. No other byte position is affected: the extension field (bytes
+// 8-10) is only ever padded at its own trailing edge, which the existing
+// edge-space rule already forbids landing on: see fatDirectoryEntryRoundTrip
+// and gosd-f83b's exhaustive round-trip test. exFAT stores the label as a
+// single contiguous UTF-16 run with no such split, so it is unaffected —
+// confirmed alongside FAT32 in TestAllPositionsRoundTripOrAreRejected.
+func ValidateLabel(pkg string, fs diskfmt.FS, label string) error {
+	maxLen := maxLabelLen
+	if fs == diskfmt.EXT4 {
+		maxLen = ext4MaxLabelLen
+	}
+
 	if label == "" {
 		return fmt.Errorf("%s: the volume label must not be empty", pkg)
 	}
-	if len(label) > maxLabelLen {
-		return fmt.Errorf("%s: volume label %q is %d characters; volume labels are at most %d", pkg, label, len(label), maxLabelLen)
+	if len(label) > maxLen {
+		return fmt.Errorf("%s: volume label %q is %d characters; %s volume labels are at most %d", pkg, label, len(label), fs, maxLen)
+	}
+	for _, r := range label {
+		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
+			return fmt.Errorf("%s: volume label %q must be printable ASCII", pkg, label)
+		}
+	}
+	if fs == diskfmt.EXT4 {
+		// Neither of FAT's round-trip hazards below applies: see the doc
+		// comment above.
+		return nil
 	}
 	if trimmed := strings.Trim(label, " "); trimmed != label {
 		if trimmed == "" {
@@ -292,11 +563,6 @@ func ValidateLabel(pkg, label string) error {
 	}
 	if len(label) > fatShortNameSplit+1 && label[fatShortNameSplit] == ' ' {
 		return fmt.Errorf("%s: volume label %q has a space as its 8th character; FAT32 stores an 11-byte label as an 8-byte name plus a 3-byte extension and trims trailing spaces from each independently when reading it back, so this space is indistinguishable from padding and silently disappears — move it, remove it, or replace it with a non-space character", pkg, label)
-	}
-	for _, r := range label {
-		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
-			return fmt.Errorf("%s: volume label %q must be printable ASCII", pkg, label)
-		}
 	}
 	return nil
 }
