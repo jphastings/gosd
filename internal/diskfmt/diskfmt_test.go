@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
 )
 
@@ -160,6 +161,72 @@ func TestInspectReportsFATLabel(t *testing.T) {
 	}
 	if got.FS != FAT32 || got.Label != "APPDATA" {
 		t.Errorf("Inspect of formatted device = %+v, want {FS:fat32 Label:APPDATA}", got)
+	}
+}
+
+// fatFixture creates a whole-device FAT filesystem of the given go-diskfs
+// width directly. diskfmt has no FormatFAT16/FormatFAT12 — GoSD's Format
+// only ever writes FAT32 — so these fixtures stand in for a stick someone
+// else formatted, the case gosd-8rw2 is about: Inspect must still name it
+// honestly even though GoSD never created it.
+func fatFixture(t *testing.T, sizeBytes int64, fsType filesystem.Type, label string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "device.img")
+	d, err := diskfs.Create(path, sizeBytes, diskfs.SectorSize512)
+	if err != nil {
+		t.Fatalf("creating backing file: %v", err)
+	}
+	if _, err := d.CreateFilesystem(disk.FilesystemSpec{
+		Partition:   0,
+		FSType:      fsType,
+		VolumeLabel: label,
+	}); err != nil {
+		t.Fatalf("creating fixture filesystem: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("closing fixture device: %v", err)
+	}
+	return path
+}
+
+// TestInspectReportsFAT16Label pins gosd-8rw2: before the fix, Inspect
+// reported every FAT width as FAT32, so a refusal to overwrite a FAT16 stick
+// named a filesystem that was not actually there.
+func TestInspectReportsFAT16Label(t *testing.T) {
+	path := fatFixture(t, 20*1024*1024, filesystem.TypeFat16, "OLDSTICK")
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.FS != FAT16 || got.Label != "OLDSTICK" {
+		t.Errorf("Inspect of a FAT16 device = %+v, want {FS:fat16 Label:OLDSTICK}", got)
+	}
+	if got.FS.String() != "FAT16" {
+		t.Errorf("FAT16.String() = %q, want %q", got.FS.String(), "FAT16")
+	}
+	if got.FS.MountType() != "vfat" {
+		t.Errorf("FAT16.MountType() = %q, want %q", got.FS.MountType(), "vfat")
+	}
+}
+
+// TestInspectReportsFAT12Label is TestInspectReportsFAT16Label's twin for the
+// even narrower FAT width (typically tiny/floppy-sized volumes).
+func TestInspectReportsFAT12Label(t *testing.T) {
+	path := fatFixture(t, 1024*1024, filesystem.TypeFat12, "TINYFAT")
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.FS != FAT12 || got.Label != "TINYFAT" {
+		t.Errorf("Inspect of a FAT12 device = %+v, want {FS:fat12 Label:TINYFAT}", got)
+	}
+	if got.FS.String() != "FAT12" {
+		t.Errorf("FAT12.String() = %q, want %q", got.FS.String(), "FAT12")
+	}
+	if got.FS.MountType() != "vfat" {
+		t.Errorf("FAT12.MountType() = %q, want %q", got.FS.MountType(), "vfat")
 	}
 }
 
