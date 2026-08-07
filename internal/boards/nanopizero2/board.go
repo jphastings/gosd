@@ -6,19 +6,6 @@
 // internal/boards/radxazero3e), since both are Rockchip SoCs booted via
 // idbloader + U-Boot proper + extlinux.
 //
-// INTERNAL-ONLY FOR NOW: this board is registered via boards.RegisterInternal
-// (see cmd/gosd/build.go), not boards.Register, per bean gosd-wskc's scope
-// amendment (2026-07-06). Mainline U-Boot support for this board
-// (configs/nanopi-zero2-rk3528_defconfig) lands in v2026.07, which hadn't
-// shipped a final release yet when this profile was written (bean gosd-f39b
-// pins a v2026.07-rc tag to unblock hardware bring-up); there is no
-// artifacts-pipeline job producing idbloader.img/u-boot.itb, so a real (non
-// --artifacts-dir) build would 404 fetching them. Flip this to a public
-// boards.Register call — and add the corresponding U-Boot job to
-// .github/workflows/build-artifacts.yml + the manifest — once gosd-f39b
-// completes and an artifact release contains this board's U-Boot files. See
-// the checklist item on bean gosd-wskc.
-//
 // The bootloader and kernel artifacts are built by
 // build/boards/nanopi-zero2/{uboot,kernel}/build.sh; they have no per-file
 // pinned URL, so they're resolved from --artifacts-dir or, falling back,

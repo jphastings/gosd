@@ -8,9 +8,8 @@
 // bean gosd-je2r's research. The bootloader and kernel artifacts are built
 // by build/boards/rock-4se/{uboot,kernel}; they have no per-file pinned URL,
 // so they're resolved from --artifacts-dir or, falling back, from the
-// CI-built artifact release (see internal/artifacts). Registered internal
-// (buildable only via explicit --board=rock-4se) until its artifact release
-// lands and bean gosd-0vvh flips it public.
+// CI-built artifact release (see internal/artifacts). Activated as a public
+// board once its artifact release landed (bean gosd-h8a8).
 package rock4se
 
 import (
