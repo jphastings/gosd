@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-08-07T09:58:20Z
-updated_at: 2026-08-07T14:23:13Z
+updated_at: 2026-08-07T14:45:04Z
 parent: gosd-lfu0
 blocked_by:
     - gosd-1c0x
@@ -137,3 +137,7 @@ runners won't need.)
 Quality gates (`go test ./...`, `go vet ./...`, `gofmt -l .`,
 `golangci-lint run ./...` + `GOOS=linux golangci-lint run ./...`) run next,
 foreground, before pushing.
+
+PR: https://github.com/jphastings/gosd/pull/194
+
+Quality-gates follow-up: all five ran and passed before the push above (the go test ./... paragraph a few lines up was written mid-run; it's now confirmed clean, including a second full-suite run after an earlier flaked cmd/gosd timeout that was resource contention, not a real failure — reproduced clean in isolation at 175s).
