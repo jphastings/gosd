@@ -21,6 +21,8 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   varies by board (table below).
 - Can [bundle prebuilt static Linux binaries](docs/externals.md) beside
   the app (`--with-external`).
+- Can [expose an app to the internet with zero app code](docs/ingress.md)
+  via a Cloudflare Tunnel (`--ingress cloudflared`; arm64 boards only).
 - Reserves placeholder files for
   [post-build config injection](docs/image-injection.md) (`--placeholder`).
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
@@ -62,6 +64,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | ext4 on attached disks (the default) | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
 | exFAT on attached disks | ✅ | ✅ | ✅ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ✅ |
 | [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
+| [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
 
 **Legend:** ✅ supported · 🚧 in progress · ➖ no such hardware on this
 board · ❌ not supported (see footnote).
@@ -137,6 +140,16 @@ board · ❌ not supported (see footnote).
 
 [^cubie-audio]: The stock kernel disables `CONFIG_SOUND` entirely; no
     recipe has been written for this board yet (no bean filed).
+
+[^cloudflared-bench]: Code-complete, unit- and QEMU-tested; not yet
+    hardware-verified against a real Cloudflare Tunnel (bench bean
+    `gosd-igk0`).
+
+[^cloudflared-armv6]: cloudflared's official `arm` release is built for
+    GOARM=7 and faults with "illegal instruction" on this board's armv6
+    CPU; `gosd build --ingress cloudflared` refuses to build for it
+    (revisit if upstream ever ships a GOARM=6 build). See
+    `docs/ingress.md`.
 
 ---
 
