@@ -156,11 +156,12 @@ const (
 )
 
 // Provisioning is one layer of a device's provisioning: the hostname, WiFi
-// network, ingress declaration and app environment variables it names.
+// network, ingress declarations (the whole gosdtoml.Ingress table, not just
+// Cloudflared - see ingressSections) and app environment variables it names.
 type Provisioning struct {
 	Hostname string
 	Wifi     gosdtoml.Wifi
-	Ingress  gosdtoml.IngressCloudflared
+	Ingress  gosdtoml.Ingress
 	Env      map[string]string
 }
 
@@ -317,11 +318,11 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 	if plan.Wifi != nil {
 		deps.Log("restoring WiFi network %q from the provisioning snapshot", plan.Wifi.SSID)
 	}
-	if plan.Ingress != nil {
+	for _, sec := range plan.Ingress {
 		// Never echoes hostname or port either, even though neither is a
 		// secret: coerceIngress's doc explains why the whole table follows
 		// one no-value-in-logs discipline rather than special-casing token.
-		deps.Log("restoring Cloudflare Tunnel ingress settings from the provisioning snapshot")
+		deps.Log("restoring %s ingress settings from the provisioning snapshot", sec.label)
 	}
 	if len(plan.Env) > 0 {
 		deps.Log("restoring hand-edited [env] value(s) from the provisioning snapshot: %s", strings.Join(sortedKeys(plan.Env), ", "))
@@ -337,10 +338,10 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 	// gosdtoml.Render itself still leaves the line commented when merged.
 	// Hostname is empty (nothing to restore). merged.Ingress carries through
 	// whatever this boot's own gosd.toml already had, or the snapshot's
-	// restored section when the plan included one (see apply), so this
+	// restored section(s) when the plan included any (see apply), so this
 	// write can't blank a hand-edited [ingress.cloudflared] table out as a
 	// side effect either way.
-	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env, merged.Ingress.Cloudflared)
+	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env, merged.Ingress)
 	if err := deps.WriteBootFile(BootConfigFile, rendered); err != nil {
 		// The values still apply to this boot, so the board comes back
 		// now; leaving the snapshot untouched is what makes the next boot
@@ -353,12 +354,52 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 	return Result{GosdToml: merged, HostnameRestored: plan.Hostname != ""}, true
 }
 
+// ingressSection is one row of ingressSections: everything the
+// classification logic below needs to know about one [ingress.<agent>]
+// section of gosdtoml.Ingress, generically. A section is always restored as
+// a whole (see the package doc's "no baked default" rationale for
+// [ingress.cloudflared]), so a row needs only a way to test whether a table
+// has this section configured, and a way to copy it, whole, from one table
+// into another.
+type ingressSection struct {
+	// label names this section in restore log lines, e.g. "Cloudflare
+	// Tunnel".
+	label string
+
+	// configured reports whether this section of ing is filled in at all.
+	configured func(ing gosdtoml.Ingress) bool
+
+	// restore overwrites just this section of dst with the same section
+	// from src, leaving every other section of dst untouched.
+	restore func(dst *gosdtoml.Ingress, src gosdtoml.Ingress)
+}
+
+// ingressSections is one row per [ingress.<agent>] section gosdtoml.Ingress
+// carries. Adding a second ingress agent (epic gosd-65uy) means adding one
+// row here, not new classification logic - planRestore, apply and effective
+// all loop over this table rather than naming Cloudflared directly.
+var ingressSections = []ingressSection{
+	{
+		label:      "Cloudflare Tunnel",
+		configured: func(ing gosdtoml.Ingress) bool { return ing.Cloudflared.Configured() },
+		restore:    func(dst *gosdtoml.Ingress, src gosdtoml.Ingress) { dst.Cloudflared = src.Cloudflared },
+	},
+}
+
 // plan is the set of values a snapshot restores onto the current card.
 type plan struct {
 	Hostname string
 	Wifi     *gosdtoml.Wifi
-	Ingress  *gosdtoml.IngressCloudflared
-	Env      map[string]string
+
+	// Ingress lists which [ingress.<agent>] sections to restore, each
+	// pulled whole from ingressFrom (see ingressSection.restore) - a
+	// section-by-section decision so fresh operator intent for one agent's
+	// section never blocks restoring a different agent's section from the
+	// snapshot.
+	Ingress     []ingressSection
+	ingressFrom gosdtoml.Ingress
+
+	Env map[string]string
 }
 
 // planRestore applies the package doc's merge rules: restore a field only
@@ -375,11 +416,15 @@ func planRestore(snap Snapshot, in Input) plan {
 		p.Wifi = &wifi
 	}
 	// No comparison against snap.Baked.Ingress: it is always the zero value
-	// (config.json never bakes a real token, see the package doc), so the
-	// snapshot's own presence is already proof of a hand-edit.
-	if snap.Effective.Ingress.Configured() && !freshIngress(in) {
-		ingress := snap.Effective.Ingress
-		p.Ingress = &ingress
+	// (config.json never bakes a real token, see the package doc), so any
+	// section configured on the snapshot is already proof of a hand-edit.
+	// Each section is classified independently: fresh intent is simply "the
+	// card's own gosd.toml already has this section configured".
+	for _, sec := range ingressSections {
+		if sec.configured(snap.Effective.Ingress) && !sec.configured(in.GosdToml.Ingress) {
+			p.Ingress = append(p.Ingress, sec)
+			p.ingressFrom = snap.Effective.Ingress
+		}
 	}
 	for key, value := range snap.Effective.Env {
 		if value == snap.Baked.Env[key] {
@@ -414,17 +459,6 @@ func freshWifi(in Input) bool {
 	return in.GosdToml.Wifi.SSID != "" && in.GosdToml.Wifi != in.Baked.Wifi
 }
 
-// freshIngress is freshHostname/freshWifi's counterpart for
-// [ingress.cloudflared]. It skips the "differs from baked" half of their
-// test: config.json never bakes a real token (only whether the cloudflared
-// binary itself is baked in), so the card's own baked default is always
-// empty and any non-empty section on the card is a hand-edit by
-// definition. There is no cloud-init source to check either — the wizard
-// has no concept of a tunnel.
-func freshIngress(in Input) bool {
-	return in.GosdToml.Ingress.Cloudflared.Configured()
-}
-
 // apply merges a plan into the card's gosd.toml, reporting whether it
 // changed anything at all (a plan can be a no-op when a restored value
 // already matches what the new image baked). cfg is this boot's own
@@ -441,8 +475,8 @@ func (p plan) apply(cfg gosdtoml.Config) (gosdtoml.Config, bool) {
 	if p.Wifi != nil {
 		merged.Wifi = *p.Wifi
 	}
-	if p.Ingress != nil {
-		merged.Ingress.Cloudflared = *p.Ingress
+	for _, sec := range p.Ingress {
+		sec.restore(&merged.Ingress, p.ingressFrom)
 	}
 	for key, value := range p.Env {
 		if merged.Env == nil {
@@ -540,9 +574,12 @@ func effective(in Input, card gosdtoml.Config) Provisioning {
 	}
 	// No cloud-init source to check first, unlike hostname/WiFi: the wizard
 	// has no concept of a tunnel, so the card's own gosd.toml is the only
-	// place a Cloudflare Tunnel declaration can come from.
-	if card.Ingress.Cloudflared.Configured() {
-		p.Ingress = card.Ingress.Cloudflared
+	// place any ingress section can come from. Each section is layered
+	// independently, mirroring planRestore.
+	for _, sec := range ingressSections {
+		if sec.configured(card.Ingress) {
+			sec.restore(&p.Ingress, card.Ingress)
+		}
 	}
 
 	if len(in.Baked.Env) > 0 || len(card.Env) > 0 {
@@ -626,7 +663,7 @@ func decode(tomlData, metaData []byte) (Snapshot, error) {
 
 	return Snapshot{
 		Identity:  meta.Identity,
-		Effective: Provisioning{Hostname: cfg.Hostname, Wifi: cfg.Wifi, Ingress: cfg.Ingress.Cloudflared, Env: cfg.Env},
+		Effective: Provisioning{Hostname: cfg.Hostname, Wifi: cfg.Wifi, Ingress: cfg.Ingress, Env: cfg.Env},
 		Baked: Provisioning{
 			Hostname: meta.Baked.Hostname,
 			Wifi:     gosdtoml.Wifi{SSID: meta.Baked.Wifi.SSID, Passphrase: meta.Baked.Wifi.Passphrase},

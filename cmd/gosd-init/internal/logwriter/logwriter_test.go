@@ -1,13 +1,35 @@
-package cloudflared
+package logwriter
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
-func TestLineWriterLogsOneLinePerWrite(t *testing.T) {
+// testLog collects log lines for assertions instead of printing them.
+type testLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *testLog) Printf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *testLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, len(l.lines))
+	copy(out, l.lines)
+	return out
+}
+
+func TestWriterLogsOneLinePerWrite(t *testing.T) {
 	log := &testLog{}
-	w := newLineWriter(log.Printf)
+	w := New("cloudflared: ", log.Printf)
 
 	if _, err := w.Write([]byte("tunnel connected\n")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -20,9 +42,9 @@ func TestLineWriterLogsOneLinePerWrite(t *testing.T) {
 	}
 }
 
-func TestLineWriterSplitsMultipleLinesInOneWrite(t *testing.T) {
+func TestWriterSplitsMultipleLinesInOneWrite(t *testing.T) {
 	log := &testLog{}
-	w := newLineWriter(log.Printf)
+	w := New("cloudflared: ", log.Printf)
 
 	if _, err := w.Write([]byte("line one\nline two\nline three\n")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -40,9 +62,9 @@ func TestLineWriterSplitsMultipleLinesInOneWrite(t *testing.T) {
 	}
 }
 
-func TestLineWriterHoldsPartialLineAcrossWrites(t *testing.T) {
+func TestWriterHoldsPartialLineAcrossWrites(t *testing.T) {
 	log := &testLog{}
-	w := newLineWriter(log.Printf)
+	w := New("cloudflared: ", log.Printf)
 
 	if _, err := w.Write([]byte("connec")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -61,11 +83,11 @@ func TestLineWriterHoldsPartialLineAcrossWrites(t *testing.T) {
 	}
 }
 
-func TestLineWriterOverflowTruncatesWithNote(t *testing.T) {
+func TestWriterOverflowTruncatesWithNote(t *testing.T) {
 	log := &testLog{}
-	w := newLineWriter(log.Printf)
+	w := New("cloudflared: ", log.Printf)
 
-	overflowing := strings.Repeat("x", maxBufferedLine+100)
+	overflowing := strings.Repeat("x", MaxBufferedLine+100)
 	if _, err := w.Write([]byte(overflowing)); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -77,8 +99,8 @@ func TestLineWriterOverflowTruncatesWithNote(t *testing.T) {
 	if !strings.Contains(got[0], "[line truncated at 4096 bytes]") {
 		t.Errorf("logged line %q does not carry a truncation note", got[0])
 	}
-	if !strings.HasPrefix(got[0], "cloudflared: "+strings.Repeat("x", maxBufferedLine)) {
-		t.Errorf("truncated line does not start with the first %d bytes written", maxBufferedLine)
+	if !strings.HasPrefix(got[0], "cloudflared: "+strings.Repeat("x", MaxBufferedLine)) {
+		t.Errorf("truncated line does not start with the first %d bytes written", MaxBufferedLine)
 	}
 
 	// The line eventually terminates normally; only the truncated prefix
@@ -93,11 +115,11 @@ func TestLineWriterOverflowTruncatesWithNote(t *testing.T) {
 	}
 }
 
-func TestLineWriterInstancesAreIndependent(t *testing.T) {
+func TestWriterInstancesAreIndependent(t *testing.T) {
 	logA := &testLog{}
 	logB := &testLog{}
-	a := newLineWriter(logA.Printf)
-	b := newLineWriter(logB.Printf)
+	a := New("cloudflared: ", logA.Printf)
+	b := New("cloudflared: ", logB.Printf)
 
 	if _, err := a.Write([]byte("from a, no newline yet")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -124,9 +146,9 @@ func TestLineWriterInstancesAreIndependent(t *testing.T) {
 	}
 }
 
-func TestLineWriterCloseIsNoopWhenBufferEmpty(t *testing.T) {
+func TestWriterCloseIsNoopWhenBufferEmpty(t *testing.T) {
 	log := &testLog{}
-	w := newLineWriter(log.Printf)
+	w := New("cloudflared: ", log.Printf)
 
 	if _, err := w.Write([]byte("already flushed\n")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -137,5 +159,23 @@ func TestLineWriterCloseIsNoopWhenBufferEmpty(t *testing.T) {
 
 	if got := log.snapshot(); len(got) != 1 {
 		t.Fatalf("Close logged an extra line: %v", got)
+	}
+}
+
+// TestWriterSupportsAnyPrefix confirms the prefix itself is a plain
+// constructor argument, not hardcoded — the whole point of extracting this
+// package (bean gosd-wxjy) is a second gosd-init-supervised agent reusing it
+// with its own prefix.
+func TestWriterSupportsAnyPrefix(t *testing.T) {
+	log := &testLog{}
+	w := New("tailscale: ", log.Printf)
+
+	if _, err := w.Write([]byte("funnel ready\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got := log.snapshot()
+	if len(got) != 1 || got[0] != "tailscale: funnel ready" {
+		t.Fatalf("logged lines = %v, want [\"tailscale: funnel ready\"]", got)
 	}
 }

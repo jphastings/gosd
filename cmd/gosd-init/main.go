@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cloudflared"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
@@ -450,8 +451,8 @@ func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (i
 		MkdirAll:     os.MkdirAll,
 		WriteFile:    os.WriteFile,
 		Clock:        cloudflared.NewRealClock(),
-		NewBackoff: func() *cloudflared.Backoff {
-			return cloudflared.NewBackoff(cloudflared.DefaultBackoffBase, cloudflared.DefaultBackoffCap)
+		NewBackoff: func() *childbackoff.Backoff {
+			return childbackoff.NewBackoff(cloudflared.DefaultBackoffBase, cloudflared.DefaultBackoffCap)
 		},
 		Log: log,
 	}

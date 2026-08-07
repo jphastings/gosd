@@ -39,8 +39,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 )
+
+// logPrefix is prepended to every line of cloudflared's relayed
+// stdout/stderr (see runOnce), following mdnsresponder's "mdns: " precedent.
+const logPrefix = "cloudflared: "
 
 // Runtime paths, per the bean's locked decision. RuntimeDir is created
 // (mode 0700) by writeRuntimeFiles before CredentialsPath and ConfigPath
@@ -133,10 +139,10 @@ type Deps struct {
 	Clock Clock
 
 	// NewBackoff creates the restart backoff used by the supervise loop. A
-	// func rather than a shared *Backoff so that if Run is ever invoked
-	// more than once its restart sequence always starts fresh, mirroring
-	// timesync.Deps.NewBackoff's rationale.
-	NewBackoff func() *Backoff
+	// func rather than a shared *childbackoff.Backoff so that if Run is
+	// ever invoked more than once its restart sequence always starts
+	// fresh, mirroring timesync.Deps.NewBackoff's rationale.
+	NewBackoff func() *childbackoff.Backoff
 
 	// Log records what cloudflared supervision is doing. Every line this
 	// package logs is prefixed "cloudflared: ", following mdnsresponder's
@@ -304,11 +310,11 @@ func supervise(deps Deps, opts Options) {
 
 // runOnce starts cloudflared once, waits for it to exit, and resets backoff
 // if it ran long enough to be considered stable (StableAfter).
-func runOnce(deps Deps, opts Options, backoff *Backoff) {
+func runOnce(deps Deps, opts Options, backoff *childbackoff.Backoff) {
 	startedAt := deps.Clock.Now()
 
-	stdout := newLineWriter(deps.Log)
-	stderr := newLineWriter(deps.Log)
+	stdout := logwriter.New(logPrefix, deps.Log)
+	stderr := logwriter.New(logPrefix, deps.Log)
 	pid, err := deps.StartProcess(opts.BinaryPath, runArgs, runEnv, stdout, stderr)
 	if err != nil {
 		deps.Log("cloudflared: starting failed: %v", err)

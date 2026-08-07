@@ -8,7 +8,7 @@ import (
 
 func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 	env := map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}
-	out := Render("my-device", true, "home-network", "hunter2", env, IngressCloudflared{})
+	out := Render("my-device", true, "home-network", "hunter2", env, Ingress{})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 }
 
 func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing.T) {
-	out := Render("", false, "", "", nil, IngressCloudflared{})
+	out := Render("", false, "", "", nil, Ingress{})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 		t.Errorf("Parse(Render(...)) warnings = %v, want none", warnings)
 	}
 	if !reflect.DeepEqual(got, Config{}) {
-		t.Errorf(`Parse(Render("", false, "", "", nil, IngressCloudflared{})) = %+v, want zero Config (all commented out)`, got)
+		t.Errorf(`Parse(Render("", false, "", "", nil, Ingress{})) = %+v, want zero Config (all commented out)`, got)
 	}
 
 	for _, want := range []string{
@@ -64,7 +64,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 		`# token = "paste-your-tunnel-token-here"`,
 	} {
 		if !strings.Contains(string(out), want) {
-			t.Errorf(`Render("", false, "", "", nil, IngressCloudflared{}) missing example line %q:`+"\n%s", want, out)
+			t.Errorf(`Render("", false, "", "", nil, Ingress{}) missing example line %q:`+"\n%s", want, out)
 		}
 	}
 }
@@ -77,7 +77,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 // hostname at all, so a wizard-provided cloud-init hostname is free to take
 // effect (bean gosd-4hz1).
 func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
-	out := Render("default-app-name", false, "", "", nil, IngressCloudflared{})
+	out := Render("default-app-name", false, "", "", nil, Ingress{})
 
 	got, _, err := Parse(out)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
 		t.Errorf("Parse(Render(\"default-app-name\", false, ...)).Hostname = %q, want empty (commented out)", got.Hostname)
 	}
 	if !strings.Contains(string(out), `# hostname = "default-app-name"`) {
-		t.Errorf(`Render("default-app-name", false, "", "", nil, IngressCloudflared{}) missing commented example line for the default hostname:`+"\n%s", out)
+		t.Errorf(`Render("default-app-name", false, "", "", nil, Ingress{}) missing commented example line for the default hostname:`+"\n%s", out)
 	}
 	if strings.Contains(string(out), "\nhostname = ") {
 		t.Errorf("Render() baked an uncommented hostname line despite bakeHostname=false:\n%s", out)
@@ -95,7 +95,7 @@ func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
 }
 
 func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
-	out := string(Render("", false, "", "", nil, IngressCloudflared{}))
+	out := string(Render("", false, "", "", nil, Ingress{}))
 
 	for _, want := range []string{"text editor", "Notepad", "restart it"} {
 		if !strings.Contains(out, want) {
@@ -105,7 +105,7 @@ func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
 }
 
 func TestRenderEnvExactOutputWithoutBakedValues(t *testing.T) {
-	out := string(Render("", false, "", "", nil, IngressCloudflared{}))
+	out := string(Render("", false, "", "", nil, Ingress{}))
 
 	const want = `
 # Extra settings your app reads when it starts, sometimes called
@@ -117,7 +117,7 @@ func TestRenderEnvExactOutputWithoutBakedValues(t *testing.T) {
 # NAME = "value"
 `
 	if !strings.Contains(out, want) {
-		t.Errorf("Render(\"\", \"\", \"\", nil, IngressCloudflared{}) missing expected [env] section:\ngot:\n%s\nwant substring:\n%s", out, want)
+		t.Errorf("Render(\"\", \"\", \"\", nil, Ingress{}) missing expected [env] section:\ngot:\n%s\nwant substring:\n%s", out, want)
 	}
 }
 
@@ -136,7 +136,7 @@ ZEBRA = "z"
 `
 
 	for i := 0; i < 5; i++ {
-		out := string(Render("", false, "", "", env, IngressCloudflared{}))
+		out := string(Render("", false, "", "", env, Ingress{}))
 		if !strings.Contains(out, want) {
 			t.Fatalf("Render() [env] section not sorted/deterministic on iteration %d:\ngot:\n%s\nwant substring:\n%s", i, out, want)
 		}
@@ -149,7 +149,7 @@ ZEBRA = "z"
 // the `gosd build --ingress cloudflared` requirement up front so a hand-
 // editing user on any other image knows why filling this in does nothing.
 func TestRenderIngressExactOutputWithoutValues(t *testing.T) {
-	out := string(Render("", false, "", "", nil, IngressCloudflared{}))
+	out := string(Render("", false, "", "", nil, Ingress{}))
 
 	const want = `
 # Makes an app on this device reachable from the internet through a free
@@ -171,7 +171,7 @@ func TestRenderIngressExactOutputWithoutValues(t *testing.T) {
 # port = 8080
 `
 	if !strings.HasSuffix(out, want) {
-		t.Errorf("Render(..., IngressCloudflared{}) does not end with the expected commented ingress example:\ngot:\n%s\nwant suffix:\n%s", out, want)
+		t.Errorf("Render(..., Ingress{}) does not end with the expected commented ingress example:\ngot:\n%s\nwant suffix:\n%s", out, want)
 	}
 }
 
@@ -179,8 +179,8 @@ func TestRenderIngressExactOutputWithoutValues(t *testing.T) {
 // test for the configured form: real values render uncommented, and the
 // build-requirement prose is dropped since it plainly took effect.
 func TestRenderIngressExactOutputWithValues(t *testing.T) {
-	ingress := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
-	out := string(Render("", false, "", "", nil, ingress))
+	cloudflared := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
+	out := string(Render("", false, "", "", nil, Ingress{Cloudflared: cloudflared}))
 
 	const want = `
 # Makes this device's app reachable from the internet through Cloudflare
@@ -191,7 +191,7 @@ hostname = "app.example.com"
 port = 8080
 `
 	if !strings.HasSuffix(out, want) {
-		t.Errorf("Render(..., %+v) does not end with the expected ingress block:\ngot:\n%s\nwant suffix:\n%s", ingress, out, want)
+		t.Errorf("Render(..., %+v) does not end with the expected ingress block:\ngot:\n%s\nwant suffix:\n%s", cloudflared, out, want)
 	}
 }
 
@@ -200,8 +200,8 @@ port = 8080
 // Configured() value round-trips through Parse with no warnings, and the
 // commented example text is absent (it's the real block instead).
 func TestRenderWithIngressRoundTripsThroughParse(t *testing.T) {
-	ingress := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
-	out := Render("my-device", true, "", "", nil, ingress)
+	cloudflared := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
+	out := Render("my-device", true, "", "", nil, Ingress{Cloudflared: cloudflared})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -210,8 +210,8 @@ func TestRenderWithIngressRoundTripsThroughParse(t *testing.T) {
 	if warnings != nil {
 		t.Errorf("Parse(Render(...)) warnings = %v, want none", warnings)
 	}
-	if got.Ingress.Cloudflared != ingress {
-		t.Errorf("Parse(Render(...)).Ingress.Cloudflared = %+v, want %+v", got.Ingress.Cloudflared, ingress)
+	if got.Ingress.Cloudflared != cloudflared {
+		t.Errorf("Parse(Render(...)).Ingress.Cloudflared = %+v, want %+v", got.Ingress.Cloudflared, cloudflared)
 	}
 	if strings.Contains(string(out), "# [ingress.cloudflared]") {
 		t.Errorf("Render() commented out ingress despite a Configured() value being set:\n%s", out)

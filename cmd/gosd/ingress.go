@@ -11,60 +11,163 @@ import (
 	"strings"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/cloudflaredpin"
 	"github.com/jphastings/gosd/internal/fetch"
 	"github.com/jphastings/gosd/internal/staticelf"
 )
 
-// ingressCloudflaredValue is the only --ingress value gosd understands
-// today (epic gosd-virc, v1: a locally-managed Cloudflare Tunnel only).
+// ingressCloudflaredValue is cloudflared's --ingress value (epic gosd-virc,
+// v1: a locally-managed Cloudflare Tunnel only).
 const ingressCloudflaredValue = "cloudflared"
 
 // ingressCloudflaredDest is where gosd build/run --ingress cloudflared
 // embeds the cloudflared binary inside the initramfs.
 const ingressCloudflaredDest = "/bin/cloudflared"
 
-// parseIngressFlags validates the repeatable --ingress flag's values,
-// fail-fast before any cross-compilation starts: the only value gosd
-// understands today is "cloudflared". Returns whether cloudflared ingress
-// was requested at all; repeating "cloudflared" more than once is harmless
-// (idempotent), but any other value is refused outright.
-func parseIngressFlags(flags []string) (cloudflared bool, err error) {
-	for _, v := range flags {
-		if v != ingressCloudflaredValue {
-			return false, fmt.Errorf("--ingress %q is invalid; the only supported value is %q", v, ingressCloudflaredValue)
-		}
-		cloudflared = true
-	}
-	return cloudflared, nil
+// ingressAgent is one entry in gosd's registry of --ingress values it
+// understands: the name accepted on the command line, the board rule it
+// needs (which GOARCHes it can run on, with the exact refusal wording for
+// the ones it can't - see validateIngress), and the initramfs dest(s) it
+// reserves from --with-external (see reservedExternalDests). Adding a
+// second ingress agent (epic gosd-65uy) means adding one row here, not
+// touching parse, validate, or collision-check logic; that agent's own
+// resolve/open functions (mirroring resolveIngressCloudflared/
+// openIngressCloudflaredForBoard) are wired into resolveSharedContent/
+// openSharedContent by its own bean, the same way cloudflared's are today.
+type ingressAgent struct {
+	name string
+
+	// capableGOARCH reports whether this agent can run on goarch. ok=false
+	// is paired with the exact refusal reason to show the operator.
+	capableGOARCH func(goarch string) (ok bool, reason string)
+
+	// reservedDests are the initramfs paths this agent reserves from
+	// --with-external, paired with the description shown in a collision
+	// error (see reservedExternalDests).
+	reservedDests map[string]string
 }
 
-// validateIngress fails fast when --ingress cloudflared is set and any
-// board in selected has no pinned cloudflared binary for its GOARCH (see
-// cloudflaredpin.ByGOARCH, the capability table) - without this check, gosd
-// build --ingress cloudflared --board pi-zero-w would either fail deep
-// inside the resolve/fetch step or, worse, ship a binary that faults with
-// "illegal instruction" the moment it runs (cloudflared's official arm
-// release is GOARM=7; pi-zero-w is armv6 - see cloudflaredpin's doc
-// comment). Mirrors validateUsbGadget's shape: name every incapable
-// board's reason, name every capable board, and suggest --board= to narrow
-// the build. A no-op when ingress is false or every selected board's
-// GOARCH is in cloudflaredpin.ByGOARCH.
-func validateIngress(selected []boards.Board, ingress bool) error {
-	if !ingress {
-		return nil
-	}
+// cloudflaredAgent is the registry's only entry today: gosd's sole --ingress
+// value (epic gosd-virc, v1).
+var cloudflaredAgent = ingressAgent{
+	name: ingressCloudflaredValue,
+	capableGOARCH: func(goarch string) (bool, string) {
+		if _, ok := cloudflaredpin.ByGOARCH[goarch]; ok {
+			return true, ""
+		}
+		reason := fmt.Sprintf("no cloudflared build is pinned for GOARCH=%s", goarch)
+		if goarch == "arm" {
+			reason = "cloudflared's official arm release is built for GOARM=7 and faults with \"illegal instruction\" on this board's armv6 CPU"
+		}
+		return false, reason
+	},
+	// /bin/cloudflared and the CA bundle's path are reserved unconditionally
+	// (bean gosd-g4km), not just on builds that actually pass --ingress
+	// cloudflared: the CA bundle ships in EVERY image regardless (bean
+	// gosd-kzgq), and reserving cloudflared's dest eagerly means adding
+	// --ingress to an existing --with-external build can never
+	// retroactively break it by surprise.
+	reservedDests: map[string]string{
+		ingressCloudflaredDest: "gosd's --ingress cloudflared binary",
+		cacerts.InitramfsPath:  "gosd's baked CA certificate bundle",
+	},
+}
 
-	var incapable, capable []string
-	for _, b := range selected {
-		if _, ok := cloudflaredpin.ByGOARCH[b.Arch().GOARCH]; ok {
-			capable = append(capable, b.Name())
+// ingressAgents is gosd's registry of every --ingress value it understands.
+var ingressAgents = []ingressAgent{cloudflaredAgent}
+
+// findIngressAgent looks up name in ingressAgents.
+func findIngressAgent(name string) (ingressAgent, bool) {
+	for _, a := range ingressAgents {
+		if a.name == name {
+			return a, true
+		}
+	}
+	return ingressAgent{}, false
+}
+
+// ingressAgentNames lists every valid --ingress value, in registry order,
+// for an unknown-value error message.
+func ingressAgentNames() []string {
+	names := make([]string, len(ingressAgents))
+	for i, a := range ingressAgents {
+		names[i] = a.name
+	}
+	return names
+}
+
+// ingressSelection is the registry-shaped result of parsing --ingress: which
+// known agents were requested. Cloudflared gets its own named field, rather
+// than a generic set, because it's still the only agent the rest of gosd
+// (resolveSharedContent, pipeline.Options.IngressCloudflared) understands -
+// a second agent's own field lands here alongside it, in the bean that
+// wires that agent all the way through.
+type ingressSelection struct {
+	Cloudflared bool
+}
+
+// has reports whether name was selected, keyed by the same names
+// ingressAgents registers - see validateIngress, which loops over the
+// registry rather than this struct's fields directly.
+func (s ingressSelection) has(name string) bool {
+	switch name {
+	case ingressCloudflaredValue:
+		return s.Cloudflared
+	default:
+		return false
+	}
+}
+
+// parseIngressFlags validates the repeatable --ingress flag's values
+// against gosd's registry of known ingress agents (ingressAgents), fail-fast
+// before any cross-compilation starts. An unknown value's error lists every
+// valid agent name; repeating a known value more than once is harmless
+// (idempotent).
+func parseIngressFlags(flags []string) (ingressSelection, error) {
+	var sel ingressSelection
+	for _, v := range flags {
+		agent, ok := findIngressAgent(v)
+		if !ok {
+			return ingressSelection{}, fmt.Errorf("--ingress %q is invalid; valid values are: %s", v, strings.Join(ingressAgentNames(), ", "))
+		}
+		switch agent.name {
+		case ingressCloudflaredValue:
+			sel.Cloudflared = true
+		}
+	}
+	return sel, nil
+}
+
+// validateIngress fails fast when a selected --ingress agent has no pinned
+// binary for a board's GOARCH (see ingressAgent.capableGOARCH) - without
+// this check, gosd build --ingress cloudflared --board pi-zero-w would
+// either fail deep inside the resolve/fetch step or, worse, ship a binary
+// that faults with "illegal instruction" the moment it runs. Each selected
+// agent is validated independently against selected, mirroring
+// validateUsbGadget's shape: name every incapable board's reason, name every
+// capable board, and suggest --board= to narrow the build. A no-op when sel
+// selects no agent, or every selected board's GOARCH is capable.
+func validateIngress(selected []boards.Board, sel ingressSelection) error {
+	for _, agent := range ingressAgents {
+		if !sel.has(agent.name) {
 			continue
 		}
+		if err := validateIngressAgent(selected, agent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		reason := fmt.Sprintf("no cloudflared build is pinned for GOARCH=%s", b.Arch().GOARCH)
-		if b.Arch().GOARCH == "arm" {
-			reason = "cloudflared's official arm release is built for GOARM=7 and faults with \"illegal instruction\" on this board's armv6 CPU"
+// validateIngressAgent is validateIngress's per-agent check.
+func validateIngressAgent(selected []boards.Board, agent ingressAgent) error {
+	var incapable, capable []string
+	for _, b := range selected {
+		ok, reason := agent.capableGOARCH(b.Arch().GOARCH)
+		if ok {
+			capable = append(capable, b.Name())
+			continue
 		}
 		incapable = append(incapable, fmt.Sprintf("%s (%s)", b.Name(), reason))
 	}
@@ -72,10 +175,10 @@ func validateIngress(selected []boards.Board, ingress bool) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf("--ingress cloudflared failed: %s", strings.Join(incapable, "; "))
+	msg := fmt.Sprintf("--ingress %s failed: %s", agent.name, strings.Join(incapable, "; "))
 	if len(capable) > 0 {
-		msg += fmt.Sprintf("; other selected boards do support --ingress cloudflared (%s) — try restricting the build with --board=%s",
-			strings.Join(capable, ", "), capable[0])
+		msg += fmt.Sprintf("; other selected boards do support --ingress %s (%s) — try restricting the build with --board=%s",
+			agent.name, strings.Join(capable, ", "), capable[0])
 	}
 	return errors.New(msg)
 }

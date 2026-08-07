@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/jphastings/gosd/internal/boards"
-	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/staticelf"
 )
 
@@ -37,20 +37,32 @@ func splitExternalFlag(raw string) (path, dest string) {
 	return raw[:i], suffix
 }
 
-// reservedExternalDests are the exact initramfs paths a --with-external dest
-// may never collide with; reservedExternalDestPrefixes are the namespaces
-// (directories) it may never land inside. /bin/cloudflared and the CA
-// bundle's path are reserved unconditionally (bean gosd-g4km), not just on
-// builds that actually pass --ingress cloudflared: the CA bundle ships in
-// EVERY image regardless (bean gosd-kzgq), and reserving cloudflared's dest
-// eagerly means adding --ingress to an existing --with-external build can
-// never retroactively break it by surprise.
-var reservedExternalDests = map[string]string{
-	"/init":                "gosd-init",
-	"/app":                 "your app",
-	ingressCloudflaredDest: "gosd's --ingress cloudflared binary",
-	cacerts.InitramfsPath:  "gosd's baked CA certificate bundle",
+// baseReservedExternalDests are the initramfs paths gosd itself always
+// reserves, independent of any --ingress agent.
+var baseReservedExternalDests = map[string]string{
+	"/init": "gosd-init",
+	"/app":  "your app",
 }
+
+// reservedExternalDests are the exact initramfs paths a --with-external dest
+// may never collide with: baseReservedExternalDests plus every registered
+// --ingress agent's own reserved dest(s) (see ingressAgent.reservedDests),
+// whether or not that agent was actually selected via --ingress this build -
+// /bin/cloudflared and the CA bundle's path are reserved unconditionally
+// (bean gosd-g4km), not just on builds that actually pass --ingress
+// cloudflared: the CA bundle ships in EVERY image regardless (bean
+// gosd-kzgq), and reserving cloudflared's dest eagerly means adding
+// --ingress to an existing --with-external build can never retroactively
+// break it by surprise. reservedExternalDestPrefixes are the namespaces
+// (directories) a dest may never land inside.
+var reservedExternalDests = func() map[string]string {
+	dests := make(map[string]string, len(baseReservedExternalDests))
+	maps.Copy(dests, baseReservedExternalDests)
+	for _, agent := range ingressAgents {
+		maps.Copy(dests, agent.reservedDests)
+	}
+	return dests
+}()
 
 var reservedExternalDestPrefixes = map[string]string{
 	"/etc/gosd/":     "gosd's reserved config directory",
