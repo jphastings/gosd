@@ -25,7 +25,7 @@ Registration prereq (CLAUDE.md): `gosd build-kernel --board cubie-a5e` only reso
 - [ ] Header I2C/SPI DTS patches under kernel/patches/ if the research bean says the board DT leaves them disabled (per-SoC convention; verify each applies against the pinned tag)
 - [ ] Audit the resulting kernel.config for defconfig surprises (=m promotions, phantom drivers — the Pi-trap lesson generalizes: grep for gadget zoo/hwsim/console assumptions)
 - [ ] Full gosd build-kernel run (backgrounded, colima up first), record kernel.config + Image/DTB sizes in kernel/README.md
-- [ ] Quality gates + PR
+- [x] Quality gates + PR
 
 ## Progress
 
@@ -34,3 +34,5 @@ Spec/fragment/tests landed (this PR): internal/kernelspec cubie-a5e KernelSpec (
 Pending, left to the orchestrator per this bean's own todos: the real gosd build-kernel --board cubie-a5e run, committing its kernel.config, and the defconfig-surprise audit (=m promotions, phantom drivers, gadget-zoo/hwsim-style traps) - to be pushed to this branch before review.
 
 Base-branch note: PR #184 (bean/gosd-o7jv, this branch's stack base) merged to main mid-task and its branch was deleted; this branch's tip is already an ancestor of main, so no rebase was needed - PR opened against main directly instead of the deleted branch.
+
+PR: https://github.com/jphastings/gosd/pull/189 (opened against main; CI running, not yet checked green - the kernel build + config audit + kernel.config commit still need pushing to this branch before review).
