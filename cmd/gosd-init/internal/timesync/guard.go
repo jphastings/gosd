@@ -86,13 +86,37 @@ func (g *stepGuard) expected(clockNow time.Time) time.Time {
 // logged, and remembered as the new pending candidate for the next call to
 // judge. opts.MaxStep <= 0 disables the guard entirely (every candidate
 // allowed, pending cleared).
+//
+// One exception, ahead of all of that (gosd-dqps): if expected(old) is
+// itself before opts.Floor, the guard's own anchor is provably wrong —
+// the clock cannot legitimately read before this image was built (see
+// checkFloor) — so newTime stepping forward to at least the floor is let
+// through with no confirmation needed at all. This is exactly the fast
+// recovery a bogus-anchored guard needs (the field failure this bean
+// documents: a floor-less first sync anchored near the epoch, and every
+// later resync's correct, current-day candidate then looked like a
+// ~56-year step and sat refused for up to two ResyncEvery periods). It
+// does NOT weaken gosd-0esw's protection for a plausible clock: whenever
+// expected(old) is already at or after the floor — the ordinary case,
+// and the only one reachable once "floor must never be silently absent"
+// holds — this branch never triggers, and a large step still needs a
+// second, agreeing query exactly as before.
 func (g *stepGuard) check(deps Deps, opts Options, old, newTime time.Time) bool {
 	if opts.MaxStep <= 0 {
 		g.pending = nil
 		return true
 	}
 
-	step := newTime.Sub(g.expected(old))
+	expected := g.expected(old)
+
+	if !opts.Floor.IsZero() && expected.Before(opts.Floor) && !newTime.Before(opts.Floor) {
+		deps.Log("NTP resync steps the clock from a pre-floor anchor (expected %s, floor %s) to %s; applying without waiting for a confirming query",
+			expected.Format(time.RFC3339), opts.Floor.Format(time.RFC3339), newTime.Format(time.RFC3339))
+		g.pending = nil
+		return true
+	}
+
+	step := newTime.Sub(expected)
 	if step < 0 {
 		step = -step
 	}
@@ -108,9 +132,20 @@ func (g *stepGuard) check(deps Deps, opts Options, old, newTime time.Time) bool 
 		return true
 	}
 
-	deps.Log("NTP resync wants to step the clock by %s, which exceeds the %s max-step threshold; refusing until a second query agrees", step, opts.MaxStep)
+	deps.Log("NTP resync wants to step the clock by %s (candidate %s, expected %s, floor %s), which exceeds the %s max-step threshold; refusing until a second query agrees",
+		step, newTime.Format(time.RFC3339), expected.Format(time.RFC3339), formatFloor(opts.Floor), opts.MaxStep)
 	g.pending = &pendingStep{candidate: newTime, old: old}
 	return false
+}
+
+// formatFloor renders opts.Floor for a log line: "none" for the zero
+// (disabled) Floor rather than Go's zero time.Time string, so a refusal
+// line reads as self-diagnosing as JP's field report needed it to be.
+func formatFloor(floor time.Time) string {
+	if floor.IsZero() {
+		return "none"
+	}
+	return floor.Format(time.RFC3339)
 }
 
 // agrees reports whether a new candidate (queried at old, a deps.Clock

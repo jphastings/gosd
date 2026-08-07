@@ -463,6 +463,130 @@ func TestRunRefusesOverThresholdStepAgainWhenSecondQueryDisagrees(t *testing.T) 
 	}
 }
 
+// TestRunLogsOnceWhenFloorIsDisabled is gosd-dqps's "floor must never be
+// silently absent" test: a zero Options.Floor (a config.json baked
+// before the build-timestamp field existed, or a build that failed to
+// bake one) must be visible in the boot log exactly once, not left as a
+// silent gap the way JP's field report found it.
+func TestRunLogsOnceWhenFloorIsDisabled(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	ntp.script("ntp1", ntpResult{t: time.Unix(1700000000, 0)})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop) // Floor left zero
+
+	go Run(deps, opts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := log.count("floor is disabled"); n != 1 {
+		t.Errorf("floor-disabled boot line logged %d times, want exactly 1: %v", n, log.snapshot())
+	}
+}
+
+// TestRunDoesNotLogFloorDisabledWhenFloorIsSet confirms the boot line is
+// specific to the disabled case: a properly baked Floor logs nothing
+// about it being disabled.
+func TestRunDoesNotLogFloorDisabledWhenFloorIsSet(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	floor := time.Unix(1700000000, 0)
+	ntp.script("ntp1", ntpResult{t: floor.Add(time.Hour)})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.Floor = floor
+
+	go Run(deps, opts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if log.contains("floor is disabled") {
+		t.Errorf("floor-disabled boot line logged despite a set Floor: %v", log.snapshot())
+	}
+}
+
+// TestRunSchedulesConfirmingResyncSoonerThanResyncEvery is gosd-dqps's
+// bounded-wrong-clock-time test: once a resync leaves a step-guard
+// confirmation pending, Run must not wait the full ResyncEvery for the
+// confirming query — advancing only DefaultPendingConfirmDelay (well
+// short of the test's much longer ResyncEvery) must be enough to trigger
+// it.
+func TestRunSchedulesConfirmingResyncSoonerThanResyncEvery(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	ntp := newFakeNTPClient()
+	first := time.Unix(1700000000, 0)
+	bigJump1 := first.Add(48 * time.Hour)
+	// The confirming query lands ~DefaultPendingConfirmDelay of real
+	// (fake Clock) time after bigJump1, not a further ResyncEvery later
+	// — that's the whole point of this test — so it must agree with a
+	// candidate that moved by roughly that same amount, not by a full
+	// hour as a same-ResyncEvery-apart pair would.
+	bigJump2 := bigJump1.Add(DefaultPendingConfirmDelay + time.Second)
+	ntp.script("ntp1", ntpResult{t: first}, ntpResult{t: bigJump1}, ntpResult{t: bigJump2})
+	sys := &fakeSystemClock{}
+	up := &flag{}
+	up.set(true)
+	log := &testLog{}
+	deps, _ := newTestDeps(clock, ntp, sys, up, log)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := defaultOptions([]string{"ntp1"}, stop)
+	opts.ResyncEvery = 24 * time.Hour // deliberately far longer than the confirm delay
+	opts.MaxStep = 1000 * time.Second
+
+	go Run(deps, opts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !waitForPending(clock, 1) {
+		t.Fatal("first resync timer was never registered")
+	}
+	clock.Advance(opts.ResyncEvery) // the first scheduled resync: bigJump1, refused, becomes pending
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !log.contains("max-step threshold") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !waitForPending(clock, 1) {
+		t.Fatal("confirming resync timer was never registered")
+	}
+
+	// Advancing only a bit past the (much shorter) pending-confirm delay
+	// must be enough to fire the confirming query — nowhere near another
+	// full ResyncEvery.
+	clock.Advance(DefaultPendingConfirmDelay + time.Second)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for len(sys.sets()) != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := sys.sets()
+	if len(got) != 2 || !got[1].Equal(bigJump2) {
+		t.Fatalf("System.Set calls = %v, want a second call with %v well before a full ResyncEvery had elapsed", got, bigJump2)
+	}
+}
+
 func TestRunLogsFailedResyncButKeepsGoing(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	ntp := newFakeNTPClient()

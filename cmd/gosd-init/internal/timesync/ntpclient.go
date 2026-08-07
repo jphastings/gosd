@@ -15,8 +15,24 @@ type beevikClient struct{}
 
 func newBeevikClient() NTPClient { return beevikClient{} }
 
-// Query returns ntp.Time's already-corrected result: local system time
-// plus the measured clock offset from server.
-func (beevikClient) Query(server string) (time.Time, error) {
-	return ntp.Time(server)
+// Query mirrors ntp.Time's request/validate/correct sequence (query,
+// then r.Validate() for the vendor library's own structural and
+// freshness/dispersion checks) but keeps the parsed *ntp.Response's
+// Leap, Stratum and raw transmit time around instead of discarding them,
+// so validateSample can run this package's own gosd-dqps checks against
+// them too — see SNTPSample's doc for why that's not just belt-and-braces.
+func (beevikClient) Query(server string) (SNTPSample, error) {
+	r, err := ntp.Query(server)
+	if err != nil {
+		return SNTPSample{}, err
+	}
+	if err := r.Validate(); err != nil {
+		return SNTPSample{}, err
+	}
+	return SNTPSample{
+		Time:              time.Now().Add(r.ClockOffset),
+		Leap:              uint8(r.Leap),
+		Stratum:           r.Stratum,
+		TransmitTimestamp: r.Time,
+	}, nil
 }

@@ -89,10 +89,26 @@ func waitForPending(clock *fakeClock, n int) bool {
 	return true
 }
 
-// ntpResult is one scripted outcome for fakeNTPClient.Query.
+// ntpResult is one scripted outcome for fakeNTPClient.Query. Most tests
+// only care about the corrected time (or an error) and get a
+// well-formed SNTPSample built from t for free; the handful exercising
+// SNTP response validation (gosd-dqps) set sample to script a specific
+// malformed response instead.
 type ntpResult struct {
-	t   time.Time
-	err error
+	t      time.Time
+	err    error
+	sample *SNTPSample
+}
+
+// toSample returns the SNTPSample this result reports: the explicit
+// override if one was scripted, otherwise a well-formed sample built
+// from t (a valid stratum, no leap warning, and t itself as both the
+// corrected time and the wire transmit timestamp).
+func (r ntpResult) toSample() SNTPSample {
+	if r.sample != nil {
+		return *r.sample
+	}
+	return SNTPSample{Time: r.t, Stratum: 2, TransmitTimestamp: r.t}
 }
 
 // fakeNTPClient scripts NTP query outcomes per server, so tests can
@@ -117,7 +133,7 @@ func (f *fakeNTPClient) script(server string, results ...ntpResult) {
 	f.results[server] = results
 }
 
-func (f *fakeNTPClient) Query(server string) (time.Time, error) {
+func (f *fakeNTPClient) Query(server string) (SNTPSample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -126,12 +142,15 @@ func (f *fakeNTPClient) Query(server string) (time.Time, error) {
 
 	rs := f.results[server]
 	if len(rs) == 0 {
-		return time.Time{}, fmt.Errorf("fakeNTPClient: no result scripted for %s", server)
+		return SNTPSample{}, fmt.Errorf("fakeNTPClient: no result scripted for %s", server)
 	}
 	if i >= len(rs) {
 		i = len(rs) - 1
 	}
-	return rs[i].t, rs[i].err
+	if rs[i].err != nil {
+		return SNTPSample{}, rs[i].err
+	}
+	return rs[i].toSample(), nil
 }
 
 func (f *fakeNTPClient) callCount(server string) int {
@@ -160,6 +179,51 @@ func (f *fakeSystemClock) sets() []time.Time {
 	out := make([]time.Time, len(f.set))
 	copy(out, f.set)
 	return out
+}
+
+// jumpingClock is a fakeClock whose Now() actually jumps when paired
+// jumpingSystemClock.Set is called — modeling a real wall-clock step,
+// the way production's real Clock (plain time.Now()) and SystemClock
+// (settimeofday) are tied together by the OS, but the plain
+// fakeClock/fakeSystemClock pair above deliberately isn't (see Clock's
+// doc comment). guard.go's own doc calls this out as the blind spot that
+// let gosd-dqps's field failure mode go unmodeled: every test using the
+// decoupled pair passes regardless of whether stepGuard's math would
+// have tolerated Now() actually moving at the moment a sync lands, since
+// it never does in those tests. Guard/anchor tests that need to rule
+// that blind spot out use this pair instead.
+type jumpingClock struct {
+	*fakeClock
+}
+
+func newJumpingClock(start time.Time) *jumpingClock {
+	return &jumpingClock{fakeClock: newFakeClock(start)}
+}
+
+// jumpTo instantly moves the clock's Now() to t without firing any
+// pending timer early — a real settimeofday step doesn't touch
+// CLOCK_MONOTONIC, so pending After() timers (armed off the monotonic
+// side in production) are unaffected by it either.
+func (c *jumpingClock) jumpTo(t time.Time) {
+	c.mu.Lock()
+	c.now = t
+	c.mu.Unlock()
+}
+
+// jumpingSystemClock records Set calls exactly like fakeSystemClock, and
+// additionally jumps its paired jumpingClock's Now() to the set value —
+// see jumpingClock's doc.
+type jumpingSystemClock struct {
+	fakeSystemClock
+	clock *jumpingClock
+}
+
+func (s *jumpingSystemClock) Set(t time.Time) error {
+	if err := s.fakeSystemClock.Set(t); err != nil {
+		return err
+	}
+	s.clock.jumpTo(t)
+	return nil
 }
 
 // flag is a thread-safe boolean, used to script deps.NetworkUp's result
