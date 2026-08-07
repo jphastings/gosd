@@ -154,6 +154,19 @@ func extractFile(bootFS fs.ReadFileFS, entry fs.DirEntry, destDir string) error 
 	return nil
 }
 
+// escapeOptionValue doubles literal commas in a value destined for a
+// QEMU comma-delimited option string (e.g. -drive if=none,file=<value>,...).
+// QEMU splits such option values on commas, so a lone comma in a
+// user-supplied path (imgPath, via `gosd qemuboot <img>`) would either
+// misparse as an extra key=value pair or attach the wrong file; doubling it
+// (`,,`) is how QEMU's own syntax spells a literal comma. Options built
+// entirely from this package's own values (ints, static strings) never need
+// this — only user-influenced strings interpolated into a comma-delimited
+// value do.
+func escapeOptionValue(value string) string {
+	return strings.ReplaceAll(value, ",", ",,")
+}
+
 // Args builds the qemu-system-aarch64 argument list for booting the
 // kernel and initramfs already extracted into workDir, with imgPath
 // attached as the virtio-blk disk: -M virt -cpu cortex-a53, virtio-blk and
@@ -195,7 +208,7 @@ func Args(workDir, imgPath string, opts Options) []string {
 		// templates): a kernel panic — including the one PID 1 dying
 		// causes — reboots instead of hanging forever (gosd-fkkr).
 		"-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10",
-		"-drive", "if=none,file="+imgPath+",format=raw,id=hd0",
+		"-drive", "if=none,file="+escapeOptionValue(imgPath)+",format=raw,id=hd0",
 		"-device", "virtio-blk-pci,drive=hd0,romfile=",
 		"-netdev", fmt.Sprintf("user,id=n0,hostfwd=tcp::%d-:80", port),
 		"-device", "virtio-net-pci,netdev=n0,romfile=",

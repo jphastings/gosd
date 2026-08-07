@@ -27,6 +27,15 @@ func TestArgsUsesDefaultsWhenPortAndMemoryAreZero(t *testing.T) {
 	assertContains(t, args, "-netdev", "user,id=n0,hostfwd=tcp::8080-:80")
 }
 
+func TestArgsDoublesLiteralCommasInImagePathForDriveFile(t *testing.T) {
+	// QEMU's -drive option splits its value on commas; a lone comma in a
+	// user-supplied path (gosd qemuboot <img>) must be doubled to survive
+	// as a literal comma rather than being parsed as a new key=value pair.
+	args := qemurun.Args("/work", "/mnt/my,image.img", qemurun.Options{})
+
+	assertContains(t, args, "-drive", "if=none,file=/mnt/my,,image.img,format=raw,id=hd0")
+}
+
 func TestArgsHonorsPortMemoryAndExtraArgs(t *testing.T) {
 	args := qemurun.Args("/work", "/img.img", qemurun.Options{
 		Port:      9999,
