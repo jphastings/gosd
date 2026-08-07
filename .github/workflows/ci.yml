@@ -272,6 +272,50 @@ jobs:
             exit 1
           fi
 
+      # gosd-66ax: with --ingress cloudflared baked in but no
+      # [ingress.cloudflared] section in gosd.toml, cloudflared's resolveMode
+      # must log its one actionable "baked but not configured" line and
+      # nothing else - never start the binary, never loop. A dummy-token
+      # supervisor-loop assertion (auth failure against the real Cloudflare
+      # edge) is deliberately NOT covered here: it would pin cloudflared's own
+      # log wording, an upstream detail this repo doesn't control, for a
+      # network expectation (reaching the real edge from a CI runner) this
+      # job otherwise avoids entirely - real tunnel establishment is
+      # bench-only (see the epic's final bean).
+      - name: "gosd run --ingress cloudflared: baked-but-not-configured logs exactly once"
+        run: |
+          mkdir -p dist
+          go build -o dist/gosd-cli ./cmd/gosd
+
+          expected="cloudflared: binary is baked into this image, but [ingress.cloudflared] isn't configured in gosd.toml; nothing to do"
+          ./dist/gosd-cli run ./examples/hello --ingress cloudflared --hostname ci-cloudflared-baked > cloudflared.log 2>&1 &
+          run_pid=$!
+
+          seen=0
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$run_pid" 2>/dev/null; then
+              echo "gosd run exited before the expected line ever appeared" >&2
+              break
+            fi
+            if grep -qF "$expected" cloudflared.log; then
+              seen=1
+              break
+            fi
+            sleep 1
+          done
+
+          kill "$run_pid" 2>/dev/null || true
+          wait "$run_pid" 2>/dev/null || true
+
+          got=$(grep -cF "$expected" cloudflared.log || true)
+          if [ "$seen" -ne 1 ] || [ "$got" -ne 1 ]; then
+            echo "::group::Captured gosd run output"
+            cat cloudflared.log
+            echo "::endgroup::"
+            echo "want exactly one \"baked but not configured\" line, got $got (seen=$seen)" >&2
+            exit 1
+          fi
+
   # Proves --data-size=expand end-to-end on the real boot path: the image
   # ships with no data partition, the "card" (the raw image file, enlarged
   # after the build, exactly as flashing onto a bigger SD card leaves it)

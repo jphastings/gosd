@@ -864,11 +864,14 @@ gosd build . --board pi-zero-2w \
   architecture before assembling anything — a mismatched binary fails
   immediately, naming the board, instead of shipping something that
   can't `exec`.
-- **Your app owns it at runtime.** gosd-init stays a single-child
-  supervisor — it starts and restarts only `/app`. Launch, monitor, and
-  restart the companion binary yourself via `os/exec`; if the pair
-  wedges, exit `/app` and let gosd-init's own backoff supervisor
-  restart the unit.
+- **Your app owns it at runtime.** gosd-init supervises only `/app`, plus a
+  small, fixed set of gosd-*shipped* system services (currently just
+  cloudflared, started when an image is built with `--ingress cloudflared`
+  — a narrow carve-out to gosd-init's original single-child design, see
+  epic gosd-oyhi). It never supervises a *user*-provided companion binary:
+  launch, monitor, and restart yours yourself via `os/exec`; if the pair
+  wedges, exit `/app` and let gosd-init's own backoff supervisor restart
+  the unit.
 
 ## GPIO, I2C, SPI
 
