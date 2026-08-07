@@ -41,6 +41,10 @@ const (
 	// ExFAT lifts FAT32's 4 GiB per-file ceiling, at the cost of needing
 	// CONFIG_EXFAT_FS in the board's kernel.
 	ExFAT FS = "exfat"
+	// EXT4 is journaled and crash-safe, at the cost of not being readable by
+	// every host OS out of the box; see internal/diskfmt/ext4golden for how
+	// GoSD creates one (a checked-in golden image, never mkfs.ext4).
+	EXT4 FS = "ext4"
 )
 
 // MountType is the name mount(2) knows this filesystem by, which is not always
@@ -52,6 +56,8 @@ func (f FS) MountType() string {
 		return "vfat"
 	case ExFAT:
 		return "exfat"
+	case EXT4:
+		return "ext4"
 	default:
 		return ""
 	}
@@ -64,6 +70,8 @@ func (f FS) String() string {
 		return "FAT32"
 	case ExFAT:
 		return "exFAT"
+	case EXT4:
+		return "ext4"
 	default:
 		return string(f)
 	}
@@ -85,6 +93,11 @@ type Contents struct {
 	// Label is that filesystem's volume label, trimmed of its padding.
 	// Meaningful only when FS is set.
 	Label string
+
+	// UUID is that filesystem's volume UUID, in canonical 8-4-4-4-12 hex.
+	// Only ext4 carries one today; empty for FAT32 and exFAT. Meaningful
+	// only when FS is set.
+	UUID string
 
 	// Blank is true when the device has no readable filesystem and its
 	// leading region is entirely zero — nothing to destroy, so it is safe to
@@ -111,6 +124,14 @@ func Inspect(devicePath string) (Contents, error) {
 	// go-diskfs guess first risks it claiming an exFAT volume as FAT.
 	if isExFAT(head) {
 		return inspectExFAT(devicePath), nil
+	}
+
+	// ext4's superblock lives at a fixed offset with its own magic, so there
+	// is no ambiguity with FAT/exFAT's boot-sector signatures to resolve by
+	// ordering; unlike inspectExFAT, a failure here is returned rather than
+	// swallowed — see inspectEXT4.
+	if isEXT4(head) {
+		return inspectEXT4(devicePath, head)
 	}
 
 	if fat, ok, err := inspectFAT(devicePath); err != nil {
@@ -206,6 +227,8 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 		return FormatFAT32(devicePath, volumeLabel)
 	case ExFAT:
 		return FormatExFAT(devicePath, volumeLabel)
+	case EXT4:
+		return FormatEXT4(devicePath, volumeLabel)
 	default:
 		return fmt.Errorf("cannot format %s: %q is not a filesystem GoSD can create", devicePath, string(fs))
 	}
