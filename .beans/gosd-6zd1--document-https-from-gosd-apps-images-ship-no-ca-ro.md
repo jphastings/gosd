@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-13T06:39:42Z
-updated_at: 2026-07-13T08:39:49Z
+updated_at: 2026-08-07T12:53:28Z
 ---
 
 Found during [[gosd-e9fy]] (sattrack): GoSD images contain no /etc/ssl CA bundle, so crypto/x509 finds zero roots and EVERY outbound HTTPS request from an app fails with certificate errors on-device — while working fine in `go run` on the developer's machine. This will bite every app that calls an HTTPS API.
@@ -28,7 +28,7 @@ Pure Go, ~300KB of binary size, no image change, roots update with the dependenc
 
 - [x] docs/runtime.md: networking section gains an HTTPS subsection (symptom, why, the fallback import, when roots update)
 - [x] Quickstart/README mention where apps first touch the network
-- [ ] Record decision A/B/C here (JP)
+- [x] Record decision A/B/C here (JP) — decided 2026-08-07 (cloudflared-ingress plan review): **B** — ship the Mozilla bundle in every image at /etc/ssl/certs/ca-certificates.crt; implemented via [[gosd-kzgq]]. Roots update via pin bump per gosd release; runtime.md's blank-import guidance becomes historical/alternative once that lands.
 
 
 ## Summary of Changes
