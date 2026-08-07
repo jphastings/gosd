@@ -110,7 +110,8 @@ board · ❌ not supported (see footnote).
 [^emmc-optional]: eMMC is an optional module/SKU on these boards; with
     none fitted, `emmc.FormatAndMount` returns `ErrNoEMMC`.
 
-[^pi-ext4]: The Pi kernels lack `CONFIG_EXT4_FS`; asking for ext4 —
+[^pi-ext4]: Enabled in these boards' kernel fragments (bean `gosd-19kw`) but
+    not yet in a published artifacts release; until then asking for ext4 —
     including via the default — fails fast with `disk.ErrUnsupportedFS`.
     Use FAT32 or exFAT here.
 
