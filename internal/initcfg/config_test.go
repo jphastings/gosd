@@ -52,6 +52,16 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Hostname: "my-device"},
 		},
 		{
+			name: "ingressCloudflared marks a build with --ingress cloudflared baked in",
+			data: `{"hostname":"my-device","ingressCloudflared":true}`,
+			want: Config{Hostname: "my-device", IngressCloudflared: true},
+		},
+		{
+			name: "config predating ingressCloudflared parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
 			name: "identity parses when present",
 			data: `{"hostname":"my-device","identity":"deadbeef"}`,
 			want: Config{Hostname: "my-device", Identity: "deadbeef"},

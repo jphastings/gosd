@@ -127,6 +127,16 @@ type Options struct {
 	// Config.Env — gosd-init computes the effective setting itself.
 	DataFlush bool
 
+	// IngressCloudflared is `gosd build --ingress cloudflared`'s value,
+	// baked straight into config.json's IngressCloudflared field (see
+	// initcfg.Config.IngressCloudflared's doc comment for the full
+	// build->runtime contract). cmd/gosd is responsible for actually
+	// putting the cloudflared binary into ExtraExecutables at
+	// /bin/cloudflared - this field only carries the "is it baked" bit
+	// through to config.json, exactly like DataFlush does for its own
+	// flag.
+	IngressCloudflared bool
+
 	// BootSizeBytes is the size of the FAT32 GOSD-BOOT partition, passed
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
@@ -316,10 +326,11 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 			SSID:       opts.Config.WifiSSID,
 			Passphrase: opts.Config.WifiPassword,
 		},
-		Env:        opts.Config.Env,
-		DataExpand: opts.DataExpand,
-		DataFlush:  opts.DataFlush,
-		Identity:   identity,
+		Env:                opts.Config.Env,
+		DataExpand:         opts.DataExpand,
+		DataFlush:          opts.DataFlush,
+		IngressCloudflared: opts.IngressCloudflared,
+		Identity:           identity,
 		// Wall-clock, taken here rather than threaded in via Options: it
 		// must vary build-to-build (that's the whole point, as
 		// timesync's clock floor), and config.json is excluded from

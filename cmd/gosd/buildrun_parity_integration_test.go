@@ -32,6 +32,7 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 		"--board", "qemu-virt",
 		"--artifacts-dir", "testdata/fake-artifacts",
 		"--hostname", "parity-test",
+		"--ingress", "cloudflared",
 		"-o", buildImg,
 	})
 	if err := buildCmd.Execute(); err != nil {
@@ -48,6 +49,7 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 		"run", "../../examples/hello",
 		"--artifacts-dir", "testdata/fake-artifacts",
 		"--hostname", "parity-test",
+		"--ingress", "cloudflared",
 		"--keep",
 	})
 	if err := runCmd.Execute(); err != nil {
@@ -59,6 +61,16 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 
 	buildRecords := decodeInitramfs(t, readBootFile(t, buildImg, "initramfs.cpio.zst"))
 	runRecords := decodeInitramfs(t, readBootFile(t, runImg, "initramfs.cpio.zst"))
+
+	// Both sides must actually carry the --ingress content, not just agree
+	// by both omitting it - see sharedcontent.go's doc comment for why the
+	// CA bundle (and now cloudflared) is routed through one shared path
+	// specifically to prevent a build-only regression like this.
+	for _, records := range [][]cpio.Record{buildRecords, runRecords} {
+		if !hasRecord(records, "bin/cloudflared") {
+			t.Fatalf("--ingress cloudflared build is missing bin/cloudflared; got entries %v", recordNames(records))
+		}
+	}
 
 	assertIdenticalInitramfsContent(t, buildRecords, runRecords)
 }

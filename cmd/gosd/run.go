@@ -35,6 +35,7 @@ var (
 	runGosdInitSrc  string
 	runBootSize     string
 	runDataFlush    bool
+	runIngress      []string
 )
 
 func newRunCmd() *cobra.Command {
@@ -76,6 +77,8 @@ place and prints its path instead.`,
 		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
 	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
 		"same flag as gosd build's --data-flush: mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
+	cmd.Flags().StringArrayVar(&runIngress, "ingress", nil,
+		"same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; only supported value: cloudflared) - qemu-virt is arm64, so this exercises the runtime path in CI")
 
 	return cmd
 }
@@ -92,6 +95,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 	b, ok := boards.Find(qemuVirtBoardName)
 	if !ok {
 		return fmt.Errorf("internal error: the %s board is not registered", qemuVirtBoardName)
+	}
+
+	ingressCloudflared, err := parseIngressFlags(runIngress)
+	if err != nil {
+		return err
+	}
+	if err := validateIngress([]boards.Board{b}, ingressCloudflared); err != nil {
+		return err
 	}
 
 	appName := naming.Sanitize(filepath.Base(filepath.Clean(pkgPath)))
@@ -142,11 +153,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	shared, err := resolveSharedContent(ctx, runArtifactsDir)
+	var ingressGOARCHesNeeded []string
+	if ingressCloudflared {
+		ingressGOARCHesNeeded = ingressGOARCHes([]boards.Board{b})
+	}
+	shared, err := resolveSharedContent(ctx, runArtifactsDir, ingressGOARCHesNeeded)
 	if err != nil {
 		return err
 	}
-	extraFiles, err := openSharedContent(shared)
+	extraFiles, extraExecutables, err := openSharedContent(shared, b)
 	if err != nil {
 		return err
 	}
@@ -159,13 +174,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Hostname:         deviceHostname,
 			HostnameExplicit: hostnameExplicit,
 		},
-		ArtifactsDir:  runArtifactsDir,
-		CacheDir:      cacheDir,
-		OutputPath:    imgPath,
-		DataSizeBytes: dataSizeBytes,
-		DataFlush:     runDataFlush,
-		BootSizeBytes: bootSizeBytes,
-		ExtraFiles:    extraFiles,
+		ArtifactsDir:       runArtifactsDir,
+		CacheDir:           cacheDir,
+		OutputPath:         imgPath,
+		DataSizeBytes:      dataSizeBytes,
+		DataFlush:          runDataFlush,
+		BootSizeBytes:      bootSizeBytes,
+		ExtraFiles:         extraFiles,
+		ExtraExecutables:   extraExecutables,
+		IngressCloudflared: ingressCloudflared,
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {

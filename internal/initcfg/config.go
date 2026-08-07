@@ -68,6 +68,21 @@ type Config struct {
 	// TestBuildIdentityUnaffectedByDataFlush (cmd/gosd/build_integration_test.go).
 	DataFlush bool `json:"dataFlush,omitempty"`
 
+	// IngressCloudflared marks an image built with `gosd build --ingress
+	// cloudflared`: a cloudflared binary is baked into the initramfs at
+	// /bin/cloudflared (see internal/cloudflaredpin and
+	// cmd/gosd/ingress.go). This is the entire build->runtime contract for
+	// ingress (epic gosd-virc, locked decision 7): it carries only the
+	// "binary is baked" bit, nothing about whether or how a tunnel is
+	// actually configured - that lives in gosd.toml's [ingress.cloudflared]
+	// section (see gosdtoml.IngressCloudflared), which gosd-init reads
+	// separately at boot. gosd-init never probes the filesystem for the
+	// binary itself; this field is the only source of truth for whether
+	// it exists. Optional: absent - including every config.json baked
+	// before this field existed - means no cloudflared binary was baked
+	// in.
+	IngressCloudflared bool `json:"ingressCloudflared,omitempty"`
+
 	// Identity is a content-derived digest of this build's boot payload,
 	// baked in by gosd build (see ComputeIdentity's docstring for the
 	// exact recipe, and internal/pipeline for where it's computed).

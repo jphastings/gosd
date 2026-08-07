@@ -138,6 +138,44 @@ func TestRunKeepPreservesTheBuiltImage(t *testing.T) {
 	}
 }
 
+// TestRunIngressCloudflaredEmbedsBinary confirms `gosd run --ingress
+// cloudflared` (bean gosd-g4km) goes through the same sharedcontent.go path
+// as `gosd build`: the fixture binary from --artifacts-dir lands at
+// /bin/cloudflared, entirely from the fixture (disableNetwork proves no
+// fetch happened for qemu-virt's arm64 GOARCH).
+func TestRunIngressCloudflaredEmbedsBinary(t *testing.T) {
+	disableNetwork(t)
+
+	argsFile := filepath.Join(t.TempDir(), "qemu-args.txt")
+	fakeQemuBinary(t, argsFile)
+
+	var stderr bytes.Buffer
+	cmd := newRootCmd()
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"run", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "cloudflared",
+		"--keep",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd run --ingress cloudflared failed: %v", err)
+	}
+
+	kept := extractKeptPath(t, stderr.String())
+	defer func() { _ = os.RemoveAll(kept) }()
+
+	records := decodeInitramfs(t, readBootFile(t, filepath.Join(kept, "hello-qemu-virt.img"), "initramfs.cpio.zst"))
+	if !hasRecord(records, "bin/cloudflared") {
+		t.Fatalf("initramfs is missing bin/cloudflared; got entries %v", recordNames(records))
+	}
+
+	configJSON := string(recordContent(t, records, "etc/gosd/config.json"))
+	if !strings.Contains(configJSON, `"ingressCloudflared":true`) {
+		t.Errorf("config.json = %s, want it to contain %q", configJSON, `"ingressCloudflared":true`)
+	}
+}
+
 func extractKeptPath(t *testing.T, stderr string) string {
 	t.Helper()
 	const marker = "kept build artifacts at "
