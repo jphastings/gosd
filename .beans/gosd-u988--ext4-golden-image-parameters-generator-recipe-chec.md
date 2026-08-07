@@ -1,11 +1,11 @@
 ---
 # gosd-u988
 title: 'ext4 golden image: parameters, generator recipe, checked-in asset'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T09:57:52Z
-updated_at: 2026-08-07T10:42:16Z
+updated_at: 2026-08-07T10:43:28Z
 parent: gosd-lfu0
 ---
 
@@ -18,7 +18,7 @@ Design + produce the pristine ext4 golden image for epic gosd-lfu0's format-by-c
 - [x] Maintainer regen recipe under build/ (Docker, pinned e2fsprogs version, deterministic: -U fixed, fixed timestamps via mke2fs env or post-strip) + manifest recording provenance; NOT part of any go build/test
 - [x] Check in the compressed golden image + a pure-Go behavioral test that decompresses it and asserts superblock magic, feature flags, block count, label empty, csum_seed present (runs on macOS — no mount, just superblock parsing)
 - [x] Record the exact regeneration + verification procedure in a README next to the asset
-- [ ] Quality gates + PR
+- [x] Quality gates + PR (https://github.com/jphastings/gosd/pull/186)
 
 
 
