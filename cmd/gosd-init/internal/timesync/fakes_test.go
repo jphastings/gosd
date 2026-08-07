@@ -181,6 +181,31 @@ func (f *fakeSystemClock) sets() []time.Time {
 	return out
 }
 
+// fakeRTC records every time Set was called with, and can be scripted to
+// fail — mirroring fakeSystemClock's shape (see its doc): rtcWriteback's
+// job (log a write failure at most once, never block the sync loop) is
+// symmetric to how stepClock already handles a failed System.Set.
+type fakeRTC struct {
+	mu  sync.Mutex
+	set []time.Time
+	err error
+}
+
+func (f *fakeRTC) Set(t time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.set = append(f.set, t)
+	return f.err
+}
+
+func (f *fakeRTC) sets() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]time.Time, len(f.set))
+	copy(out, f.set)
+	return out
+}
+
 // jumpingClock is a fakeClock whose Now() actually jumps when paired
 // jumpingSystemClock.Set is called — modeling a real wall-clock step,
 // the way production's real Clock (plain time.Now()) and SystemClock

@@ -83,11 +83,13 @@ type Config struct {
 
 	// BuildTimestamp is when gosd build assembled this image (UTC,
 	// RFC3339Nano), baked in by the CLI. It's gosd-init's timesync
-	// package's clock floor (see BuildTime and gosd-0esw): neither board
-	// has a battery-backed RTC, so the clock starts every boot near the
-	// Unix epoch, and an SNTP result reporting a time before the image
-	// was even built can only be wrong — a forged or badly misbehaving
-	// server, never a legitimate one.
+	// package's clock floor (see BuildTime and gosd-0esw): even on a
+	// board with a battery-backed RTC (see gosd-achn), a power cut
+	// without a coin cell — or a board with no RTC at all, the Pi family
+	// — still starts the clock near the Unix epoch, and an SNTP result
+	// reporting a time before the image was even built can only be
+	// wrong — a forged or badly misbehaving server, never a legitimate
+	// one.
 	//
 	// Deliberately excluded from ComputeIdentity's payload without any
 	// special-casing: that function's docstring already excludes

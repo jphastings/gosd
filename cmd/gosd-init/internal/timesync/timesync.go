@@ -1,18 +1,23 @@
 // Package timesync implements SNTP time synchronization for gosd-init.
-// Neither board has a battery-backed RTC, so the clock starts at the Unix
-// epoch on every boot and must be corrected before anything relying on
-// wall-clock time — most importantly TLS/x509 certificate validity
-// checks — can be trusted.
+// Not every board has a battery-backed RTC — the Pi family has none at
+// all — and even where one exists, without a coin cell it survives a warm
+// reboot but not a power cut (see gosd-achn). So on many boots the clock
+// still starts at or near the Unix epoch and must be corrected before
+// anything relying on wall-clock time — most importantly TLS/x509
+// certificate validity checks — can be trusted. Once SNTP does correct it,
+// this package writes the result back to the RTC, if the board has one,
+// so a later warm reboot has a head start (see RTC and rtcWriteback).
 //
 // Following the style established by boot, netup, and wifiup, every
-// side-effecting dependency (the NTP client, settimeofday, the clock,
-// marker file I/O) sits behind a thin interface, so the retry/refresh
-// state machine in this file is fully unit-tested with fakes on any OS.
-// The real settimeofday-backed SystemClock lives in platform_linux.go
-// behind a "linux" build tag; platform_other.go stubs it out so `go test
-// ./...` still passes on macOS. NTPClient's real implementation
-// (ntpclient.go) needs no such gating: querying an NTP server is a plain
-// UDP round-trip, not a Linux-specific syscall.
+// side-effecting dependency (the NTP client, settimeofday, the RTC, the
+// clock, marker file I/O) sits behind a thin interface, so the
+// retry/refresh state machine in this file is fully unit-tested with
+// fakes on any OS. The real settimeofday-backed SystemClock and
+// ioctl-backed RTC live in platform_linux.go behind a "linux" build tag;
+// platform_other.go stubs them out so `go test ./...` still passes on
+// macOS. NTPClient's real implementation (ntpclient.go) needs no such
+// gating: querying an NTP server is a plain UDP round-trip, not a
+// Linux-specific syscall.
 package timesync
 
 import (
@@ -61,6 +66,13 @@ type Deps struct {
 	NTP    NTPClient
 	System SystemClock
 	Clock  Clock
+
+	// RTC writes the system time back to the board's battery-backed
+	// real-time clock after every clock step this package applies (see
+	// rtcWriteback.apply). Never nil in production: a board with no RTC
+	// at all still gets an implementation, one that reports
+	// ErrRTCNotPresent (see platform_linux.go and platform_other.go).
+	RTC RTC
 
 	// NewBackoff creates the retry/backoff strategy used until the first
 	// sync succeeds. A func rather than a shared *Backoff so a restart of
@@ -162,9 +174,13 @@ func Run(deps Deps, opts Options) {
 	// loop) so that first sync anchors it — see stepGuard's doc: every
 	// resync's step is measured against wherever the clock should be
 	// given the most recently *applied* sync, and the first sync is the
-	// only source of that anchor before any resync has ever run.
+	// only source of that anchor before any resync has ever run. rtc is
+	// created alongside it and threaded through the same calls, so an
+	// RTC write failure is only ever logged once across the whole Run
+	// call (see rtcWriteback's doc).
 	guard := &stepGuard{}
-	if !syncUntilSuccess(deps, opts, guard) {
+	rtc := &rtcWriteback{}
+	if !syncUntilSuccess(deps, opts, guard, rtc) {
 		return
 	}
 
@@ -183,7 +199,7 @@ func Run(deps Deps, opts Options) {
 		case <-opts.Stop:
 			return
 		case <-deps.Clock.After(delay):
-			guard.resync(deps, opts)
+			guard.resync(deps, opts, rtc)
 		}
 	}
 }
@@ -223,16 +239,16 @@ func waitForNetworkUp(deps Deps, opts Options) bool {
 // opts.Floor (see checkFloor) or opts.Stop closes. A pre-floor result is
 // treated exactly like a round with no answer at all: logged and retried
 // after backoff, never applied. On a result that does clear the floor, it
-// sets the system clock, logs the step change, anchors guard for the
-// resync loop to measure steps against (see stepGuard's doc), writes the
-// time-synced marker, and returns true. It returns false only if
-// opts.Stop closed first.
-func syncUntilSuccess(deps Deps, opts Options, guard *stepGuard) bool {
+// sets the system clock, logs the step change, writes it back to the RTC
+// (see rtcWriteback.apply), anchors guard for the resync loop to measure
+// steps against (see stepGuard's doc), writes the time-synced marker, and
+// returns true. It returns false only if opts.Stop closed first.
+func syncUntilSuccess(deps Deps, opts Options, guard *stepGuard, rtc *rtcWriteback) bool {
 	backoff := deps.NewBackoff()
 	for {
 		if newTime, ok := queryServers(deps, opts.Servers); ok && checkFloor(deps, opts, newTime) {
 			old := deps.Clock.Now()
-			stepClock(deps, old, newTime)
+			stepClock(deps, old, newTime, rtc)
 			guard.setAnchor(old, newTime)
 			if err := deps.MarkTimeSynced(); err != nil {
 				deps.Log("writing time-synced marker failed: %v", err)
@@ -257,7 +273,7 @@ func syncUntilSuccess(deps Deps, opts Options, guard *stepGuard) bool {
 // confirmation (stepGuard.check). Any refusal, and any round where no
 // server answered, is just logged so the next scheduled resync tries
 // again.
-func (g *stepGuard) resync(deps Deps, opts Options) {
+func (g *stepGuard) resync(deps Deps, opts Options, rtc *rtcWriteback) {
 	newTime, ok := queryServers(deps, opts.Servers)
 	if !ok {
 		deps.Log("scheduled NTP resync failed on every configured server; will retry at the next resync")
@@ -271,7 +287,7 @@ func (g *stepGuard) resync(deps Deps, opts Options) {
 	if !g.check(deps, opts, old, newTime) {
 		return
 	}
-	stepClock(deps, old, newTime)
+	stepClock(deps, old, newTime, rtc)
 	g.setAnchor(old, newTime)
 }
 
@@ -339,14 +355,18 @@ func validateSample(sample SNTPSample) error {
 }
 
 // stepClock sets the system clock to newTime and logs the step change
-// (old -> new), per the bean. old is the deps.Clock reading immediately
-// before the step, passed in by the caller (rather than read again here)
-// so a resync's step-guard measurement and the logged "old" value are
-// exactly the same reading.
-func stepClock(deps Deps, old, newTime time.Time) {
+// (old -> new), per the bean, then writes newTime back to the RTC (see
+// rtcWriteback.apply and gosd-lx8g) — but only once the system clock
+// itself was actually set; a failed System.Set must not also attempt an
+// RTC write. old is the deps.Clock reading immediately before the step,
+// passed in by the caller (rather than read again here) so a resync's
+// step-guard measurement and the logged "old" value are exactly the same
+// reading.
+func stepClock(deps Deps, old, newTime time.Time, rtc *rtcWriteback) {
 	if err := deps.System.Set(newTime); err != nil {
 		deps.Log("setting system clock failed: %v", err)
 		return
 	}
 	deps.Log("system clock synchronized via NTP: %s -> %s", old.Format(time.RFC3339), newTime.Format(time.RFC3339))
+	rtc.apply(deps, newTime)
 }

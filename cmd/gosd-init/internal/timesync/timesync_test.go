@@ -8,11 +8,15 @@ import (
 
 var errBoom = errors.New("boom")
 
+// newTestDeps wires a default fakeRTC that always succeeds — tests that
+// don't care about RTC behavior get one for free; tests that do (see
+// rtc_test.go) override deps.RTC with their own fakeRTC afterward.
 func newTestDeps(clock *fakeClock, ntp *fakeNTPClient, sys *fakeSystemClock, up *flag, log *testLog) (Deps, *counter) {
 	marked := &counter{}
 	deps := Deps{
 		NTP:        ntp,
 		System:     sys,
+		RTC:        &fakeRTC{},
 		Clock:      clock,
 		NewBackoff: func() *Backoff { return noJitterBackoff(time.Second, 10*time.Second) },
 		NetworkUp: func() (bool, error) {

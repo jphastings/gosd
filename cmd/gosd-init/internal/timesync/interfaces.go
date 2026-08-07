@@ -1,6 +1,9 @@
 package timesync
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // NTPClient queries a single NTP server for the current, corrected time.
 // Implementations must be safe to use from a single goroutine at a time
@@ -56,12 +59,35 @@ type SNTPSample struct {
 // NTPClient boundary (see Clock's doc comment).
 const sntpLeapNotInSync = 3
 
-// SystemClock sets the OS wall-clock time. Neither board has a
-// battery-backed RTC, so this — settimeofday(2) on Linux — is the only
-// way gosd-init ever gets a correct clock.
+// SystemClock sets the OS wall-clock time. This — settimeofday(2) on
+// Linux — is the only way gosd-init ever corrects the running kernel's
+// clock: even on a board with a battery-backed RTC (see RTC and
+// gosd-achn), the kernel's own HCTOSYS copies the RTC's value in at boot,
+// before gosd-init even starts, so by the time this package runs, SNTP is
+// the only source of a trustworthy time to Set.
 type SystemClock interface {
 	Set(t time.Time) error
 }
+
+// RTC writes t to the board's battery-backed real-time clock, if it has
+// one, immediately after every clock step this package actually applies
+// — first sync and resync alike (see rtcWriteback.apply) — so a warm
+// reboot without network access recovers a correct time straight from
+// hardware instead of starting from the Unix epoch again (gosd-achn).
+// Without a coin cell, that survives a warm reboot but not a power cut.
+//
+// Implementations report ErrRTCNotPresent on a board with no RTC at all
+// (the Pi family) rather than an ordinary error, so rtcWriteback.apply
+// can tell "nothing to do here" apart from "the write actually failed" —
+// the former is never logged, the latter gets exactly one warning per
+// Run call (see the package doc and gosd-lx8g).
+type RTC interface {
+	Set(t time.Time) error
+}
+
+// ErrRTCNotPresent is the sentinel error an RTC implementation reports
+// when the board has no battery-backed RTC device at all — see RTC's doc.
+var ErrRTCNotPresent = errors.New("no RTC device present")
 
 // Clock abstracts time so the retry/refresh state machine in timesync.go
 // can be driven deterministically in tests, without any real waiting.
