@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-06T22:33:44Z
-updated_at: 2026-08-07T11:19:28Z
+updated_at: 2026-08-07T11:21:49Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-jpc8
@@ -21,7 +21,7 @@ Confirmed pins (gosd-jpc8): U-Boot mainline v2026.04, defconfig radxa-cubie-a5e_
 - [x] uboot/Dockerfile (TF-A bl31 stage + U-Boot stage + scratch artifacts stage) and build.sh (jq-driven pins, out/ copy)
 - [x] uboot/README.md: boot-chain explanation, offset, how to bump pins
 - [x] Local Docker build succeeds; record u-boot-sunxi-with-spl.bin size (must fit the pre-partition gap with room to spare)
-- [ ] Quality gates + PR
+- [x] Quality gates + PR (PR #188 — retargeted to main after #184 merged mid-task; CI running, MERGEABLE)
 
 
 ## Summary of Changes
