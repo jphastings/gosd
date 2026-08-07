@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-06T22:33:44Z
-updated_at: 2026-08-06T22:52:40Z
+updated_at: 2026-08-06T23:13:17Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-jpc8
@@ -23,7 +23,7 @@ Pinned values (gosd-jpc8): raw write u-boot-sunxi-with-spl.bin at OFFSET 8192 (8
 - [x] RegisterInternal in cmd/gosd/build.go (public flip happens in the activation bean, NOT here)
 - [x] Reserve cubie-a5e in CLAUDE.md's Board IDs locked-decision list (epic's first PR)
 - [x] COMPATIBILITY.md row(s) for cubie-a5e marked as in-progress/internal
-- [ ] Quality gates + PR
+- [x] Quality gates + PR (PR #184, CI green 2026-08-07)
 
 ## Summary of Changes
 
