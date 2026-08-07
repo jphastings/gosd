@@ -43,12 +43,14 @@ func main() {
 
 	listener, err := net.Listen("tcp", ":80")
 	if err != nil {
+		fmt.Printf("gosd hello: :80 unavailable (%v); falling back to :8080\n", err)
 		listener, err = net.Listen("tcp", ":8080")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gosd hello: failed to listen on :80 or :8080: %v\n", err)
 			os.Exit(1)
 		}
 	}
+	fmt.Printf("gosd hello: listening on %s\n", listener.Addr())
 
 	if err := http.Serve(listener, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "gosd hello: server stopped: %v\n", err)
