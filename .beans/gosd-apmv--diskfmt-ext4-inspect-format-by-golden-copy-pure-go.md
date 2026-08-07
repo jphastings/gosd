@@ -1,11 +1,11 @@
 ---
 # gosd-apmv
 title: 'diskfmt: ext4 inspect + format-by-golden-copy (pure Go)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T09:57:52Z
-updated_at: 2026-08-07T11:12:52Z
+updated_at: 2026-08-07T11:14:12Z
 parent: gosd-lfu0
 blocked_by:
     - gosd-u988
@@ -19,7 +19,7 @@ internal/diskfmt grows ext4 support alongside FAT32/exFAT for epic gosd-lfu0: In
 - [x] Format: golden copy + label (16-byte limit enforced with an actionable error) + random UUID + superblock csum update
 - [x] Behavioral tests: format a file-backed target, re-Inspect it, assert label/UUID/features; corrupt-superblock and truncated-golden-write cases produce honest errors/probe failures
 - [x] Document (docstrings) that Format's output is only established once blockmount's marker lands — a bare probe-passing superblock is expected debris after a crash
-- [ ] Quality gates + PR
+- [x] Quality gates + PR (https://github.com/jphastings/gosd/pull/187)
 
 ## Summary of Changes
 
