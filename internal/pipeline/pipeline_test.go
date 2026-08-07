@@ -17,6 +17,7 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/inject"
@@ -136,6 +137,47 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
 		}
 	}
+}
+
+// TestAssembleBakesStaticHostsIntoInitramfs is the acceptance test for
+// gosd-e3xi part 1: every image ships an /etc/hosts with the static
+// localhost/loopback lines, with zero runtime code needed to produce them
+// (gosd-init only ever appends its own hostname line at boot — see
+// cmd/gosd-init/internal/boot/sequence_test.go for that half).
+func TestAssembleBakesStaticHostsIntoInitramfs(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board"}
+	imgPath := filepath.Join(dir, "out.img")
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board:          b,
+		AppBinaryPath:  appPath,
+		InitBinaryPath: initPath,
+		Config:         boards.BuildConfig{Hostname: "myhost"},
+		OutputPath:     imgPath,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	raw, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst back: %v", err)
+	}
+
+	assertRecordContent(t, decodeInitramfs(t, raw), strings.TrimPrefix(hostsfile.Path, "/"), hostsfile.Static())
 }
 
 func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {

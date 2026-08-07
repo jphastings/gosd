@@ -20,6 +20,7 @@ import (
 	"github.com/jphastings/gosd/internal/artifacts"
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/gosdtoml"
+	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/initramfs"
@@ -32,6 +33,7 @@ const (
 	configFileMode     = 0o644
 	firmwareFileMode   = 0o644
 	executableFileMode = 0o755
+	hostsFileMode      = 0o644
 )
 
 // mountPointDirs are the directories gosd-init unconditionally mounts
@@ -259,6 +261,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	payload = append(payload,
 		initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/init"), Content: initBinBytes},
 		initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/app"), Content: appBinBytes},
+		initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath(hostsfile.Path), Content: []byte(hostsfile.Static())},
 	)
 	for name, data := range firmwareBytes {
 		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/lib/firmware/" + name), Content: data})
@@ -306,11 +309,17 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		return image.WriteReport{}, fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
 	}
 
-	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+3)
+	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+4)
 	files = append(files,
 		initramfs.File{Path: "/init", Content: bytes.NewReader(initBinBytes), Mode: initFileMode},
 		initramfs.File{Path: "/app", Content: bytes.NewReader(appBinBytes), Mode: appFileMode},
 		initramfs.File{Path: "/etc/gosd/config.json", Content: bytes.NewReader(configJSON), Mode: configFileMode},
+		// The static localhost/loopback lines only; gosd-init appends its
+		// own 127.0.1.1 <hostname> line once the hostname settles at boot
+		// (see hostsfile.Write and cmd/gosd-init/internal/boot/sequence.go)
+		// — the hostname isn't known here, and gosd.toml/cloud-init can
+		// still change it after this image is built.
+		initramfs.File{Path: hostsfile.Path, Content: strings.NewReader(hostsfile.Static()), Mode: hostsFileMode},
 	)
 	for name, data := range firmwareBytes {
 		files = append(files, initramfs.File{Path: "/lib/firmware/" + name, Content: bytes.NewReader(data), Mode: firmwareFileMode})

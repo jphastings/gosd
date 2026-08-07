@@ -20,6 +20,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/gosdtoml"
+	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
 )
@@ -103,6 +104,9 @@ func main() {
 				log,
 			)
 			return provsnapshot.Run(deps, in)
+		},
+		WriteHosts: func(hostname string) error {
+			return hostsfile.Write(hostsfile.Path, hostname)
 		},
 		WriteBootFailure: func(msg string) error {
 			return platform.WriteBootFailure(bootTarget, msg)

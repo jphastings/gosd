@@ -148,6 +148,10 @@ Practical implications for your app:
   need you to poll the filesystem.
 - **DNS** is written to `/etc/resolv.conf` from the DHCP lease once one
   is obtained; it's simply absent before then.
+- **`localhost` resolves via the shipped `/etc/hosts`**, no DNS or network
+  needed — every image ships one baked into the initramfs (see
+  `internal/hostsfile`). Your device's own hostname resolves to `127.0.1.1`
+  too, once `gosd-init` has settled on it during boot.
 
 `gosd-init` brings up wired Ethernet (interfaces matching `eth*`, `end*`,
 `enp*` — see `cmd/gosd-init/internal/netup/netup.go`) and, if the board
