@@ -677,6 +677,11 @@ var specs = map[string]KernelSpec{
 			// for the full rationale). Found during rock-4se real-hardware
 			// bring-up (bean gosd-sz6p).
 			"CONFIG_USB_MASS_STORAGE",
+			// Btrfs: leaks in as =y from the arm64 defconfig baseline (=m
+			// promoted to =y by the no-modules build, same trap as the
+			// legacy mass-storage gadget above). Nothing in gosd formats or
+			// mounts btrfs (JP decision 2026-08-07, bean gosd-10fn).
+			"CONFIG_BTRFS_FS",
 		},
 		ModulesDisabled: true,
 	},
