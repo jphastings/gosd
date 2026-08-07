@@ -26,10 +26,12 @@ import (
 	"syscall"
 	"time"
 
-	// GoSD images ship no /etc/ssl CA bundle, so crypto/x509 has no system
-	// roots to verify the TLE API's certificate against; this registers
-	// the Mozilla root store as the fallback, the standard pure-Go answer
-	// for HTTPS from minimal images.
+	// Every GoSD image already ships a CA bundle (see docs/runtime.md), so
+	// this blank import isn't required for the TLE API's HTTPS call to
+	// work. It's kept anyway as the pattern for an app that wants to pin
+	// its own roots at build time, independent of gosd's own release
+	// cadence: golang.org/x/crypto/x509roots/fallback bakes in the
+	// Mozilla root store via go.mod, the standard pure-Go answer.
 	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
