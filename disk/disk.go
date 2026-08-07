@@ -258,11 +258,11 @@ var deviceClasses = []string{
 // others. Beyond the class allowlist it rejects an eMMC's boot/RPMB/GP
 // hardware partitions (which hold boot code, replay-protected data or
 // vendor-managed content such as DRM keys and calibration — never general
-// storage), a device reporting no medium (an empty card-reader slot still
-// enumerates), and a write-protected device — better to report ErrNoDisk than
-// to fail deep inside a format.
+// storage). Present-medium and write-protected exclusion is not this
+// package's concern any more: blockmount.Usable enforces both, for every
+// caller of Candidates/Choose, before rank is ever consulted — see gosd-ix38.
 func rank(dev blockmount.Device) (int, bool) {
-	if dev.SizeSectors == 0 || dev.ReadOnly || isMMCHardwarePartition(dev.Name) {
+	if isMMCHardwarePartition(dev.Name) {
 		return 0, false
 	}
 	for i, prefix := range deviceClasses {

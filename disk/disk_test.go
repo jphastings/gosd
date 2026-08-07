@@ -127,6 +127,24 @@ func TestChooseNeverPicksAnEMMCGeneralPurposeHardwarePartition(t *testing.T) {
 	}
 }
 
+// TestRankLeavesMediumAndWriteProtectionToBlockmount pins the responsibility
+// split gosd-ix38 introduced: rank now expresses only disk's own class
+// preference and its eMMC-hardware-partition exclusion, so a device with no
+// medium or that is write-protected still ranks as acceptable here — it is
+// blockmount.Usable, applied inside Candidates/Choose, that keeps such a
+// device off the list (see TestChooseReportsErrNoDisk for the end-to-end
+// behaviour, unchanged by this split).
+func TestRankLeavesMediumAndWriteProtectionToBlockmount(t *testing.T) {
+	for _, dev := range []blockmount.Device{
+		{Name: "sda", SizeSectors: 0},
+		{Name: "sdb", SizeSectors: 1 << 20, ReadOnly: true},
+	} {
+		if _, ok := rank(dev); !ok {
+			t.Errorf("rank(%+v) ok = false, want true — medium/write-protection filtering belongs to blockmount.Usable now, not rank", dev)
+		}
+	}
+}
+
 // TestIsMMCHardwarePartition proves the matcher is structural (a regex
 // anchored on the kernel's actual naming), not a suffix list: it must reject
 // every hardware-partition shape the MMC block driver creates without also

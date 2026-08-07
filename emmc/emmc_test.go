@@ -64,12 +64,18 @@ func TestLabelErrorsAreAttributedToThisPackage(t *testing.T) {
 	}
 }
 
+// present is an eMMC that is attached, has a medium and is writable — the
+// baseline every discovery case varies from.
+func present(name, kind string, partitions ...string) blockmount.Device {
+	return blockmount.Device{Name: name, Kind: kind, SizeSectors: 1 << 20, Partitions: partitions}
+}
+
 func TestChooseEMMCPrefersUnmountedMMCRegardlessOfNumber(t *testing.T) {
 	// The eMMC is mmcblk1 here and the booted SD is mmcblk0, proving selection
 	// is by type + not-in-use, not by device number.
 	devices := []blockmount.Device{
-		{Name: "mmcblk0", Kind: "SD", Partitions: []string{"mmcblk0p1", "mmcblk0p2"}},
-		{Name: "mmcblk1", Kind: "MMC"},
+		present("mmcblk0", "SD", "mmcblk0p1", "mmcblk0p2"),
+		present("mmcblk1", "MMC"),
 	}
 	mounted := map[string]bool{"/dev/mmcblk0p1": true, "/dev/mmcblk0p2": true}
 
@@ -125,5 +131,28 @@ func TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions(t *testing.T) {
 
 	if _, err := chooseEMMC(devices, mounted); !errors.Is(err, ErrNoEMMC) {
 		t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
+	}
+}
+
+// TestChooseEMMCRejectsNoMediumOrWriteProtected pins gosd-ix38's fix.
+// chooseEMMC's rank is `dev.Kind == "MMC"` alone — before this fix, an
+// MMC-typed device with no medium or one that was write-protected would have
+// been picked as a format target, exactly the divergence from disk.rank
+// (which always rejected both) that the bean found. blockmount.Usable now
+// rejects both for every caller of Choose/Candidates, so emmc inherits the
+// same rule as disk without rank having to spell it out.
+func TestChooseEMMCRejectsNoMediumOrWriteProtected(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dev  blockmount.Device
+	}{
+		{"no medium", blockmount.Device{Name: "mmcblk1", Kind: "MMC", SizeSectors: 0}},
+		{"write-protected", blockmount.Device{Name: "mmcblk1", Kind: "MMC", SizeSectors: 1 << 20, ReadOnly: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := chooseEMMC([]blockmount.Device{tc.dev}, nil); !errors.Is(err, ErrNoEMMC) {
+				t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
+			}
+		})
 	}
 }
