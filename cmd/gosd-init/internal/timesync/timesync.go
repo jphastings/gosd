@@ -15,7 +15,10 @@
 // UDP round-trip, not a Linux-specific syscall.
 package timesync
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Default tuning values for production wiring (main.go); tests use their
 // own, much shorter values so they don't take real wall-clock time to run.
@@ -36,6 +39,15 @@ const (
 	// (Options.MaxStep), matching ntpd's classic ~1000s step/panic
 	// threshold — see stepGuard's doc for the full design (gosd-0esw).
 	DefaultMaxStep = 1000 * time.Second
+
+	// DefaultPendingConfirmDelay is how soon Run re-queries after a
+	// resync candidate is refused pending a second, confirming query
+	// (see stepGuard.check and Options.PendingConfirmDelay) — 45s,
+	// within the bean's 30-60s target. This bounds how long the device
+	// sits on a wrong clock while a legitimate large step waits to be
+	// confirmed, without hammering the NTP servers the way polling on
+	// every tick would (gosd-dqps).
+	DefaultPendingConfirmDelay = 45 * time.Second
 )
 
 // DefaultServers is the NTP server list used when config.json doesn't
@@ -107,6 +119,18 @@ type Options struct {
 	// default) disables the guard. Production wires this to
 	// DefaultMaxStep.
 	MaxStep time.Duration
+
+	// PendingConfirmDelay is how soon Run schedules the next resync when
+	// the previous one left a stepGuard.pending confirmation
+	// outstanding, instead of waiting the full ResyncEvery — see
+	// pendingConfirmDelay. Unlike ResyncEvery/MaxStep, zero has no
+	// useful "disabled" meaning here (a zero-length wait would busy-loop
+	// against the NTP servers with a known-wrong clock), so this field
+	// deliberately falls back to DefaultPendingConfirmDelay when unset —
+	// mirroring how Backoff.Next treats a zero delay as "use base."
+	// That fallback is also why main.go's Options literal doesn't need
+	// to set this explicitly for production to get the shorter delay.
+	PendingConfirmDelay time.Duration
 }
 
 // Run waits for the network-up marker, then synchronizes the system
@@ -119,6 +143,17 @@ type Options struct {
 // boot.Deps.StartNetworking): per the locked behavior, time sync must
 // never block or delay /app's start.
 func Run(deps Deps, opts Options) {
+	// A disabled floor (config.json baked before the build-timestamp
+	// field existed, or a build that failed to bake one — see
+	// initcfg.Config.BuildTime) must never be a silent state: it's
+	// exactly the condition that let the first sync in gosd-dqps's field
+	// report apply an unvalidated, near-epoch time with no lower bound
+	// to refuse it. One line, not a per-attempt log, since this is a
+	// static property of opts for this whole Run call.
+	if opts.Floor.IsZero() {
+		deps.Log("NTP clock floor is disabled (no build timestamp available); a pre-build SNTP result cannot be detected and refused")
+	}
+
 	if !waitForNetworkUp(deps, opts) {
 		return
 	}
@@ -134,13 +169,33 @@ func Run(deps Deps, opts Options) {
 	}
 
 	for {
+		// A resync that left a confirmation pending (stepGuard.check
+		// refused an over-threshold candidate and is waiting to see if
+		// the next query agrees) is scheduled sooner than an ordinary
+		// resync: the clock is known-wrong in the meantime, and bounding
+		// that matters more than not hammering the NTP servers (gosd-dqps).
+		delay := opts.ResyncEvery
+		if guard.pending != nil {
+			delay = pendingConfirmDelay(opts)
+		}
+
 		select {
 		case <-opts.Stop:
 			return
-		case <-deps.Clock.After(opts.ResyncEvery):
+		case <-deps.Clock.After(delay):
 			guard.resync(deps, opts)
 		}
 	}
+}
+
+// pendingConfirmDelay returns opts.PendingConfirmDelay, falling back to
+// DefaultPendingConfirmDelay when unset — see Options.PendingConfirmDelay's
+// doc for why zero isn't treated as "disabled" here.
+func pendingConfirmDelay(opts Options) time.Duration {
+	if opts.PendingConfirmDelay > 0 {
+		return opts.PendingConfirmDelay
+	}
+	return DefaultPendingConfirmDelay
 }
 
 // waitForNetworkUp polls deps.NetworkUp (checking immediately, then every
@@ -234,20 +289,53 @@ func checkFloor(deps Deps, opts Options, newTime time.Time) bool {
 }
 
 // queryServers tries each server in order, returning the first one that
-// answers. NTP servers (especially pool.ntp.org, a shared round-robin
-// pool) are occasionally slow or briefly unreachable; trying the whole
-// list before giving up the round means one flaky server doesn't cost an
-// entire backoff cycle.
+// answers with a sample that passes validateSample. NTP servers
+// (especially pool.ntp.org, a shared round-robin pool) are occasionally
+// slow or briefly unreachable; trying the whole list before giving up
+// the round means one flaky server doesn't cost an entire backoff cycle.
+// A server that answers but fails validation is treated exactly like one
+// that didn't answer at all: logged, and the next server in the list is
+// tried — an unsynchronized server (the expected bench case: a
+// fresh-booted home router, not an exotic attack) is exactly as useless
+// as one that timed out.
 func queryServers(deps Deps, servers []string) (time.Time, bool) {
 	for _, server := range servers {
-		t, err := deps.NTP.Query(server)
+		sample, err := deps.NTP.Query(server)
 		if err != nil {
 			deps.Log("querying NTP server %s failed: %v", server, err)
 			continue
 		}
-		return t, true
+		if err := validateSample(sample); err != nil {
+			deps.Log("NTP server %s returned an untrustworthy response: %v", server, err)
+			continue
+		}
+		return sample.Time, true
 	}
 	return time.Time{}, false
+}
+
+// validateSample rejects the specific misbehavior signatures of an
+// unsynchronized or malformed NTP server (gosd-dqps): LI=3 ("alarm
+// condition, clock not synchronized"), a stratum of 0 (Kiss-of-Death) or
+// above 15 (invalid per RFC 5905), and a zero transmit timestamp. This
+// runs in addition to, not instead of, whatever structural validation
+// the NTPClient implementation itself does (see beevikClient.Query) —
+// keeping it here, against this package's own SNTPSample type, is what
+// makes it exercisable with fakeNTPClient rather than only ever tested
+// against a real server.
+func validateSample(sample SNTPSample) error {
+	switch {
+	case sample.Leap == sntpLeapNotInSync:
+		return fmt.Errorf("leap indicator 3 (clock not synchronized)")
+	case sample.Stratum == 0:
+		return fmt.Errorf("stratum 0 (kiss-of-death/control response, not a time sample)")
+	case sample.Stratum > 15:
+		return fmt.Errorf("invalid stratum %d (must be 1-15)", sample.Stratum)
+	case sample.TransmitTimestamp.IsZero():
+		return fmt.Errorf("zero transmit timestamp")
+	default:
+		return nil
+	}
 }
 
 // stepClock sets the system clock to newTime and logs the step change
