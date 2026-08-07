@@ -241,3 +241,12 @@ or Podman installed and its daemon/machine running. All three share the
 user's home directory with their VMs, which the build relies on for its bind
 mounts. Windows is untested, matching the rest of the CLI's "best-effort,
 don't break gratuitously" stance.
+
+The daemon must be running on THIS machine: a remote/SSH docker context
+(`DOCKER_HOST=ssh://...`, or `docker context use` pointed at a `tcp://`
+endpoint on another host) bind-mounts local paths onto a filesystem that
+isn't local to them, so the container sees empty directories and the build
+fails deep inside with no obvious cause. `gosd build-kernel` detects this
+and refuses early, naming the offending context/endpoint, rather than let
+it fail confusingly. To use a beefier build box, clone the repo under its
+own `$HOME` and run the command there against its own local daemon instead.

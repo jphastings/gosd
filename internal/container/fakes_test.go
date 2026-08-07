@@ -20,8 +20,13 @@ type fakeExec struct {
 	paths map[string]string
 
 	// runFn, if set, is invoked for every Run call (including `info`
-	// liveness checks) and controls its outcome.
+	// liveness checks and `context inspect` preflight probes) and
+	// controls its outcome.
 	runFn func(path string, args []string, stdout, stderr io.Writer) (int, error)
+
+	// env stands in for the process environment; a key absent from env
+	// looks unset, matching os.LookupEnv's ok=false.
+	env map[string]string
 
 	calls []fakeCall
 }
@@ -54,6 +59,13 @@ func (f *fakeExec) Run(_ context.Context, path string, args []string, stdout, st
 		return 0, nil
 	}
 	return fn(path, args, stdout, stderr)
+}
+
+func (f *fakeExec) LookupEnv(key string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.env[key]
+	return v, ok
 }
 
 func (f *fakeExec) lastCall() fakeCall {

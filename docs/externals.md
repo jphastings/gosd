@@ -265,3 +265,10 @@ three share the user's home directory with their VMs, which the build
 relies on for its bind mounts (the same requirement `gosd build-kernel`
 has — see `docs/custom-kernels.md`). Windows is untested, matching the rest
 of the CLI's "best-effort, don't break gratuitously" stance.
+
+The daemon must be running on THIS machine, for the same reason: a
+remote/SSH docker context bind-mounts local paths onto a filesystem that
+isn't local to them, so the container sees empty directories. `gosd
+build-external` detects this and refuses early, naming the offending
+context/endpoint — see `docs/custom-kernels.md`'s "Supported hosts" section
+for the full explanation.

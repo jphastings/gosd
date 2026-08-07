@@ -27,4 +27,10 @@ type execRunner interface {
 	// -1 if the process never started) and any error from launching or
 	// waiting for it.
 	Run(ctx context.Context, path string, args []string, stdout, stderr io.Writer) (exitCode int, err error)
+
+	// LookupEnv mirrors os.LookupEnv. It's part of the seam (rather than
+	// Detect calling os.LookupEnv directly) so the remote-context
+	// preflight's handling of DOCKER_HOST/CONTAINER_HOST can be tested
+	// with a fake instead of mutating the real process environment.
+	LookupEnv(key string) (value string, ok bool)
 }
