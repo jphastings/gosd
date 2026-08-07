@@ -97,11 +97,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("internal error: the %s board is not registered", qemuVirtBoardName)
 	}
 
-	ingressCloudflared, err := parseIngressFlags(runIngress)
+	ingressSelected, err := parseIngressFlags(runIngress)
 	if err != nil {
 		return err
 	}
-	if err := validateIngress([]boards.Board{b}, ingressCloudflared); err != nil {
+	if err := validateIngress([]boards.Board{b}, ingressSelected); err != nil {
 		return err
 	}
 
@@ -154,7 +154,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
 	var ingressGOARCHesNeeded []string
-	if ingressCloudflared {
+	if ingressSelected.Cloudflared {
 		ingressGOARCHesNeeded = ingressGOARCHes([]boards.Board{b})
 	}
 	shared, err := resolveSharedContent(ctx, runArtifactsDir, ingressGOARCHesNeeded)
@@ -182,7 +182,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		BootSizeBytes:      bootSizeBytes,
 		ExtraFiles:         extraFiles,
 		ExtraExecutables:   extraExecutables,
-		IngressCloudflared: ingressCloudflared,
+		IngressCloudflared: ingressSelected.Cloudflared,
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {

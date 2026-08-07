@@ -1,4 +1,52 @@
-# Ingress: exposing an app to the internet (`gosd build --ingress cloudflared`)
+# Ingress: exposing an app to the internet (`gosd build --ingress`)
+
+`gosd build --ingress <agent>` bakes a client into the image that exposes an
+app on the device to the public internet with zero app code: no port
+forwarding, no public IP address, and (depending on the agent) no account on
+the device itself beyond a token or key you paste into `gosd.toml`.
+`gosd-init` supervises the client for the life of the device — there is
+still no shell, no SSH, and no listener gosd-init itself adds; the agent's
+own outbound connection is the only new thing on the wire.
+
+## Choosing an ingress
+
+| Agent | `--ingress` value | Board support | Where TLS terminates | Account you need |
+|---|---|---|---|---|
+| Cloudflare Tunnel | `cloudflared` | arm64 boards only ([^armv6]) | Cloudflare's edge | A Cloudflare account (free tier works) |
+
+[^armv6]: cloudflared's official `arm` release is built for `GOARM=7`, which
+    faults with "illegal instruction" on `pi-zero-w`'s `armv6` CPU — see
+    "What's not supported yet" in the Cloudflare Tunnel section below.
+
+Every agent shares the same shape, whichever one you pick:
+
+- **What it is.** A binary baked into the image at build time
+  (`--ingress <agent>`), supervised by `gosd-init` for the device's whole
+  life, that carries traffic for a declared public hostname to a declared
+  local port on your app.
+- **Where TLS terminates** matters for what the agent's operator (Cloudflare,
+  in `cloudflared`'s case) can see: traffic is encrypted from the public
+  client to that operator's edge, then decrypted and forwarded to your
+  device over the agent's own tunnel protocol. Your app itself speaks plain
+  HTTP on `localhost` — the agent is what makes that safe to expose.
+  Terminating TLS yourself, end-to-end past the operator's edge, isn't
+  something any agent in this table supports.
+- **Whose account you need** is the operator whose tunnel infrastructure
+  carries your traffic — you authenticate the *tunnel*, at build/config
+  time, with a token or key from that account; the device itself never logs
+  in anywhere interactively (it has no interactive surface at all — see
+  `docs/runtime.md`).
+- **Declared entirely through `gosd.toml`**, under `[ingress.<agent>]` — the
+  ingress rule (hostname, local port, and whatever else that agent needs)
+  is a runtime setting, never baked into the image itself, so the same image
+  works for any tunnel you later create.
+- **Survives a reflash** the same way a hand-edited WiFi passphrase does —
+  see each agent's own "Surviving a reflash" section for the details.
+
+Per-agent sections follow below; Cloudflare Tunnel is the only one shipped
+today.
+
+## Cloudflare Tunnel (`gosd build --ingress cloudflared`)
 
 `gosd build --ingress cloudflared` bakes a [Cloudflare
 Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
@@ -13,7 +61,7 @@ runtime resolution (there's no `--ingress-token` build flag — unlike
 Remote/dashboard-managed tunnels and quick tunnels are out of scope for v1
 (see "Why a CLI-created tunnel" below).
 
-## Runbook
+### Runbook
 
 These steps run on your own machine, with the
 [`cloudflared`](https://github.com/cloudflare/cloudflared) CLI installed —
@@ -69,7 +117,7 @@ token, hostname, and port; decodes the token; writes cloudflared's runtime
 config; and starts the tunnel. `my-device.example.com` starts serving
 whatever your app answers on `:8080`.
 
-### Why a CLI-created tunnel
+#### Why a CLI-created tunnel
 
 Only tunnels created with the `cloudflared` CLI (steps 2-3 above) are
 supported. A tunnel created from the Cloudflare Zero Trust dashboard
@@ -88,7 +136,7 @@ device (the shape a dashboard-created tunnel's token would arrive in) is
 refused with an actionable log line rather than silently attempted — see
 "Troubleshooting" below.
 
-## What gets written on the device
+### What gets written on the device
 
 Nothing about the tunnel lives on `GOSD-BOOT` except what you typed into
 `gosd.toml`. At boot, once the network is up, `gosd-init` decodes the token
@@ -115,7 +163,7 @@ never persisted outside `/run`'s tmpfs. `cloudflared` runs as
 with `HOME=/run/gosd/cloudflared` so its own `~/.cloudflared` probing
 resolves somewhere writable instead of a nonexistent home directory.
 
-### No credentials file on `GOSD-BOOT`
+#### No credentials file on `GOSD-BOOT`
 
 A Cloudflare Tunnel is normally authorized by a credentials JSON file
 (`{"AccountTag", "TunnelSecret", "TunnelID"}`) sitting next to
@@ -125,7 +173,7 @@ it itself at boot and writes the credentials file into RAM, not onto the
 card. There is nothing to distribute, back up, or leak from `GOSD-BOOT`
 beyond the token already sitting in `gosd.toml`.
 
-## Secrets on a FAT partition
+### Secrets on a FAT partition
 
 The tunnel token sits in `gosd.toml` in plain text on `GOSD-BOOT`, a FAT32
 partition readable by anyone with the card in a computer — the same trust
@@ -136,7 +184,7 @@ WiFi password. This is a deliberate consequence of the "no credentials
 file, hand-editable `gosd.toml`" design (epic `gosd-virc`, decision 3), not
 an oversight.
 
-## Clock and TLS
+### Clock and TLS
 
 No GoSD board has a battery-backed real-time clock (see
 [`docs/runtime.md`'s "Clock" section](runtime.md#clock-starts-at-1970-until-sntp-syncs)) —
@@ -163,7 +211,7 @@ clock a roughly-correct starting point before the network even comes up;
 that's tracked separately as epic `gosd-achn` and isn't required for
 ingress to work today.
 
-## Pinned version and updates
+### Pinned version and updates
 
 The `cloudflared` binary is pinned by upstream release tag and SHA-256 in
 `internal/cloudflaredpin` — never re-hosted, matching GoSD's policy for
@@ -181,7 +229,7 @@ The only way to move to a newer `cloudflared` is:
 There's no in-place update path for the binary itself — this mirrors how
 every other baked artifact (kernel, U-Boot) updates in GoSD today.
 
-## The metrics listener
+### The metrics listener
 
 cloudflared opens its own Prometheus-style metrics HTTP endpoint by
 default, bound to `localhost` only (its own `--metrics` flag, which
@@ -193,7 +241,7 @@ policy of adding no listeners itself. It is not reachable from the tunnel
 or from the network; the ingress rule in `config.yml` forwards only to the
 one `http://localhost:<port>` your app declared.
 
-## Surviving a reflash
+### Surviving a reflash
 
 Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included. Like
 the hostname, WiFi network, and `[env]` values, a hand-edited
@@ -216,7 +264,7 @@ This needs `--data-size=expand` (or any non-zero `--data-size`) — a card
 with no data partition has nothing to snapshot to, same as every other
 provisioning value.
 
-## Troubleshooting
+### Troubleshooting
 
 `gosd-init` validates `[ingress.cloudflared]` once, at boot, and logs
 exactly one line (prefixed `cloudflared: `) if something's wrong — it
@@ -238,7 +286,7 @@ Nothing here is fatal to boot — your app still starts normally either way.
 Check the serial console (115200 baud unless `--console-baud` says
 otherwise) for these lines if the tunnel doesn't come up.
 
-## What's not supported yet
+### What's not supported yet
 
 - **Remote/dashboard-managed tunnels and quick tunnels** — v1 is
   locally-managed only (see "Why a CLI-created tunnel" above).

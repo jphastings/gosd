@@ -143,12 +143,17 @@ port = %d
 // gosd.toml > cloud-init > config.json precedence (bean gosd-4hz1). A
 // hand-edit that later uncomments the line always wins, same as today.
 //
-// ingress follows the same on/off shape as WiFi: its zero value renders the
-// commented [ingress.cloudflared] example (shown on every image, since
-// there's no consumer-independent way to know whether this image was built
-// with --ingress cloudflared support baked in — the comment itself says
-// so), and a Configured() value renders the real token/hostname/port.
-func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string, ingress IngressCloudflared) []byte {
+// ingress takes the WHOLE Ingress table, not just IngressCloudflared,
+// so a future agent's own [ingress.<agent>] section reaches Render without
+// another signature change at every call site (both here and in
+// cmd/gosd-init/internal/provsnapshot's re-render) — v1 only ever renders
+// the Cloudflared section, following the same on/off shape as WiFi: its
+// zero value renders the commented [ingress.cloudflared] example (shown on
+// every image, since there's no consumer-independent way to know whether
+// this image was built with --ingress cloudflared support baked in — the
+// comment itself says so), and a Configured() value renders the real
+// token/hostname/port.
+func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string, ingress Ingress) []byte {
 	out := header
 
 	if hostname != "" && bakeHostname {
@@ -181,8 +186,8 @@ func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		}
 	}
 
-	if ingress.Configured() {
-		out += fmt.Sprintf(ingressTemplate, ingress.Token, ingress.Hostname, ingress.Port)
+	if ingress.Cloudflared.Configured() {
+		out += fmt.Sprintf(ingressTemplate, ingress.Cloudflared.Token, ingress.Cloudflared.Hostname, ingress.Cloudflared.Port)
 	} else {
 		out += ingressCommentedOut
 	}

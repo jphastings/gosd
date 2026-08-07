@@ -161,7 +161,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ingressCloudflared, err := parseIngressFlags(ingressFlags)
+	ingressSelected, err := parseIngressFlags(ingressFlags)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := validateIngress(selected, ingressCloudflared); err != nil {
+	if err := validateIngress(selected, ingressSelected); err != nil {
 		return err
 	}
 
@@ -243,7 +243,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	var ingressGOARCHesNeeded []string
-	if ingressCloudflared {
+	if ingressSelected.Cloudflared {
 		ingressGOARCHesNeeded = ingressGOARCHes(selected)
 	}
 	shared, err := resolveSharedContent(ctx, artifactsDir, ingressGOARCHesNeeded)
@@ -299,7 +299,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ExtraExecutables:   extraExecutables,
 			ExtraFiles:         extraFiles,
 			Placeholders:       placeholderSpecs,
-			IngressCloudflared: ingressCloudflared,
+			IngressCloudflared: ingressSelected.Cloudflared,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
 		if err != nil {

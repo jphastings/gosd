@@ -316,8 +316,8 @@ func TestSnapshotRecordsAHandSetIngressSection(t *testing.T) {
 		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{Cloudflared: ingress}},
 	})
 
-	if snap := s.snapshot(t); snap.Effective.Ingress != ingress {
-		t.Errorf("snapshot effective ingress = %+v, want %+v", snap.Effective.Ingress, ingress)
+	if snap := s.snapshot(t); snap.Effective.Ingress.Cloudflared != ingress {
+		t.Errorf("snapshot effective ingress = %+v, want %+v", snap.Effective.Ingress.Cloudflared, ingress)
 	}
 }
 
@@ -369,7 +369,7 @@ func TestReflashKeepsAHandSetIngressMadeOnTheNewCard(t *testing.T) {
 	s := newStore()
 	s.seed(t, Snapshot{
 		Identity:  "old",
-		Effective: Provisioning{Ingress: gosdtoml.IngressCloudflared{Token: "old-token", Hostname: "old.example.com", Port: 8080}},
+		Effective: Provisioning{Ingress: gosdtoml.Ingress{Cloudflared: gosdtoml.IngressCloudflared{Token: "old-token", Hostname: "old.example.com", Port: 8080}}},
 	})
 
 	fresh := gosdtoml.IngressCloudflared{Token: "fresh-token", Hostname: "fresh.example.com", Port: 9090}

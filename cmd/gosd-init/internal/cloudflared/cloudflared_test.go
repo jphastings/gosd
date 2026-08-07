@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
@@ -71,7 +72,7 @@ func baseTestDeps(clock *fakeClock, log *testLog) Deps {
 		MkdirAll:     func(string, os.FileMode) error { return nil },
 		WriteFile:    func(string, []byte, os.FileMode) error { return nil },
 		Clock:        clock,
-		NewBackoff:   func() *Backoff { return NewBackoff(time.Second, 30*time.Second) },
+		NewBackoff:   func() *childbackoff.Backoff { return childbackoff.NewBackoff(time.Second, 30*time.Second) },
 		Log:          log.Printf,
 	}
 }
@@ -462,7 +463,7 @@ func TestTokenNeverAppearsInAnyLogOutput(t *testing.T) {
 		Log:   log.Printf,
 	}
 	opts := baseTestOptions(validConfig(t), nil)
-	runOnce(deps, opts, NewBackoff(time.Second, 30*time.Second))
+	runOnce(deps, opts, childbackoff.NewBackoff(time.Second, 30*time.Second))
 	if !m.run {
 		t.Fatalf("test setup: resolveMode did not run: %q", m.log)
 	}
