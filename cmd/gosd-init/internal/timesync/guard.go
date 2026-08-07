@@ -35,10 +35,13 @@ const stepAgreementTolerance = 30 * time.Second
 //
 // Not used for the very first sync (syncUntilSuccess only calls
 // setAnchor, never check): before that there's no trustworthy "current
-// clock" reading to measure a step against at all — the board has no
-// battery-backed RTC, so the clock starts every boot near the Unix
-// epoch, and *any* correct time is a huge step away from that. The floor
-// check (see checkFloor) guards the first sync instead.
+// clock" reading to measure a step against at all — some boards have no
+// battery-backed RTC at all (the Pi family), and even one that has been
+// written to before (see rtcWriteback) may have lost power since without
+// a coin cell, so a fresh boot's clock can't be assumed correct, and
+// *any* correct time might look like a huge step away from wherever it
+// started. The floor check (see checkFloor) guards the first sync
+// instead.
 type stepGuard struct {
 	// anchorClock/anchorTime record deps.Clock's reading at the moment of
 	// the most recently applied sync, and what the system clock was set

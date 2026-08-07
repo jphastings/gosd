@@ -336,6 +336,7 @@ func timesyncDeps(log func(format string, args ...any)) timesync.Deps {
 	return timesync.Deps{
 		NTP:    platform.NTP,
 		System: platform.System,
+		RTC:    platform.RTC,
 		Clock:  timesync.NewRealClock(),
 		NewBackoff: func() *timesync.Backoff {
 			return timesync.NewBackoff(timesync.DefaultBackoffBase, timesync.DefaultBackoffCap)

@@ -14,17 +14,22 @@ import (
 
 var errUnsupportedPlatform = errors.New("gosd-init: settimeofday not supported outside Linux")
 
-// NewPlatform returns the real (portable) NTP client plus a SystemClock
-// stub that fails clearly if ever invoked. It exists only to keep this
-// package buildable on non-Linux hosts; gosd-init itself is only ever
-// built and run for linux/arm64.
+// NewPlatform returns the real (portable) NTP client plus SystemClock and
+// RTC stubs that fail clearly if ever invoked. It exists only to keep
+// this package buildable on non-Linux hosts; gosd-init itself is only
+// ever built and run for linux/arm64.
 func NewPlatform() *Platform {
 	return &Platform{
 		NTP:    newBeevikClient(),
 		System: unsupportedSystemClock{},
+		RTC:    unsupportedRTC{},
 	}
 }
 
 type unsupportedSystemClock struct{}
 
 func (unsupportedSystemClock) Set(time.Time) error { return errUnsupportedPlatform }
+
+type unsupportedRTC struct{}
+
+func (unsupportedRTC) Set(time.Time) error { return errUnsupportedPlatform }
