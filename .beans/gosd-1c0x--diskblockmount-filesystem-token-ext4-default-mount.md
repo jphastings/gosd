@@ -1,11 +1,11 @@
 ---
 # gosd-1c0x
 title: 'disk/blockmount: Filesystem token (ext4 default), mount + online grow, adoption gate'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T09:58:20Z
-updated_at: 2026-08-07T13:25:44Z
+updated_at: 2026-08-07T13:27:09Z
 parent: gosd-lfu0
 blocked_by:
     - gosd-apmv
@@ -20,7 +20,7 @@ The API + runtime half of epic gosd-lfu0. disk's Options gains the typed filesys
 - [x] platform_linux.go: mount, RESIZE_FS ioctl grow (partition size derived from the block device, never assumed), sync/marker ordering; platform_other.go stubs; fake-driven tests for the full state machine incl. crash-debris cases (golden partially written; grown but marker missing; marker present)
 - [x] Explicit crash-ordering argument in the package docs (write → sync → marker → sync) + adversarial self-review BEFORE requesting JP review — probe-only adoption is the named historical failure (gosd-lirl)
 - [x] Growth-after-adoption: re-mounting an established volume must NOT re-grow or re-format; only first establishment grows
-- [ ] Quality gates + PR
+- [x] Quality gates + PR (https://github.com/jphastings/gosd/pull/192)
 
 ## Summary of Changes
 
