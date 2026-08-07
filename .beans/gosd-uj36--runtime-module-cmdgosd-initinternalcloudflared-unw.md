@@ -1,11 +1,11 @@
 ---
 # gosd-uj36
 title: Runtime module cmd/gosd-init/internal/cloudflared (unwired, fake-tested)
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T12:52:10Z
-updated_at: 2026-08-07T12:53:22Z
+updated_at: 2026-08-07T17:29:26Z
 parent: gosd-virc
 blocked_by:
     - gosd-7upw
@@ -57,7 +57,65 @@ isolation — NOT yet wired into main.go, that is bean 4).
 
 ## Todos
 
-[ ] mode.go + tests (decode, validation, config.yml golden)
-[ ] logwriter + tests (split/partial/overflow/independence)
-[ ] Run loop + fakes (gates, backoff sequence 1,2,4..30, stable reset, Stop)
-[ ] token-never-logged scan test
+[x] mode.go + tests (decode, validation, config.yml golden)
+[x] logwriter + tests (split/partial/overflow/independence)
+[x] Run loop + fakes (gates, backoff sequence 1,2,4..30, stable reset, Stop)
+[x] token-never-logged scan test
+
+
+
+## Summary of Changes
+
+Implemented `cmd/gosd-init/internal/cloudflared/` exactly per the locked
+decisions, unwired (no changes to main.go/boot/any other package):
+
+- `cloudflared.go`: `Deps`/`Options`/`Run`. `Run` resolves the mode (pure),
+  gates on network-up (2s poll, parks forever), gates on time-synced (up to 2 minutes,
+  then proceeds with a warning), writes the runtime files, then supervises
+  cloudflared: re-gating network-up before every single start (parking, not
+  backing off, if the network is down — cloudflared holds its own redundant
+  edge connections), logging pid+argv only (never env), and resetting backoff
+  after a StableAfter-length run. Fixed argv/env per the bean
+  (`tunnel --no-autoupdate --loglevel warn --config .../config.yml run`,
+  `HOME=/run/gosd/cloudflared`). `Deps.Wait`'s doc comment documents that
+  production must wire `boot.Platform.Reaper.Wait`, never `exec.Cmd.Wait`,
+  which would race the reaper's central wait4(-1) loop.
+- `mode.go`: `resolveMode` (pure — no I/O) covers every locked failure mode
+  (unconfigured/baked cross-product, missing-key(s) naming exact keys,
+  token-only -> "remote mode not supported yet", bad token, invalid hostname,
+  out-of-range port) each producing at most one actionable log line; token
+  decode tries all four base64 alphabets and tolerates unknown JSON fields;
+  `credentialsJSON`/`configYAML` render the two runtime files by hand
+  (no YAML lib), safe against injection because hostname/port are validated
+  (strict FQDN regex, 1-65535) before a run=true result is ever produced.
+- `backoff.go`: 1s/30s/no-jitter backoff, same doubling-with-cap shape as
+  `boot.Backoff`, duplicated per this package's no-cross-imports convention.
+- `logwriter.go`: mutex-guarded line-splitting prefix writer ("cloudflared: "),
+  4KiB soft cap with a truncation note, `Close` flushes a trailing partial
+  line. The mutex exists because `StartProcess` never calls `cmd.Wait`
+  (by design), so os/exec's own stdout/stderr-copying goroutine can still be
+  writing into a lineWriter after `Deps.Wait` returns and `runOnce` calls
+  `Close` — caught by `go test -race`, not merely theoretical.
+- `interfaces.go`: `Clock` (Now/After), duplicated per precedent.
+- `platform.go`: real `StartProcess` via `os/exec`, no build tags (starting a
+  process needs no Linux-only syscall, so it compiles and genuinely runs on
+  macOS too, exercised for real in `platform_test.go`).
+- Full fake-driven test suite (`*_test.go`): mode resolution table covering
+  every failure row plus the happy path; logwriter split/partial/overflow/
+  independence/Close; backoff sequence 1,2,4,8,16,30,30 and reset; Run's
+  network-up and time-synced gates (including Stop-closes-while-waiting);
+  supervise's exact argv/env, escalating-backoff sequence, stable-reset, and
+  network re-gate-before-restart; a real end-to-end write of credentials.json/
+  config.yml through fake file funcs, byte-for-byte matched against the
+  golden content; a token-never-appears-in-any-log-output scan across every
+  failure mode plus a full runOnce with relayed stdout/stderr; and a real
+  StartProcess integration test (env isolation from the parent process,
+  missing-binary error).
+
+Gates: `go test ./cmd/gosd-init/internal/cloudflared/...` (including
+`-race`), `go test ./...`, `go vet ./...`, `gofmt -l .`, and
+`golangci-lint run ./...` both native and `GOOS=linux` are all clean.
+An initial `go test ./...` run hit `no space left on device` in two
+unrelated packages (`internal/build`, `internal/diskfmt`) from concurrent
+sibling agents on the shared machine; a re-run once disk freed up passed
+every package.
