@@ -2,6 +2,7 @@ package gosdtoml
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -173,6 +174,100 @@ data_flush = [1, 2, 3]
 				`gosd.toml data_flush isn't a plain boolean (found array); using the baked default`,
 			},
 		},
+		{
+			name: "full ingress config parses",
+			data: `
+[ingress.cloudflared]
+token = "example-tunnel-token"
+hostname = "app.example.com"
+port = 8080
+`,
+			want: Config{Ingress: Ingress{Cloudflared: IngressCloudflared{
+				Token:    "example-tunnel-token",
+				Hostname: "app.example.com",
+				Port:     8080,
+			}}},
+		},
+		{
+			name: "missing [ingress.cloudflared] table leaves Ingress zero",
+			data: `hostname = "my-device"`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
+			name: "bare scalars under [ingress.cloudflared] are coerced, with a key-only warning each",
+			data: `
+[ingress.cloudflared]
+token = 123456789
+hostname = true
+port = "8080"
+`,
+			want: Config{Ingress: Ingress{Cloudflared: IngressCloudflared{
+				Token:    "123456789",
+				Hostname: "true",
+				Port:     8080,
+			}}},
+			wantWarnings: []string{
+				`gosd.toml [ingress.cloudflared] token is a bare number, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.cloudflared] hostname is a bare boolean, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.cloudflared] port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+			},
+		},
+		{
+			name: "ingress warning order is deterministic (token, hostname, port), regardless of file order",
+			data: `
+[ingress.cloudflared]
+port = "8080"
+hostname = true
+token = 123456789
+`,
+			want: Config{Ingress: Ingress{Cloudflared: IngressCloudflared{
+				Token:    "123456789",
+				Hostname: "true",
+				Port:     8080,
+			}}},
+			wantWarnings: []string{
+				`gosd.toml [ingress.cloudflared] token is a bare number, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.cloudflared] hostname is a bare boolean, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.cloudflared] port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+			},
+		},
+		{
+			name: "non-scalar ingress values are dropped, with a warning each",
+			data: `
+[ingress.cloudflared]
+token = ["a", "b"]
+hostname = { x = 1 }
+port = 2026-07-08T00:00:00Z
+`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml [ingress.cloudflared] token isn't a plain value (found array); ignoring it`,
+				`gosd.toml [ingress.cloudflared] hostname isn't a plain value (found table); ignoring it`,
+				`gosd.toml [ingress.cloudflared] port isn't a plain value (found time.Time); ignoring it`,
+			},
+		},
+		{
+			name: "an ingress port that isn't all digits when quoted is dropped, with a warning",
+			data: `
+[ingress.cloudflared]
+port = "80-80"
+`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml [ingress.cloudflared] port is not a whole number; ignoring it`,
+			},
+		},
+		{
+			name: "a malformed ingress entry still lets hostname parse",
+			data: `
+hostname = "my-device"
+
+[ingress.cloudflared]
+token = ["a", "b"]
+`,
+			want:         Config{Hostname: "my-device"},
+			wantWarnings: []string{`gosd.toml [ingress.cloudflared] token isn't a plain value (found array); ignoring it`},
+		},
 	}
 
 	for _, tt := range tests {
@@ -198,3 +293,77 @@ data_flush = [1, 2, 3]
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestIngressWarningsNeverIncludeTheTokenValue guards the locked decision
+// that [ingress.cloudflared] warnings name only the key, never the value:
+// the token is a secret and must never end up in a log line, however it's
+// malformed. Each case embeds a distinctive marker in the raw token value
+// and scans every warning Parse returns (not just the token-specific one -
+// a bug could just as easily leak it into an unrelated message) for it.
+func TestIngressWarningsNeverIncludeTheTokenValue(t *testing.T) {
+	const secretMarker = "sk-super-secret-tunnel-token-should-never-leak"
+
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "token coerced from a bare number",
+			data: "[ingress.cloudflared]\ntoken = 8471936502\n",
+		},
+		{
+			name: "token coerced from a bare boolean",
+			data: "[ingress.cloudflared]\ntoken = true\n",
+		},
+		{
+			name: "token dropped as an array",
+			data: `[ingress.cloudflared]
+token = ["` + secretMarker + `"]
+`,
+		},
+		{
+			name: "token dropped as an inline table",
+			data: `[ingress.cloudflared]
+token = { value = "` + secretMarker + `" }
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, warnings, err := Parse([]byte(tt.data))
+			if err != nil {
+				t.Fatalf("Parse(%q) unexpected error: %v", tt.data, err)
+			}
+			if len(warnings) == 0 {
+				t.Fatalf("Parse(%q) produced no warnings, want at least one", tt.data)
+			}
+			for _, w := range warnings {
+				if strings.Contains(w, secretMarker) || strings.Contains(w, "8471936502") {
+					t.Errorf("Parse(%q) warning %q leaks the token value", tt.data, w)
+				}
+			}
+		})
+	}
+}
+
+func TestIngressCloudflaredConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		c    IngressCloudflared
+		want bool
+	}{
+		{name: "zero value", c: IngressCloudflared{}, want: false},
+		{name: "token only", c: IngressCloudflared{Token: "t"}, want: true},
+		{name: "hostname only", c: IngressCloudflared{Hostname: "app.example.com"}, want: true},
+		{name: "port only", c: IngressCloudflared{Port: 8080}, want: true},
+		{name: "all fields", c: IngressCloudflared{Token: "t", Hostname: "app.example.com", Port: 8080}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.c.Configured(); got != tt.want {
+				t.Errorf("%+v.Configured() = %v, want %v", tt.c, got, tt.want)
+			}
+		})
+	}
+}

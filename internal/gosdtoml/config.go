@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
@@ -22,6 +23,7 @@ type Config struct {
 	Hostname string            `toml:"hostname"`
 	Wifi     Wifi              `toml:"wifi"`
 	Env      map[string]string `toml:"env"`
+	Ingress  Ingress           `toml:"ingress"`
 
 	// DataFlush overrides config.json's baked vfat "flush" mount-option
 	// default (gosd build --data-flush, see internal/initcfg.Config.
@@ -43,6 +45,35 @@ type Wifi struct {
 	Passphrase string `toml:"passphrase"`
 }
 
+// Ingress is a table of the internet-facing tunnels this device declares.
+// It's a table of tables — not IngressCloudflared inlined directly under
+// [ingress] — so a future ingress provider gets its own sibling table
+// ([ingress.something-else]) without a schema break.
+type Ingress struct {
+	Cloudflared IngressCloudflared `toml:"cloudflared"`
+}
+
+// IngressCloudflared is a locally-managed Cloudflare Tunnel declaration:
+// the tunnel token (from `cloudflared tunnel token <name>` or the
+// dashboard), the public hostname it should answer for, and the local port
+// its traffic is forwarded to. All three are required for the tunnel to
+// actually run; Parse only shapes the values (see coerceIngress) and never
+// checks that — FQDN shape, port range, which keys are even present — is
+// semantic validation that belongs to the future cloudflared runtime
+// module, once it exists to be validated against (validHostname's
+// precedent: gosd.toml is parsed long before that).
+type IngressCloudflared struct {
+	Token    string `toml:"token"`
+	Hostname string `toml:"hostname"`
+	Port     int    `toml:"port"`
+}
+
+// Configured reports whether any field has been set, i.e. whether this
+// gosd.toml declares (or attempts to declare) a Cloudflare Tunnel at all.
+func (c IngressCloudflared) Configured() bool {
+	return c.Token != "" || c.Hostname != "" || c.Port != 0
+}
+
 // rawConfig mirrors Config, except [env] is decoded into map[string]any
 // rather than map[string]string. Decoding straight into map[string]string
 // would make toml.Decode itself fail whenever a hand-editing user writes a
@@ -54,7 +85,22 @@ type rawConfig struct {
 	Hostname  string         `toml:"hostname"`
 	Wifi      Wifi           `toml:"wifi"`
 	Env       map[string]any `toml:"env"`
+	Ingress   rawIngress     `toml:"ingress"`
 	DataFlush any            `toml:"data_flush"`
+}
+
+// rawIngress mirrors Ingress the way rawConfig mirrors Config: each
+// [ingress.cloudflared] field is decoded into `any` so coerceIngress can
+// apply its own, more forgiving typing rules instead of letting a bare
+// scalar fail the whole parse.
+type rawIngress struct {
+	Cloudflared rawIngressCloudflared `toml:"cloudflared"`
+}
+
+type rawIngressCloudflared struct {
+	Token    any `toml:"token"`
+	Hostname any `toml:"hostname"`
+	Port     any `toml:"port"`
 }
 
 // Parse parses gosd.toml's contents into a Config. Missing data (nil or
@@ -77,7 +123,11 @@ type rawConfig struct {
 // boolean, so a quoted "true"/"false" is coerced with a warning, and
 // anything else is dropped (falling back to config.json's baked default)
 // with a warning of its own — a malformed override must never stop boot
-// (bean gosd-9m1k).
+// (bean gosd-9m1k). [ingress.cloudflared] gets the same [env]/data_flush
+// treatment field by field (see coerceIngress), except its warnings never
+// echo the coerced value at all, even for hostname and port: token is a
+// secret, and the whole table follows one discipline rather than
+// special-casing just that field (mergeUserEnv precedent).
 func Parse(data []byte) (Config, []string, error) {
 	if len(data) == 0 {
 		return Config{}, nil, nil
@@ -93,10 +143,13 @@ func Parse(data []byte) (Config, []string, error) {
 	if dataFlushWarning != "" {
 		warnings = append([]string{dataFlushWarning}, warnings...)
 	}
+	ingress, ingressWarnings := coerceIngress(raw.Ingress)
+	warnings = append(warnings, ingressWarnings...)
 	cfg := Config{
 		Hostname:  raw.Hostname,
 		Wifi:      raw.Wifi,
 		Env:       env,
+		Ingress:   ingress,
 		DataFlush: dataFlush,
 	}
 	return cfg, warnings, nil
@@ -178,6 +231,104 @@ func coerceEnv(raw map[string]any) (map[string]string, []string) {
 		env = nil
 	}
 	return env, warnings
+}
+
+// coerceIngress turns the raw [ingress.cloudflared] table into an Ingress,
+// field by field: token and hostname are meant to be quoted strings, so a
+// bare scalar is coerced to text with a warning, the same leniency [env]
+// applies; port is meant to be a bare integer, so a quoted all-digit string
+// is also accepted with a warning, data_flush's mirror-image leniency (see
+// coerceDataFlush). Every warning names only the key, never the value —
+// token is a secret, and the other two fields follow the same discipline
+// for consistency (mergeUserEnv precedent) rather than special-casing just
+// the one field that needs it. Warning order is fixed (token, hostname,
+// port) rather than sorted, since this is a fixed-shape struct, not a map
+// with unpredictable iteration order like [env] — Parse's overall output
+// is still deterministic.
+func coerceIngress(raw rawIngress) (Ingress, []string) {
+	table := raw.Cloudflared
+	var warnings []string
+
+	token, warning := coerceIngressString("token", table.Token)
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	hostname, warning := coerceIngressString("hostname", table.Hostname)
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	port, warning := coerceIngressPort(table.Port)
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+
+	return Ingress{Cloudflared: IngressCloudflared{Token: token, Hostname: hostname, Port: port}}, warnings
+}
+
+// coerceIngressString coerces one of [ingress.cloudflared]'s string fields
+// (token or hostname): a bare scalar is coerced to its string form, a
+// non-scalar is dropped, and — unlike coerceEnv's equivalent path — neither
+// warning ever shows the value, coerced or otherwise, so a hand-edited
+// token can never leak into a log.
+func coerceIngressString(key string, raw any) (string, string) {
+	switch v := raw.(type) {
+	case nil:
+		return "", ""
+	case string:
+		return v, ""
+	case int64, float64, bool:
+		return fmt.Sprintf("%v", v), fmt.Sprintf(
+			"gosd.toml [ingress.cloudflared] %s is a bare %s, not a quoted string; using it as text — add quotes to silence this warning",
+			key, tomlTypeName(v),
+		)
+	default:
+		return "", fmt.Sprintf(
+			"gosd.toml [ingress.cloudflared] %s isn't a plain value (found %s); ignoring it",
+			key, tomlTypeName(v),
+		)
+	}
+}
+
+// coerceIngressPort coerces [ingress.cloudflared]'s port field: a bare TOML
+// integer is used as-is (including out-of-range or negative values — port
+// range is semantic validation, not Parse's job, see Ingress's docstring);
+// a quoted, all-digit string ("8080") is accepted with a warning, the same
+// leniency data_flush applies the other way around; anything else leaves
+// the port unset (0) with a warning. As with the string fields, the value
+// is never echoed.
+func coerceIngressPort(raw any) (int, string) {
+	switch v := raw.(type) {
+	case nil:
+		return 0, ""
+	case int64:
+		return int(v), ""
+	case string:
+		if isAllDigits(v) {
+			if port, err := strconv.Atoi(v); err == nil {
+				return port, "gosd.toml [ingress.cloudflared] port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning"
+			}
+		}
+		return 0, "gosd.toml [ingress.cloudflared] port is not a whole number; ignoring it"
+	default:
+		return 0, fmt.Sprintf(
+			"gosd.toml [ingress.cloudflared] port isn't a plain value (found %s); ignoring it",
+			tomlTypeName(v),
+		)
+	}
+}
+
+// isAllDigits reports whether s is non-empty and every rune is an ASCII
+// digit — the shape coerceIngressPort accepts for a quoted port number.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // tomlTypeName names the decoded Go type of a TOML value in the vocabulary

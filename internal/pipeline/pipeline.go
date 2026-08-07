@@ -223,7 +223,11 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// (sanitized main-package name) renders commented, like [wifi], so an
 	// Imager wizard's cloud-init hostname isn't always shadowed by it (see
 	// bean gosd-4hz1 and gosdtoml.Render's docstring).
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env))
+	//
+	// The zero IngressCloudflared value below always renders the commented
+	// example: gosd build has no --ingress flag yet (bean gosd-7upw is
+	// schema-only), so there's never a real value to bake here.
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env, gosdtoml.IngressCloudflared{}))
 
 	// opts.Placeholders land at the FAT root the same way, right after
 	// gosd.toml and still before the read-and-hash loop below, so they're

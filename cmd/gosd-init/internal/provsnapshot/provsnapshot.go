@@ -310,8 +310,10 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 	// operator intent (a hand-edit or a wizard hostname that already took
 	// effect), so it's written back uncommented, exactly like a hand-edit -
 	// gosdtoml.Render itself still leaves the line commented when merged.
-	// Hostname is empty (nothing to restore).
-	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env)
+	// Hostname is empty (nothing to restore). merged.Ingress carries
+	// through whatever this boot's own gosd.toml already had (see apply),
+	// so this write can't blank it out as a side effect.
+	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env, merged.Ingress.Cloudflared)
 	if err := deps.WriteBootFile(BootConfigFile, rendered); err != nil {
 		// The values still apply to this boot, so the board comes back
 		// now; leaving the snapshot untouched is what makes the next boot
@@ -381,7 +383,13 @@ func freshWifi(in Input) bool {
 // changed anything at all (a plan can be a no-op when a restored value
 // already matches what the new image baked).
 func (p plan) apply(cfg gosdtoml.Config) (gosdtoml.Config, bool) {
-	merged := gosdtoml.Config{Hostname: cfg.Hostname, Wifi: cfg.Wifi, Env: maps.Clone(cfg.Env)}
+	// Ingress isn't part of a plan (nothing restores it across a reflash
+	// yet — bean gosd-7upw is schema-only), but it must still survive an
+	// unrelated hostname/WiFi/[env] restore write on the SAME card: cfg is
+	// this boot's own gosd.toml, so carrying its Ingress through here is
+	// what stops the write below from silently blanking a hand-edited
+	// [ingress.cloudflared] table.
+	merged := gosdtoml.Config{Hostname: cfg.Hostname, Wifi: cfg.Wifi, Env: maps.Clone(cfg.Env), Ingress: cfg.Ingress}
 	if p.Hostname != "" {
 		merged.Hostname = p.Hostname
 	}
@@ -515,9 +523,13 @@ type bakedWifi struct {
 // GOSD-BOOT, so the "leave it commented for the wizard" concern that
 // gosdtoml.Render's bakeHostname flag exists for doesn't apply here - the
 // snapshot must round-trip whatever Effective.Hostname actually is through
-// decode's gosdtoml.Parse.
+// decode's gosdtoml.Parse. Ingress passes the zero value: like DataFlush,
+// it isn't restored by the provisioning snapshot across a reflash yet
+// (Provisioning carries no Ingress field — that's the later provsnapshot
+// child bean in the ingress epic, gosd-virc), so there's nothing "real" to
+// round-trip through this file yet.
 func (s Snapshot) encode() ([]byte, []byte, error) {
-	tomlData := gosdtoml.Render(s.Effective.Hostname, true, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, s.Effective.Env)
+	tomlData := gosdtoml.Render(s.Effective.Hostname, true, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, s.Effective.Env, gosdtoml.IngressCloudflared{})
 	meta := snapshotMeta{
 		Schema:   schemaVersion,
 		Identity: s.Identity,
