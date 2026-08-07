@@ -113,10 +113,10 @@ func TestConcurrentWaitersOnDistinctPidsBothResolve(t *testing.T) {
 func TestStashSurvivesGrandchildReapsBeforeWait(t *testing.T) {
 	r := newReaper()
 
-	// gosd-init supervises one child at a time and calls Wait as soon as
-	// Start returns, so an eviction that mattered would need a whole stash's
-	// worth of orphaned grandchildren to be reaped inside that window. A
-	// realistic burst leaves the app's status claimable.
+	// gosd-init calls Wait on a child as soon as its own Start returns, so
+	// an eviction that mattered would need a whole stash's worth of
+	// orphaned grandchildren to be reaped inside that one child's own
+	// window. A realistic burst leaves the app's status claimable.
 	r.deliver(4242, 5)
 	for pid := 5000; pid < 5000+maxStashedResults-1; pid++ {
 		r.deliver(pid, 0)
