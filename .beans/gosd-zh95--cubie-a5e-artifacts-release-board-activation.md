@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-07T12:30:02Z
+updated_at: 2026-08-07T12:31:07Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-o7jv
@@ -58,5 +58,9 @@ This bean splits into two PRs per the tag-first/bump-second rule (CLAUDE.md's
 - Quality gates (go test ./..., go vet ./..., gofmt -l ., golangci-lint run
   ./... both darwin and GOOS=linux, actionlint) all green.
 - Triggered the required pre-merge workflow_dispatch run on the PR branch
-  per CLAUDE.md's "the tag run must not be the jobs' first execution" rule;
-  run URL to follow in a second Progress update once available.
+  per CLAUDE.md's "the tag run must not be the jobs' first execution" rule:
+  https://github.com/jphastings/gosd/actions/runs/31178515476 (PR #191). Not
+  watched to completion here — the orchestrator monitors it. Remaining todos
+  (green run, PR merge, tag push, three-way verification, PR 2 activation)
+  are all downstream of that run and of JP's tag push, so status stays
+  in-progress.
