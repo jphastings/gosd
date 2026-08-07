@@ -112,8 +112,19 @@ func TestInspectRefusesUnknownIncompatFeatures(t *testing.T) {
 	head := ext4HeadOnlyBackingFile(t)
 
 	// Set a bit outside ext4KnownIncompat (e.g. the "encrypt" bit, 0x10000).
-	const unknownBit = 0x10000
-	f, err := os.OpenFile(head, os.O_RDWR, 0)
+	setEXT4IncompatBit(t, head, 0x10000)
+
+	_, err := Inspect(head)
+	if err == nil {
+		t.Fatal("Inspect with an unknown incompat feature bit = nil error, want a refusal")
+	}
+}
+
+// setEXT4IncompatBit ORs bit into the backing file's ext4 feature_incompat
+// field, in place.
+func setEXT4IncompatBit(t *testing.T, path string, bit uint32) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("opening to corrupt: %v", err)
 	}
@@ -121,17 +132,32 @@ func TestInspectRefusesUnknownIncompatFeatures(t *testing.T) {
 	if _, err := f.ReadAt(cur[:], ext4SuperblockOffset+ext4SuperblockOffFeatureIncompat); err != nil {
 		t.Fatalf("reading feature_incompat: %v", err)
 	}
-	binary.LittleEndian.PutUint32(cur[:], binary.LittleEndian.Uint32(cur[:])|unknownBit)
+	binary.LittleEndian.PutUint32(cur[:], binary.LittleEndian.Uint32(cur[:])|bit)
 	if _, err := f.WriteAt(cur[:], ext4SuperblockOffset+ext4SuperblockOffFeatureIncompat); err != nil {
 		t.Fatalf("writing feature_incompat: %v", err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
 	}
+}
 
-	_, err = Inspect(head)
-	if err == nil {
-		t.Fatal("Inspect with an unknown incompat feature bit = nil error, want a refusal")
+// TestInspectToleratesRecoverFlag pins the fix for the bug CI's
+// qemu-disk-ext4 job (gosd-ucgr) found by actually rebooting past a hard
+// qemu kill: the kernel sets INCOMPAT_RECOVER (0x0004, "needs journal
+// replay") on essentially every real reboot — GoSD boards never cleanly
+// unmount — so treating it as an unknown feature refused adoption after
+// almost every boot, not just a crash. Inspect must read straight through
+// it, the same as it would for a pristine volume.
+func TestInspectToleratesRecoverFlag(t *testing.T) {
+	head := ext4HeadOnlyBackingFile(t)
+	setEXT4IncompatBit(t, head, ext4IncompatRecover)
+
+	got, err := Inspect(head)
+	if err != nil {
+		t.Fatalf("Inspect with only INCOMPAT_RECOVER set: %v", err)
+	}
+	if got.FS != EXT4 {
+		t.Errorf("Inspect with only INCOMPAT_RECOVER set reported FS %q, want ext4", got.FS)
 	}
 }
 

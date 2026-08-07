@@ -547,9 +547,9 @@ the `disk`/`emmc` packages at once.
 
 If your app needs more storage than that, the answer today is an attached disk
 rather than a bigger `/data`: the [`disk` package](#attached-disk-storage-disk-package)
-formats an SSD or USB drive as **exFAT**, which has neither this ceiling nor
-FAT32's 4GiB-per-file one. `/data` remains the place for state; bulk media
-belongs on the drive holding it.
+formats an SSD or USB drive as **ext4** by default, or **exFAT** on request —
+neither has this ceiling or FAT32's 4GiB-per-file one. `/data` remains the
+place for state; bulk media belongs on the drive holding it.
 
 ## Onboard eMMC storage (Rockchip boards)
 
@@ -625,9 +625,9 @@ if res.Err != nil {
 Everything `emmc` guarantees, `disk` guarantees identically: it returns
 immediately and the channel delivers exactly one `Result` before
 closing; formatting is idempotent and keyed on the label, so a disk
-already carrying a volume with your label is only mounted; a blank disk
-is always formatted; `destructive` gates everything else; `label` is 11
-ASCII characters, FAT's own limit (and equally valid as an exFAT label).
+already carrying a volume with your label *and* filesystem is only
+mounted (not re-formatted, nor re-grown — see "ext4 by default" below);
+a blank disk is always formatted; `destructive` gates everything else.
 
 - **Discovery is an allowlist, and never picks the boot media.** Only
   `nvme*` (NVMe namespaces), `sd*` (SCSI/USB mass storage), `vd*`
@@ -651,71 +651,109 @@ ASCII characters, FAT's own limit (and equally valid as an exFAT label).
   the same volume over USB (`disk.Unmount` first — expose or mount, never
   both), and it avoids the privileged partition-table reread. A host plugging
   in sees a drive with no partition table, which Windows, macOS and Linux all
-  mount happily. The FAT caveats from `/data` apply unchanged to both
-  filesystems: no unix permissions, ownership, symlinks or hard links, and
-  not power-loss-robust (write with the sequence under "Making a write
-  durable" above). A FAT32 volume also honors the same `GOSD_DATA_FLUSH`
-  setting as `/data` (`gosd build --data-flush`/`gosd.toml`'s `data_flush`);
-  exFAT never took the `flush` mount option and is unaffected either way.
+  mount happily.
 - **When nothing suitable is attached**, `FormatAndMount`'s channel yields
   `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
   here" rather than a fatal error, exactly as `examples/emmcstorage` does for
   `ErrNoEMMC`.
 
-### FAT32 or exFAT
+`examples/diskstorage` is the worked example — it also doubles as CI's
+`qemu-disk-ext4` job's test app, so it's exercised on every PR.
 
-`FormatAndMount` writes **FAT32**, which every host mounts and every
-GoSD board's kernel can. Its price is two hard ceilings: **no single
-file may exceed 4 GiB**, however large the disk, and **GoSD will only
-create a FAT32 volume up to 256 GiB** — point it at a 512 GB SSD and it
-refuses before touching the disk, naming the limit, because the FAT32
-volume it would write past that size is corrupt (the pure-Go formatter
-counts the sectors in each file allocation table in 16 bits). exFAT has
-neither ceiling. `FormatAndMountWith` takes the alternative:
+### ext4 by default, or FAT32/exFAT for removable media
+
+`FormatAndMount`'s zero value — and `FormatAndMountWith`'s
+`Options{}` — formats **ext4**, not FAT32: a deliberate breaking change
+from `disk`'s earlier default, called out in the release notes of the
+version that shipped it (epic `gosd-lfu0`). Internal drives are what
+`disk` is almost always used for, where host-OS readability doesn't
+matter and crash-safety does, so that's what the zero value now buys
+you. Formatting writes a pristine, checked-in golden ext4 image
+(`internal/diskfmt/ext4golden`) straight to the device — no `mkfs.ext4`
+binary, no pure-Go mke2fs — then grows it to the disk's actual size with
+a single online `EXT4_IOC_RESIZE_FS` ioctl, exactly once, at first
+establishment; a later mount of an already-established volume adopts it
+(gated on a hidden completion marker — see `internal/blockmount`'s
+package doc for the full crash-ordering argument) rather than re-growing
+or reformatting it.
+
+**The journal is not a substitute for the fsync pattern above.** ext4's
+journal buys metadata crash-*consistency* (no half-written inodes or
+directory entries after a power cut) and replays automatically at the
+next mount — but, same as `/data`'s FAT32, it says nothing about
+*your* file's data reaching the disk before a power cut. Durable writes
+to an ext4-mounted `disk` volume use the exact four-step
+write-sync-rename-sync sequence from "Making a write durable" above; the
+journal changes what a crash can corrupt, not whether your own
+unfsynced write survives one.
+
+`CONFIG_EXT4_FS` is required in the board's kernel — `COMPATIBILITY.md`'s
+"ext4 on attached disks" row says which boards have it (the Pi family
+does not, as of this writing). Where it's missing, `disk` reports
+`ErrUnsupportedFS` *before writing anything* — it reads
+`/proc/filesystems` first — including when ext4 is only the silent
+zero-value default:
+
+```go
+res := <-disk.FormatAndMount("APPDATA", "/storage", false)
+if errors.Is(res.Err, disk.ErrUnsupportedFS) {
+	// This board's kernel has no ext4 (e.g. a Pi); fall back explicitly.
+	res = <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
+		Filesystem: disk.FAT32,
+	})
+}
+```
+
+FAT32 and exFAT remain available as explicit `Options.Filesystem`
+choices for the case ext4's default doesn't serve: **removable media
+meant to be read on another host**, where FAT32's universal readability
+— or exFAT's, past FAT32's two ceilings — is the point.
 
 ```go
 res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
 	Filesystem:  disk.ExFAT,
 	Destructive: true,
 })
-if errors.Is(res.Err, disk.ErrUnsupportedFS) {
-	// This board's kernel has no exFAT; fall back, disk untouched.
-	res = <-disk.FormatAndMount("APPDATA", "/storage", true)
-}
 ```
 
-`Options`' zero value is exactly what `FormatAndMount` does — FAT32,
-discover the disk, refuse to overwrite — so it is the one call to reach
-for when you want to vary anything, including `Device` (which
-`FormatAndMountDevice` sets for you).
+Three things are worth knowing about the FAT-family options:
 
-Three things are worth knowing about exFAT here:
-
-- **An exFAT disk that already carries your label is mounted, not
-  reformatted** — whichever `Filesystem` you asked for. Most SSDs and
-  USB drives ship exFAT, and if such a drive already holds your app's
-  volume then that data is the reason it was plugged in. Converting it
-  would destroy it, so `disk` never does. (A volume with somebody
-  *else's* label is still refused without `destructive=true`, as
-  always.)
-- **Not every board's kernel can mount it.** `CONFIG_EXFAT_FS` is
+- **`FormatAndMountWith` writes FAT32** on request, with two hard
+  ceilings: **no single file may exceed 4 GiB**, however large the disk,
+  and **GoSD will only create a FAT32 volume up to 256 GiB** — point it
+  at a 512 GB SSD and it refuses before touching the disk, naming the
+  limit, because the FAT32 volume it would write past that size is
+  corrupt (the pure-Go formatter counts the sectors in each file
+  allocation table in 16 bits). **exFAT has neither ceiling**, and an
+  exFAT disk that already carries your label is mounted, not
+  reformatted — whichever `Filesystem` you asked for, since most SSDs
+  and USB drives ship exFAT already, and if one already holds your
+  app's volume that data is the reason it was plugged in. Neither FAT
+  variant is crash-safe: both carry the same caveats as `/data` — no
+  unix permissions, ownership, symlinks or hard links, and not
+  power-loss-robust without the fsync sequence above. A FAT32 volume
+  also honors the same `GOSD_DATA_FLUSH` setting as `/data` (`gosd build
+  --data-flush`/`gosd.toml`'s `data_flush`); exFAT never took the
+  `flush` mount option and is unaffected either way.
+- **Not every board's kernel can mount exFAT.** `CONFIG_EXFAT_FS` is
   required, and `COMPATIBILITY.md`'s "exFAT on attached disks" row says
-  which boards have it in their published artifacts. Where it is
-  missing, `disk` reports `ErrUnsupportedFS` *before writing anything*
-  — it reads `/proc/filesystems` first — so a fallback like the one
-  above always finds the disk intact. This applies to reading too: an
-  exFAT drive on a board whose kernel lacks the driver reports the same
-  error rather than a bare mount failure.
-- **The formatter is GoSD's own.** `go-diskfs`, which writes our FAT32,
-  has no exFAT support, so `internal/diskfmt` writes exFAT directly from
-  the Microsoft specification — pure Go, no `mkfs.exfat`, no root. It
-  writes the main and backup boot regions, the FAT, the allocation
-  bitmap, a BMP-complete up-case table and a root directory carrying the
-  label.
+  which boards have it in their published artifacts; the preflight and
+  `ErrUnsupportedFS` behavior are identical to ext4's, above.
+- **Both FAT-family formatters are GoSD's own.** `go-diskfs` writes our
+  FAT32; `internal/diskfmt` writes exFAT directly from the Microsoft
+  specification, since `go-diskfs` has no exFAT support — pure Go, no
+  `mkfs.exfat`, no root.
+- **Label length depends on the filesystem**: ext4's is 16 ASCII
+  characters (its `s_volume_name` field), FAT32/exFAT's is 11 (FAT's own
+  limit, and equally valid as an exFAT label) — pass a label longer than
+  the filesystem you're asking for allows and `FormatAndMountWith`
+  rejects it before touching the disk.
 
-There is no `disk`-specific example yet; `examples/emmcstorage` is the
-shape to copy — the only difference is the import and the sentinel you
-check for.
+A label match against a *different* filesystem than requested — a drive
+that arrived pre-formatted some other way, or an app whose `Filesystem`
+choice changed across an upgrade — is never silently converted: it's
+treated like any other foreign content, refused unless
+`Destructive: true`, exactly like a label that doesn't match at all.
 
 ## Logging
 

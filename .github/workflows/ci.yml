@@ -124,7 +124,7 @@ jobs:
       # narrower, faster check that the pure-Go, no-root, arm64 cross-
       # compile path works for the binaries gosd assembles into images.
       - name: Cross-compile arm64 targets (CGO disabled)
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello ./examples/usbserial ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/usbwebsite ./examples/chime
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello ./examples/usbserial ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/diskstorage ./examples/usbwebsite ./examples/chime
       # GOARM=6 is the pi-zero-w board's target (bean gosd-2j6z, keystone for
       # gosd-et0q): a narrower check than the arm64 one above, just proving
       # the 32-bit ARM cross-compile path works for the binaries every board
@@ -139,7 +139,7 @@ jobs:
       # size assertions only get checked for armv6 by this step, so don't
       # drop chime from the list without adding ./sound in its place.
       - name: Cross-compile armv6 targets (CGO disabled)
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./examples/hello ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/usbwebsite ./examples/chime
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./examples/hello ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/diskstorage ./examples/usbwebsite ./examples/chime
       - name: Build gosd CLI for host
         run: go build ./cmd/gosd
 
@@ -359,3 +359,70 @@ jobs:
             echo "the app started despite a corrupt data partition" >&2
             exit 1
           fi
+
+  # Proves ext4 is genuinely disk/'s default (Options{}'s zero value, not an
+  # explicit disk.EXT4 token) end to end on the real boot path: a second,
+  # blank virtio disk — attached only to qemu for this job, never part of
+  # the built image — is formatted from internal/diskfmt/ext4golden's image
+  # and grown to its own size on first boot, survives qemu being
+  # hard-killed (boot-and-grep.sh's kill/pkill sends the qemu process no
+  # clean-shutdown signal, doubling as a power cut exactly as
+  # qemu-expand-data's does), and comes back adopted rather than
+  # reformatted on the very next boot — the counter file in
+  # examples/diskstorage only reaches "2" if last boot's fsync'd write
+  # (docs/runtime.md's four-step pattern) survived the journal replay.
+  # Mirrors qemu-expand-data's shape. (gosd-vag9 tracks an unrelated
+  # SHA-pinning cleanup shared with that job and qemu-boot; not repeated
+  # here on purpose so this job's discipline doesn't get out of sync with
+  # its own future fix.)
+  qemu-disk-ext4:
+    name: "qemu ext4 disk default: format, grow, crash-safe adoption"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache downloaded board artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/gosd/artifacts
+          key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
+      - name: Install qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+      - name: gosd build ./examples/diskstorage --board=qemu-virt (real artifacts)
+        run: |
+          mkdir -p dist
+          go run ./cmd/gosd build ./examples/diskstorage \
+            --board=qemu-virt \
+            --hostname ci-qemu-disk-ext4 \
+            -o dist/diskstorage-qemu-virt.img
+      # A few GiB, sparse, well past ext4golden's fixed 512MiB image so the
+      # "grew, not golden" assertion below is unambiguous — and cheap to
+      # create/attach since qemu never reads the unwritten tail.
+      - name: Create a second, blank virtio disk
+        run: truncate -s 2G dist/disk2.img
+      - name: "First boot: formats the second disk as ext4 (the zero-value default) and grows it"
+        run: |
+          export QEMU_EXTRA_ARGS=$'-drive\nif=none,file=dist/disk2.img,format=raw,id=hd1\n-device\nvirtio-blk-pci,drive=hd1,romfile='
+          ./scripts/boot-and-grep.sh dist/diskstorage-qemu-virt.img first.log \
+            "gosd disk: DISKTEST ready at /storage (device /dev/vdb)" \
+            "gosd disk: boots=1"
+      - name: "Assert the grow ran: filesystem size tracks the 2GiB disk, not the 512MiB golden image"
+        run: ./scripts/assert-disk-grew.sh first.log
+      # Hard-killing qemu (boot-and-grep.sh's kill/pkill, no guest shutdown)
+      # doubles as a power cut, same as qemu-expand-data: everything the
+      # second boot depends on — the golden-image write, the grow, and the
+      # establishment marker (internal/blockmount's EXT4EstablishedMarker) —
+      # must already be durable on the disk.
+      - name: "Second boot: same two disks, hard-killed and rebooted — adopts, does not reformat"
+        run: |
+          export QEMU_EXTRA_ARGS=$'-drive\nif=none,file=dist/disk2.img,format=raw,id=hd1\n-device\nvirtio-blk-pci,drive=hd1,romfile='
+          ./scripts/boot-and-grep.sh dist/diskstorage-qemu-virt.img second.log \
+            "gosd disk: DISKTEST ready at /storage (device /dev/vdb)" \
+            "gosd disk: boots=2"
+      - name: "Assert the grown size persisted through adoption (no re-grow, no reformat)"
+        run: ./scripts/assert-disk-grew.sh second.log

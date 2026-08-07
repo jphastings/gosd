@@ -48,6 +48,26 @@ const (
 // ext2fs/ext2_fs.h. Bits not listed are ones this package has never been
 // taught to interpret.
 const (
+	// ext4IncompatRecover ("needs recovery") is not a format-shape feature
+	// like the others below — it is a transient flag the KERNEL sets when it
+	// opens the journal for writing and clears only on a clean unmount. GoSD
+	// boards never cleanly unmount (gosd-init has no shutdown path — see
+	// CLAUDE.md's "gosd-init has no interactive surface"), so this bit is
+	// set on essentially every real-world reboot, and deliberately after a
+	// hard power cut or qemu kill: it is the expected, common case, not an
+	// exceptional one. Every field this package's Inspect/parseEXT4Superblock
+	// read — feature bits, block count, label, UUID — is written with a
+	// direct fsync/syncfs by Format/Grow/EstablishMarker (see
+	// internal/blockmount's crash-ordering argument), never left pending in
+	// the journal, so a pending replay does not make any of them
+	// untrustworthy to read here. The replay itself happens inside the
+	// kernel's own Mount call that follows Inspect, before anything reads
+	// file *data*. Treating this bit as "unknown" refused adoption after
+	// almost every real reboot until CI's qemu-disk-ext4 job (gosd-ucgr)
+	// caught it by actually rebooting past a hard kill, which none of this
+	// package's earlier device-file-only tests did.
+	ext4IncompatRecover = 0x0004
+
 	ext4IncompatFiletype         = 0x0002
 	ext4IncompatMetaBG           = 0x0010
 	ext4IncompatExtents          = 0x0040
@@ -60,16 +80,17 @@ const (
 )
 
 // ext4KnownIncompat is the set of INCOMPAT feature bits GoSD's ext4 code
-// understands: exactly the feature set the golden image is built with (see
-// internal/diskfmt/ext4golden/manifest.json and README.md), which is also
-// the only feature set FormatEXT4 ever produces. ext4's own definition of
-// "incompat" is that a reader which doesn't recognise one of these bits must
-// not attempt to interpret the filesystem at all — so an incompat bit
-// outside this set is refused rather than guessed at (see
+// tolerates reading: the on-disk feature set the golden image is built with
+// (see internal/diskfmt/ext4golden/manifest.json and README.md), which is
+// also the only feature set FormatEXT4 ever produces, plus ext4IncompatRecover
+// (see its own doc comment — a runtime flag, not a format feature). ext4's
+// own definition of "incompat" is that a reader which doesn't recognise one
+// of these bits must not attempt to interpret the filesystem at all — so an
+// incompat bit outside this set is refused rather than guessed at (see
 // parseEXT4Superblock), instead of risking a future or foreign ext4 volume
 // being silently misdescribed as something GoSD can safely adopt or format
 // over.
-const ext4KnownIncompat = ext4IncompatFiletype | ext4IncompatMetaBG | ext4IncompatExtents |
+const ext4KnownIncompat = ext4IncompatRecover | ext4IncompatFiletype | ext4IncompatMetaBG | ext4IncompatExtents |
 	ext4Incompat64Bit | ext4IncompatFlexBG | ext4IncompatMetadataCsumSeed
 
 // errNotEXT4 is wrapped into every reason parseEXT4Superblock refuses a
