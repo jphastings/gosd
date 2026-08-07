@@ -92,11 +92,47 @@ const envHeader = `
 [env]
 `
 
+// ingressCommentedOut is shown when no Cloudflare Tunnel is configured — an
+// example for the user to uncomment and edit. Unlike WiFi and [env], this
+// only ever takes effect on an image built with
+// `gosd build --ingress cloudflared` (which bakes the cloudflared binary
+// in), so the comment says so up front — a hand-editing user on any other
+// image would otherwise have no way to know why nothing happened.
+const ingressCommentedOut = `
+# Makes an app on this device reachable from the internet through a free
+# Cloudflare Tunnel — no port forwarding or public IP address needed. This
+# only works on a device built with "gosd build --ingress cloudflared"; on
+# any other device, filling this in does nothing.
+#
+# To turn this on, remove the "#" from the start of all three lines below,
+# then fill in your own values:
+#   token: run "cloudflared tunnel token <tunnel-name>" (or copy it from
+#   the Cloudflare dashboard) and paste the long piece of text it prints
+#   hostname: the public web address you want to use, for example
+#   "app.example.com"
+#   port: the port number the app on this device listens on, for example
+#   8080
+# [ingress.cloudflared]
+# token = "paste-your-tunnel-token-here"
+# hostname = "app.example.com"
+# port = 8080
+`
+
+// ingressTemplate is shown once a Cloudflare Tunnel is configured.
+const ingressTemplate = `
+# Makes this device's app reachable from the internet through Cloudflare
+# Tunnel. To change these, edit the values below.
+[ingress.cloudflared]
+token = %q
+hostname = %q
+port = %d
+`
+
 // Render produces the gosd.toml file the builder writes onto every image:
-// the plain-language header, followed by the hostname, WiFi and [env]
-// settings — filled in with the build-time values when set, or left as
-// commented-out examples when they're not, so a hand-edited card always
-// shows the user exactly what to type and where.
+// the plain-language header, followed by the hostname, WiFi, [env] and
+// ingress settings — filled in with the build-time values when set, or
+// left as commented-out examples when they're not, so a hand-edited card
+// always shows the user exactly what to type and where.
 //
 // bakeHostname distinguishes an operator-chosen hostname from the sanitized
 // -package-name default: only bakeHostname=true renders the hostname line
@@ -106,7 +142,13 @@ const envHeader = `
 // wizard hostname (cloud-init) to win instead, per the locked
 // gosd.toml > cloud-init > config.json precedence (bean gosd-4hz1). A
 // hand-edit that later uncomments the line always wins, same as today.
-func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string) []byte {
+//
+// ingress follows the same on/off shape as WiFi: its zero value renders the
+// commented [ingress.cloudflared] example (shown on every image, since
+// there's no consumer-independent way to know whether this image was built
+// with --ingress cloudflared support baked in — the comment itself says
+// so), and a Configured() value renders the real token/hostname/port.
+func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string, ingress IngressCloudflared) []byte {
 	out := header
 
 	if hostname != "" && bakeHostname {
@@ -137,6 +179,12 @@ func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		for _, key := range keys {
 			out += fmt.Sprintf("%s = %q\n", key, env[key])
 		}
+	}
+
+	if ingress.Configured() {
+		out += fmt.Sprintf(ingressTemplate, ingress.Token, ingress.Hostname, ingress.Port)
+	} else {
+		out += ingressCommentedOut
 	}
 
 	return []byte(out)
