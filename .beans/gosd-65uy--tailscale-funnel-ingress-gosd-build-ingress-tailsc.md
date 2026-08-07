@@ -5,9 +5,10 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-08-07T15:07:24Z
-updated_at: 2026-08-07T15:07:33Z
+updated_at: 2026-08-07T20:21:07Z
 blocked_by:
     - gosd-virc
+    - gosd-wxjy
 ---
 
 Second ingress agent, after the cloudflared epic (gosd-virc). A tsnet-based
@@ -22,7 +23,10 @@ through its bench bean gosd-igk0. The five cloudflared bean amendments that
 keep the --ingress rail generic for two agents (Render(Ingress) whole-table;
 registry-shaped flag parse; shared logwriter/childbackoff packages;
 table-driven provsnapshot classification; docs/ingress.md overview structure)
-were applied to those beans on 2026-08-07.
+never reached the implementing agents (they lived only in a working-tree
+stash while the backlog burndown ran); recovered verbatim from stash@{0} on
+2026-08-07 into the refactor bean [[gosd-wxjy]], which now blocks this epic
+alongside the bench gate.
 
 ## Locked decisions
 
