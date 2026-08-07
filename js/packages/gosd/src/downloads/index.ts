@@ -17,8 +17,10 @@ import {
   serviceWorkerAvailable,
   type ServiceWorkerLocation,
 } from "./sinks/service-worker.js";
-import type { SaveSink, SaveSinkKind } from "./sinks/types.js";
+import type { SaveSink, SaveSinkKind, SeekableSaveSink } from "./sinks/types.js";
 import type { SubstitutionProgress } from "./substitute.js";
+import { createFreshDownloadCheckpoint } from "./resume.js";
+import type { ResumeStore } from "./resume-store.js";
 
 export type SaveTier = SaveSinkKind;
 
@@ -48,6 +50,17 @@ export interface WithPlaceholdersOptions {
   fetch?: typeof fetch;
   signal?: AbortSignal;
   onProgress?: (progress: SubstitutionProgress) => void;
+  /** Opt-in: on the fs-access tier, checkpoints enough progress to
+   * IndexedDB (the file handle, the image's identity, and each patched
+   * placeholder's pristine bytes as they verify) that an interrupted
+   * download can later be continued with `resumeDownload` instead of
+   * starting over. No effect on the memory or service-worker tiers — see
+   * the package README's "Resuming" section. Off by default: resuming
+   * needs IndexedDB writes this option's callers may not want. */
+  resumable?: boolean;
+  /** Overrides the default IndexedDB-backed resume store `resumable` uses
+   * — mainly for tests. */
+  resumeStore?: ResumeStore;
 }
 
 export interface WithPlaceholdersResult {
@@ -94,7 +107,7 @@ export async function withPlaceholders(
   // needs "transient user activation", which a synchronous call chain from
   // a click handler carries across an `await` but not across a prior one
   // (see sinks/fs-access.ts). Everything else below is free to be async.
-  let fsAccessSink: SaveSink | undefined;
+  let fsAccessSink: SeekableSaveSink | undefined;
   let demoted = false;
   if (preferFsAccess) {
     try {
@@ -149,6 +162,17 @@ export async function withPlaceholders(
       tier = "memory";
     }
 
+    const checkpoint =
+      options.resumable && fsAccessSink
+        ? createFreshDownloadCheckpoint({
+            sink: fsAccessSink,
+            manifest,
+            imageURL: String(imageURL),
+            filename,
+            store: options.resumeStore,
+          })
+        : undefined;
+
     const result = await runDownload({
       manifest,
       padded,
@@ -157,6 +181,7 @@ export async function withPlaceholders(
       ignoreETag: options.ignoreETag,
       signal: options.signal,
       onProgress: options.onProgress,
+      checkpoint,
     });
 
     if (demoted) {
@@ -209,11 +234,17 @@ export { checkImageResponse } from "./preconditions.js";
 export type { CheckImageResponseOptions } from "./preconditions.js";
 
 export { runDownload } from "./run.js";
-export type { RunDownloadOptions, RunDownloadResult, ImageResponseProvider } from "./run.js";
+export type {
+  RunDownloadOptions,
+  RunDownloadResult,
+  ImageResponseProvider,
+  DownloadCheckpoint,
+} from "./run.js";
 
 export { Sha256 } from "./sha256.js";
 
-export type { SaveSink, SaveSinkKind } from "./sinks/types.js";
+export type { SaveSink, SaveSinkKind, SeekableSaveSink } from "./sinks/types.js";
+export { isSeekable } from "./sinks/types.js";
 export { createMemorySink } from "./sinks/memory.js";
 export type { CreateMemorySinkOptions } from "./sinks/memory.js";
 export { createFsAccessSink, fsAccessAvailable } from "./sinks/fs-access.js";
@@ -227,3 +258,22 @@ export type {
   CreateServiceWorkerSinkOptions,
   ServiceWorkerLocation,
 } from "./sinks/service-worker.js";
+
+export {
+  createFreshDownloadCheckpoint,
+  listResumableDownloads,
+  discardResumableDownload,
+  resumeDownload,
+  resumeStoreAvailable,
+  createIndexedDbResumeStore,
+} from "./resume.js";
+export type {
+  CreateFreshDownloadCheckpointOptions,
+  ResumableDownloadInfo,
+  ListResumableDownloadsOptions,
+  DiscardResumableDownloadOptions,
+  ResumeDownloadOptions,
+  ResumeDownloadResult,
+  ResumeRecord,
+  ResumeStore,
+} from "./resume.js";

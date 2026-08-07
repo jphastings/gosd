@@ -7,6 +7,7 @@ import {
 import type { Manifest } from "./manifest.js";
 import { runDownload } from "./run.js";
 import { Sha256 } from "./sha256.js";
+import { primeSubstitutionState } from "./substitute.js";
 import type { SaveSink } from "./sinks/types.js";
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -218,5 +219,171 @@ describe("runDownload", () => {
       bytesProcessed: image.length,
       bytesTotal: image.length,
     });
+  });
+});
+
+describe("runDownload: resumeFrom", () => {
+  it("continues a substitution pass and only writes the remaining bytes", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const splitPoint = 80;
+    const resumeFrom = primeSubstitutionState(manifest, new Map(), image.subarray(0, splitPoint));
+    const rest = image.subarray(splitPoint);
+
+    const result = await runDownload({
+      manifest,
+      padded: new Map(),
+      fetchImage: async () =>
+        new Response(rest, { headers: { "content-length": String(rest.length) } }),
+      sink,
+      resumeFrom,
+    });
+
+    expect(result.sha256).toBe(manifest.image.sha256);
+    const written = new Uint8Array(sink.writes.reduce((sum, c) => sum + c.length, 0));
+    let offset = 0;
+    for (const c of sink.writes) {
+      written.set(c, offset);
+      offset += c.length;
+    }
+    expect(written).toEqual(rest);
+  });
+
+  it("checks Content-Length against only the remaining bytes, not the whole image", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const splitPoint = 80;
+    const resumeFrom = primeSubstitutionState(manifest, new Map(), image.subarray(0, splitPoint));
+    const rest = image.subarray(splitPoint);
+
+    // A resumed 206 response's Content-Length reflecting the WHOLE image
+    // (rather than just what's left) must be rejected — it's exactly the
+    // bug expectedContentLength exists to catch.
+    await expect(
+      runDownload({
+        manifest,
+        padded: new Map(),
+        fetchImage: async () =>
+          new Response(rest, { headers: { "content-length": String(image.length) } }),
+        sink,
+        resumeFrom,
+      }),
+    ).rejects.toThrow(GosdImagePreconditionError);
+  });
+});
+
+describe("runDownload: checkpoint", () => {
+  it("calls onFinalized(true) after a full success", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const onFinalized = vi.fn();
+
+    await runDownload({
+      manifest,
+      padded: new Map(),
+      fetchImage: async () =>
+        new Response(image, { headers: { "content-length": String(image.length) } }),
+      sink,
+      checkpoint: { onFinalized },
+    });
+
+    expect(onFinalized).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("calls onResponseHeaders once the response is known, before any bytes stream", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const onResponseHeaders = vi.fn();
+
+    await runDownload({
+      manifest,
+      padded: new Map(),
+      fetchImage: async () =>
+        new Response(image, {
+          headers: {
+            "content-length": String(image.length),
+            etag: manifest.image.sha256,
+            "last-modified": "Wed, 01 Jan 2025 00:00:00 GMT",
+          },
+        }),
+      sink,
+      checkpoint: { onResponseHeaders },
+    });
+
+    expect(onResponseHeaders).toHaveBeenCalledExactlyOnceWith({
+      etag: manifest.image.sha256,
+      lastModified: "Wed, 01 Jan 2025 00:00:00 GMT",
+    });
+  });
+
+  it("on a recoverable failure (e.g. an aborted signal), commits instead of aborting and calls onFinalized(false)", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const controller = new AbortController();
+    controller.abort(new Error("network drop"));
+    const onFinalized = vi.fn();
+
+    await expect(
+      runDownload({
+        manifest,
+        padded: new Map(),
+        fetchImage: async () =>
+          new Response(image, { headers: { "content-length": String(image.length) } }),
+        sink,
+        signal: controller.signal,
+        checkpoint: { onFinalized },
+      }),
+    ).rejects.toThrow();
+
+    expect(sink.aborts).toHaveLength(0);
+    expect(sink.committed).toBe(true);
+    expect(onFinalized).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("on an untrustworthy failure (a hash mismatch), still aborts and never calls onFinalized", async () => {
+    const { image, manifest } = fixture();
+    const corrupt = Uint8Array.from(image);
+    corrupt[5] ^= 0xff;
+    const sink = fakeSink();
+    const onFinalized = vi.fn();
+
+    await expect(
+      runDownload({
+        manifest,
+        padded: new Map(),
+        fetchImage: async () =>
+          new Response(corrupt, { headers: { "content-length": String(corrupt.length) } }),
+        sink,
+        checkpoint: { onFinalized },
+      }),
+    ).rejects.toThrow(GosdImageHashMismatchError);
+
+    expect(sink.aborts).toHaveLength(1);
+    expect(sink.committed).toBe(false);
+    expect(onFinalized).not.toHaveBeenCalled();
+  });
+
+  it("a custom isUntrustworthy overrides the default classification", async () => {
+    const { image, manifest } = fixture();
+    const sink = fakeSink();
+    const controller = new AbortController();
+    controller.abort(new Error("network drop"));
+    const onFinalized = vi.fn();
+
+    await expect(
+      runDownload({
+        manifest,
+        padded: new Map(),
+        fetchImage: async () =>
+          new Response(image, { headers: { "content-length": String(image.length) } }),
+        sink,
+        signal: controller.signal,
+        checkpoint: { onFinalized, isUntrustworthy: () => true },
+      }),
+    ).rejects.toThrow();
+
+    expect(sink.aborts).toHaveLength(1);
+    expect(sink.committed).toBe(false);
+    expect(onFinalized).not.toHaveBeenCalled();
   });
 });

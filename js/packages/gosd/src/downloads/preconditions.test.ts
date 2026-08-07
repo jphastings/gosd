@@ -86,6 +86,22 @@ describe("checkImageResponse: Content-Length", () => {
   it("passes when there's no Content-Length header at all", () => {
     expect(() => checkImageResponse(response({}), manifest(1000))).not.toThrow();
   });
+
+  it("checks against expectedContentLength instead of image.size when given", () => {
+    expect(() =>
+      checkImageResponse(response({ "content-length": "400" }), manifest(1000), {
+        expectedContentLength: 400,
+      }),
+    ).not.toThrow();
+  });
+
+  it("throws when Content-Length disagrees with expectedContentLength, even matching image.size", () => {
+    expect(() =>
+      checkImageResponse(response({ "content-length": "1000" }), manifest(1000), {
+        expectedContentLength: 400,
+      }),
+    ).toThrow(GosdImagePreconditionError);
+  });
 });
 
 describe("checkImageResponse: combined matrix", () => {

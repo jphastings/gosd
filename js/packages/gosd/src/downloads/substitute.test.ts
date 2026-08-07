@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   GosdImageHashMismatchError,
   GosdImageSizeError,
@@ -9,6 +9,7 @@ import { Sha256 } from "./sha256.js";
 import {
   createSubstitutionTransform,
   patchStream,
+  primeSubstitutionState,
   type SubstitutionProgress,
 } from "./substitute.js";
 
@@ -277,5 +278,104 @@ describe("createSubstitutionTransform: degenerate manifests", () => {
 
     const transform = createSubstitutionTransform(manifest, new Map());
     expect(transform).toBeInstanceOf(TransformStream);
+  });
+});
+
+describe("createSubstitutionTransform: onPlaceholderVerified", () => {
+  const { image, manifest } = buildFixture(500, [
+    { path: "patched", ranges: [{ offset: 50, length: 20 }] },
+    { path: "untouched", ranges: [{ offset: 200, length: 10 }] },
+  ]);
+  const padded = new Map([["patched", new Uint8Array(20).fill(0xaa)]]);
+
+  it("fires with the pristine bytes for a patched placeholder, but never for an untouched one", async () => {
+    const events: Array<{ path: string; pristine: Uint8Array }> = [];
+    await collect(
+      patchStream(readableFrom(chunksOfSizes(image, [33])), manifest, padded, {
+        onPlaceholderVerified: (path, pristine) =>
+          events.push({ path, pristine: pristine.slice() }),
+      }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.path).toBe("patched");
+    expect(events[0]?.pristine).toEqual(image.subarray(50, 70));
+  });
+});
+
+describe("primeSubstitutionState + resumeFrom: continuing a download across a session", () => {
+  const { image, manifest } = buildFixture(2000, [
+    { path: "a", ranges: [{ offset: 100, length: 50 }] },
+    {
+      path: "b",
+      ranges: [
+        { offset: 500, length: 30 },
+        { offset: 600, length: 20 },
+      ],
+    },
+    { path: "c", ranges: [{ offset: 1000, length: 1 }] },
+  ]);
+  const padded = new Map([
+    ["a", new Uint8Array(50).fill(0xaa)],
+    ["b", new Uint8Array(50).fill(0xbb)],
+    // "c" deliberately left untouched
+  ]);
+  const expected = naiveSplice(image, manifest, padded);
+
+  const splitPoints: Record<string, number> = {
+    "before any placeholder": 10,
+    "mid-way through a patched placeholder (a, 100-150)": 120,
+    "between two ranges of the same fragmented placeholder (b)": 550,
+    "exactly on the untouched placeholder's boundary (c, 1000-1001)": 1000,
+    "just before the end": 1999,
+  };
+
+  for (const [name, splitPoint] of Object.entries(splitPoints)) {
+    it(`resumes correctly when split ${name} (offset ${splitPoint})`, async () => {
+      const resumeState = primeSubstitutionState(manifest, padded, image.subarray(0, splitPoint));
+
+      const rest = image.subarray(splitPoint);
+      const output = await collect(
+        patchStream(readableFrom(chunksOfSizes(rest, [37])), manifest, padded, {}, resumeState),
+      );
+
+      expect(output).toEqual(expected.subarray(splitPoint));
+    });
+  }
+
+  it("reports onPlaceholderVerified only for placeholders finishing after the resume point", async () => {
+    const splitPoint = 150; // placeholder "a" (100-150) already fully captured by this point
+    const resumeState = primeSubstitutionState(manifest, padded, image.subarray(0, splitPoint));
+
+    const onPlaceholderVerified = vi.fn();
+    await collect(
+      patchStream(
+        readableFrom(chunksOfSizes(image.subarray(splitPoint), [40])),
+        manifest,
+        padded,
+        { onPlaceholderVerified },
+        resumeState,
+      ),
+    );
+
+    expect(onPlaceholderVerified).toHaveBeenCalledTimes(1);
+    expect(onPlaceholderVerified).toHaveBeenCalledWith("b", expect.any(Uint8Array));
+  });
+
+  it("primeSubstitutionState throws GosdPlaceholderNotPristineError when the prefix was reconstructed wrong", () => {
+    const tamperedPrefix = Uint8Array.from(image.subarray(0, 200));
+    tamperedPrefix[110] ^= 0xff; // inside placeholder "a"'s range
+
+    expect(() => primeSubstitutionState(manifest, padded, tamperedPrefix)).toThrow(
+      GosdPlaceholderNotPristineError,
+    );
+  });
+
+  it("primeSubstitutionState on an empty prefix behaves like starting fresh", async () => {
+    const resumeState = primeSubstitutionState(manifest, padded, new Uint8Array(0));
+    const output = await collect(
+      patchStream(readableFrom(chunksOfSizes(image, [51])), manifest, padded, {}, resumeState),
+    );
+    expect(output).toEqual(expected);
   });
 });

@@ -20,3 +20,26 @@ export interface SaveSink {
    * triggered the abort. */
   abort(reason: unknown): Promise<void>;
 }
+
+/** An optional capability a SaveSink MAY additionally implement, rather
+ * than a change to the base (deliberately sequential-only) contract above.
+ * Only the fs-access tier does today — resuming a download needs a real,
+ * reopenable destination to read back and continue writing to; the memory
+ * and service-worker tiers have nothing durable to resume from across a
+ * page reload. See resume.ts. */
+export interface SeekableSaveSink extends SaveSink {
+  /** Reads back the bytes already durably written at this sink's
+   * destination, e.g. left over from an earlier, interrupted attempt —
+   * used to re-verify a partial download before trusting and resuming it. */
+  readExisting(): Promise<Uint8Array>;
+  /** An opaque, structured-clonable handle identifying this sink's
+   * destination, suitable for persisting (e.g. in IndexedDB) and passing
+   * back to this tier's own "reopen for resume" function in a later
+   * session. Meaningful only to the tier that produced it. */
+  readonly resumeHandle: unknown;
+}
+
+export function isSeekable(sink: SaveSink): sink is SeekableSaveSink {
+  const candidate = sink as Partial<SeekableSaveSink>;
+  return typeof candidate.readExisting === "function" && "resumeHandle" in candidate;
+}
