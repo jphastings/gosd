@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,7 +22,6 @@ import (
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/boards/rock4se"
 	"github.com/jphastings/gosd/internal/build"
-	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
@@ -231,11 +229,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	caCertsCache, err := caCertsCacheDir()
-	if err != nil {
-		return err
-	}
-	caCertsPath, err := resolveCACerts(ctx, artifactsDir, caCertsCache)
+	shared, err := resolveSharedContent(ctx, artifactsDir)
 	if err != nil {
 		return err
 	}
@@ -253,7 +247,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		caCerts, err := openCACertsForBoard(caCertsPath)
+		extraFiles, err := openSharedContent(shared)
 		if err != nil {
 			return err
 		}
@@ -280,7 +274,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			BootSizeBytes:    bootSizeBytes,
 			ExtraFirmware:    extraFirmware,
 			ExtraExecutables: extraExecutables,
-			ExtraFiles:       map[string]io.Reader{cacerts.InitramfsPath: caCerts},
+			ExtraFiles:       extraFiles,
 			Placeholders:     placeholderSpecs,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
