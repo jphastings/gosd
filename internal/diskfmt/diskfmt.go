@@ -340,7 +340,12 @@ func CreateEmptyFile(devicePath, name string) (err error) {
 // RootFileExists reports whether the root directory of the filesystem on
 // devicePath holds a file called name, matched case-insensitively as FAT
 // itself matches names. An error means the directory could not be read at
-// all, which is not the same answer as "no".
+// all, which is not the same answer as "no". This also covers a directory
+// the Linux kernel has written into (the on-device case: gosd-init/apps
+// write to devicePath, then a host tool reads it back through here) —
+// go-diskfs correctly skips the FAT delete-marker (0xE5) entries a kernel
+// rename leaves behind, including on LFN continuation slots; see
+// TestRootFileExistsSurvivesKernelDeletedEntries (gosd-zzdz).
 func RootFileExists(devicePath, name string) (found bool, err error) {
 	d, err := openDisk(devicePath, true)
 	if err != nil {
