@@ -1,11 +1,11 @@
 # Artifact pipeline: cutting and consuming a GoSD artifact release
 
 `gosd build` needs a kernel, DTB, and (for the Radxa Zero 3E, NanoPi Zero2,
-and ROCK 4SE) a bootloader for every board it targets. GoSD compiles these
-itself — it never asks a user to build a kernel — and ships them as GitHub
-Releases tagged `artifacts/vX.Y.Z`, separate from the CLI's own `vX.Y.Z`
-releases. This page covers cutting one of those releases, and how the CLI
-consumes it. See bean `gosd-wtpa` for the design history.
+ROCK 4SE, and Cubie A5E) a bootloader for every board it targets. GoSD
+compiles these itself — it never asks a user to build a kernel — and ships
+them as GitHub Releases tagged `artifacts/vX.Y.Z`, separate from the CLI's
+own `vX.Y.Z` releases. This page covers cutting one of those releases, and
+how the CLI consumes it. See bean `gosd-wtpa` for the design history.
 
 Third-party binary blobs (Pi GPU firmware, Pi WiFi firmware, Rockchip rkbin)
 are **not** part of an artifact release: they stay upstream-fetched by the
@@ -20,27 +20,28 @@ Pushing a git tag `artifacts/vX.Y.Z` runs
 
 1. Runs `gosd build-kernel --board <id> --staging staging/` (bean gosd-07fl)
    for each of `pi-zero-2w`, `pi-zero-w`, `pi-3b`, `radxa-zero-3e`,
-   `nanopi-zero2`, `rock-4se`, and `qemu-virt` — one job per board, each
-   driving Docker from `internal/kernelspec`'s declarative per-board spec,
-   cross-compiling for arm64 (or, for pi-zero-w, armv6) via a `-linux-gnu-`
-   cross toolchain, so they run unchanged on GitHub's amd64 `ubuntu-latest`
-   runners (no QEMU, no arm64 runner needed). This is the same command a
-   developer runs locally with `gosd build-kernel` — CI dogfoods the real
-   CLI path rather than a separate release-only script. `gosd build-kernel
-   --staging` also writes each board's `source.json` directly, so the
-   release path and the local dev path produce identical provenance data.
-   The three U-Boot boards (radxa-zero-3e, nanopi-zero2, rock-4se)
-   additionally run their own `build/boards/<board>/uboot/build.sh` —
-   U-Boot orchestration is out of scope for `gosd build-kernel` (epic
-   gosd-47rm) and stays a plain script; a small workflow step merges its
-   pinned repo/tag into the board's already-written `source.json` (rock-4se
-   also folds in its from-source Trusted Firmware-A provenance here), since
-   the U-Boot script has no `source.json` of its own.
+   `nanopi-zero2`, `rock-4se`, `cubie-a5e`, and `qemu-virt` — one job per
+   board, each driving Docker from `internal/kernelspec`'s declarative
+   per-board spec, cross-compiling for arm64 (or, for pi-zero-w, armv6) via a
+   `-linux-gnu-` cross toolchain, so they run unchanged on GitHub's amd64
+   `ubuntu-latest` runners (no QEMU, no arm64 runner needed). This is the
+   same command a developer runs locally with `gosd build-kernel` — CI
+   dogfoods the real CLI path rather than a separate release-only script.
+   `gosd build-kernel --staging` also writes each board's `source.json`
+   directly, so the release path and the local dev path produce identical
+   provenance data. The four U-Boot boards (radxa-zero-3e, nanopi-zero2,
+   rock-4se, cubie-a5e) additionally run their own
+   `build/boards/<board>/uboot/build.sh` — U-Boot orchestration is out of
+   scope for `gosd build-kernel` (epic gosd-47rm) and stays a plain script; a
+   small workflow step merges its pinned repo/tag into the board's
+   already-written `source.json` (rock-4se and cubie-a5e also fold in their
+   from-source Trusted Firmware-A provenance here), since the U-Boot script
+   has no `source.json` of its own.
 2. Packages the outputs into per-board tarballs — `pi-zero-2w.tar.zst`,
    `pi-zero-w.tar.zst`, `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`,
-   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, and `qemu-virt.tar.zst` —
-   using `build/artifacts/package.sh`, which also writes a `manifest.json`
-   describing every file's name, sha256, and size, plus each compiled
+   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, `cubie-a5e.tar.zst`, and
+   `qemu-virt.tar.zst` — using `build/artifacts/package.sh`, which also
+   writes a `manifest.json` describing every file's name, sha256, and size, plus each compiled
    component's source repo/commit-or-tag/config path (GPL provenance).
    `gosd build-kernel --staging` emits the generated `kernel.config`
    alongside the kernel image and DTB, so that file is packaged into the
@@ -61,6 +62,15 @@ into the same release as the public boards, purely so
 `internal/artifacts.EnsureBoard` and local `--board=qemu-virt` builds can
 fetch its kernel through the exact same cache/download path as any other
 board — there is no separate distribution mechanism for it.
+
+`cubie-a5e` (Radxa Cubie A5E, epic gosd-h1wv) is internal-only for the same
+reason `rock-4se` once was: its board profile, kernel spec, and U-Boot
+pipeline are registered and buildable via explicit `--board=cubie-a5e`, but
+it isn't yet advertised or included in the default all-boards build. It's
+built and packaged here from day one — tag-first, bump-second — so that once
+an `artifacts/vX.Y.Z` release carries its files, a follow-up activation PR
+only needs to bump `internal/artifacts.Version` and flip the board
+`Register`ed, with no CI changes.
 
 `build/artifacts/package.sh` is a standalone script, runnable and testable
 without Docker, a real kernel build, or network access — point it at any
@@ -105,6 +115,12 @@ staging/
     idbloader.img
     u-boot.itb
     source.json
+  cubie-a5e/
+    Image
+    sun55i-a527-cubie-a5e.dtb
+    kernel.config
+    u-boot-sunxi-with-spl.bin
+    source.json
   qemu-virt/
     Image
     kernel.config
@@ -134,8 +150,8 @@ the same tarballs + manifest.json the workflow publishes.
 4. Watch the `Build artifacts` workflow run. On success it publishes a
    GitHub Release named `Artifacts vX.Y.Z` with `pi-zero-2w.tar.zst`,
    `pi-zero-w.tar.zst`, `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`,
-   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, `qemu-virt.tar.zst`, and
-   `manifest.json` attached.
+   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, `cubie-a5e.tar.zst`,
+   `qemu-virt.tar.zst`, and `manifest.json` attached.
 5. In a follow-up PR — a normal CLI-code change, part of the *next* CLI
    `vX.Y.Z` release, not the artifact release itself — bump
    `internal/artifacts.Version` to the new tag, so newly-built `gosd`
