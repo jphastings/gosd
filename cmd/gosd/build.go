@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/boards/cubiea5e"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
 	"github.com/jphastings/gosd/internal/boards/pi3b"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
@@ -52,6 +53,13 @@ func init() {
 	// so real (non---artifacts-dir) fetches for this board now resolve
 	// (bean gosd-7wv9's activation flip).
 	boards.Register(pi3b.New())
+	// cubie-a5e is internal-only (epic gosd-h1wv): the board profile is
+	// registered so gosd build-kernel and the U-Boot pipeline beans can
+	// resolve it (the same de-facto prerequisite rock-4se's registration
+	// was for its kernel build), but no kernel or U-Boot artifacts exist
+	// yet - only reachable via an explicit --board=cubie-a5e until a
+	// later activation bean publishes its artifacts and flips it public.
+	boards.RegisterInternal(cubiea5e.New())
 }
 
 var (
