@@ -190,6 +190,8 @@ say so in the bean rather than silently diverging.
 - **gosd-init has no interactive surface**: no shell, no SSH, no remote debug,
   ever. Serial console output and app logs only. The only network listeners in
   gosd-init are mDNS (and, later, the explicitly-designed update endpoint).
+  cloudflared (when baked via `--ingress cloudflared`) is an outbound-only
+  tunnel supervised by gosd-init — still no listeners, no shell.
 - **`/data` durability is the app's choice (decided 2026-07-31):** the data
   partition is mounted without `dirsync`, so a write that must survive an
   immediate power cut uses the four-step fsync/rename pattern in

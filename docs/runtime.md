@@ -824,11 +824,12 @@ gosd build . --board radxa-zero-3e --console-baud 115200
   actionable error otherwise.
 - `gosd-init` itself has no shell, no interactive surface, and no
   remote debug access, on purpose — the only things running alongside
-  your app are the supervisor, its network/time-sync bring-up, and its
-  mDNS responder (and, later, an update listener). If you need to
-  inspect a running device, that has to happen through your own app (an
-  HTTP endpoint, for instance, as `examples/hello` does) or the serial
-  console.
+  your app are the supervisor, its network/time-sync bring-up, its mDNS
+  responder, cloudflared (only when an image is built with `--ingress
+  cloudflared` — outbound-only, adds no listener), and, later, an update
+  listener. If you need to inspect a running device, that has to happen
+  through your own app (an HTTP endpoint, for instance, as
+  `examples/hello` does) or the serial console.
 - Each selected board's own Go build tag (`gosd_<board-id>`, e.g.
   `gosd_pi_zero_2w`) is passed to your app's compile — gosd-init is
   never tagged. See [`docs/board-build-tags.md`](board-build-tags.md)
@@ -864,11 +865,14 @@ gosd build . --board pi-zero-2w \
   architecture before assembling anything — a mismatched binary fails
   immediately, naming the board, instead of shipping something that
   can't `exec`.
-- **Your app owns it at runtime.** gosd-init stays a single-child
-  supervisor — it starts and restarts only `/app`. Launch, monitor, and
-  restart the companion binary yourself via `os/exec`; if the pair
-  wedges, exit `/app` and let gosd-init's own backoff supervisor
-  restart the unit.
+- **Your app owns it at runtime.** gosd-init supervises only `/app`, plus a
+  small, fixed set of gosd-*shipped* system services (currently just
+  cloudflared, started when an image is built with `--ingress cloudflared`
+  — a narrow carve-out to gosd-init's original single-child design, see
+  epic gosd-oyhi). It never supervises a *user*-provided companion binary:
+  launch, monitor, and restart yours yourself via `os/exec`; if the pair
+  wedges, exit `/app` and let gosd-init's own backoff supervisor restart
+  the unit.
 
 ## GPIO, I2C, SPI
 

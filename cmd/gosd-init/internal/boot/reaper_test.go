@@ -55,13 +55,68 @@ func TestWaitReceivesStatusReapedWhileWaiting(t *testing.T) {
 	}
 }
 
+// TestConcurrentWaitersOnDistinctPidsBothResolve pins the reaper's amended
+// stash comment (gosd-66ax, gosd-oyhi carve-out): gosd-init now supervises a
+// small, fixed set of children — /app and, when baked, cloudflared — each
+// with its own goroutine parked in Wait for its own pid at the same time.
+// Both waiters are parked (registered in r.waiters) before either pid is
+// delivered, so this genuinely exercises two concurrent Waiters, not two
+// sequential ones; neither may block on, or steal the status meant for, the
+// other's pid.
+func TestConcurrentWaitersOnDistinctPidsBothResolve(t *testing.T) {
+	r := newReaper()
+
+	appDone := make(chan int, 1)
+	cloudflaredDone := make(chan int, 1)
+
+	go func() {
+		status, err := r.Wait(4242)
+		if err != nil {
+			t.Errorf("Wait(4242) returned error: %v", err)
+		}
+		appDone <- status
+	}()
+	go func() {
+		status, err := r.Wait(9999)
+		if err != nil {
+			t.Errorf("Wait(9999) returned error: %v", err)
+		}
+		cloudflaredDone <- status
+	}()
+
+	// Give both goroutines time to reach Wait's parked state before either
+	// pid is reaped.
+	time.Sleep(10 * time.Millisecond)
+
+	r.deliver(9999, 2)
+	r.deliver(4242, 1)
+
+	select {
+	case status := <-appDone:
+		if status != 1 {
+			t.Errorf("Wait(4242) returned status %d, want 1", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait(4242) blocked; its exit status was lost")
+	}
+
+	select {
+	case status := <-cloudflaredDone:
+		if status != 2 {
+			t.Errorf("Wait(9999) returned status %d, want 2", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait(9999) blocked; its exit status was lost")
+	}
+}
+
 func TestStashSurvivesGrandchildReapsBeforeWait(t *testing.T) {
 	r := newReaper()
 
-	// gosd-init supervises one child at a time and calls Wait as soon as
-	// Start returns, so an eviction that mattered would need a whole stash's
-	// worth of orphaned grandchildren to be reaped inside that window. A
-	// realistic burst leaves the app's status claimable.
+	// gosd-init calls Wait on a child as soon as its own Start returns, so
+	// an eviction that mattered would need a whole stash's worth of
+	// orphaned grandchildren to be reaped inside that one child's own
+	// window. A realistic burst leaves the app's status claimable.
 	r.deliver(4242, 5)
 	for pid := 5000; pid < 5000+maxStashedResults-1; pid++ {
 		r.deliver(pid, 0)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/cloudflared"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
@@ -32,6 +33,14 @@ const (
 	appPath      = "/app"
 	bootTarget   = "/boot"
 	dataTarget   = "/data"
+
+	// cloudflaredBinaryPath is where `gosd build --ingress cloudflared`
+	// bakes the cloudflared binary into the initramfs (see
+	// cmd/gosd/ingress.go's ingressCloudflaredDest and
+	// initcfg.Config.IngressCloudflared's doc comment) — duplicated here
+	// rather than imported, since that constant lives in the gosd CLI's own
+	// internal package, a different binary from gosd-init.
+	cloudflaredBinaryPath = "/bin/cloudflared"
 
 	// dataMarkerPath is an empty file created on the GOSD-DATA partition
 	// the first time it's mounted, marking it as initialized by gosd.
@@ -160,6 +169,24 @@ func main() {
 			})
 			guard.Go("the mDNS responder", func() {
 				mdnsresponder.Run(mdnsresponderDeps(log, mdnsChanged), mdnsresponder.Options{Hostname: cfg.Hostname})
+			})
+			// cloudflared is a gosd-SHIPPED system service, not a user
+			// external — the narrow gosd-oyhi carve-out (see
+			// boot/reaper.go's stash comment and docs/runtime.md's
+			// "Your app owns it at runtime" bullet) lets gosd-init
+			// supervise it here alongside netup/timesync/mdnsresponder,
+			// guarded the same way. Placed before the WiFi block below so
+			// an Ethernet-only board's early return (no WiFi hardware)
+			// can never skip starting it.
+			guard.Go("cloudflared", func() {
+				cloudflared.Run(cloudflaredDeps(log, platform.Reaper.Wait), cloudflared.Options{
+					BinaryPath:             cloudflaredBinaryPath,
+					Baked:                  cfg.IngressCloudflared,
+					Config:                 gosdToml.Ingress.Cloudflared,
+					NetworkUpPollInterval:  cloudflared.DefaultNetworkUpPollInterval,
+					TimeSyncedTimeout:      cloudflared.DefaultTimeSyncedTimeout,
+					TimeSyncedPollInterval: cloudflared.DefaultTimeSyncedPollInterval,
+				})
 			})
 
 			wifiClient, err := wifiup.NewPlatform()
@@ -402,4 +429,46 @@ func mdnsresponderDeps(log func(format string, args ...any), changed *mdnsrespon
 		Changed:   changed.C(),
 		Log:       log,
 	}
+}
+
+// cloudflaredDeps wires the real cloudflared supervision implementation:
+// StartProcess is that package's own os/exec-backed starter (platform.go),
+// and wait is platform.Reaper.Wait — NEVER exec.Cmd.Wait, for the same
+// reason boot.AppStarter's doc comment already gives for /app: as PID 1,
+// gosd-init reaps every child through one central wait4(-1, ...) loop, and
+// a second, independent wait on the same pid would race it. NetworkUp
+// reuses the exact stat check timesyncDeps already wires netup's own
+// NetworkUp field through (timesync.NetworkUpMarkerExists); TimeSynced is
+// timeSyncedMarkerExists's twin of that same check for timesync's own
+// marker, which nothing outside timesync needed to read before cloudflared.
+func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (int, error)) cloudflared.Deps {
+	return cloudflared.Deps{
+		StartProcess: cloudflared.StartProcess,
+		Wait:         wait,
+		NetworkUp:    func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
+		TimeSynced:   timeSyncedMarkerExists,
+		MkdirAll:     os.MkdirAll,
+		WriteFile:    os.WriteFile,
+		Clock:        cloudflared.NewRealClock(),
+		NewBackoff: func() *cloudflared.Backoff {
+			return cloudflared.NewBackoff(cloudflared.DefaultBackoffBase, cloudflared.DefaultBackoffCap)
+		},
+		Log: log,
+	}
+}
+
+// timeSyncedMarkerExists reports whether the time-synced marker file
+// exists, mirroring timesync.NetworkUpMarkerExists's shape (an existence
+// check, "not found" isn't an error). timesync itself has no exported
+// helper for its own marker — nothing outside that package needed to check
+// it before cloudflared did.
+func timeSyncedMarkerExists() (bool, error) {
+	_, err := os.Stat(timesync.DefaultTimeSyncedPath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking %s: %w", timesync.DefaultTimeSyncedPath, err)
 }

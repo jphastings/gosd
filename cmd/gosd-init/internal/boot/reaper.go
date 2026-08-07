@@ -59,11 +59,15 @@ func (r *reaper) deliver(pid, status int) {
 }
 
 // stash records pid's status until someone claims it, evicting the oldest
-// entry once the stash is full. Eviction can't lose the app's status in
-// practice: gosd-init supervises a single child at a time and calls Wait on
-// it as soon as Start returns, so an eviction would need maxStashedResults
-// *other* pids (grandchildren orphaned to PID 1) to be reaped inside that
-// window. Callers hold r.mu.
+// entry once the stash is full. Eviction can't lose a supervised child's
+// status in practice: gosd-init supervises a small, fixed set of children
+// (the app, plus gosd-shipped system services like cloudflared — a narrow
+// carve-out to the original single-child design, see gosd-oyhi) and calls
+// Wait on each one as soon as its own Start returns, so an eviction would
+// need maxStashedResults *other* pids (grandchildren orphaned to PID 1) to
+// be reaped inside that pid's own Start-to-Wait window — the argument holds
+// per pid, not on the total number of children gosd-init happens to be
+// supervising at once. Callers hold r.mu.
 func (r *reaper) stash(pid, status int) {
 	if _, known := r.results[pid]; !known {
 		r.stashed = append(r.stashed, pid)
