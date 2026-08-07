@@ -5,7 +5,7 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-08-07T14:07:40Z
-updated_at: 2026-08-07T14:08:31Z
+updated_at: 2026-08-07T19:11:38Z
 parent: gosd-lfu0
 ---
 
@@ -36,3 +36,14 @@ docs/runtime.md, hardware-proven rather than only qemu-asserted
 [ ] Record findings (including any surprises vs the qemu behavior) in this
 bean's Summary of Changes; update COMPATIBILITY.md's ext4 row/footnote
 from code-complete/QEMU-tested to hardware-verified if it holds up
+
+## Bench procedure (JP running this — 2026-08-07)
+
+`examples/diskstorage` (from the qemu smoke, PR #194) is the ready-made test app: zero-value `disk.FormatAndMountWith` → ext4 default, durable boot counter at `<mount>/disk-boots`, HTTP readiness endpoint.
+
+1. **Build & flash**: `gosd build --board rock-4se -o out/ ./examples/diskstorage`, flash via the sdwire rig, NVMe fitted.
+2. **First boot** (serial @1.5M or `--console-baud`): expect the format→grow→marker sequence in the logs; `disk-boots` = 1; check the mounted size ≈ the NVMe's size (grow proof), not 512MiB.
+3. **Adoption across clean-ish reboots**: power-cycle via the rig; counter must increment (2, 3…) — never reset (reset = reformat = adoption bug).
+4. **Power-cut test**: `curl` the endpoint to confirm up, then cut power at randomized moments across several cycles (the interesting window is early boot, mid-format on a fresh card, and just-after-write). After each: counter continuity + kernel journal-replay line in dmesg output on serial. The one write per boot is brief — for sustained-write torture, loop `curl` against a small handler tweak (or just do many cycles; each boot rewrites the counter durably).
+5. **Half-established debris**: once, cut power on the FIRST boot mid-format (before the marker) — next boot must cleanly reformat and start the counter at 1 (that's correct behavior, not a bug — the marker gates adoption).
+6. Record boot-count reached, any resets, journal-replay observations, and timing here; COMPATIBILITY.md's ext4 row gets its hardware-verified footnote from this bean.

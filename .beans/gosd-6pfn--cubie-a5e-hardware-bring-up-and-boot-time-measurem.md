@@ -3,9 +3,9 @@
 title: 'Cubie A5E: hardware bring-up and boot-time measurement'
 status: todo
 type: task
-priority: normal
+priority: deferred
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-06T22:34:59Z
+updated_at: 2026-08-07T19:11:14Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-zh95
@@ -23,3 +23,5 @@ Watch for the known Allwinner-specific risks from the research bean: PMIC regula
 - [ ] Provisioning: gosd.toml hand-edit honored
 - [ ] Boot-time baseline recorded here + COMPATIBILITY.md footnotes updated with hardware-verified status
 - [ ] File follow-up beans for anything found (field-report pattern)
+
+DEFERRED (JP, 2026-08-07): the Cubie A5E is still in the post — bring-up starts when the board physically arrives and goes on the sdwire rig. Software side is fully activated (artifacts v0.9.0, public board, PR #205), so this is hardware-gated only.
