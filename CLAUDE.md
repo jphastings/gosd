@@ -289,12 +289,38 @@ say so in the bean rather than silently diverging.
   vs `dwc2` (mainline, gadget-capable) — opposite gadget outcomes
   (gosd-spjt). Check which driver a node's compatible binds at the pin.
 - Kernel pins are **per-family**, bumped family-wide, never one board alone:
-  the Rockchip boards + qemu-virt share one mainline stable tag
-  (`internal/kernelspec`'s `fleetKernelTag`), while the Pi boards share one
-  raspberrypi/linux **commit** pin (`piZeroCommitRef` — a DOWNSTREAM-tree
-  pin, not mainline; assuming the Pis ran mainline sent gosd-anyp's research
-  down a dead end for a day). Kernel/U-Boot Docker builds take 20-60 min:
-  run them backgrounded and poll the log, never in a foreground shell.
+  the mainline-fleet boards — Rockchip, Allwinner (cubie-a5e), and
+  qemu-virt — share one mainline stable tag (`internal/kernelspec`'s
+  `fleetKernelTag`), while the Pi boards share one raspberrypi/linux
+  **commit** pin (`piZeroCommitRef` — a DOWNSTREAM-tree pin, not mainline;
+  assuming the Pis ran mainline sent gosd-anyp's research down a dead end
+  for a day). Kernel/U-Boot Docker builds take 20-60 min: run them
+  backgrounded and poll the log, never in a foreground shell — and from the
+  session that owns them, never from a subagent's background task (a
+  subagent's background jobs are killed when it returns; the cubie-a5e
+  U-Boot build died this way, log frozen mid-compile with no error).
+- **Allwinner (sunxi) family facts, proven on cubie-a5e (epic gosd-h1wv):**
+  the whole boot chain is ONE raw write — `u-boot-sunxi-with-spl.bin`
+  (SPL + FIT with BL31, U-Boot proper, DTB) at byte 8192; the BootROM also
+  probes 128KiB, unused by us. Blob-free, but BL31 compiles from a
+  commit-pinned TF-A FORK (mainline TF-A has no sun55i_a523 platform yet —
+  bean gosd-cjr6 tracks the repin); the A523 uses no SCP firmware
+  (`SCP=/dev/null`). USB gadget is MUSB (`allwinner,sun8i-a33-musb`
+  fallback), not dwc3, and the board DT pins peripheral mode — no DTS patch
+  needed. Per-board LPDDR4 DRAM tuning lives in the board's U-Boot
+  defconfig, so a new Allwinner board is only buildable once ITS defconfig
+  is merged upstream — and U-Boot defconfigs can be RENAMED between the
+  mailing-list posting and the merge (`radxa-a5e_defconfig` landed as
+  `radxa-cubie-a5e_defconfig`; searching the list name produced a false
+  "not merged" — verify against the tree at the pinned tag, never the
+  posting).
+- **Activating a board (internal → public) must also add its artifacts to
+  `cmd/gosd/testdata/fake-artifacts/`**: the network-tripwire integration
+  tests build the default all-boards set, so a newly public board without
+  fixtures falls through to a real release fetch that only CI catches — a
+  warm artifact cache in the real HOME satisfies resolution before any
+  network request, silently masking the tripwire locally (PR #205). Run the
+  cmd/gosd tests with an isolated `HOME` before pushing an activation.
 
 ## Quality gates — run ALL of these before every commit/PR
 
