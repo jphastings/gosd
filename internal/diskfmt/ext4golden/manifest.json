@@ -1,0 +1,56 @@
+{
+  "$schema_note": "Provenance for internal/diskfmt/ext4golden/golden.img.zst. Regenerate with build/ext4-golden/build.sh; parameter WHYs are in this directory's README.md, not here.",
+  "e2fsprogs": {
+    "repo": "https://github.com/tytso/e2fsprogs.git",
+    "tag": "v1.47.4",
+    "commit": "7ee1d505ef3b37831215f490411f346fe57e9053"
+  },
+  "mke2fs": {
+    "filesystem": "ext4",
+    "blockSize": 4096,
+    "goldenSizeMiB": 512,
+    "journalSizeMiB": 128,
+    "features": {
+      "compat": [
+        "has_journal",
+        "ext_attr",
+        "dir_index"
+      ],
+      "incompat": [
+        "filetype",
+        "meta_bg",
+        "extent",
+        "64bit",
+        "flex_bg",
+        "metadata_csum_seed"
+      ],
+      "roCompat": [
+        "sparse_super",
+        "large_file",
+        "huge_file",
+        "dir_nlink",
+        "extra_isize",
+        "metadata_csum"
+      ]
+    },
+    "uuid": "4c1a41c8-20b8-4c50-8399-7fae324e8398",
+    "label": "",
+    "hashSeed": "da89e13f-1cf4-4015-a4e0-0e9abbd2aabd",
+    "e2fsprogsFakeTime": "1735689600"
+  },
+  "rawImage": {
+    "sizeBytes": 536870912,
+    "sha256": "1b37664680a1957bc29a021eccf70892298a5e5d517a884871fe2a255cd160b4"
+  },
+  "compressedAsset": {
+    "sizeBytes": 17509,
+    "sha256": "0910a4cb3ae6873d56a1a8d01e320541d8580308f7cc9b3039e974aff7fdd213",
+    "path": "golden.img.zst"
+  },
+  "verification": {
+    "ranInContainer": true,
+    "verifiedGrowthCeilingBytes": 8796093022208,
+    "note": "See README.md for the full growth-ceiling argument (empirical proof at whatever ceiling this run's build host allowed, plus the documented meta_bg mechanism this generalizes from)."
+  },
+  "generatedAt": "2026-08-07T10:33:47Z"
+}
