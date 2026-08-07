@@ -1,0 +1,10 @@
+{
+  "$schema_note": "Build-source pins for the Radxa Cubie A5E. Like rock-4se there is NO rkbin/blob section here: the A527's DRAM init is open-source in mainline U-Boot's SPL (CONFIG_MACH_SUN55I_A523) and its BL31 builds from source, so everything in u-boot-sunxi-with-spl.bin is compiled from the pinned sources below. UNLIKE rock-4se's tfa pin, this one is a MOVING BRANCH on a fork, not a tagged release of the upstream project -- mainline Trusted-Firmware-A has no sun55i_a523 platform yet (bean gosd-jpc8), so BL31 is built from jernejsk/arm-trusted-firmware's a523 branch instead. The commit below, not the branch name, is authoritative: the branch is informational only (it records which upstream line the pin was taken from) and can move at any time without affecting this build, because the Dockerfile fetches the pinned commit directly rather than cloning the branch and checking it out.",
+  "tfa": {
+    "repo": "https://github.com/jernejsk/arm-trusted-firmware.git",
+    "branch": "a523",
+    "commit": "b5de74a685fb73b784e45bbbd18dd9a0c528d8b2",
+    "license": "BSD-3-Clause",
+    "license_note": "TF-A is compiled from source at the pinned commit (make PLAT=sun55i_a523 bl31), never fetched as a binary blob; BSD-3-Clause permits embedding the resulting bl31.bin in the u-boot-sunxi-with-spl.bin FIT image we produce and distribute. The commit, not the branch, is authoritative: the Dockerfile fetches this exact commit directly (git fetch --depth 1 origin $TFA_COMMIT), so even if the a523 branch moves on to a different commit, this build keeps working from the commit that's still reachable. Re-pin deliberately (see uboot/README.md) rather than tracking the branch's tip."
+  }
+}
