@@ -36,13 +36,14 @@ import (
 // docs/artifacts.md) is the only step needed to move gosd onto newer
 // CI-built kernels/U-Boot.
 //
-// v0.8.0 carries the first pi-3b artifacts (gosd-0nl7's CI kernel job):
-// kernel8.img plus both family DTBs - bcm2710-rpi-3-b.dtb and
-// bcm2710-rpi-3-b-plus.dtb, one image covering the 3B and 3B+ with the GPU
-// firmware picking by board revision (gosd-oq0z). Every other board is an
-// unchanged rebuild of v0.7.0 from identical source pins and configs (the
-// two Pi Zero tarballs are byte-identical to v0.7.0's).
-const Version = "v0.8.0"
+// v0.9.0 carries the first cubie-a5e artifacts (epic gosd-h1wv, bean
+// gosd-axtv's kernel build): Image plus sun55i-a527-cubie-a5e.dtb, a
+// trimmed mainline v6.18.37 kernel (the fleet's first Allwinner member),
+// and u-boot-sunxi-with-spl.bin - a single SPL+FIT bootloader image with
+// BL31 compiled from a pinned TF-A fork (mainline has no sun55i_a523
+// platform yet), no rkbin-style blobs. Every other board is an unchanged
+// rebuild of v0.8.0 from identical source pins and configs.
+const Version = "v0.9.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

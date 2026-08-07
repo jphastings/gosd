@@ -189,9 +189,9 @@ provenance record missing any of those defeats the point of recording it.
 ```
 
 Output is keyed by **arch, not board** — `arm64` covers pi-zero-2w,
-radxa-zero-3e, nanopi-zero2, rock-4se, and pi-3b alike; `arm-6` covers
-pi-zero-w — since an external's toolchain and static-linking result depend
-only on the target arch, not which board eventually boots it. The
+radxa-zero-3e, nanopi-zero2, rock-4se, pi-3b, and cubie-a5e alike; `arm-6`
+covers pi-zero-w — since an external's toolchain and static-linking result
+depend only on the target arch, not which board eventually boots it. The
 `source.json` filename is prefixed with the external's own name
 (`<name>.source.json`, not a bare `source.json`) because a single `<arch>/`
 directory can hold more than one external's output side by side; a bare

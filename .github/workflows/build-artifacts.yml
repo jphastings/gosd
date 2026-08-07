@@ -5,14 +5,13 @@ name: Build artifacts
 # manually via workflow_dispatch for testing on a branch (bean gosd-07fl) —
 # a dispatch run skips the final publish step, see package-and-release below.
 # Builds the kernel/DTB/bootloader files GoSD compiles itself for both
-# end-user boards plus the internal-only boards — qemu-virt (CI/local boot
-# testing, bean gosd-5wm0) and cubie-a5e (epic gosd-h1wv, pre-activation) —
-# neither ever shown in end-user docs or the default all-boards build,
-# packages them into per-board tarballs + a manifest.json, and publishes a
-# GitHub Release from them. Third-party blobs (GPU firmware, WiFi firmware,
-# rkbin) are NOT built or re-hosted here — they stay upstream-fetched by the
-# CLI at pinned URL+sha256, per the no-rehosting policy in the repo root
-# CLAUDE.md.
+# end-user boards plus the internal-only qemu-virt board (CI/local boot
+# testing, bean gosd-5wm0) — never shown in end-user docs or the default
+# all-boards build — packages them into per-board tarballs + a
+# manifest.json, and publishes a GitHub Release from them. Third-party
+# blobs (GPU firmware, WiFi firmware, rkbin) are NOT built or re-hosted
+# here — they stay upstream-fetched by the CLI at pinned URL+sha256, per
+# the no-rehosting policy in the repo root CLAUDE.md.
 #
 # The kernel jobs run `gosd build-kernel` (bean gosd-07fl/epic
 # gosd-47rm): it drives the same Dockerized, cross-compiling build the old
@@ -209,9 +208,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # cubie-a5e is registered internal-only until its first artifacts release
-  # activates it (epic gosd-h1wv, activation bean part of gosd-zh95); it's
-  # built and packaged here so that release can carry it from day one.
+  # cubie-a5e is public (epic gosd-h1wv, activated by bean gosd-zh95).
   cubie-a5e-kernel:
     name: Build cubie-a5e kernel
     runs-on: ubuntu-latest

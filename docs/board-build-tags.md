@@ -19,7 +19,7 @@ underscores:
 | `radxa-zero-3e` | `gosd_radxa_zero_3e` |
 | `nanopi-zero2` | `gosd_nanopi_zero2` |
 | `rock-4se` | `gosd_rock_4se` |
-| `cubie-a5e` | `gosd_cubie_a5e` (internal-only until activation) |
+| `cubie-a5e` | `gosd_cubie_a5e` |
 
 Gate a file to a board with a `//go:build` constraint:
 

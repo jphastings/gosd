@@ -2,7 +2,7 @@
 
 Turn a Go application into a flashable SD-card image for the Raspberry Pi
 Zero 2W, Raspberry Pi Zero W, Raspberry Pi 3B (and 3B+), Radxa Zero 3E,
-FriendlyElec NanoPi Zero2, and Radxa ROCK 4SE.
+FriendlyElec NanoPi Zero2, Radxa ROCK 4SE, and Radxa Cubie A5E.
 [`COMPATIBILITY.md`](COMPATIBILITY.md) is the board × feature matrix: what
 works where, and how each cell was verified.
 

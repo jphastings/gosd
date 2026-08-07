@@ -17,13 +17,11 @@
 // on the FAT boot partition.
 //
 // The bootloader and kernel artifacts are built by
-// build/boards/cubie-a5e/{uboot,kernel} (later beans - see epic gosd-h1wv's
-// sequencing); they have no per-file pinned URL, so they're resolved from
-// --artifacts-dir or, falling back, from the CI-built artifact release (see
-// internal/artifacts). Pinned values (offsets, console, artifact names) are
-// bean gosd-jpc8's research findings. Registered internal (buildable only
-// via explicit --board=cubie-a5e) until its artifact release lands and a
-// later activation bean flips it public.
+// build/boards/cubie-a5e/{uboot,kernel}; they have no per-file pinned URL,
+// so they're resolved from --artifacts-dir or, falling back, from the
+// CI-built artifact release (see internal/artifacts). Pinned values
+// (offsets, console, artifact names) are bean gosd-jpc8's research findings.
+// Public since the artifacts/v0.9.0 release (bean gosd-zh95's activation).
 package cubiea5e
 
 import (
