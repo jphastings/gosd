@@ -157,6 +157,10 @@ the same tarballs + manifest.json the workflow publishes.
    - **Content spot-check** — confirm the released artifact actually
      carries the change, e.g. `dtc -I dtb -O dts` showing the newly enabled
      DT node.
+7. Also check the cacerts pin is current —
+   `.github/workflows/cacerts-pin-check.yml` runs this check on a schedule
+   and files an issue when it's not (bean gosd-w6zc); no need to duplicate
+   its logic here.
 
 ## How the CLI consumes a release: pinning and caching
 
