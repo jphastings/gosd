@@ -196,6 +196,19 @@ This is a separate concern from the clock (below): a valid CA bundle
 doesn't help if the clock still reads 1970, since certificate validity
 periods won't check out either — see "Clock" for that gotcha.
 
+### Ingress: reaching your app from the internet (`--ingress cloudflared`)
+
+An image built with `gosd build --ingress cloudflared`, plus an
+`[ingress.cloudflared]` section filled in on `gosd.toml`, gets a Cloudflare
+Tunnel: `gosd-init` supervises a baked-in `cloudflared` binary that carries
+traffic for one public hostname to one local port on your app — no port
+forwarding, no public IP address, and no app code required.
+
+**[docs/ingress.md](ingress.md) is the full guide** — creating the tunnel,
+why it must be CLI-created rather than dashboard-created, what token and
+config files actually exist and where, the clock/TLS startup window, the
+pinned-version update story, and what survives a reflash.
+
 ## Provisioning: hostname and WiFi from Raspberry Pi Imager
 
 Beyond `config.json` baked in at build time and `gosd.toml` hand-edited
@@ -432,26 +445,34 @@ restores what the operator actually chose, freshest intent first:
    normal — and also refreshes the snapshot, since it's the most recent
    statement of the operator's intent.
 2. **Failing that, the snapshot restores anything it can prove was a
-   hand-edit**: a hostname, WiFi ssid/passphrase pair, or individual
+   hand-edit**: a hostname, a WiFi ssid/passphrase pair, an individual
    `[env]` key whose snapshotted value differed from the baked default it
-   was compared against at the time. A value that only ever matched the
-   old image's default is never restored — if a new release changes that
-   default, the new default wins, because the operator never actually
-   chose the old one.
+   was compared against at the time, or the whole `[ingress.cloudflared]`
+   section — restored as a unit, never field-by-field, since there is no
+   baked default for it to differ from (`config.json` only ever records
+   *whether* the `cloudflared` binary is baked in, never a real token), so
+   any snapshotted section at all counts as the operator's own intent. A
+   value that only ever matched the old image's default is never restored
+   — if a new release changes that default, the new default wins, because
+   the operator never actually chose the old one.
 3. **Failing that, the newly-flashed image's own baked defaults apply**,
    exactly as on a first flash.
 
 The practical effect: an operator who reflashes a device the same way
 they flashed it the first time — including skipping the Imager wizard
 entirely, via "Use custom image" — gets their hostname and WiFi back and
-rejoins the network on its own, and any hand-edited `gosd.toml [env]`
-value survives too, restored (re-rendered from GoSD's own template) into
-the new card's `gosd.toml` so it's still visible and editable there.
+rejoins the network on its own, any hand-edited `gosd.toml [env]` value
+survives too, restored (re-rendered from GoSD's own template) into the new
+card's `gosd.toml` so it's still visible and editable there, and a
+configured [Cloudflare Tunnel](ingress.md) resumes the same way — with no
+credentials file to lose, since the tunnel token round-trips through
+`/data` exactly like a WiFi passphrase does.
 
-What does **not** come back: anything outside hostname/WiFi/`[env]` — the
-Imager wizard's other, RPi-OS-specific settings were never applied in the
-first place (see "Provisioning" above) — nor the schema or contents of
-your app's own `/data` files across versions, which remains the app's
+What does **not** come back: anything outside
+hostname/WiFi/`[env]`/`[ingress.cloudflared]` — the Imager wizard's other,
+RPi-OS-specific settings were never applied in the first place (see
+"Provisioning" above) — nor the schema or contents of your app's own
+`/data` files across versions, which remains the app's
 concern like any other update. A hand-written *comment* in a card's
 `gosd.toml` isn't preserved either, since a restore re-renders the file
 from the template: values come back, prose around them doesn't. Every
