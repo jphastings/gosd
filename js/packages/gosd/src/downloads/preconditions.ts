@@ -15,6 +15,10 @@ export interface CheckImageResponseOptions {
    * serving with a Content-Encoding). Not recommended — see the ETag
    * policy in the package README. */
   ignoreETag?: boolean;
+  /** The Content-Length this response is expected to declare — defaults to
+   * `manifest.image.size`. A resumed `Range` request's `206` response only
+   * declares the remaining bytes, not the whole image (see resume.ts). */
+  expectedContentLength?: number;
 }
 
 /** Checks `response`'s `ETag` and `Content-Length` headers against
@@ -49,9 +53,10 @@ export function checkImageResponse(
     const contentLengthHeader = response.headers.get("content-length");
     if (contentLengthHeader !== null) {
       const contentLength = Number(contentLengthHeader);
-      if (Number.isFinite(contentLength) && contentLength !== manifest.image.size) {
+      const expected = options.expectedContentLength ?? manifest.image.size;
+      if (Number.isFinite(contentLength) && contentLength !== expected) {
         throw new GosdImagePreconditionError(
-          `the image response's Content-Length (${contentLengthHeader}) does not match the manifest's declared image size (${manifest.image.size}); the download would end up truncated or overlong`,
+          `the image response's Content-Length (${contentLengthHeader}) does not match the expected size of ${expected} bytes; the download would end up truncated or overlong`,
         );
       }
     }

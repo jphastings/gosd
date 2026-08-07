@@ -29,6 +29,17 @@
 // A throw from `transform`/`flush` errors the TransformStream, which in a
 // `pipeTo` chain cancels the upstream fetch and aborts the downstream sink
 // — one error channel for the whole pipeline.
+//
+// Steps 1-4 are implemented as a plain, streamless "engine" below
+// (createEngine/engineProcessChunk/engineFinish) so the exact same logic
+// backs two different callers: the live TransformStream, and
+// `primeSubstitutionState`, which replays an already-downloaded (and, for
+// any patched placeholder within it, pristine-reconstructed — see
+// resume.ts) prefix through it to rebuild the running hash state a resumed
+// download needs to continue correctly, without a serialized-hasher-state
+// format to maintain (the vendored Sha256 only supports in-session
+// `clone()`; re-hashing a reconstructed prefix is the cross-session
+// equivalent).
 
 import {
   GosdImageHashMismatchError,
@@ -45,6 +56,13 @@ export interface SubstitutionProgress {
 
 export interface SubstitutionOptions {
   onProgress?: (progress: SubstitutionProgress) => void;
+  /** Fires the instant a placeholder that `padded` supplied a replacement
+   * for finishes verifying, with that placeholder's PRISTINE (pre-
+   * substitution) bytes — never for a placeholder `padded` left untouched
+   * (its on-disk bytes already are its pristine bytes). Used by the
+   * fs-access resumable download path (resume.ts) to stash those bytes for
+   * reconstructing this prefix again in a later session. */
+  onPlaceholderVerified?: (path: string, pristine: Uint8Array) => void;
 }
 
 interface Segment {
@@ -61,19 +79,36 @@ interface PlaceholderState {
   sha256: string;
   hasher: Sha256;
   remaining: number;
+  /** Accumulates this placeholder's pristine bytes as they're seen, but
+   * only when it's being patched (`onPlaceholderVerified` needs them for a
+   * patched placeholder; an untouched one's on-disk bytes are already its
+   * pristine bytes, so capturing them again would just waste memory). */
+  capture: Uint8Array | null;
+  captureOffset: number;
 }
 
-function buildPlan(
-  manifest: Manifest,
-  padded: Map<string, Uint8Array>,
-): { segments: Segment[]; placeholderStates: PlaceholderState[] } {
-  const placeholderStates: PlaceholderState[] = manifest.placeholders.map((p) => ({
-    path: p.path,
-    sha256: p.sha256,
-    hasher: new Sha256(),
-    remaining: p.size,
-  }));
+/** The running state of one substitution pass: how far through the image
+ * it's gotten, the whole-image hash so far, and each placeholder's own
+ * in-progress hash. Produced by `primeSubstitutionState` and consumed by
+ * `createSubstitutionTransform`'s `resumeFrom` to continue a download
+ * across a browser session (see resume.ts) — opaque otherwise, and never
+ * serialized (a fresh prime from a reconstructed prefix stands in for
+ * serialization; see the module doc above). */
+export interface SubstitutionState {
+  pos: number;
+  segIndex: number;
+  imageHasher: Sha256;
+  placeholderStates: PlaceholderState[];
+}
 
+interface Engine {
+  manifest: Manifest;
+  segments: Segment[];
+  options: SubstitutionOptions;
+  state: SubstitutionState;
+}
+
+function buildSegments(manifest: Manifest, padded: Map<string, Uint8Array>): Segment[] {
   const segments: Segment[] = [];
   manifest.placeholders.forEach((p, placeholderIndex) => {
     const replacement = padded.get(p.path);
@@ -89,117 +124,196 @@ function buildPlan(
     }
   });
   segments.sort((a, b) => a.start - b.start);
-
-  return { segments, placeholderStates };
+  return segments;
 }
 
-function verifyPristine(state: PlaceholderState): void {
+function freshState(manifest: Manifest, padded: Map<string, Uint8Array>): SubstitutionState {
+  return {
+    pos: 0,
+    segIndex: 0,
+    imageHasher: new Sha256(),
+    placeholderStates: manifest.placeholders.map((p) => ({
+      path: p.path,
+      sha256: p.sha256,
+      hasher: new Sha256(),
+      remaining: p.size,
+      capture: padded.has(p.path) ? new Uint8Array(p.size) : null,
+      captureOffset: 0,
+    })),
+  };
+}
+
+function createEngine(
+  manifest: Manifest,
+  padded: Map<string, Uint8Array>,
+  options: SubstitutionOptions,
+  resumeFrom?: SubstitutionState,
+): Engine {
+  return {
+    manifest,
+    segments: buildSegments(manifest, padded),
+    options,
+    state: resumeFrom ?? freshState(manifest, padded),
+  };
+}
+
+function verifyPristine(engine: Engine, state: PlaceholderState): void {
   const digest = state.hasher.digestHex();
   if (digest !== state.sha256) {
     throw new GosdPlaceholderNotPristineError(
       `placeholder "${state.path}" is not pristine: expected sha256 ${state.sha256}, got ${digest}; the image may be corrupt, already patched by something else, or tampered with`,
     );
   }
+  if (state.capture) {
+    engine.options.onPlaceholderVerified?.(state.path, state.capture);
+  }
+}
+
+/** Runs the engine's start-of-stream check: a zero-size placeholder never
+ * has a byte cross the loop in `engineProcessChunk`, so it's verified up
+ * front against the empty-input digest. Skipped when resuming (a resumed
+ * engine's placeholders were already checked during priming). */
+function engineStart(engine: Engine): void {
+  for (const state of engine.state.placeholderStates) {
+    if (state.remaining === 0) {
+      verifyPristine(engine, state);
+    }
+  }
+}
+
+/** Feeds one chunk through the engine, returning the bytes to emit
+ * (possibly rewritten with replacement content, possibly the same chunk
+ * unchanged). Shared, verbatim, between the live TransformStream and
+ * `primeSubstitutionState`'s replay of an already-downloaded prefix. */
+function engineProcessChunk(engine: Engine, chunk: Uint8Array): Uint8Array {
+  const { state, segments, manifest } = engine;
+  const chunkStart = state.pos;
+  const chunkEnd = state.pos + chunk.length;
+
+  if (chunkEnd > manifest.image.size) {
+    throw new GosdImageSizeError(
+      `the downloaded image exceeds its manifest's declared size of ${manifest.image.size} bytes; the download or the manifest is corrupt`,
+    );
+  }
+
+  state.imageHasher.update(chunk);
+
+  let out: Uint8Array | null = null;
+
+  while (state.segIndex < segments.length) {
+    const seg = segments[state.segIndex];
+    if (!seg || seg.start >= chunkEnd) break;
+
+    const intersectStart = Math.max(seg.start, chunkStart);
+    const intersectEnd = Math.min(seg.end, chunkEnd);
+
+    if (intersectEnd > intersectStart) {
+      const localStart = intersectStart - chunkStart;
+      const localEnd = intersectEnd - chunkStart;
+      const placeholderState = state.placeholderStates[seg.placeholderIndex];
+      if (!placeholderState) {
+        throw new Error("substitute: internal error, segment references an unknown placeholder");
+      }
+
+      const original = chunk.subarray(localStart, localEnd);
+      placeholderState.hasher.update(original);
+      if (placeholderState.capture) {
+        placeholderState.capture.set(original, placeholderState.captureOffset);
+        placeholderState.captureOffset += original.length;
+      }
+      placeholderState.remaining -= intersectEnd - intersectStart;
+      if (placeholderState.remaining === 0) {
+        verifyPristine(engine, placeholderState);
+      }
+
+      if (seg.replacement) {
+        if (!out) out = chunk.slice();
+        out.set(
+          seg.replacement.subarray(intersectStart - seg.start, intersectEnd - seg.start),
+          localStart,
+        );
+      }
+    }
+
+    if (seg.end <= chunkEnd) {
+      state.segIndex++;
+    } else {
+      break;
+    }
+  }
+
+  state.pos = chunkEnd;
+  engine.options.onProgress?.({ bytesProcessed: state.pos, bytesTotal: manifest.image.size });
+
+  return out ?? chunk;
+}
+
+function engineFinish(engine: Engine): void {
+  const { state, manifest } = engine;
+  if (state.pos !== manifest.image.size) {
+    throw new GosdImageSizeError(
+      `the download ended after ${state.pos} bytes but the manifest declares the image as ${manifest.image.size} bytes; the download was interrupted, or the manifest is stale`,
+    );
+  }
+  const digest = state.imageHasher.digestHex();
+  if (digest !== manifest.image.sha256) {
+    throw new GosdImageHashMismatchError(
+      `the downloaded image failed final integrity verification: expected sha256 ${manifest.image.sha256}, got ${digest}; the download is corrupt, or the image at that URL has changed since the manifest was written`,
+    );
+  }
+}
+
+/** Replays `prefix` — the reconstructed-pristine bytes of an
+ * already-downloaded prefix of the image (see resume.ts's
+ * `reconstructPristinePrefix`) — through the same verification/hashing
+ * logic a live download uses, without writing the result anywhere.
+ * Returns the resulting `SubstitutionState`, ready to hand to
+ * `createSubstitutionTransform`'s `resumeFrom` to continue the download
+ * live from `prefix.length` onward. Throws exactly as a live download
+ * would if `prefix` doesn't actually verify (e.g. it wasn't correctly
+ * reconstructed, or the on-disk file was corrupted) — the caller should
+ * treat that as "this resume isn't safe; discard it and start fresh". */
+export function primeSubstitutionState(
+  manifest: Manifest,
+  padded: Map<string, Uint8Array>,
+  prefix: Uint8Array,
+): SubstitutionState {
+  const engine = createEngine(manifest, padded, {});
+  engineStart(engine);
+  if (prefix.length > 0) {
+    engineProcessChunk(engine, prefix);
+  }
+  return engine.state;
 }
 
 /** Builds the substitution TransformStream for one download: feed it the
  * raw image bytes in order, and it emits the same bytes with every
  * `padded` placeholder's ranges rewritten in place, throwing as soon as
  * anything fails verification. `padded` (from `padContents`) need not
- * cover every placeholder — the rest are verified but left untouched. */
+ * cover every placeholder — the rest are verified but left untouched.
+ *
+ * `resumeFrom` (from `primeSubstitutionState`) starts the transform partway
+ * through the image instead of at byte 0, continuing an already-verified
+ * prefix's running hashes — the caller is responsible for only ever
+ * feeding this transform the bytes that come immediately after that
+ * prefix. */
 export function createSubstitutionTransform(
   manifest: Manifest,
   padded: Map<string, Uint8Array>,
   options: SubstitutionOptions = {},
+  resumeFrom?: SubstitutionState,
 ): TransformStream<Uint8Array, Uint8Array> {
-  const { segments, placeholderStates } = buildPlan(manifest, padded);
-  const imageHasher = new Sha256();
-  const imageSize = manifest.image.size;
-
-  let pos = 0;
-  let segIndex = 0;
+  const engine = createEngine(manifest, padded, options, resumeFrom);
 
   return new TransformStream<Uint8Array, Uint8Array>({
     start() {
-      // A zero-size placeholder (degenerate, but not forbidden by the
-      // manifest schema) never has a byte cross the loop below, so verify
-      // it up front against the empty-input digest.
-      for (const state of placeholderStates) {
-        if (state.remaining === 0) {
-          verifyPristine(state);
-        }
-      }
+      if (!resumeFrom) engineStart(engine);
     },
-
     transform(chunk, controller) {
-      const chunkStart = pos;
-      const chunkEnd = pos + chunk.length;
-
-      if (chunkEnd > imageSize) {
-        throw new GosdImageSizeError(
-          `the downloaded image exceeds its manifest's declared size of ${imageSize} bytes; the download or the manifest is corrupt`,
-        );
-      }
-
-      imageHasher.update(chunk);
-
-      let out: Uint8Array | null = null;
-
-      while (segIndex < segments.length) {
-        const seg = segments[segIndex];
-        if (!seg || seg.start >= chunkEnd) break;
-
-        const intersectStart = Math.max(seg.start, chunkStart);
-        const intersectEnd = Math.min(seg.end, chunkEnd);
-
-        if (intersectEnd > intersectStart) {
-          const localStart = intersectStart - chunkStart;
-          const localEnd = intersectEnd - chunkStart;
-          const state = placeholderStates[seg.placeholderIndex];
-          if (!state)
-            throw new Error(
-              "substitute: internal error, segment references an unknown placeholder",
-            );
-
-          state.hasher.update(chunk.subarray(localStart, localEnd));
-          state.remaining -= intersectEnd - intersectStart;
-          if (state.remaining === 0) {
-            verifyPristine(state);
-          }
-
-          if (seg.replacement) {
-            if (!out) out = chunk.slice();
-            out.set(
-              seg.replacement.subarray(intersectStart - seg.start, intersectEnd - seg.start),
-              localStart,
-            );
-          }
-        }
-
-        if (seg.end <= chunkEnd) {
-          segIndex++;
-        } else {
-          break;
-        }
-      }
-
-      controller.enqueue(out ?? chunk);
-      pos = chunkEnd;
-      options.onProgress?.({ bytesProcessed: pos, bytesTotal: imageSize });
+      controller.enqueue(engineProcessChunk(engine, chunk));
     },
-
     flush() {
-      if (pos !== imageSize) {
-        throw new GosdImageSizeError(
-          `the download ended after ${pos} bytes but the manifest declares the image as ${imageSize} bytes; the download was interrupted, or the manifest is stale`,
-        );
-      }
-      const digest = imageHasher.digestHex();
-      if (digest !== manifest.image.sha256) {
-        throw new GosdImageHashMismatchError(
-          `the downloaded image failed final integrity verification: expected sha256 ${manifest.image.sha256}, got ${digest}; the download is corrupt, or the image at that URL has changed since the manifest was written`,
-        );
-      }
+      engineFinish(engine);
     },
   });
 }
@@ -210,6 +324,7 @@ export function patchStream(
   manifest: Manifest,
   padded: Map<string, Uint8Array>,
   options: SubstitutionOptions = {},
+  resumeFrom?: SubstitutionState,
 ): ReadableStream<Uint8Array> {
-  return source.pipeThrough(createSubstitutionTransform(manifest, padded, options));
+  return source.pipeThrough(createSubstitutionTransform(manifest, padded, options, resumeFrom));
 }

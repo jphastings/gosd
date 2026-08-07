@@ -87,7 +87,8 @@ click.
 Chromium stages writes to a swap file that's only published to the real path when the stream
 closes, so a failure partway through never leaves a truncated file at the user-visible path.
 If the user dismisses the picker, `withPlaceholders` rejects with `GosdCancelledError` — at
-that point nothing has been fetched yet.
+that point nothing has been fetched yet. This is the only tier that can resume an interrupted
+download later — see "Resuming" below.
 
 ### Tier 2: Service worker (`service-worker`, opt-in)
 
@@ -184,14 +185,67 @@ import {
 
 A `SaveSink` is just `{ kind, writable, commit(), abort(reason) }` — write your own to drive
 `runDownload` against a Node `fs` file handle, an S3 upload, or anything else that can accept
-a `WritableStream<Uint8Array>`.
+a `WritableStream<Uint8Array>`. A sink can additionally implement `SeekableSaveSink` (checked
+with `isSeekable`) to support resuming — see "Resuming" below.
 
 ## Resuming
 
-**Not implemented yet** — a planned follow-up. The `SaveSink` interface and the vendored
-`Sha256` class (which exposes `clone()` to snapshot hashing state) are both designed to make
-resumable downloads (via `Range`/`If-Range`) possible to add later without a breaking change,
-but today every download is sequential, start to finish, with no resume-from-partial support.
+The fs-access tier can resume an interrupted download across a page reload — the other two
+tiers can't (a service worker's in-flight state and a buffered `Blob` don't survive one, so
+resuming isn't offered for them). Opt in with `options.resumable`:
+
+```ts
+async function onDownloadClick() {
+  await withPlaceholders(imageURL, files, { resumable: true });
+}
+```
+
+This checkpoints progress to IndexedDB as the download streams: the `FileSystemFileHandle` the
+user picked, the image's identity (`manifest.image.sha256`) and size, the response's
+`ETag`/`Last-Modified`, and — as each patched placeholder finishes verifying — its pristine
+(pre-substitution) bytes, which are small (placeholders are KiB-scale) and are what a later
+resume needs to reconstruct the equivalent original bytes for re-verification, since only
+placeholder ranges are ever rewritten on disk. On a full success the checkpoint is deleted; on
+a failure that isn't corruption (a network drop, a cancelled request), whatever was durably
+streamed is preserved instead of thrown away.
+
+On your next page load, offer to continue:
+
+```ts
+import {
+  listResumableDownloads,
+  resumeDownload,
+  discardResumableDownload,
+} from "@jphastings/gosd/downloads";
+
+const pending = await listResumableDownloads();
+// pending: [{ key, imageURL, filename, imageSize, bytesWritten }, ...]
+
+async function onResumeClick(key: string) {
+  try {
+    const result = await resumeDownload({ key, files });
+    console.log(`resumed and saved via ${result.savedVia}, sha256 ${result.sha256}`);
+  } catch (err) {
+    // The partial file failed re-verification, or permission to keep
+    // writing to it was refused — start over instead.
+    await discardResumableDownload(key);
+    await withPlaceholders(pending.find((p) => p.key === key)!.imageURL, files);
+  }
+}
+```
+
+`resumeDownload` re-verifies whatever's already on disk (re-hashing a reconstruction of its
+pristine bytes rather than serializing the vendored `Sha256`'s internal state — there's no
+resumable-hash format to keep in sync across versions this way) before issuing an HTTP `Range`
+request with `If-Range` pinned to the stored `ETag`/`Last-Modified`, and continues the same
+substitution/verification pass a fresh download would have run. If the server ignores the
+`Range` (a plain `200` — no support, or the resource changed), it restarts from scratch, reusing
+the same already-picked file so the save picker never reappears.
+
+Resuming needs an explicit `key` — from `listResumableDownloads`, or `manifest.image.sha256` if
+you already have the manifest — because the whole point is to act _before_ re-running
+`withPlaceholders` (which would show the save picker again). `withPlaceholders` itself never
+auto-resumes.
 
 ## Zero runtime dependencies
 
