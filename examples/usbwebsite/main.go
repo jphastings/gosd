@@ -20,7 +20,10 @@
 // mounting it locally must never be live at the same time (the host writes
 // raw blocks with no knowledge of our filesystem), so the app either hands
 // the device to a connected computer or keeps it mounted to serve — never
-// both.
+// both. It formats the eMMC as FAT32 rather than emmc's ext4 default (see
+// emmcOptions): the whole "plug in, drag files, eject" workflow depends on
+// the volume being natively readable from macOS and Windows, which ext4
+// is not.
 //
 // A board whose eMMC already holds other content (a vendor image, a prior
 // project) needs explicit consent before this app claims it: set the
@@ -118,6 +121,15 @@ func main() {
 	serveWebsite(st.mountpoint)
 }
 
+// emmcOptions pins the eMMC to FAT32 rather than emmc's ext4 default
+// (gosd-9sc4): usbwebsite's entire point is presenting this volume to a
+// connected computer via gadget.MassStorage so its files can be dropped or
+// edited directly, and ext4 is not natively readable from macOS or Windows —
+// FAT32 is what makes that "plug in, drag files, eject" workflow work.
+func emmcOptions(destructive bool) emmc.Options {
+	return emmc.Options{Filesystem: emmc.FAT32, Destructive: destructive}
+}
+
 // claimStorage picks this boot's website volume: the onboard eMMC when the
 // board has one (formatted on first use, with the same consent gate as
 // before), otherwise the SD card's GOSD-DATA partition, which `gosd build
@@ -127,7 +139,7 @@ func main() {
 // unexpected errors exit so gosd-init restarts (and thereby retries) the app.
 func claimStorage() (storage, bool) {
 	destructive := wipeConsented()
-	res := <-emmc.FormatAndMount(emmcLabel, emmcMountpoint, destructive)
+	res := <-emmc.FormatAndMountWith(emmcLabel, emmcMountpoint, emmcOptions(destructive))
 	switch {
 	case res.Err == nil:
 		return storage{
@@ -135,10 +147,11 @@ func claimStorage() (storage, bool) {
 			device:     res.BlockDevice,
 			source:     "onboard eMMC (" + emmcLabel + ")",
 			unmount:    func() error { return emmc.Unmount(res.MountPoint) },
-			// FormatAndMount is idempotent here: it only remounts, never
-			// reformats, an eMMC that already carries this app's label.
+			// FormatAndMountWith is idempotent here: it only remounts, never
+			// reformats, an eMMC that already carries this app's label as
+			// FAT32.
 			remount: func() error {
-				r := <-emmc.FormatAndMount(emmcLabel, emmcMountpoint, false)
+				r := <-emmc.FormatAndMountWith(emmcLabel, emmcMountpoint, emmcOptions(false))
 				return r.Err
 			},
 		}, true

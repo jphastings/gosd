@@ -110,14 +110,17 @@ say so in the bean rather than silently diverging.
   `internal/diskfmt` (pure-Go inspect/format — FAT32 via go-diskfs, exFAT
   written directly from the Microsoft spec, ext4 from a checked-in golden
   image), so a change to one must not silently change the other's
-  semantics. `emmc` is FAT32-only by design and untouched by `disk`'s
-  filesystem choice, below. `disk` takes a typed `Filesystem` token
-  (`disk.EXT4`/`disk.FAT32`/`disk.ExFAT`) whose zero value is `disk.EXT4`
-  (epic `gosd-lfu0` — see the dedicated locked decision below for the
-  format/grow/adopt mechanism, a one-liner is `internal/blockmount`'s
-  package doc). exFAT and ext4 each need their kernel support
-  (`CONFIG_EXFAT_FS`/`CONFIG_EXT4_FS`) checked against `/proc/filesystems`
-  before any write.
+  semantics. Both `emmc` and `disk` take the same typed `Filesystem` token
+  (`EXT4`/`FAT32`/`ExFAT`, one const set per package but identical in
+  shape and spelling) whose zero value is `EXT4` (epic `gosd-lfu0` for
+  `disk`, bean `gosd-9sc4` for `emmc` — see the dedicated locked decisions
+  below for the format/grow/adopt mechanism, a one-liner is
+  `internal/blockmount`'s package doc). exFAT and ext4 each need their
+  kernel support (`CONFIG_EXFAT_FS`/`CONFIG_EXT4_FS`) checked against
+  `/proc/filesystems` before any write. The two packages still differ in
+  candidate *selection*, not filesystem: `emmc` addresses exactly one
+  device (the board's onboard eMMC) with no equivalent of `disk`'s
+  multi-class ranking or `FormatAndMountDevice`/`Devices`.
 - **`disk/` defaults to ext4 (decided 2026-08-07, epic `gosd-lfu0`):**
   `disk.Options.Filesystem`'s zero value is `disk.EXT4` — a deliberate
   breaking change from the prior FAT32 default, shipped as a minor version
@@ -135,10 +138,31 @@ say so in the bean rather than silently diverging.
   pattern (docs/runtime.md) remains the app-facing contract regardless of
   filesystem. FAT32/exFAT remain available as explicit `Options.Filesystem`
   tokens for removable media meant to be read on another host, which is
-  the case ext4's default does not serve. `emmc/` is unaffected — stays
-  FAT32-only by design. Proven end-to-end (format, grow, a hard qemu kill
-  with no clean shutdown, reboot, adopt, journal replay) by CI's
-  `qemu-disk-ext4` job; real-hardware verification is bean `gosd-vv5o`.
+  the case ext4's default does not serve. Proven end-to-end (format, grow,
+  a hard qemu kill with no clean shutdown, reboot, adopt, journal replay)
+  by CI's `qemu-disk-ext4` job; real-hardware verification is bean
+  `gosd-vv5o`.
+- **`emmc/` shares `disk`'s Filesystem token and ext4 default (decided
+  2026-08-07, bean `gosd-9sc4`) — this REPLACES the prior "emmc is
+  FAT32-only by design" locked decision.** `emmc.Options.Filesystem`'s
+  zero value is `emmc.EXT4`, mirroring `disk.Options.Filesystem` token for
+  token (`emmc.EXT4`/`emmc.FAT32`/`emmc.ExFAT`) — the same deliberate
+  breaking default, shipped in the same CLI minor release as `disk`'s flip
+  (bean `gosd-2194`). The format/grow/adopt machinery was already shared
+  via `internal/blockmount`'s `runEXT4`; this bean only stopped `emmc`
+  pinning `diskfmt.FAT32` and let its own token flow through, so an
+  established FAT32 eMMC volume plus a zero-value (ext4) request refuses
+  without `Destructive: true`, naming the upgrade story in the error (pass
+  `emmc.Options{Filesystem: emmc.FAT32}` explicitly to keep adopting the
+  existing FAT32 volume; `Destructive: true` reformats it as ext4 and
+  loses its data). What does **not** change: `emmc`'s candidate selection
+  stays a single onboard device (`chooseEMMC`, keyed on `Kind == "MMC"`)
+  with no `disk`-style multi-class ranking or
+  `FormatAndMountDevice`/`Devices` equivalent, and its hardware-partition
+  exclusion still relies on the `Kind == ""` sysfs quirk rather than
+  `disk.rank`'s explicit regex (`gosd-ix38`) — that split predates this
+  bean and is unrelated to which filesystem is requested; see
+  `internal/blockmount`'s package doc for the full detail.
 - **Layout ABI (decided 2026-07-31, docs/design/upgrade-path.md):** the boot
   volume size is per-app (`gosd build --boot-size`, default 256MiB) and is
   that app's on-card ABI — changing it in a later release erases GOSD-DATA

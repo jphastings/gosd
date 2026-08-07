@@ -60,10 +60,11 @@ func writeAndReadBack() error {
 // writeFileDurably writes data to path so that a power cut leaves either the
 // old contents or the new, never a torn mix, and so that the new contents are
 // on the device by the time it returns: write a temp file, fsync it, rename it
-// over the real name, then fsync the renamed file and its directory. The
-// eMMC's whole-device FAT filesystem has the same weak crash-safety as
-// GOSD_DATA, so the same pattern applies — see docs/runtime.md's "Making a
-// write durable".
+// over the real name, then fsync the renamed file and its directory. Even
+// ext4's journal (the eMMC's default filesystem, see the emmc package doc)
+// only buys metadata crash-consistency, not durability for this file's own
+// data, so the same pattern applies regardless of filesystem — see
+// docs/runtime.md's "Making a write durable".
 func writeFileDurably(path string, data []byte) error {
 	tmp := path + ".tmp"
 

@@ -5,15 +5,24 @@
 // Both public packages are thin parameterisations of this one. They differ only
 // in what they call the storage in error messages, which sentinel they return
 // when none is available, and which block devices they consider candidates;
-// everything else (the orchestration, FAT's label rules, the boot-device
+// everything else (the orchestration, the label rules, the boot-device
 // exclusion, the Linux mount/sysfs primitives) is here so the two can never
-// drift apart. emmc only ever asks Run for diskfmt.FAT32, so every ext4-only
-// code path below (runEXT4, and the Grow/EstablishMarker/MarkerEstablished/
-// RootHasOtherContent/SyncDevice/Unmount Deps) is unreachable from it —
-// additive, not a change to its FAT32-only semantics.
+// drift apart. Both emmc and disk pass a typed Filesystem token through to
+// Run — emmc gained the same token disk already had (bean gosd-9sc4,
+// mirroring gosd-1c0x/PR #192), both defaulting to EXT4 — so every code path
+// below, including runEXT4, is reachable from either caller; neither package
+// pins a single diskfmt.FS any more. What still differs between the two is
+// candidate *selection*, not filesystem: emmc addresses exactly one device
+// (chooseEMMC, keyed on Kind == "MMC") with no equivalent of disk's
+// multi-class ranking or FormatAndMountDevice/Devices, and disk's rank
+// explicitly excludes an eMMC's hardware partitions (isMMCHardwarePartition)
+// where emmc's selection stays safe against them only via a sysfs-topology
+// quirk (see emmc.chooseEMMC's doc and gosd-ix38) — that divergence predates
+// gosd-9sc4 and is unrelated to, and unchanged by, which filesystem is
+// requested.
 //
-// ext4 (disk only; see disk.Options.Filesystem) is the one filesystem here
-// that is grown and crash-gated rather than just formatted: Run's
+// ext4 (see emmc.Options.Filesystem / disk.Options.Filesystem) is the one
+// filesystem here that is grown and crash-gated rather than just formatted: Run's
 // establishment sequence is write → sync → mount → grow → marker → sync,
 // mirroring the write → sync → marker → sync convention every other
 // on-disk commit in this codebase follows (cmd/gosd-init/internal/
@@ -122,9 +131,9 @@ type Deps struct {
 	MountedSources func() (map[string]bool, error)
 
 	// The fields below are ext4-only: Run never calls them for FAT32 or
-	// exFAT, so a Deps value that leaves them nil (every emmc caller, and
-	// every disk caller that never asks for diskfmt.EXT4) is exactly as
-	// valid as it always was — see runEXT4.
+	// exFAT, so a Deps value that leaves them nil (any emmc or disk caller
+	// that never asks for diskfmt.EXT4) is exactly as valid as it always
+	// was — see runEXT4.
 
 	// SyncDevice flushes device's page-cache-buffered writes to the medium.
 	// Called once, right after Format writes ext4's golden image and before
