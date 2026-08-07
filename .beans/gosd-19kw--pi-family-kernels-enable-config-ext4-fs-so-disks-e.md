@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-08-07T19:11:14Z
-updated_at: 2026-08-07T19:39:13Z
+updated_at: 2026-08-07T19:40:38Z
 parent: gosd-lfu0
 ---
 
@@ -27,3 +27,12 @@ Fragment edits landed (pi-zero-2w, pi-zero-w, pi-3b), COMPATIBILITY.md's [^pi-ex
 ## Progress update: quality gates all green (2026-08-07)
 
 After the initial ENOSPC-plagued attempts (recorded above), the shared machine's disk pressure eased enough for clean runs: `go vet ./...` (0 issues), `golangci-lint run ./...` (0 issues), `GOOS=linux golangci-lint run ./...` (0 issues, after two ENOSPC-caused false starts that cleared on retry), `gofmt -l .` (clean), and `go test ./internal/kernelspec/...` including TestPiRequiredYIsDerivedFromFragment (all pass). A full `go test ./...` run earlier passed every package except cmd/gosd's disk-heavy cross-compile integration tests, which hit host ENOSPC from concurrent sibling-agent contention — unrelated to this change (zero .go files touched). Committed as 2cbb4d9 on bean/gosd-19kw-pi-ext4, rebased onto latest origin/main via fast-forward (no conflicts). Next: push, open PR, trigger workflow_dispatch on build-artifacts.yml, record the run URL.
+
+
+
+## PR opened, CI triggered (2026-08-07)
+
+PR: https://github.com/jphastings/gosd/pull/223
+Rebased onto latest main (fast-forward + a clean rebase past two more incoming merges — no conflicts). All quality gates green: go test ./..., go vet ./..., gofmt -l ., golangci-lint run ./..., GOOS=linux golangci-lint run ./... (see the ENOSPC note above for the bumpy road getting there — none of it was code-related).
+
+workflow_dispatch run (build-artifacts.yml on bean/gosd-19kw-pi-ext4): https://github.com/jphastings/gosd/actions/runs/31212493453 — includes the pi-zero-2w, pi-zero-w and pi-3b kernel jobs this change touches. Stopping here per the task instructions; orchestrator monitors the run. Remaining after merge: JP pushes the artifacts/vX.Y.Z tag (shared with gosd-10fn's btrfs trim), then a follow-up PR bumps internal/artifacts.Version and flips COMPATIBILITY.md's Pi ext4 row symbols.
