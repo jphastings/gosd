@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-08-06T22:32:57Z
-updated_at: 2026-08-06T22:42:43Z
+updated_at: 2026-08-07T16:38:51Z
 ---
 
 Seventh supported board and the FIRST ALLWINNER board: Radxa Cubie A5E — Allwinner A527 (sun55iw3 die, shared with A523/T527/H728), 8x Cortex-A55 (4x2.0GHz + 4x1.42GHz), arm64. Board: LPDDR4x (1/2/4GB variants), microSD + optional onboard eMMC, M.2 Key-M (PCIe Gen2 x1 via combo PHY shared with USB3), 2x GbE, WiFi 6/BT 5.4 module, USB 3.0 Type-A host, USB 2.0 Type-C OTG (gadget candidate + power), 40-pin Pi-style header, HDMI 2.0. JP has the hardware (purchased 2026-08).
@@ -41,3 +41,5 @@ Corrections/refinements to the locked decisions above, from primary-source verif
 - USB gadget: **IN scope, mainline** — the board DT pins usb_otg dr_mode="peripheral" (MUSB, allwinner,sun8i-a33-musb) at the fleet tag.
 - Confirmed OUT at fleet tag v6.18.37: PCIe/NVMe (no node), second GbE (GMAC200 later than v6.18), WiFi/BT (non-mainline driver), header SPI (dtsi has no spi nodes at all — nothing to patch spidev onto; revisit on fleet tag bump), eMMC (no node enabled in board DT).
 - SD is powered by AXP717 cldo3: the AXP MFD/regulator + r_i2c drivers are hard kernel requirements or the card vanishes mid-boot.
+
+Status 2026-08-07: activation shipped (#205, pending review). All children complete except hardware bring-up (gosd-6pfn) — the sole remaining work, needs the board on the bench.

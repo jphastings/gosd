@@ -77,19 +77,17 @@ say so in the bean rather than silently diverging.
   promotes to `latest`) — procedure in `js/PUBLISHING.md`; never publish
   from CI to `latest`.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
-  pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / qemu-virt,
-  and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6, 32-bit only). The
-  build pipeline compiles the app and gosd-init once per architecture needed
-  by the selected boards (decided 2026-07-06; was arm64-only).
+  pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / cubie-a5e /
+  qemu-virt, and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is armv6,
+  32-bit only). The build pipeline compiles the app and gosd-init once per
+  architecture needed by the selected boards (decided 2026-07-06; was
+  arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
   `pi-3b` (BCM2837, one image covers the 3B and 3B+ — epic gosd-xhc3),
   `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf),
   `rock-4se` (Radxa ROCK 4SE, RK3399-T — epic gosd-cuym),
   `cubie-a5e` (Radxa Cubie A5E, Allwinner A527 — first Allwinner board,
-  epic gosd-h1wv; **internal-only** until its artifacts release and
-  activation bean land — registered via `RegisterInternal`, same as
-  qemu-virt/pre-activation rock-4se); also `qemu-virt`
-  (internal —
+  epic gosd-h1wv); also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`

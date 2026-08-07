@@ -50,6 +50,7 @@ var boardDisplayNames = map[string]string{
 	"radxa-zero-3e": "Radxa Zero 3E",
 	"nanopi-zero2":  "NanoPi Zero2",
 	"rock-4se":      "Radxa ROCK 4SE",
+	"cubie-a5e":     "Radxa Cubie A5E",
 }
 
 // displayName returns the human-friendly name for boardID, falling back to

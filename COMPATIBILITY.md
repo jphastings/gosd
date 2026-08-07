@@ -25,7 +25,8 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   [post-build config injection](docs/image-injection.md) (`--placeholder`).
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
   stock kernels omit (`gosd build-kernel`).
-- Enables I2C, SPI and GPIO by default ([pinouts](docs/runtime.md)).
+- Enables I2C, SPI and GPIO by default ([pinouts](docs/runtime.md)) —
+  except the Radxa Cubie A5E, see Board notes below.
 - Ships no shell and no SSH, ever — serial console and app logs only.
 - Will gain OTA app updates — [designed](docs/design/ab-updates.md), not
   yet implemented (epic `gosd-vxal`).
@@ -47,20 +48,20 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | Radxa Zero 3E | In progress (`gosd-nlzf`) |
 | NanoPi Zero2 | Complete (`gosd-odp7`) |
 | Radxa ROCK 4SE | Complete (`gosd-sz6p`) |
-| Radxa Cubie A5E | Not started — internal-only profile, no artifacts yet (epic `gosd-h1wv`) |
+| Radxa Cubie A5E | Not started — code-complete, artifacts published (bean `gosd-6pfn`) |
 
 ## Board-specific features
 
-| Feature | Pi Zero 2W | Pi Zero W | Pi 3B | Radxa Zero 3E | NanoPi Zero2 | ROCK 4SE |
-|---|---|---|---|---|---|---|
-| Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ |
-| WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] |
-| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ |
-| Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] |
-| NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ |
-| ext4 on attached disks (the default) | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ✅ | ✅ | ✅ |
-| exFAT on attached disks | ✅ | ✅ | ✅ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ |
-| [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ |
+| Feature | Pi Zero 2W | Pi Zero W | Pi 3B | Radxa Zero 3E | NanoPi Zero2 | ROCK 4SE | Cubie A5E |
+|---|---|---|---|---|---|---|---|
+| Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ [^cubie-eth] |
+| WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] |
+| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ |
+| Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
+| NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] |
+| ext4 on attached disks (the default) | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
+| exFAT on attached disks | ✅ | ✅ | ✅ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ✅ |
+| [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
 
 **Legend:** ✅ supported · 🚧 in progress · ➖ no such hardware on this
 board · ❌ not supported (see footnote).
@@ -76,6 +77,12 @@ board · ❌ not supported (see footnote).
   `gosd build --console-baud 115200`.
 - **NanoPi Zero2** — GPIO/I2C/SPI are on a 30-pin FPC connector, not a
   Pi-style 40-pin header.
+- **Radxa Cubie A5E** — the first Allwinner board: unlike every other
+  board here, its stock kernel has no header SPI at all
+  (`sun55i-a523.dtsi` has no SPI node at this kernel tag, so there's
+  nothing for a DTS patch to enable) and no header I2C either — only the
+  PMIC-internal `r_i2c0` bus is wired up; both are deferred to a
+  post-bring-up follow-up (bean `gosd-jpc8`). GPIO works as usual.
 
 [^pi3b-wifi]: The 3B+'s BCM43455 WiFi firmware isn't bundled yet, so a
     3B+ is Ethernet-first for now (bean `gosd-oq0z`).
@@ -110,6 +117,26 @@ board · ❌ not supported (see footnote).
 
 [^zero3e-audio]: Recipe written, never compiled or heard (bean
     `gosd-lrxz`).
+
+[^cubie-eth]: Only EMAC0 (RGMII, RTL8211F PHY, `dwmac-sun8i`) is enabled —
+    the board's second GbE port uses the newer GMAC200 IP, which has no
+    driver at this kernel tag (epic `gosd-h1wv`).
+
+[^cubie-wifi]: The onboard WiFi 6/BT 5.4 module has no mainline driver at
+    this kernel tag — out of scope for this board's initial support
+    (epic `gosd-h1wv`).
+
+[^cubie-emmc]: The board has an optional onboard eMMC module socket, but
+    no eMMC node is enabled in the board DT at this kernel tag (bean
+    `gosd-jpc8`'s research) — `emmc.FormatAndMount` returns `ErrNoEMMC`,
+    the same as a board with no eMMC hardware at all.
+
+[^cubie-nvme]: The M.2 Key-M slot (PCIe Gen2 x1, shared combo PHY with
+    USB3) has no PCIe controller node in the board DT at this kernel tag —
+    mainline A523 PCIe support isn't there yet (epic `gosd-h1wv`).
+
+[^cubie-audio]: The stock kernel disables `CONFIG_SOUND` entirely; no
+    recipe has been written for this board yet (no bean filed).
 
 ---
 

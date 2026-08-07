@@ -1,11 +1,11 @@
 ---
 # gosd-zh95
 title: 'Cubie A5E: artifacts release + board activation'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-07T12:31:07Z
+updated_at: 2026-08-07T16:38:51Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-o7jv
@@ -19,10 +19,10 @@ Wire cubie-a5e into .github/workflows/build-artifacts.yml (kernel + uboot jobs m
 
 - [x] build-artifacts.yml: cubie-a5e-kernel + cubie-a5e-uboot jobs + release-assembly wiring (single u-boot-sunxi-with-spl.bin, not idbloader/itb pair)
 - [x] internal/boards artifacts mapping + tests for the new tarball contents
-- [ ] workflow_dispatch pre-merge run green on the PR branch
-- [ ] PR 1 (no Version bump) merged; JP pushes artifacts tag
-- [ ] Verify the artifact bump three ways (clean-HOME build, offline cache re-run, content spot-check e.g. dtc on the released DTB) — record in this bean
-- [ ] PR 2: artifacts.Version bump + public registration + COMPATIBILITY.md/docs/catalog in one activation PR
+- [x] workflow_dispatch pre-merge run green on the PR branch (run 31178515476, success)
+- [x] PR 1 (#191) merged; JP pushed artifacts/v0.9.0 (2026-08-07; a stray plain v0.9.0 tag was pushed first and deleted — the artifacts/ prefix is load-bearing for the workflow trigger)
+- [x] Verify the artifact bump three ways (clean-HOME build, offline cache re-run, content spot-check e.g. dtc on the released DTB) — record in this bean
+- [x] PR 2: artifacts.Version bump + public registration + COMPATIBILITY.md/docs/catalog in one activation PR (#205)
 
 ## Progress
 
@@ -64,3 +64,11 @@ This bean splits into two PRs per the tag-first/bump-second rule (CLAUDE.md's
   (green run, PR merge, tag push, three-way verification, PR 2 activation)
   are all downstream of that run and of JP's tag push, so status stays
   in-progress.
+
+## Three-way verification of artifacts/v0.9.0 (2026-08-07)
+
+1. Clean-machine build: fresh HOME, no --board/--artifacts-dir → all SEVEN public images built (cubie-a5e now among them) from a real release download; hello-cubie-a5e.img = 285,212,672 bytes. (First attempt failed on host disk exhaustion — 1.4GiB free; reclaimed ~10GB of session build debris and re-ran clean.)
+2. Offline re-run: same HOME, HTTP(S)_PROXY pointed at a dead port → full rebuild succeeded entirely from cache.
+3. Content spot-checks: released sun55i-a527-cubie-a5e.dtb contains "Radxa Cubie A5E" / "radxa,cubie-a5e"; bytes at offset 8192 of hello-cubie-a5e.img compare EQUAL to the release's u-boot-sunxi-with-spl.bin (819,137 bytes) — the sunxi raw write lands where the board profile promises.
+
+Note for future activations: the activation subagent stalled by parking its verification builds in ITS OWN background (killed at turn end — the known pattern); the builds above were re-run from the orchestrator session.

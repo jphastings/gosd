@@ -63,15 +63,6 @@ into the same release as the public boards, purely so
 fetch its kernel through the exact same cache/download path as any other
 board — there is no separate distribution mechanism for it.
 
-`cubie-a5e` (Radxa Cubie A5E, epic gosd-h1wv) is internal-only for the same
-reason `rock-4se` once was: its board profile, kernel spec, and U-Boot
-pipeline are registered and buildable via explicit `--board=cubie-a5e`, but
-it isn't yet advertised or included in the default all-boards build. It's
-built and packaged here from day one — tag-first, bump-second — so that once
-an `artifacts/vX.Y.Z` release carries its files, a follow-up activation PR
-only needs to bump `internal/artifacts.Version` and flip the board
-`Register`ed, with no CI changes.
-
 `build/artifacts/package.sh` is a standalone script, runnable and testable
 without Docker, a real kernel build, or network access — point it at any
 staging directory laid out like:

@@ -996,7 +996,7 @@ func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
 // gosd's locked "no --board builds every board" decision requires) now
 // produces the pi-zero-2w, pi-zero-w, pi-3b, radxa-zero-3e, nanopi-zero2,
-// and rock-4se images, not just a subset.
+// rock-4se, and cubie-a5e images, not just a subset.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -1017,7 +1017,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-pi-3b.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img"} {
+	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-pi-3b.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img", "hello-cubie-a5e.img"} {
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -1029,9 +1029,10 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		}
 	}
 
-	// qemu-virt is the only internal-only board (pi-3b went public in bean
-	// gosd-7wv9's activation): the default no---board build must produce
-	// exactly the six public boards' images, never one for qemu-virt.
+	// qemu-virt is the only internal-only board (cubie-a5e went public in
+	// bean gosd-zh95's activation): the default no---board build must
+	// produce exactly the seven public boards' images, never one for
+	// qemu-virt.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -1042,8 +1043,8 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 6 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 6 (internal-only boards must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != 7 {
+		t.Errorf("default build produced %d .img files (%v), want exactly 7 (internal-only boards must stay excluded)", len(imgNames), imgNames)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
 		t.Error("default build produced hello-qemu-virt.img; that board is internal-only and must be excluded from the default build set")
@@ -1542,6 +1543,139 @@ func TestBuildCatalogForRock4SEWritesEntry(t *testing.T) {
 	}
 	if len(entry.Devices) != 1 || entry.Devices[0] != "rock-4se" {
 		t.Errorf("devices = %v, want [\"rock-4se\"] (no official Imager tag for non-Pi hardware)", entry.Devices)
+	}
+}
+
+// TestBuildProducesABootableImageForCubieA5EFromFakeArtifacts is the
+// acceptance test for bean gosd-zh95: an explicit `gosd build
+// --board=cubie-a5e`, using --artifacts-dir to supply fake bootloader/kernel
+// files, produces an image with u-boot-sunxi-with-spl.bin raw-written at its
+// locked offset (8KiB, the sunxi BootROM's single SPL+FIT load - unlike the
+// Rockchip boards' idbloader/itb pair) ahead of the boot partition, and a
+// boot partition containing the kernel, DTB, initramfs, and a rendered
+// extlinux.conf. cubie-a5e is public since bean gosd-zh95's activation, so
+// it's also covered by the default all-boards build
+// (TestBuildWithNoBoardFlagBuildsAllBoards) and by catalog output
+// (TestBuildCatalogForCubieA5EWritesEntry).
+func TestBuildProducesABootableImageForCubieA5EFromFakeArtifacts(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-cubie-a5e.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "cubie-a5e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "integration-test",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=cubie-a5e failed: %v", err)
+	}
+
+	assertRawWriteAt(t, imgPath, 8192, "fake u-boot-sunxi-with-spl.bin")
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	for _, want := range []string{"Image", "sun55i-a527-cubie-a5e.dtb", "initramfs.cpio.zst", "extlinux/extlinux.conf"} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Errorf("boot partition is missing %q: %v", want, err)
+		}
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	wantExtlinuxConf := "default gosd\n" +
+		"timeout 0\n" +
+		"label gosd\n" +
+		"    kernel /Image\n" +
+		"    fdt /sun55i-a527-cubie-a5e.dtb\n" +
+		"    initrd /initramfs.cpio.zst\n" +
+		"    append console=ttyS0,115200n8 quiet init=/init gosd.board=cubie-a5e panic=10\n"
+	if string(extlinuxConf) != wantExtlinuxConf {
+		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
+}
+
+// TestBuildCatalogForCubieA5EWritesEntry confirms that, now that cubie-a5e
+// is a public board (gosd-zh95's flip), --catalog on a cubie-a5e-only build
+// writes a real os_list.json entry with the display name from
+// internal/catalog and its "devices" tag falling back to the raw board ID,
+// like the other non-Raspberry-Pi boards.
+func TestBuildCatalogForCubieA5EWritesEntry(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	outDir := t.TempDir()
+	imgPath := filepath.Join(outDir, "hello-cubie-a5e.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "cubie-a5e",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--catalog",
+		"--publish-base-url", "https://example.com/downloads",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=cubie-a5e --catalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Errorf("the image itself should be built: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "hello-cubie-a5e.os_list.json"))
+	if err != nil {
+		t.Fatalf("reading hello-cubie-a5e.os_list.json: %v", err)
+	}
+
+	var list struct {
+		OSList []struct {
+			Name    string   `json:"name"`
+			Devices []string `json:"devices"`
+		} `json:"os_list"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatalf("unmarshaling hello-cubie-a5e.os_list.json: %v", err)
+	}
+	if len(list.OSList) != 1 {
+		t.Fatalf("hello-cubie-a5e.os_list.json has %d entries, want 1", len(list.OSList))
+	}
+	entry := list.OSList[0]
+	if want := "hello (Radxa Cubie A5E)"; entry.Name != want {
+		t.Errorf("name = %q, want %q", entry.Name, want)
+	}
+	if len(entry.Devices) != 1 || entry.Devices[0] != "cubie-a5e" {
+		t.Errorf("devices = %v, want [\"cubie-a5e\"] (no official Imager tag for non-Pi hardware)", entry.Devices)
 	}
 }
 

@@ -180,7 +180,7 @@ func TestBuildEntryDevicesUseOfficialImagerTags(t *testing.T) {
 
 // --- golden JSON for a fake build ---
 
-// fakeBuild writes six fake .img files (standing in for a real gosd
+// fakeBuild writes seven fake .img files (standing in for a real gosd
 // build's output) into dir and returns the Image values WriteFiles expects.
 func fakeBuild(t *testing.T, dir string) []Image {
 	t.Helper()
@@ -192,6 +192,7 @@ func fakeBuild(t *testing.T, dir string) []Image {
 		"hello-radxa-zero-3e.img": "fake radxa-zero-3e image content\n",
 		"hello-nanopi-zero2.img":  "fake nanopi-zero2 image content\n",
 		"hello-rock-4se.img":      "fake rock-4se image content\n",
+		"hello-cubie-a5e.img":     "fake cubie-a5e image content\n",
 	}
 	images := make([]Image, 0, len(files))
 	for name, content := range files {
@@ -210,6 +211,7 @@ func fakeBuild(t *testing.T, dir string) []Image {
 		Image{AppName: "hello", BoardID: "pi-3b", Path: filepath.Join(dir, "hello-pi-3b.img")},
 		Image{AppName: "hello", BoardID: "pi-zero-2w", Path: filepath.Join(dir, "hello-pi-zero-2w.img")},
 		Image{AppName: "hello", BoardID: "nanopi-zero2", Path: filepath.Join(dir, "hello-nanopi-zero2.img")},
+		Image{AppName: "hello", BoardID: "cubie-a5e", Path: filepath.Join(dir, "hello-cubie-a5e.img")},
 	)
 	return images
 }
@@ -227,12 +229,12 @@ func TestWriteFilesMatchesGoldenOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteFiles: %v", err)
 	}
-	if len(entries) != 6 {
-		t.Fatalf("WriteFiles returned %d entries, want 6", len(entries))
+	if len(entries) != 7 {
+		t.Fatalf("WriteFiles returned %d entries, want 7", len(entries))
 	}
-	// WriteFiles sorts by BoardID: "nanopi-zero2" < "pi-3b" < "pi-zero-2w"
-	// < "pi-zero-w" < "radxa-zero-3e" < "rock-4se".
-	if entries[0].Name != "hello (NanoPi Zero2)" || entries[1].Name != "hello (Raspberry Pi 3B)" || entries[2].Name != "hello (Raspberry Pi Zero 2 W)" || entries[3].Name != "hello (Raspberry Pi Zero W)" || entries[4].Name != "hello (Radxa Zero 3E)" || entries[5].Name != "hello (Radxa ROCK 4SE)" {
+	// WriteFiles sorts by BoardID: "cubie-a5e" < "nanopi-zero2" < "pi-3b" <
+	// "pi-zero-2w" < "pi-zero-w" < "radxa-zero-3e" < "rock-4se".
+	if entries[0].Name != "hello (Radxa Cubie A5E)" || entries[1].Name != "hello (NanoPi Zero2)" || entries[2].Name != "hello (Raspberry Pi 3B)" || entries[3].Name != "hello (Raspberry Pi Zero 2 W)" || entries[4].Name != "hello (Raspberry Pi Zero W)" || entries[5].Name != "hello (Radxa Zero 3E)" || entries[6].Name != "hello (Radxa ROCK 4SE)" {
 		t.Errorf("WriteFiles entries not sorted by board ID: %+v", entries)
 	}
 
