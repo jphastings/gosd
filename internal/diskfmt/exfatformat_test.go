@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -99,15 +100,94 @@ func TestFormatExFATRoundTripsThroughInspect(t *testing.T) {
 	}
 }
 
+// specRollingChecksum is a second, independently-written implementation of
+// the Microsoft exFAT specification's rolling checksum, transcribed directly
+// from the spec's published pseudocode (section 3.4, "Main Boot Checksum
+// Sub-region"):
+//
+//	UINT32 Checksum = 0;
+//	for (i = 0; i < Length; i++) {
+//	    if (i is one of the excluded byte offsets) continue;
+//	    Checksum = ((Checksum << 31) | (Checksum >> 1)) + (UINT32)Data[i];
+//	}
+//
+// exFATRollingChecksum (exfatformat.go) computes the same rotate with
+// bits.RotateLeft32(sum, -1); this spells the rotate out with shifts instead,
+// so the two do not share a rotate-direction (or any other) bug by
+// construction. TestFormatExFATBootRegionValidates and
+// TestFormatExFATUpcaseTableIsWhatItClaims use this as an independent oracle
+// for the writer's checksums, rather than recomputing "want" with the same
+// function that produced them — see TestExFATRollingChecksumMatchesTheSpecByHand
+// for both implementations pinned against a value worked out by hand.
+func specRollingChecksum(data []byte, skipped ...int) uint32 {
+	var checksum uint32
+	for i, b := range data {
+		if slices.Contains(skipped, i) {
+			continue
+		}
+		checksum = ((checksum << 31) | (checksum >> 1)) + uint32(b)
+	}
+	return checksum
+}
+
+// TestExFATRollingChecksumMatchesTheSpecByHand pins exFATRollingChecksum (the
+// production implementation) and specRollingChecksum (this test file's
+// independent oracle, see its doc comment) against values worked out by hand
+// from the specification's pseudocode, so a rotate-direction or accumulation
+// bug in either one fails here instead of only ever being checked against the
+// other.
+//
+// Derivation for data = {0x01, 0x02, 0x03, 0x04}, no exclusions (rotr(x, 1)
+// moves bit 0 into bit 31 and shifts every other bit right by one):
+//
+//	i=0: checksum = rotr(0x00000000, 1) + 0x01 = 0x00000000 + 1 = 0x00000001
+//	i=1: checksum = rotr(0x00000001, 1) + 0x02 = 0x80000000 + 2 = 0x80000002
+//	i=2: checksum = rotr(0x80000002, 1) + 0x03 = 0x40000001 + 3 = 0x40000004
+//	i=3: checksum = rotr(0x40000004, 1) + 0x04 = 0x20000002 + 4 = 0x20000006
+//
+// Skipping index 1 (the boot region's VolumeFlags/PercentInUse exclusion
+// pattern) instead:
+//
+//	i=0: checksum = rotr(0x00000000, 1) + 0x01 = 0x00000000 + 1 = 0x00000001
+//	i=1: skipped
+//	i=2: checksum = rotr(0x00000001, 1) + 0x03 = 0x80000000 + 3 = 0x80000003
+//	i=3: checksum = rotr(0x80000003, 1) + 0x04 = 0xC0000001 + 4 = 0xC0000005
+func TestExFATRollingChecksumMatchesTheSpecByHand(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04}
+
+	for _, tc := range []struct {
+		name    string
+		skipped []int
+		want    uint32
+	}{
+		{"no exclusions", nil, 0x20000006},
+		{"skip index 1", []int{1}, 0xC0000005},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exFATRollingChecksum(data, tc.skipped...); got != tc.want {
+				t.Errorf("exFATRollingChecksum = %#08x, want %#08x", got, tc.want)
+			}
+			if got := specRollingChecksum(data, tc.skipped...); got != tc.want {
+				t.Errorf("specRollingChecksum = %#08x, want %#08x", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestFormatExFATBootRegionValidates recomputes the boot checksum the way any
 // driver does before trusting a volume, and checks the structural markers a
 // driver looks for. A volume that fails this is one Linux and macOS refuse.
+//
+// It checks the writer's checksum against specRollingChecksum rather than
+// exFATRollingChecksum — the function under test elsewhere in this file — so
+// a bug in that function's rotate or accumulation would fail here rather than
+// passing because both sides of the comparison share the bug.
 func TestFormatExFATBootRegionValidates(t *testing.T) {
 	const sector = exFATFormatSectorSize
 	v := formatted(t, 8<<20, "BETAMIN")
 	main := v.at(0, exFATBootRegionSectors*sector)
 
-	want := exFATRollingChecksum(main[:exFATBootChecksumSector*sector],
+	want := specRollingChecksum(main[:exFATBootChecksumSector*sector],
 		exFATOffVolumeFlags, exFATOffVolumeFlags+1, exFATOffPercentInUse)
 	for at := 0; at < sector; at += 4 {
 		got := binary.LittleEndian.Uint32(main[exFATBootChecksumSector*sector+at:])
@@ -173,13 +253,19 @@ func TestFormatExFATAllocationBitmapMatchesTheFAT(t *testing.T) {
 // checks: the recorded checksum matches the bytes on disk, and the table
 // decompresses to the full Basic Multilingual Plane. Linux rejects a table that
 // covers less, whatever its checksum.
+//
+// The checksum comparison uses specRollingChecksum (an independent oracle, see
+// its doc comment), not exFATRollingChecksum — the writer used the latter to
+// produce the recorded value, so recomputing "got" with the same function
+// would only prove the writer is self-consistent, not that the checksum
+// algorithm itself is right.
 func TestFormatExFATUpcaseTableIsWhatItClaims(t *testing.T) {
 	v := formatted(t, 8<<20, "BETAMIN")
 
 	entry := v.rootEntry(exFATEntryUpcase)
 	table := v.at(v.g.clusterOffset(binary.LittleEndian.Uint32(entry[20:])), binary.LittleEndian.Uint64(entry[24:]))
 
-	if got, want := exFATRollingChecksum(table), binary.LittleEndian.Uint32(entry[4:]); got != want {
+	if got, want := specRollingChecksum(table), binary.LittleEndian.Uint32(entry[4:]); got != want {
 		t.Errorf("up-case table checksum = %#08x, but the directory entry records %#08x", got, want)
 	}
 
