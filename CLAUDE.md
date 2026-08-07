@@ -169,6 +169,13 @@ say so in the bean rather than silently diverging.
   Developers never *have to* compile a kernel themselves — `gosd build-kernel`
   (epic gosd-47rm) is an opt-in path for compiling in a driver GoSD's stock,
   trimmed kernels cut; see `docs/custom-kernels.md`.
+- **CA roots ship in every image (decided 2026-08-07, bean gosd-kzgq):** the
+  pinned Mozilla bundle lands at `/etc/ssl/certs/ca-certificates.crt` in every
+  initramfs, so app HTTPS needs no `x509roots/fallback` import. The pin is
+  `internal/cacerts` — a DATED curl.se snapshot URL + sha256, never the rolling
+  `cacert.pem` URL (it changes under a pin); bump procedure in the package doc.
+  Don't remove the bundle to save space, and don't document the blank-import
+  as required (it remains a valid app-side alternative only).
 - **End-user flashing path (decided 2026-07-05):** the flagship flow is a
   Raspberry Pi Imager custom-repository catalog entry — `gosd build` can emit
   an `os_list.json` entry declaring `init_format: "cloudinit"`, the developer

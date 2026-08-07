@@ -1,11 +1,11 @@
 ---
 # gosd-6zd1
 title: 'Document HTTPS from gosd apps: images ship no CA roots (x509roots/fallback pattern)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-13T06:39:42Z
-updated_at: 2026-08-07T12:53:28Z
+updated_at: 2026-08-07T15:07:27Z
 ---
 
 Found during [[gosd-e9fy]] (sattrack): GoSD images contain no /etc/ssl CA bundle, so crypto/x509 finds zero roots and EVERY outbound HTTPS request from an app fails with certificate errors on-device — while working fine in `go run` on the developer's machine. This will bite every app that calls an HTTPS API.

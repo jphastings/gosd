@@ -3,8 +3,9 @@
 title: 'Cloudflare Tunnel ingress: gosd build --ingress cloudflared (arm64 v1)'
 status: todo
 type: epic
+priority: normal
 created_at: 2026-08-07T12:51:17Z
-updated_at: 2026-08-07T12:51:17Z
+updated_at: 2026-08-07T13:59:09Z
 ---
 
 JP request (2026-08-07): gosd devices' HTTP services reachable from the public
@@ -44,8 +45,8 @@ and armv6 incompatibility all verified against real release assets.
    check, not a staticelf matter. pi-zero-w: actionable build error +
    COMPATIBILITY.md footnote. Revisit via artifacts-CI compile if demand appears.
 5. **Ingress rule targets `http://localhost:<port>`** (gosd-e3xi ships
-   /etc/hosts — soft dependency: e3xi merges before this epic's wiring bean
-   boots on hardware).
+   /etc/hosts — soft dependency SATISFIED 2026-08-07: e3xi merged;
+   internal/hostsfile ships /etc/hosts in every initramfs).
 6. `--no-autoupdate` always; `--loglevel warn` (info floods 115200 serial);
    `HOME=/run/gosd/cloudflared` so ~/.cloudflared probing resolves writable.
 7. Locked-decision compliance: cloudflared is outbound-only (QUIC to the edge)
