@@ -271,6 +271,38 @@ jobs:
             echo "hello never responded with '$expected' on http://localhost:8080 within 180s" >&2
             exit 1
           fi
+      # Free coverage of HCTOSYS's in-kernel RTC-to-system-clock read path
+      # (gosd-jyq8/gosd-achn): qemu-virt's PL031 is seeded from the host
+      # clock by default (internal/qemurun.Args passes no -rtc override),
+      # and the pinned kernel's CONFIG_RTC_HCTOSYS=y/
+      # CONFIG_RTC_HCTOSYS_DEVICE="rtc0" copies it into the system clock
+      # during kernel init — before gosd-init even starts, so gosd-init
+      # itself can never observe or influence this step (see timesync's
+      # package doc). The kernel logs it unconditionally very early in
+      # boot (confirmed against a real build+boot: "rtc-pl031
+      # <addr>.pl031: setting system clock to <ISO8601> UTC (<unix>)"),
+      # so this needs no network and can't race gosd-init's own NTP sync
+      # the way asserting on timesync's own log line would.
+      - name: Verify the PL031 RTC seeded a plausible boot-time clock
+        run: |
+          line="$(grep -i 'rtc-pl031.*setting system clock to' serial.log || true)"
+          if [ -z "$line" ]; then
+            echo "::group::Captured serial log"
+            cat serial.log
+            echo "::endgroup::"
+            echo "no PL031 HCTOSYS boot line found in serial.log" >&2
+            exit 1
+          fi
+          echo "kernel boot line: $line"
+          year="$(echo "$line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | cut -c1-4)"
+          if [ -z "$year" ] || [ "$year" -lt 2020 ]; then
+            echo "::group::Captured serial log"
+            cat serial.log
+            echo "::endgroup::"
+            echo "PL031-seeded boot clock year '$year' looks implausible (expected a real host-seeded date, not epoch)" >&2
+            exit 1
+          fi
+          echo "PL031 read path OK: kernel HCTOSYS seeded the boot clock to $year, straight from the host-seeded RTC"
 
   # Proves --data-size=expand end-to-end on the real boot path: the image
   # ships with no data partition, the "card" (the raw image file, enlarged
