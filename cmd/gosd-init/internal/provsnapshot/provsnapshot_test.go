@@ -307,6 +307,86 @@ func TestReflashRestoresHostnameAndWifiOnlyWhenTheFreshBootHasNone(t *testing.T)
 	})
 }
 
+func TestSnapshotRecordsAHandSetIngressSection(t *testing.T) {
+	s := newStore()
+	ingress := gosdtoml.IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
+
+	Run(s.deps(), Input{
+		Identity: "aaaa1111",
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{Cloudflared: ingress}},
+	})
+
+	if snap := s.snapshot(t); snap.Effective.Ingress != ingress {
+		t.Errorf("snapshot effective ingress = %+v, want %+v", snap.Effective.Ingress, ingress)
+	}
+}
+
+// TestIngressSurvivesAPlainReflashWithNoCredentialsFile is the bean gosd-tgzo
+// property: since the tunnel token lives nowhere but gosd.toml (epic
+// gosd-virc decision 3 - no separate credentials file exists anywhere on
+// GOSD-BOOT), restoring the whole [ingress.cloudflared] section from the
+// snapshot is the entire mechanism by which a hand-configured tunnel
+// survives an ordinary Raspberry Pi Imager reflash, exactly like a
+// hand-edited WiFi passphrase already does.
+func TestIngressSurvivesAPlainReflashWithNoCredentialsFile(t *testing.T) {
+	s := newStore()
+	ingress := gosdtoml.IngressCloudflared{Token: "super-secret-tunnel-token", Hostname: "app.example.com", Port: 8080}
+
+	// First boot: the operator hand-edited [ingress.cloudflared] into
+	// gosd.toml before ever powering the board on.
+	Run(s.deps(), Input{
+		Identity: "old",
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{Cloudflared: ingress}},
+	})
+
+	// Reflash: a new image identity, and a gosd.toml exactly as "gosd build"
+	// renders it on every image - no [ingress.cloudflared] at all, since
+	// config.json never bakes a token. Deps exposes no credentials-file API
+	// of any kind, and the fake boot filesystem here starts empty: nothing
+	// but the /data snapshot is available to recover the tunnel from.
+	res := Run(s.deps(), Input{
+		Identity: "new",
+		GosdToml: gosdtoml.Config{},
+	})
+
+	if res.GosdToml.Ingress.Cloudflared != ingress {
+		t.Errorf("ingress = %+v after reflash, want the hand-set tunnel restored exactly (token included)", res.GosdToml.Ingress.Cloudflared)
+	}
+	written, ok := s.boot[BootConfigFile]
+	if !ok {
+		t.Fatalf("nothing was written back to %s on the boot partition", BootConfigFile)
+	}
+	back, _, err := gosdtoml.Parse(written)
+	if err != nil {
+		t.Fatalf("the gosd.toml written back doesn't parse: %v", err)
+	}
+	if back.Ingress.Cloudflared != ingress {
+		t.Errorf("written gosd.toml ingress = %+v, want the restored tunnel visible to the operator", back.Ingress.Cloudflared)
+	}
+}
+
+func TestReflashKeepsAHandSetIngressMadeOnTheNewCard(t *testing.T) {
+	s := newStore()
+	s.seed(t, Snapshot{
+		Identity:  "old",
+		Effective: Provisioning{Ingress: gosdtoml.IngressCloudflared{Token: "old-token", Hostname: "old.example.com", Port: 8080}},
+	})
+
+	fresh := gosdtoml.IngressCloudflared{Token: "fresh-token", Hostname: "fresh.example.com", Port: 9090}
+	res := Run(s.deps(), Input{
+		Identity: "new",
+		// Hand-edited on the freshly flashed card, before this boot.
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{Cloudflared: fresh}},
+	})
+
+	if res.GosdToml.Ingress.Cloudflared != fresh {
+		t.Errorf("ingress = %+v, want the tunnel declared on the new card to win over the snapshot", res.GosdToml.Ingress.Cloudflared)
+	}
+	if _, ok := s.boot[BootConfigFile]; ok {
+		t.Error("gosd.toml was rewritten even though the new card already declared its own tunnel")
+	}
+}
+
 func TestSameImageBootIsNotTreatedAsAReflash(t *testing.T) {
 	s := newStore()
 	s.seed(t, Snapshot{
