@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestIsAffirmative(t *testing.T) {
 	yes := []string{"1", "true", "TRUE", "yes", "Yes", "on", " on "}
@@ -81,5 +85,86 @@ func TestSecondPartition(t *testing.T) {
 		if got := secondPartition(dev); got != want {
 			t.Errorf("secondPartition(%q) = %q, want %q", dev, got, want)
 		}
+	}
+}
+
+func TestIsTruncatedStarter(t *testing.T) {
+	truncated := []string{
+		"",
+		starterPage[:1],
+		starterPage[:len(starterPage)/2],
+		starterPage[:len(starterPage)-1],
+	}
+	for _, v := range truncated {
+		if !isTruncatedStarter(v) {
+			t.Errorf("isTruncatedStarter(%q) = false, want true", v)
+		}
+	}
+
+	notTruncated := []string{
+		starterPage,                             // complete, matches exactly
+		starterPage + "\n<p>extra</p>",          // complete, with user additions
+		"<!doctype html><title>My site</title>", // unrelated user content
+	}
+	for _, v := range notTruncated {
+		if isTruncatedStarter(v) {
+			t.Errorf("isTruncatedStarter(%q) = true, want false", v)
+		}
+	}
+}
+
+func TestEnsureStarterPage(t *testing.T) {
+	t.Run("writes the starter page when none exists", func(t *testing.T) {
+		dir := t.TempDir()
+		ensureStarterPage(dir)
+		assertIndexContent(t, dir, starterPage)
+		assertNoTmpFileLeftBehind(t, dir)
+	})
+
+	t.Run("repairs an empty index.html left by an interrupted write", func(t *testing.T) {
+		dir := t.TempDir()
+		writeIndex(t, dir, "")
+		ensureStarterPage(dir)
+		assertIndexContent(t, dir, starterPage)
+	})
+
+	t.Run("repairs a truncated index.html left by an interrupted write", func(t *testing.T) {
+		dir := t.TempDir()
+		writeIndex(t, dir, starterPage[:len(starterPage)/2])
+		ensureStarterPage(dir)
+		assertIndexContent(t, dir, starterPage)
+	})
+
+	t.Run("leaves the user's own content alone", func(t *testing.T) {
+		dir := t.TempDir()
+		const userContent = "<!doctype html><title>My real site</title>"
+		writeIndex(t, dir, userContent)
+		ensureStarterPage(dir)
+		assertIndexContent(t, dir, userContent)
+	})
+}
+
+func writeIndex(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(content), 0o644); err != nil {
+		t.Fatalf("writing index.html fixture: %v", err)
+	}
+}
+
+func assertIndexContent(t *testing.T, dir, want string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("index.html = %q, want %q", got, want)
+	}
+}
+
+func assertNoTmpFileLeftBehind(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, "index.html.tmp")); !os.IsNotExist(err) {
+		t.Errorf("index.html.tmp should not survive a successful write, stat err = %v", err)
 	}
 }

@@ -359,14 +359,9 @@ func serveWebsite(dir string) {
 	}
 }
 
-// ensureStarterPage writes a placeholder index.html when the site has none, so
-// a brand-new board serves something that explains how to add real content.
-func ensureStarterPage(dir string) {
-	index := filepath.Join(dir, "index.html")
-	if _, err := os.Stat(index); err == nil {
-		return // the user's own content is already here
-	}
-	const starter = `<!doctype html>
+// starterPage is the placeholder index.html a brand-new website volume gets,
+// explaining how to add real content.
+const starterPage = `<!doctype html>
 <title>GoSD usbwebsite</title>
 <h1>It works!</h1>
 <p>This page is served by a GoSD board from its website storage.</p>
@@ -375,9 +370,97 @@ func ensureStarterPage(dir string) {
 card). Replace this index.html (and add whatever else you like), eject the
 drive, then power the board on its own again to serve your site.</p>
 `
-	if err := os.WriteFile(index, []byte(starter), 0o644); err != nil {
+
+// ensureStarterPage writes the placeholder index.html when the site has none,
+// so a brand-new board serves something that explains how to add real
+// content — and repairs it if it's present but truncated or empty, which is
+// what a power cut mid-write can leave behind (this used to be written with a
+// bare os.WriteFile, and the existence check alone then mistook that debris
+// for the user's own content and never touched it again).
+func ensureStarterPage(dir string) {
+	index := filepath.Join(dir, "index.html")
+
+	raw, err := os.ReadFile(index)
+	switch {
+	case err == nil:
+		if !isTruncatedStarter(string(raw)) {
+			return // the user's own content is already here
+		}
+		fmt.Println("gosd usbwebsite: index.html is a truncated/empty starter page (likely an interrupted write after a power cut); repairing it")
+	case errors.Is(err, os.ErrNotExist):
+		// no page yet; fall through to write the starter
+	default:
+		fmt.Fprintf(os.Stderr, "gosd usbwebsite: could not check the existing index.html: %v\n", err)
+		return
+	}
+
+	if err := writeFileDurably(index, []byte(starterPage)); err != nil {
 		fmt.Fprintf(os.Stderr, "gosd usbwebsite: could not write the starter page: %v\n", err)
 	}
+}
+
+// isTruncatedStarter reports whether content is a strict prefix of
+// starterPage, including empty — exactly what a power cut partway through
+// writing the starter page can leave on a FAT volume with no fsync/rename
+// protecting it. It never matches genuine user content: nobody's own
+// index.html happens to begin with our exact starter text and then just
+// stop partway through.
+func isTruncatedStarter(content string) bool {
+	return len(content) < len(starterPage) && strings.HasPrefix(starterPage, content)
+}
+
+// writeFileDurably writes data to path so that a power cut leaves either the
+// old contents or the new, never a torn mix, and so that the new contents are
+// on the card by the time it returns: write a temp file, fsync it, rename it
+// over the real name, then fsync the renamed file and its directory. Both
+// backings usbwebsite serves from (the eMMC's whole-device FAT and the SD
+// card's GOSD-DATA FAT32 partition) share the same weak crash-safety, so the
+// same pattern applies — see docs/runtime.md's "Making a write durable".
+func writeFileDurably(path string, data []byte) error {
+	tmp := path + ".tmp"
+
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// A FAT rename only dirties directory blocks, which otherwise wait for
+	// writeback expiry (~30s). Syncing the still-open file writes its new
+	// directory entry with the real start cluster and size; syncing the
+	// directory writes the entry the rename added and the one it removed.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory itself, so directory entries added or removed in
+// it reach the card rather than waiting for writeback.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }
 
 // firstUDC returns the board's first USB peripheral controller under
