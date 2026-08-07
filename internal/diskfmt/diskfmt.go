@@ -45,14 +45,21 @@ const (
 	// every host OS out of the box; see internal/diskfmt/ext4golden for how
 	// GoSD creates one (a checked-in golden image, never mkfs.ext4).
 	EXT4 FS = "ext4"
+	// FAT16 and FAT12 are narrower FAT widths GoSD never creates (Format has
+	// no case for either) but Inspect can find on a device it did not write
+	// — e.g. a stick someone else formatted. Reported distinctly so a
+	// refusal names what is actually there instead of misreporting it as
+	// FAT32 (gosd-8rw2); both mount the same way FAT32 does.
+	FAT16 FS = "fat16"
+	FAT12 FS = "fat12"
 )
 
 // MountType is the name mount(2) knows this filesystem by, which is not always
-// the name people call it: FAT32 is Linux's "vfat". Empty for an FS value
-// GoSD does not handle.
+// the name people call it: every FAT width is Linux's "vfat". Empty for an FS
+// value GoSD does not handle.
 func (f FS) MountType() string {
 	switch f {
-	case FAT32:
+	case FAT32, FAT16, FAT12:
 		return "vfat"
 	case ExFAT:
 		return "exfat"
@@ -68,6 +75,10 @@ func (f FS) String() string {
 	switch f {
 	case FAT32:
 		return "FAT32"
+	case FAT16:
+		return "FAT16"
+	case FAT12:
+		return "FAT12"
 	case ExFAT:
 		return "exFAT"
 	case EXT4:
@@ -162,9 +173,10 @@ func inspectExFAT(devicePath string) Contents {
 	return Contents{FS: ExFAT, Label: label}
 }
 
-// inspectFAT reports whether devicePath holds a FAT filesystem and, if so, its
-// label. ok is false (with a nil error) when the device simply isn't FAT; a
-// non-nil error means the device could not be read at all.
+// inspectFAT reports whether devicePath holds a FAT filesystem and, if so,
+// its width-specific FS and label. ok is false (with a nil error) when the
+// device simply isn't FAT; a non-nil error means the device could not be
+// read at all.
 func inspectFAT(devicePath string) (contents Contents, ok bool, err error) {
 	d, err := openDisk(devicePath, true)
 	if err != nil {
@@ -175,14 +187,30 @@ func inspectFAT(devicePath string) (contents Contents, ok bool, err error) {
 	// GetFilesystem probes FAT32/16/12 (then other, non-FAT types); an error
 	// or a non-FAT result both mean "not a FAT we recognise".
 	fs, err := d.GetFilesystem(0)
-	if err != nil || !isFAT(fs.Type()) {
+	if err != nil {
 		return Contents{}, false, nil
 	}
-	return Contents{FS: FAT32, Label: trimLabel(fs.Label())}, true, nil
+	fatFS, ok := fatWidth(fs.Type())
+	if !ok {
+		return Contents{}, false, nil
+	}
+	return Contents{FS: fatFS, Label: trimLabel(fs.Label())}, true, nil
 }
 
-func isFAT(t filesystem.Type) bool {
-	return t == filesystem.TypeFat32 || t == filesystem.TypeFat16 || t == filesystem.TypeFat12
+// fatWidth maps a go-diskfs FAT type to the FS value Inspect reports it as,
+// so a refusal names the width that is actually on the device (gosd-8rw2)
+// instead of Format's own FAT32-only vocabulary.
+func fatWidth(t filesystem.Type) (FS, bool) {
+	switch t {
+	case filesystem.TypeFat32:
+		return FAT32, true
+	case filesystem.TypeFat16:
+		return FAT16, true
+	case filesystem.TypeFat12:
+		return FAT12, true
+	default:
+		return "", false
+	}
 }
 
 // trimLabel drops the trailing space/NUL padding FAT stores volume labels with.
