@@ -20,11 +20,39 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/u-root/u-root/pkg/cpio"
 
+	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/inject"
 )
+
+// caCertsFixtureContent is testdata/fake-artifacts/ca-certificates.crt's
+// exact content: a few lines of fake PEM text, never the real ~186KB
+// Mozilla bundle, so every build-integration test that touches
+// --artifacts-dir stays fast and hermetic while still exercising the same
+// code path a real fetch.ToDir download would.
+const caCertsFixtureContent = "-----BEGIN CERTIFICATE-----\nfake fixture CA bundle, not a real Mozilla bundle\n-----END CERTIFICATE-----\n"
+
+// assertCACertsBaked confirms records - a built image's decoded initramfs -
+// carries the CA bundle every image ships (bean gosd-kzgq) at its standard
+// path and mode, sourced here from the --artifacts-dir fixture rather than a
+// real network fetch (the network tripwire in each caller proves that).
+func assertCACertsBaked(t *testing.T, records []cpio.Record) {
+	t.Helper()
+
+	name := strings.TrimPrefix(cacerts.InitramfsPath, "/")
+	rec, ok := findRecord(records, name)
+	if !ok {
+		t.Fatalf("initramfs is missing %q; got entries %v", name, recordNames(records))
+	}
+	if want := uint64(cpio.S_IFREG | 0o644); rec.Mode != want {
+		t.Errorf("%s Mode = %#o, want %#o", name, rec.Mode, want)
+	}
+	if got := string(recordContent(t, records, name)); got != caCertsFixtureContent {
+		t.Errorf("%s content = %q, want %q", name, got, caCertsFixtureContent)
+	}
+}
 
 // roundTripFunc adapts a function into an http.RoundTripper, so the test
 // below can fail loudly the instant a build makes a real network request.
@@ -143,6 +171,8 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
 	}
+
+	assertCACertsBaked(t, records)
 
 	// With no --data-size flag, the default (0, no GOSD-DATA partition) must
 	// produce the single-partition layout. The MBR always has 4 entry slots;
@@ -566,6 +596,12 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
 }
 
 // TestBuildConsoleBaudOverridesRockchipExtlinuxConf is the acceptance test
@@ -802,6 +838,12 @@ func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
 }
 
 // TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts is the
@@ -913,6 +955,8 @@ func TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts(t *testing.T) {
 	for _, name := range []string{"app", "init"} {
 		assertELF32Arm(t, records, name)
 	}
+
+	assertCACertsBaked(t, records)
 }
 
 // assertELF32Arm fails the test unless the cpio record named name parses as
@@ -1056,6 +1100,12 @@ func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
 			t.Errorf("boot partition unexpectedly contains %q; qemu-virt has no on-device bootloader to configure", absent)
 		}
 	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
 }
 
 // TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
@@ -1207,6 +1257,8 @@ func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
 	}
+
+	assertCACertsBaked(t, records)
 }
 
 // TestBuildUsbGadgetFailsActionablyForPi3B confirms `gosd build
@@ -1363,6 +1415,12 @@ func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
 	if string(extlinuxConf) != wantExtlinuxConf {
 		t.Errorf("extlinux.conf = %q, want %q", extlinuxConf, wantExtlinuxConf)
 	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
 }
 
 // TestBuildCatalogForNanopiZero2WritesEntry confirms that, now that

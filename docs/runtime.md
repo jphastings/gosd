@@ -28,8 +28,8 @@ does is the whole system.
   fixed-size `--data-size` does not (see "Persistent storage: `/data`").
 - **Logging is stdout/stderr to the serial console**, nothing else. No
   syslog, no log files, no remote shipping.
-- **HTTPS needs a manual CA bundle** — the image ships no root store; see
-  "HTTPS calls need a CA bundle your app supplies" below.
+- **HTTPS just works.** Every image ships the Mozilla CA bundle at the
+  standard system path; see "HTTPS calls and the CA bundle" below.
 
 ## Supervision
 
@@ -170,28 +170,29 @@ this precedence order (highest wins):
 3. **`config.json`**, baked at build time by `gosd build --wifi-ssid` /
    `--wifi-pass`.
 
-### HTTPS calls need a CA bundle your app supplies
+### HTTPS calls and the CA bundle
 
-An outbound HTTPS request from `/app` fails with a certificate-verification
-error — something like `x509: certificate signed by unknown authority` —
-even though the same code works fine under `go run` on your development
-machine. GoSD images ship no `/etc/ssl` CA bundle: nothing populates a
-system root store, so `crypto/x509` has no roots to verify any server's
-certificate against.
+An outbound HTTPS request from `/app` just works: every image ships the
+Mozilla CA bundle (curl.se's dated `cacert.pem` snapshot, pinned in
+`internal/cacerts`) at `/etc/ssl/certs/ca-certificates.crt`, Go's default
+root-certificate path on Linux, so `crypto/x509` finds it with no setup —
+no import, no build-time step, nothing your app needs to do. The bundle is
+baked in at `gosd build`/`gosd run` time and updates with each `gosd`
+release as the pin is bumped (bean gosd-kzgq).
 
-The fix is a blank import of the Mozilla root bundle into your app binary:
+An app can still pin its own roots at build time instead, via a blank
+import:
 
 ```go
 import _ "golang.org/x/crypto/x509roots/fallback"
 ```
 
-Pure Go, no image change, and it costs only a modest amount of binary
-size. See `examples/sattrack/main.go` for the pattern in production use,
-calling a TLE API over HTTPS. Roots are pinned at your app's build time
-via that module's version in your `go.mod`; bump the dependency to pull
-in newer roots.
+This still works (the image's own bundle just makes it unnecessary for
+most apps) and is the one way to control exactly which roots ship,
+independent of `gosd`'s own release cadence. See `examples/sattrack/main.go`
+for the pattern in production use, calling a TLE API over HTTPS.
 
-This is a separate concern from the clock (below): fixing the CA bundle
+This is a separate concern from the clock (below): a valid CA bundle
 doesn't help if the clock still reads 1970, since certificate validity
 periods won't check out either — see "Clock" for that gotcha.
 

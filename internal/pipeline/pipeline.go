@@ -34,6 +34,7 @@ const (
 	firmwareFileMode   = 0o644
 	executableFileMode = 0o755
 	hostsFileMode      = 0o644
+	extraFileMode      = 0o644
 )
 
 // mountPointDirs are the directories gosd-init unconditionally mounts
@@ -83,6 +84,15 @@ type Options struct {
 	// bytes at mode 0755. Assemble closes every reader once it's done with
 	// it, exactly like ExtraFirmware.
 	ExtraExecutables map[string]io.Reader
+
+	// ExtraFiles holds additional non-executable files to land at their
+	// given absolute dest inside the initramfs, at mode 0644 rather than
+	// ExtraExecutables' 0755 - the right mode for data such as the
+	// Mozilla CA bundle (gosd build/run, bean gosd-kzgq), keyed by dest,
+	// mirroring ExtraExecutables' shape in every other respect including
+	// close discipline: Assemble closes every reader once it's done with
+	// it.
+	ExtraFiles map[string]io.Reader
 
 	// ArtifactsDir is checked for each of Board.Artifacts() by name
 	// before falling back to a pinned-URL fetch into CacheDir. Pointing
@@ -148,6 +158,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	}
 	defer closeReaders(firmware)
 	defer closeReaders(opts.ExtraExecutables)
+	defer closeReaders(opts.ExtraFiles)
 
 	// Every input that contributes to config.json's image identity (see
 	// initcfg.ComputeIdentity) has to be read into memory before it can be
@@ -170,6 +181,10 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	extraExecBytes, err := readAllReaders(opts.ExtraExecutables)
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("reading extra executables for %s: %w", opts.Board.Name(), err)
+	}
+	extraFileBytes, err := readAllReaders(opts.ExtraFiles)
+	if err != nil {
+		return image.WriteReport{}, fmt.Errorf("reading extra files for %s: %w", opts.Board.Name(), err)
 	}
 
 	// Board.BootFiles requires a non-nil Initramfs even though it never
@@ -241,7 +256,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// not read: its reader is the placeholder from above, standing in
 	// until the real archive is built.
 	var initramfsKey string
-	payload := make([]initcfg.PayloadFile, 0, len(bootFiles)+len(firmwareBytes)+len(extraExecBytes)+2)
+	payload := make([]initcfg.PayloadFile, 0, len(bootFiles)+len(firmwareBytes)+len(extraExecBytes)+len(extraFileBytes)+2)
 	for name, r := range bootFiles {
 		if r == io.Reader(initramfsPlaceholder) {
 			initramfsKey = name
@@ -267,6 +282,9 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath("/lib/firmware/" + name), Content: data})
 	}
 	for dest, data := range extraExecBytes {
+		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath(dest), Content: data})
+	}
+	for dest, data := range extraFileBytes {
 		payload = append(payload, initcfg.PayloadFile{Path: initcfg.InitramfsPayloadPath(dest), Content: data})
 	}
 
@@ -309,7 +327,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		return image.WriteReport{}, fmt.Errorf("encoding config.json for %s: %w", opts.Board.Name(), err)
 	}
 
-	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+4)
+	files := make([]initramfs.File, 0, len(firmwareBytes)+len(extraExecBytes)+len(extraFileBytes)+4)
 	files = append(files,
 		initramfs.File{Path: "/init", Content: bytes.NewReader(initBinBytes), Mode: initFileMode},
 		initramfs.File{Path: "/app", Content: bytes.NewReader(appBinBytes), Mode: appFileMode},
@@ -326,6 +344,9 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	}
 	for dest, data := range extraExecBytes {
 		files = append(files, initramfs.File{Path: dest, Content: bytes.NewReader(data), Mode: executableFileMode})
+	}
+	for dest, data := range extraFileBytes {
+		files = append(files, initramfs.File{Path: dest, Content: bytes.NewReader(data), Mode: extraFileMode})
 	}
 
 	var initramfsBuf bytes.Buffer

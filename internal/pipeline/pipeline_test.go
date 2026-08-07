@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -178,6 +179,81 @@ func TestAssembleBakesStaticHostsIntoInitramfs(t *testing.T) {
 	}
 
 	assertRecordContent(t, decodeInitramfs(t, raw), strings.TrimPrefix(hostsfile.Path, "/"), hostsfile.Static())
+}
+
+// TestAssembleWritesExtraFilesAtMode0644AndChangesIdentity is the acceptance
+// test for gosd-kzgq's ExtraFiles: a non-executable extra file (the shape
+// the baked-in CA bundle uses) lands in the initramfs at its given dest, at
+// mode 0644 rather than ExtraExecutables' 0755, and is covered by the image
+// identity like every other input Assemble hashes.
+func TestAssembleWritesExtraFilesAtMode0644AndChangesIdentity(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	build := 0
+	buildAndReadConfig := func(extraFiles map[string]io.Reader) (initcfg.Config, []cpio.Record) {
+		t.Helper()
+		build++
+		imgPath := filepath.Join(dir, fmt.Sprintf("out%d.img", build))
+		if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
+			Board:          &fakeBoard{name: "fake-board"},
+			AppBinaryPath:  appPath,
+			InitBinaryPath: initPath,
+			OutputPath:     imgPath,
+			ExtraFiles:     extraFiles,
+		}); err != nil {
+			t.Fatalf("Assemble: %v", err)
+		}
+
+		d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+		if err != nil {
+			t.Fatalf("reopening the image: %v", err)
+		}
+		defer func() { _ = d.Close() }()
+
+		fs, err := d.GetFilesystem(1)
+		if err != nil {
+			t.Fatalf("GetFilesystem(1): %v", err)
+		}
+		raw, err := fs.ReadFile("initramfs.cpio.zst")
+		if err != nil {
+			t.Fatalf("reading initramfs.cpio.zst: %v", err)
+		}
+		records := decodeInitramfs(t, raw)
+
+		var cfg initcfg.Config
+		if err := json.Unmarshal(recordContent(t, records, "etc/gosd/config.json"), &cfg); err != nil {
+			t.Fatalf("config.json is not valid JSON: %v", err)
+		}
+		return cfg, records
+	}
+
+	baseline, _ := buildAndReadConfig(nil)
+
+	const dest = "/etc/ssl/certs/ca-certificates.crt"
+	withExtra, records := buildAndReadConfig(map[string]io.Reader{dest: strings.NewReader("fake PEM bytes")})
+
+	assertRecordContent(t, records, strings.TrimPrefix(dest, "/"), "fake PEM bytes")
+
+	name := strings.TrimPrefix(dest, "/")
+	found := false
+	for _, r := range records {
+		if r.Name != name {
+			continue
+		}
+		found = true
+		if want := uint64(cpio.S_IFREG | 0o644); r.Mode != want {
+			t.Errorf("record %q Mode = %#o, want %#o", name, r.Mode, want)
+		}
+	}
+	if !found {
+		t.Fatalf("no record named %q found", name)
+	}
+
+	if withExtra.Identity == baseline.Identity {
+		t.Errorf("Identity = %q for both builds, want ExtraFiles to change it", withExtra.Identity)
+	}
 }
 
 func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
