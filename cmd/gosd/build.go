@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -81,6 +82,7 @@ var (
 	consoleBaud    int
 	dataFlush      bool
 	placeholders   []string
+	ingressFlags   []string
 )
 
 // defaultDataSize is the GOSD-DATA partition size used when --data-size is
@@ -137,6 +139,8 @@ func newBuildCmd() *cobra.Command {
 		"mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on GOSD-BOOT at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
+	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
+		"bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; only supported value: cloudflared); the tunnel itself is declared on-device via gosd.toml's [ingress.cloudflared] section - arm64 boards only, since cloudflared's official arm release is GOARM=7 and faults on pi-zero-w's armv6")
 
 	return cmd
 }
@@ -154,6 +158,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	externalSpecs, err := parseWithExternalFlags(withExternal)
+	if err != nil {
+		return err
+	}
+
+	ingressCloudflared, err := parseIngressFlags(ingressFlags)
 	if err != nil {
 		return err
 	}
@@ -187,6 +196,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := validateConsoleBaud(selected, consoleBaud); err != nil {
+		return err
+	}
+
+	if err := validateIngress(selected, ingressCloudflared); err != nil {
 		return err
 	}
 
@@ -230,7 +243,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	shared, err := resolveSharedContent(ctx, artifactsDir)
+	var ingressGOARCHesNeeded []string
+	if ingressCloudflared {
+		ingressGOARCHesNeeded = ingressGOARCHes(selected)
+	}
+	shared, err := resolveSharedContent(ctx, artifactsDir, ingressGOARCHesNeeded)
 	if err != nil {
 		return err
 	}
@@ -248,9 +265,15 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		extraFiles, err := openSharedContent(shared)
+		extraFiles, ingressExecutables, err := openSharedContent(shared, b)
 		if err != nil {
 			return err
+		}
+		for dest, r := range ingressExecutables {
+			if extraExecutables == nil {
+				extraExecutables = make(map[string]io.Reader, len(ingressExecutables))
+			}
+			extraExecutables[dest] = r
 		}
 
 		opts := pipeline.Options{
@@ -266,17 +289,18 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				Env:              env,
 				ConsoleBaud:      consoleBaud,
 			},
-			ArtifactsDir:     artifactsDir,
-			CacheDir:         cacheDir,
-			OutputPath:       outputs[b.Name()],
-			DataSizeBytes:    dataSizeBytes,
-			DataExpand:       dataExpand,
-			DataFlush:        dataFlush,
-			BootSizeBytes:    bootSizeBytes,
-			ExtraFirmware:    extraFirmware,
-			ExtraExecutables: extraExecutables,
-			ExtraFiles:       extraFiles,
-			Placeholders:     placeholderSpecs,
+			ArtifactsDir:       artifactsDir,
+			CacheDir:           cacheDir,
+			OutputPath:         outputs[b.Name()],
+			DataSizeBytes:      dataSizeBytes,
+			DataExpand:         dataExpand,
+			DataFlush:          dataFlush,
+			BootSizeBytes:      bootSizeBytes,
+			ExtraFirmware:      extraFirmware,
+			ExtraExecutables:   extraExecutables,
+			ExtraFiles:         extraFiles,
+			Placeholders:       placeholderSpecs,
+			IngressCloudflared: ingressCloudflared,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
 		if err != nil {

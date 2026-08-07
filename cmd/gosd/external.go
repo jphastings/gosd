@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/staticelf"
 )
 
@@ -38,10 +39,17 @@ func splitExternalFlag(raw string) (path, dest string) {
 
 // reservedExternalDests are the exact initramfs paths a --with-external dest
 // may never collide with; reservedExternalDestPrefixes are the namespaces
-// (directories) it may never land inside.
+// (directories) it may never land inside. /bin/cloudflared and the CA
+// bundle's path are reserved unconditionally (bean gosd-g4km), not just on
+// builds that actually pass --ingress cloudflared: the CA bundle ships in
+// EVERY image regardless (bean gosd-kzgq), and reserving cloudflared's dest
+// eagerly means adding --ingress to an existing --with-external build can
+// never retroactively break it by surprise.
 var reservedExternalDests = map[string]string{
-	"/init": "gosd-init",
-	"/app":  "your app",
+	"/init":                "gosd-init",
+	"/app":                 "your app",
+	ingressCloudflaredDest: "gosd's --ingress cloudflared binary",
+	cacerts.InitramfsPath:  "gosd's baked CA certificate bundle",
 }
 
 var reservedExternalDestPrefixes = map[string]string{
