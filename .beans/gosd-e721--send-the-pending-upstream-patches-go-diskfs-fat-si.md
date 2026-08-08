@@ -22,3 +22,18 @@ sent, per the no-third-party-PRs rule — JP decides and sends:
 
 GoSD carries local mitigations for all three, so none is urgent; sending
 them retires the mitigations' upstream halves eventually.
+
+---
+
+## Additional upstream candidate (2026-08-08, from bean gosd-6cf2)
+
+tailscale.com/tsnet writes its JSON state files (tailscaled.state, the node
+identity; tailscaled.log.conf, the persistent log ID) without a write→rename,
+so a power cut mid-write leaves an empty/truncated file that tsnet.Up refuses
+to load ("unexpected end of JSON input") and never regenerates — a permanent
+wedge. On appliances whose state dir survives reflash (our /data) this is
+unrecoverable without out-of-band deletion. Upstream fix worth proposing:
+tsnet should either write these atomically (temp + rename) or self-heal an
+unparseable state file (treat as absent → fresh registration). We work around
+it in cmd/gosd-tsfunnel for now (drop-if-not-valid-JSON, gosd-6cf2). Prepare
+the patch/rationale in a local clone; do NOT open a PR upstream without JP.

@@ -221,6 +221,28 @@ say so in the bean rather than silently diverging.
   rather than binding a socket on any real host interface, so Funnel makes
   the app publicly reachable without gosd-init or the shim adding a listener
   either.
+- **A gosd-shipped subprocess must not assume a normal OS environment
+  (bench-proven 2026-08-08, bean gosd-6cf2).** gosd-init launches supervised
+  children with a minimal, explicit env (e.g. tsfunnel gets only
+  `TS_AUTHKEY`) on an initramfs rootfs with no `HOME`, no `/var/lib`, no
+  `os.UserCacheDir()`. Third-party libraries that quietly need those PANIC or
+  wedge only on-device — fakes can't catch it. Two concrete lessons that
+  generalise: (1) set whatever dir env a library needs EXPLICITLY (tsnet's
+  `TS_LOGS_DIR` → the state dir; cloudflared's `HOME` → `/run/gosd/...`),
+  don't rely on OS defaults; (2) library state files written to `/data`
+  without write→rename become an unrecoverable wedge after a power cut,
+  made STICKY because `/data` survives reflash and can't be cleared from a
+  macOS host (ext4) — the shim must self-heal a corrupt/empty state file
+  (drop-if-unparseable) rather than trust it. Also: never
+  `defer thing.Close()` unconditionally on a start-failure path — tsnet's
+  Close panics when Up failed early and MASKS the real error; only defer
+  Close after a successful start. **Corollary for bench triage:** an
+  on-device failure that reproduces off-device (macOS/qemu) is a code bug;
+  one that does NOT (e.g. gosd-h46e's tsnet-404, present on linux/arm64 board
+  but not macOS with the same binary+key+network) is environment-specific —
+  reproduce it under qemu-virt / a linux-arm64 container before burning
+  reflash cycles, and verify network claims with an on-device preflight
+  (`http.Get` to the endpoint) before blaming the network.
 - **`/data` durability is the app's choice (decided 2026-07-31):** the data
   partition is mounted without `dirsync`, so a write that must survive an
   immediate power cut uses the four-step fsync/rename pattern in
