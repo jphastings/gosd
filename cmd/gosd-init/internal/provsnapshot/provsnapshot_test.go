@@ -387,6 +387,144 @@ func TestReflashKeepsAHandSetIngressMadeOnTheNewCard(t *testing.T) {
 	}
 }
 
+func TestSnapshotRecordsAHandSetTailscaleFunnelSection(t *testing.T) {
+	s := newStore()
+	ingress := gosdtoml.IngressTailscaleFunnel{Authkey: "tskey-auth-example", Hostname: "my-device", Port: 8080, FunnelPort: 443}
+
+	Run(s.deps(), Input{
+		Identity: "aaaa1111",
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{TailscaleFunnel: ingress}},
+	})
+
+	if snap := s.snapshot(t); snap.Effective.Ingress.TailscaleFunnel != ingress {
+		t.Errorf("snapshot effective ingress = %+v, want %+v", snap.Effective.Ingress.TailscaleFunnel, ingress)
+	}
+}
+
+// TestTailscaleFunnelSurvivesAPlainReflashWithNoCredentialsFile is bean
+// gosd-u2gz's counterpart to gosd-tgzo's cloudflared test: since the auth
+// key lives nowhere but gosd.toml (same as a Cloudflare Tunnel's token, epic
+// gosd-65uy decision 6), restoring the whole [ingress.tailscale-funnel]
+// section from the snapshot is what lets a hand-configured Funnel survive an
+// ordinary Raspberry Pi Imager reflash, exactly like a hand-edited WiFi
+// passphrase or Cloudflare Tunnel already does.
+func TestTailscaleFunnelSurvivesAPlainReflashWithNoCredentialsFile(t *testing.T) {
+	s := newStore()
+	ingress := gosdtoml.IngressTailscaleFunnel{Authkey: "tskey-auth-super-secret", Hostname: "my-device", Port: 8080, FunnelPort: 443}
+
+	// First boot: the operator hand-edited [ingress.tailscale-funnel] into
+	// gosd.toml before ever powering the board on.
+	Run(s.deps(), Input{
+		Identity: "old",
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{TailscaleFunnel: ingress}},
+	})
+
+	// Reflash: a new image identity, and a gosd.toml exactly as "gosd build"
+	// renders it on every image - no [ingress.tailscale-funnel] at all, since
+	// config.json never bakes an auth key. Deps exposes no credentials-file
+	// API of any kind, and the fake boot filesystem here starts empty:
+	// nothing but the /data snapshot is available to recover the Funnel
+	// settings from.
+	res := Run(s.deps(), Input{
+		Identity: "new",
+		GosdToml: gosdtoml.Config{},
+	})
+
+	if res.GosdToml.Ingress.TailscaleFunnel != ingress {
+		t.Errorf("ingress = %+v after reflash, want the hand-set Funnel restored exactly (authkey included)", res.GosdToml.Ingress.TailscaleFunnel)
+	}
+	written, ok := s.boot[BootConfigFile]
+	if !ok {
+		t.Fatalf("nothing was written back to %s on the boot partition", BootConfigFile)
+	}
+	back, _, err := gosdtoml.Parse(written)
+	if err != nil {
+		t.Fatalf("the gosd.toml written back doesn't parse: %v", err)
+	}
+	if back.Ingress.TailscaleFunnel != ingress {
+		t.Errorf("written gosd.toml ingress = %+v, want the restored Funnel visible to the operator", back.Ingress.TailscaleFunnel)
+	}
+}
+
+func TestReflashKeepsAHandSetTailscaleFunnelSectionMadeOnTheNewCard(t *testing.T) {
+	s := newStore()
+	s.seed(t, Snapshot{
+		Identity:  "old",
+		Effective: Provisioning{Ingress: gosdtoml.Ingress{TailscaleFunnel: gosdtoml.IngressTailscaleFunnel{Authkey: "tskey-auth-old", Hostname: "old-device", Port: 8080, FunnelPort: 443}}},
+	})
+
+	fresh := gosdtoml.IngressTailscaleFunnel{Authkey: "tskey-auth-fresh", Hostname: "fresh-device", Port: 9090, FunnelPort: 8443}
+	res := Run(s.deps(), Input{
+		Identity: "new",
+		// Hand-edited on the freshly flashed card, before this boot.
+		GosdToml: gosdtoml.Config{Ingress: gosdtoml.Ingress{TailscaleFunnel: fresh}},
+	})
+
+	if res.GosdToml.Ingress.TailscaleFunnel != fresh {
+		t.Errorf("ingress = %+v, want the Funnel declared on the new card to win over the snapshot", res.GosdToml.Ingress.TailscaleFunnel)
+	}
+	if _, ok := s.boot[BootConfigFile]; ok {
+		t.Error("gosd.toml was rewritten even though the new card already declared its own Funnel")
+	}
+}
+
+// TestTailscaleFunnelReflashRestoresSettingsEvenAfterTheAuthkeyWasRemoved is
+// bean gosd-u2gz's "layered reflash property" test. Epic gosd-65uy decision
+// 4 lets an operator delete the auth key from gosd.toml once the device has
+// registered, since tsnet ignores it once local state exists; decision 3
+// puts that state on /data (/data/.gosd/tailscale), so it is untouched by,
+// and invisible to, this package. The two layers stack to give the full
+// property described in the epic and this bean:
+//
+//   - Layer 1 (exercised here): this package restores whatever the operator
+//     last set for hostname/port/funnel_port from the snapshot, even with no
+//     authkey in it at all — the snapshotted section still counts as
+//     configured because Hostname/Port/FunnelPort are non-zero, so restore
+//     fires exactly as it would for a still-present authkey.
+//   - Layer 2 (out of this package's reach, asserted only in the comment
+//     above and the epic bean): the reconnecting node keeps the SAME
+//     identity and the SAME public https://…ts.net URL regardless of what
+//     this restore does to authkey, because that identity already lives on
+//     /data and tsnet never re-derives it from gosd.toml.
+//
+// Together they are why a plain Imager reflash of a --data-size=expand image
+// needs no re-auth at all, unlike a Cloudflare Tunnel where the token must
+// keep being restored forever.
+func TestTailscaleFunnelReflashRestoresSettingsEvenAfterTheAuthkeyWasRemoved(t *testing.T) {
+	s := newStore()
+	s.seed(t, Snapshot{
+		Identity: "old",
+		Effective: Provisioning{Ingress: gosdtoml.Ingress{TailscaleFunnel: gosdtoml.IngressTailscaleFunnel{
+			// No Authkey: the operator already removed it after this
+			// device's first successful registration.
+			Hostname:   "my-device",
+			Port:       8080,
+			FunnelPort: 443,
+		}}},
+	})
+
+	res := Run(s.deps(), Input{
+		Identity: "new",
+		GosdToml: gosdtoml.Config{},
+	})
+
+	want := gosdtoml.IngressTailscaleFunnel{Hostname: "my-device", Port: 8080, FunnelPort: 443}
+	if res.GosdToml.Ingress.TailscaleFunnel != want {
+		t.Errorf("ingress = %+v after reflash, want %+v restored with no authkey needed", res.GosdToml.Ingress.TailscaleFunnel, want)
+	}
+	written, ok := s.boot[BootConfigFile]
+	if !ok {
+		t.Fatalf("nothing was written back to %s on the boot partition", BootConfigFile)
+	}
+	back, _, err := gosdtoml.Parse(written)
+	if err != nil {
+		t.Fatalf("the gosd.toml written back doesn't parse: %v", err)
+	}
+	if back.Ingress.TailscaleFunnel != want {
+		t.Errorf("written gosd.toml ingress = %+v, want the restored Funnel settings visible to the operator", back.Ingress.TailscaleFunnel)
+	}
+}
+
 func TestSameImageBootIsNotTreatedAsAReflash(t *testing.T) {
 	s := newStore()
 	s.seed(t, Snapshot{
