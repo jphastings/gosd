@@ -10,13 +10,19 @@ own outbound connection is the only new thing on the wire.
 
 ## Choosing an ingress
 
-| Agent | `--ingress` value | Board support | Where TLS terminates | Account you need |
-|---|---|---|---|---|
-| Cloudflare Tunnel | `cloudflared` | arm64 boards only ([^armv6]) | Cloudflare's edge | A Cloudflare account (free tier works) |
+| Agent | `--ingress` value | Board support | Where TLS terminates | Account you need | Public URL | Surviving a reflash |
+|---|---|---|---|---|---|---|
+| Cloudflare Tunnel | `cloudflared` | arm64 boards only ([^armv6]) | Cloudflare's edge | A Cloudflare account (free tier works) | Your own domain, e.g. `app.example.com` | Token round-trips through `/data`; nothing to re-enter |
+| Tailscale Funnel | `tailscale-funnel` | Every board, including `pi-zero-w` | On the device itself ([^tsfunnel-onnode]) | A Tailscale account (free plan works) | `https://<hostname>.<tailnet>.ts.net` | Node identity lives on `/data` — reconnects with **zero re-auth** |
 
 [^armv6]: cloudflared's official `arm` release is built for `GOARM=7`, which
     faults with "illegal instruction" on `pi-zero-w`'s `armv6` CPU — see
     "What's not supported yet" in the Cloudflare Tunnel section below.
+
+[^tsfunnel-onnode]: A Let's Encrypt certificate that Tailscale's control
+    plane issues automatically (Tailscale ACME) — Tailscale's own relay
+    infrastructure only ever routes the still-encrypted bytes, by TLS SNI,
+    and never decrypts them. See the Tailscale Funnel section below.
 
 Every agent shares the same shape, whichever one you pick:
 
@@ -24,17 +30,21 @@ Every agent shares the same shape, whichever one you pick:
   (`--ingress <agent>`), supervised by `gosd-init` for the device's whole
   life, that carries traffic for a declared public hostname to a declared
   local port on your app.
-- **Where TLS terminates** matters for what the agent's operator (Cloudflare,
-  in `cloudflared`'s case) can see: traffic is encrypted from the public
-  client to that operator's edge, then decrypted and forwarded to your
-  device over the agent's own tunnel protocol. Your app itself speaks plain
+- **Where TLS terminates** differs by agent, and matters for who can see
+  your traffic in flight (see the table above for which is which):
+  cloudflared decrypts at Cloudflare's edge and forwards to your device over
+  its own tunnel protocol; Tailscale Funnel terminates TLS on the device
+  itself, using a certificate Tailscale's control plane issues automatically
+  — its relay infrastructure only ever routes the still-encrypted bytes, by
+  TLS SNI, and never decrypts them. Either way, your app itself speaks plain
   HTTP on `localhost` — the agent is what makes that safe to expose.
-  Terminating TLS yourself, end-to-end past the operator's edge, isn't
-  something any agent in this table supports.
-- **Whose account you need** is the operator whose tunnel infrastructure
-  carries your traffic — you authenticate the *tunnel*, at build/config
-  time, with a token or key from that account; the device itself never logs
-  in anywhere interactively (it has no interactive surface at all — see
+  Terminating TLS yourself, end-to-end past either agent, isn't something
+  either one supports.
+- **Whose account you need** is the operator whose infrastructure carries
+  your traffic — you authenticate the *tunnel* (or, for Tailscale Funnel,
+  the device's tailnet membership), at build/config time, with a token or
+  key from that account; the device itself never logs in anywhere
+  interactively (it has no interactive surface at all — see
   `docs/runtime.md`).
 - **Declared entirely through `gosd.toml`**, under `[ingress.<agent>]` — the
   ingress rule (hostname, local port, and whatever else that agent needs)
@@ -42,9 +52,13 @@ Every agent shares the same shape, whichever one you pick:
   works for any tunnel you later create.
 - **Survives a reflash** the same way a hand-edited WiFi passphrase does —
   see each agent's own "Surviving a reflash" section for the details.
+  Tailscale Funnel goes one step further: its node identity lives on
+  `/data` rather than in `gosd.toml` at all, so it survives a reflash with
+  no re-authentication whatsoever — see that section for what this means in
+  practice.
 
-Per-agent sections follow below; Cloudflare Tunnel is the only one shipped
-today.
+Per-agent sections follow below: Cloudflare Tunnel first, then Tailscale
+Funnel.
 
 ## Cloudflare Tunnel (`gosd build --ingress cloudflared`)
 
@@ -301,3 +315,295 @@ otherwise) for these lines if the tunnel doesn't come up.
   from the ELF header alone to catch this any earlier than a hard,
   per-board `--ingress cloudflared` build refusal. See
   `COMPATIBILITY.md`.
+
+## Tailscale Funnel (`gosd build --ingress tailscale-funnel`)
+
+`gosd build --ingress tailscale-funnel` bakes a tiny
+[tsnet](https://tailscale.com/kb/1244/tsnet)-based shim, `gosd-tsfunnel`,
+into the image — compiled from GoSD's own source for every board's
+architecture (including `pi-zero-w`'s `GOARCH=arm GOARM=6`), never
+downloaded as a prebuilt blob. `gosd-init` supervises it for the life of the
+device: the shim registers a node on your tailnet, opens a [Tailscale
+Funnel](https://tailscale.com/kb/1223/funnel) listener, and reverse-proxies
+every request to one local port on your app — no port forwarding, no public
+IP address, and no app code at all. Because GoSD compiles the shim itself
+rather than relying on an upstream release asset, **every board is
+supported**, including `pi-zero-w` — contrast Cloudflare Tunnel's
+arm64-only reach ([^armv6] above).
+
+The public address is always `https://<hostname>.<tailnet>.ts.net` — a
+MagicDNS name built from the device's hostname and your tailnet's name,
+never a domain of your own choosing.
+
+### Prerequisites: three tailnet settings the device can't set for itself
+
+Funnel needs three things enabled on your **tailnet**, all from the
+[Tailscale admin console](https://login.tailscale.com/admin/) —
+`gosd-tsfunnel` has no way to set any of them itself, and fails with an
+actionable error at boot if they're missing (see "Troubleshooting" below):
+
+1. **MagicDNS** — Settings → DNS → enable MagicDNS. Funnel's public hostname
+   is a MagicDNS name.
+2. **HTTPS Certificates** — Settings → enable HTTPS Certificates. This is
+   what lets Tailscale issue the on-node Let's Encrypt certificate Funnel
+   terminates TLS with.
+3. **The `funnel` node attribute**, granted to this device in your tailnet's
+   ACL policy file (Access Controls in the admin console). Targeting a tag
+   (rather than one specific device) is what makes this survive a device
+   being rebuilt or re-registered — see "Create a tagged, reusable auth
+   key" below — with a policy entry like:
+
+   ```jsonc
+   {
+     // ... your existing ACLs ...
+     "tagOwners": {
+       "tag:gosd-device": ["autogroup:admin"],
+     },
+     "nodeAttrs": [
+       {
+         "target": ["tag:gosd-device"],
+         "attr":   ["funnel"],
+       },
+     ],
+   }
+   ```
+
+   Swap `tag:gosd-device` for whatever tag you actually use — it just has to
+   match the tag on the auth key from the runbook below.
+
+None of this is a GoSD setting; it lives entirely in your Tailscale account
+and has nothing to do with which image you build.
+
+### Runbook
+
+1. **Build the image with the shim baked in, and a data partition** — the
+   shim's tailnet identity needs somewhere durable to live (see "The data
+   partition requirement" below):
+
+   ```sh
+   gosd build . --board pi-zero-2w --ingress tailscale-funnel --data-size=expand -o my-app.img
+   ```
+
+2. **Set up the tailnet prerequisites** above, once per tailnet — not once
+   per device.
+
+3. **Create a tagged, reusable auth key** in the admin console (Settings →
+   Keys → Generate auth key):
+   - **Tagged**, with the same tag your ACL policy's `nodeAttrs` targets
+     (`tag:gosd-device` in the example above). Tagging is what disables this
+     node's key expiry: an *untagged* device's key expires after
+     Tailscale's default 180 days, which would eventually disconnect a
+     device nobody is sitting in front of to re-authenticate. A tag makes
+     the identity permanent instead.
+   - **Reusable**, so the same key works for more than one device, or to
+     re-register this one later if it ever loses its state (see "Surviving
+     a reflash" below).
+   - The key itself still expires — Tailscale caps auth keys at 90 days —
+     but that only matters for this device's *first* registration.
+     `gosd-tsfunnel` never looks at the key again once the device is
+     registered, so a device built today with a key generated today keeps
+     working long after that key has expired.
+
+4. **Paste the auth key and port into `gosd.toml`** on the `GOSD-BOOT`
+   partition (or hand-edit the commented-out example the image already
+   ships, per `docs/provisioning-formats.md`):
+
+   ```toml
+   [ingress.tailscale-funnel]
+   authkey = "tskey-auth-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   port = 8080
+   ```
+
+   `port` is the only required key. Restart the device (or power it on for
+   the first time) for the change to take effect.
+
+5. **Delete the auth key from `gosd.toml`, if you like**, once the device
+   has appeared in your tailnet's device list — see "Secrets on a FAT
+   partition" below for why that's safe.
+
+Once the device boots with a network connection, `gosd-init` starts
+`gosd-tsfunnel`, which registers with your tailnet (if it hasn't already),
+opens a Funnel listener, and starts proxying to `http://localhost:8080`.
+The device is reachable at `https://<hostname>.<tailnet>.ts.net`.
+
+### `gosd.toml` keys
+
+| Key | Required | Default | Notes |
+|---|---|---|---|
+| `authkey` | Only for first registration | — | A tagged, reusable auth key (see "Runbook" above). Safe to delete once the device has registered. Never logged. |
+| `port` | Yes | — | The local port your app listens on. |
+| `hostname` | No | The device's own hostname | Becomes the `<hostname>` in `https://<hostname>.<tailnet>.ts.net`. |
+| `funnel_port` | No | `443` | Which of Tailscale Funnel's three supported ports to listen on: `443`, `8443`, or `10000`. |
+
+### The data partition requirement
+
+Unlike Cloudflare Tunnel, whose credentials are stateless from GoSD's point
+of view, Tailscale Funnel's node identity — its private key, its tailnet
+membership, the public hostname it was assigned — lives on disk, at
+`/data/.gosd/tailscale`, on the `GOSD-DATA` partition. Losing that directory
+means the device shows up as a *brand new* node the next time it starts,
+with a new identity and a new public URL.
+
+Because of that, `gosd build --ingress tailscale-funnel` **refuses to
+build** without a data partition, with this exact error:
+
+```
+--ingress tailscale-funnel failed: tailscale-funnel stores its tailnet identity on the GOSD-DATA partition; pass --data-size (e.g. --data-size=64MiB or --data-size=expand)
+```
+
+Any non-zero `--data-size` satisfies this; `--data-size=expand` (the usual
+choice — see [docs/runtime.md](runtime.md)) is fine. If `/data` is ever
+mounted read-only at runtime (a failing card, for instance), `gosd-init`
+logs one actionable line and never starts the shim, rather than running it
+with nowhere durable to keep its identity — see "Troubleshooting" below.
+
+### What gets written on the device
+
+There's no config file, unlike cloudflared's `config.yml`. Every per-boot
+value `gosd-tsfunnel` needs travels as a command-line argument or an
+environment variable, built fresh by `gosd-init` on every boot from
+`gosd.toml`, and never read back:
+
+- `--statedir /data/.gosd/tailscale` (created mode `0700` before the shim
+  ever starts, since it holds private key material)
+- `--hostname <hostname>`
+- `--backend http://localhost:<port>`
+- `--funnel-port <funnel_port>`
+- `TS_AUTHKEY=<authkey>` — **only in the environment, never in argv.**
+  `gosd-init`'s supervisor logs the pid and argv of every child it starts,
+  but never its environment, so the one genuinely secret value here travels
+  a way that can never end up in a log line.
+
+Tailscale's own `tsnet` library manages everything else — the node's
+private key, its tailnet registration, its ACME certificate — inside
+`--statedir`.
+
+### Secrets on a FAT partition
+
+Like the WiFi passphrase and Cloudflare Tunnel's token, the auth key sits in
+`gosd.toml` in plain text on `GOSD-BOOT`, a FAT32 partition readable by
+anyone with the card in a computer. Treat it accordingly. Unlike those two,
+though, this secret is genuinely disposable: once the device has registered
+(check your tailnet's device list), delete the `authkey` line from
+`gosd.toml` entirely — `gosd-tsfunnel` never needs it again, since tsnet
+ignores `TS_AUTHKEY` once state already exists at `--statedir`.
+
+### Clock and TLS, and the restart backoff
+
+Same underlying gates as Cloudflare Tunnel — see
+[docs/runtime.md's "Clock" section](runtime.md#clock-starts-at-1970-until-sntp-syncs):
+no GoSD board has a battery-backed clock, so it starts every boot at the
+Unix epoch until SNTP sync completes. `gosd-init` waits for the network-up
+marker first (parking indefinitely if the network never comes up), then
+waits up to **2 minutes** for the time-synced marker before starting the
+shim anyway — Tailscale's own control-plane and ACME retries, plus the
+restart backoff below, absorb whatever clock skew is left once NTP does
+land.
+
+If the shim exits, for any reason — an expired auth key, a network blip, a
+still-missing `funnel` nodeAttr — `gosd-init` restarts it with a backoff
+that starts at 1 second, doubles on each consecutive failure, and caps at
+30 seconds; running stably for 30 seconds resets it back to 1 second for
+the next failure. If the network goes down between attempts, a restart
+waits on the network-up marker again rather than burning through backoff
+for no reason.
+
+### Surviving a reflash
+
+Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included, but
+**not** `GOSD-DATA` — and Tailscale Funnel's node identity is what makes
+this agent's reflash story strictly better than Cloudflare Tunnel's:
+
+- **The tailnet identity itself never moves.** It lives at
+  `/data/.gosd/tailscale`, which a plain Raspberry Pi Imager reflash never
+  touches, as long as the new image also keeps `--data-size=expand` (or any
+  non-zero `--data-size`). The device comes back up as the *same* tailnet
+  node, at the *same* `https://<hostname>.<tailnet>.ts.net` URL, with
+  **zero re-authentication** — you don't even need the auth key anymore,
+  let alone a fresh one.
+- **A hand-edited `[ingress.tailscale-funnel]` section** is separately
+  protected by the [provisioning
+  snapshot](runtime.md#the-provisioning-snapshot-surviving-a-reflash), the
+  same way `[ingress.cloudflared]` is: restored as a whole section on the
+  first boot after a reflash, provided the freshly flashed card doesn't
+  already declare its own `[ingress.tailscale-funnel]` (which always wins,
+  as fresh operator intent). This also needs `--data-size=expand` (or any
+  non-zero `--data-size`) on the new image — a card with no data partition
+  has nothing to snapshot to or restore from.
+
+**If you ever do lose `/data`** — a card swap that doesn't carry the old
+data partition over, a `--data-size=0` rebuild, or a from-scratch reformat
+— the device registers as a brand new node on its next boot. Tailscale
+won't hand out a name that's already taken: if `<hostname>` is already
+registered, the new node is renamed `<hostname>-1`, and its public URL
+changes to match. To recover the original name and URL: delete the stale
+node from your tailnet's device list, then supply a live tagged auth key in
+`gosd.toml` (a fresh one from the same tag works just as well as the
+original, even if that one has since expired) so the device can
+re-register under the name it used to have.
+
+### Troubleshooting
+
+`gosd-init` validates `[ingress.tailscale-funnel]` once, at boot, and logs
+exactly one line (prefixed `tailscale-funnel: `) if something's wrong — it
+never re-checks or self-heals a bad value later in the same boot. These are
+the actual messages, verbatim, from
+`cmd/gosd-init/internal/tsfunnel/mode.go` and
+`cmd/gosd-init/internal/tsfunnel/tsfunnel.go`:
+
+| Situation | Log line |
+|---|---|
+| Binary baked, nothing configured | `tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do` |
+| Configured, binary not baked | `tailscale-funnel: [ingress.tailscale-funnel] is configured in gosd.toml, but this image wasn't built with --ingress tailscale-funnel; rebuild with that flag to bake the binary in` |
+| `port` missing | `tailscale-funnel: [ingress.tailscale-funnel] is missing required key: port` |
+| `port` out of range | `` tailscale-funnel: [ingress.tailscale-funnel] port <port> is out of range (must be 1-65535) `` |
+| `funnel_port` isn't 443/8443/10000 | `` tailscale-funnel: [ingress.tailscale-funnel] funnel_port <port> is not one of the supported values (443, 8443, 10000) `` |
+| No data partition, or `/data` read-only | `` tailscale-funnel: /data/.gosd/tailscale is not writable (<error>); tailscale-funnel needs a data partition; rebuild with --data-size `` |
+
+Nothing here is fatal to boot — your app still starts normally either way.
+
+Two more failure modes come from the shim itself (`cmd/gosd-tsfunnel`,
+`errors.go`), once it's actually running. These arrive as ordinary process
+output relayed through the supervisor, so they appear on the console with
+**both** prefixes — `tailscale-funnel: ` from the relay, then
+`gosd-tsfunnel: ` from the shim's own error reporting:
+
+- **Registration doesn't finish within 5 minutes** (usually an expired or
+  wrong `TS_AUTHKEY`, or a clock still far from correct):
+
+  > `tailscale-funnel: gosd-tsfunnel: tsnet node did not finish registering within 5m0s: <error> — check that TS_AUTHKEY hasn't expired (auth keys expire within 90 days and are only needed for first registration; tsnet ignores the key once state already exists) and that the device clock is roughly correct (GoSD boards have no RTC and start every boot at the Unix epoch until SNTP syncs)`
+
+- **The Funnel listener won't open** (one of the three tailnet prerequisites
+  above isn't actually set):
+
+  > `tailscale-funnel: gosd-tsfunnel: tsnet could not start a Funnel listener: <error> — check that this tailnet's ACL policy grants this device the "funnel" nodeAttr, that HTTPS certificates are enabled for the tailnet, and that MagicDNS is enabled; see docs/ingress.md`
+
+Either way, the shim exits, `gosd-init` logs its pid and exit status, and
+the restart backoff (see "Clock and TLS, and the restart backoff" above)
+tries again — useful when
+the fix is on the tailnet side (an ACL edit propagates without a reboot),
+less useful for a genuinely expired key, which needs a fresh one written
+into `gosd.toml` and the device restarted.
+
+### What's not supported yet, and other caveats
+
+- **No custom domains.** The public URL is always
+  `https://<hostname>.<tailnet>.ts.net` — Funnel doesn't support bringing
+  your own domain, unlike Cloudflare Tunnel.
+- **Bandwidth caps.** Tailscale applies non-configurable bandwidth limits to
+  Funnel traffic; they aren't published as a specific number.
+- **`FunnelOnly` isn't exposed.** The shim always calls tsnet's plain
+  `ListenFunnel`, reachable from both the public internet and your tailnet
+  directly — useful as a debugging path while you're still fixing a
+  misconfigured `funnel` nodeAttr. A tailnet-only-vs-public toggle may
+  become a `gosd.toml` key later, but isn't one today.
+- **Memory footprint.** The shim is initramfs-resident (RAM, not the SD
+  card) for as long as the device runs. Baking both `cloudflared` and
+  `tailscale-funnel` into the same image at once costs roughly an extra
+  40-60MB of RAM combined — most devices only need one agent, but nothing
+  stops building with both.
+- **Not yet hardware-verified.** Every piece of this — the build, the
+  `gosd.toml` schema, the runtime module, the supervisor wiring — is
+  unit-tested and exercised under QEMU, but hasn't yet been run against a
+  real tailnet on real hardware. That's epic `gosd-65uy`'s bench bean
+  `gosd-79v8`; see `COMPATIBILITY.md` for current per-board status.

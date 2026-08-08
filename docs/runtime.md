@@ -196,18 +196,24 @@ This is a separate concern from the clock (below): a valid CA bundle
 doesn't help if the clock still reads 1970, since certificate validity
 periods won't check out either — see "Clock" for that gotcha.
 
-### Ingress: reaching your app from the internet (`--ingress cloudflared`)
+### Ingress: reaching your app from the internet (`--ingress`)
 
-An image built with `gosd build --ingress cloudflared`, plus an
-`[ingress.cloudflared]` section filled in on `gosd.toml`, gets a Cloudflare
-Tunnel: `gosd-init` supervises a baked-in `cloudflared` binary that carries
-traffic for one public hostname to one local port on your app — no port
-forwarding, no public IP address, and no app code required.
+An image built with `gosd build --ingress cloudflared` or
+`--ingress tailscale-funnel`, plus a matching `[ingress.<agent>]` section
+filled in on `gosd.toml`, gets a public URL: `gosd-init` supervises a
+baked-in binary that carries traffic for one hostname to one local port on
+your app — no port forwarding, no public IP address, and no app code
+required. Cloudflare Tunnel needs a Cloudflare account and only runs on
+arm64 boards; Tailscale Funnel needs a Tailscale account, runs on every
+board (including `pi-zero-w`), and keeps its tailnet identity on `/data` so
+it survives a reflash with no re-authentication.
 
-**[docs/ingress.md](ingress.md) is the full guide** — creating the tunnel,
-why it must be CLI-created rather than dashboard-created, what token and
-config files actually exist and where, the clock/TLS startup window, the
-pinned-version update story, and what survives a reflash.
+**[docs/ingress.md](ingress.md) is the full guide** for both agents —
+creating the tunnel or registering the tailnet node, what each one needs
+from your Cloudflare/Tailscale account and can't set up for itself, what
+files or state actually exist and where, the clock/TLS startup window, the
+pinned-version or compiled-per-arch update story, and what survives a
+reflash.
 
 ## Provisioning: hostname and WiFi from Raspberry Pi Imager
 
@@ -404,8 +410,10 @@ Rules of engagement:
   surprised by it when listing `/data`. An `expand` image's partition
   root also carries `gosd-data-established` (not a dotfile — deliberately,
   see the reflash bullet above) once its first-boot format completes, and
-  `/data/.gosd/` is reserved for `gosd-init`'s own bookkeeping (currently
-  the provisioning snapshot, below). Leave all three alone; none of them
+  `/data/.gosd/` is reserved for `gosd-init`'s own bookkeeping — the
+  provisioning snapshot (below) and, on an image built with `--ingress
+  tailscale-funnel`, the shim's tsnet state under `/data/.gosd/tailscale`
+  (see [docs/ingress.md](ingress.md)). Leave all three alone; none of them
   is meant for your app to read, and an app deleting one is never treated
   as corruption.
 - **Reflashing wipes `/data` for a fixed-size `--data-size` image, every
@@ -448,13 +456,14 @@ restores what the operator actually chose, freshest intent first:
    hand-edit**: a hostname, a WiFi ssid/passphrase pair, an individual
    `[env]` key whose snapshotted value differed from the baked default it
    was compared against at the time, or the whole `[ingress.cloudflared]`
-   section — restored as a unit, never field-by-field, since there is no
-   baked default for it to differ from (`config.json` only ever records
-   *whether* the `cloudflared` binary is baked in, never a real token), so
-   any snapshotted section at all counts as the operator's own intent. A
-   value that only ever matched the old image's default is never restored
-   — if a new release changes that default, the new default wins, because
-   the operator never actually chose the old one.
+   or `[ingress.tailscale-funnel]` section — restored as a unit, never
+   field-by-field, since there is no baked default for either to differ
+   from (`config.json` only ever records *whether* the agent's binary is
+   baked in, never a real token or auth key), so any snapshotted section at
+   all counts as the operator's own intent. A value that only ever matched
+   the old image's default is never restored — if a new release changes
+   that default, the new default wins, because the operator never actually
+   chose the old one.
 3. **Failing that, the newly-flashed image's own baked defaults apply**,
    exactly as on a first flash.
 
@@ -466,10 +475,16 @@ survives too, restored (re-rendered from GoSD's own template) into the new
 card's `gosd.toml` so it's still visible and editable there, and a
 configured [Cloudflare Tunnel](ingress.md) resumes the same way — with no
 credentials file to lose, since the tunnel token round-trips through
-`/data` exactly like a WiFi passphrase does.
+`/data` exactly like a WiFi passphrase does. A configured [Tailscale
+Funnel](ingress.md) does even better: its tailnet identity lives on `/data`
+independently of this snapshot mechanism, so it reconnects under the same
+public URL with no re-authentication at all — the snapshot here only
+carries the remaining `hostname`/`port`/`funnel_port` (and the auth key, if
+one is still sitting in `gosd.toml`) back into the new card's file.
 
 What does **not** come back: anything outside
-hostname/WiFi/`[env]`/`[ingress.cloudflared]` — the Imager wizard's other,
+hostname/WiFi/`[env]`/`[ingress.cloudflared]`/`[ingress.tailscale-funnel]`
+— the Imager wizard's other,
 RPi-OS-specific settings were never applied in the first place (see
 "Provisioning" above) — nor the schema or contents of your app's own
 `/data` files across versions, which remains the app's
