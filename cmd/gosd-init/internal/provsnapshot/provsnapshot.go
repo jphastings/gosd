@@ -102,6 +102,22 @@
 // what lets a Cloudflare Tunnel survive a plain Imager reflash exactly
 // like a hand-edited WiFi passphrase does.
 //
+// [ingress.tailscale-funnel] (epic gosd-65uy) follows [ingress.cloudflared]
+// exactly — same whole-section classification, same always-empty-in-v1
+// baked default, same "no cloud-init equivalent" reasoning — with one added
+// nuance: unlike a Cloudflare Tunnel's token, the authkey is only needed for
+// this device's *first* registration, and is safe for an operator to delete
+// from gosd.toml afterwards (epic decision 4). tsnet's own node identity
+// lives on the data partition (/data/.gosd/tailscale, epic decision 3), not
+// in gosd.toml, so it survives a reflash on its own, independently of
+// anything this package does. The two layers stack: this package's job is
+// only to keep the operator-facing hostname/port/funnel_port (and the
+// authkey, while it's still there) from evaporating out of gosd.toml on
+// GOSD-BOOT, exactly as it does for a Cloudflare Tunnel; the node keeping
+// its identity and public URL across that same reflash is a property of
+// /data alone, holding even when the restored section carries no authkey at
+// all because the operator already removed it.
+//
 // Restores are written back to gosd.toml on GOSD-BOOT (durably, briefly
 // remounting it read-write) and applied in memory for the boot in progress,
 // so a reflashed board rejoins its network without a second reboot. Writing
@@ -383,6 +399,11 @@ var ingressSections = []ingressSection{
 		label:      "Cloudflare Tunnel",
 		configured: func(ing gosdtoml.Ingress) bool { return ing.Cloudflared.Configured() },
 		restore:    func(dst *gosdtoml.Ingress, src gosdtoml.Ingress) { dst.Cloudflared = src.Cloudflared },
+	},
+	{
+		label:      "Tailscale Funnel",
+		configured: func(ing gosdtoml.Ingress) bool { return ing.TailscaleFunnel.Configured() },
+		restore:    func(dst *gosdtoml.Ingress, src gosdtoml.Ingress) { dst.TailscaleFunnel = src.TailscaleFunnel },
 	},
 }
 
