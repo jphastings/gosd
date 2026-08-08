@@ -268,6 +268,130 @@ token = ["a", "b"]
 			want:         Config{Hostname: "my-device"},
 			wantWarnings: []string{`gosd.toml [ingress.cloudflared] token isn't a plain value (found array); ignoring it`},
 		},
+		{
+			name: "full tailscale-funnel config parses",
+			data: `
+[ingress.tailscale-funnel]
+authkey = "tskey-auth-example"
+hostname = "my-device"
+port = 8080
+funnel_port = 8443
+`,
+			want: Config{Ingress: Ingress{TailscaleFunnel: IngressTailscaleFunnel{
+				Authkey:    "tskey-auth-example",
+				Hostname:   "my-device",
+				Port:       8080,
+				FunnelPort: 8443,
+			}}},
+		},
+		{
+			name: "missing [ingress.tailscale-funnel] table leaves Ingress zero",
+			data: `hostname = "my-device"`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
+			name: "both ingress tables can be configured at once",
+			data: `
+[ingress.cloudflared]
+token = "example-tunnel-token"
+hostname = "app.example.com"
+port = 8080
+
+[ingress.tailscale-funnel]
+authkey = "tskey-auth-example"
+port = 9090
+`,
+			want: Config{Ingress: Ingress{
+				Cloudflared: IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080},
+				TailscaleFunnel: IngressTailscaleFunnel{
+					Authkey: "tskey-auth-example",
+					Port:    9090,
+				},
+			}},
+		},
+		{
+			name: "bare scalars under [ingress.tailscale-funnel] are coerced, with a key-only warning each",
+			data: `
+[ingress.tailscale-funnel]
+authkey = 123456789
+hostname = true
+port = "8080"
+funnel_port = "8443"
+`,
+			want: Config{Ingress: Ingress{TailscaleFunnel: IngressTailscaleFunnel{
+				Authkey:    "123456789",
+				Hostname:   "true",
+				Port:       8080,
+				FunnelPort: 8443,
+			}}},
+			wantWarnings: []string{
+				`gosd.toml [ingress.tailscale-funnel] authkey is a bare number, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] hostname is a bare boolean, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] funnel_port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+			},
+		},
+		{
+			name: "tailscale-funnel warning order is deterministic (authkey, hostname, port, funnel_port), regardless of file order",
+			data: `
+[ingress.tailscale-funnel]
+funnel_port = "8443"
+port = "8080"
+hostname = true
+authkey = 123456789
+`,
+			want: Config{Ingress: Ingress{TailscaleFunnel: IngressTailscaleFunnel{
+				Authkey:    "123456789",
+				Hostname:   "true",
+				Port:       8080,
+				FunnelPort: 8443,
+			}}},
+			wantWarnings: []string{
+				`gosd.toml [ingress.tailscale-funnel] authkey is a bare number, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] hostname is a bare boolean, not a quoted string; using it as text — add quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+				`gosd.toml [ingress.tailscale-funnel] funnel_port is a quoted number, not a bare integer; using it — remove the quotes to silence this warning`,
+			},
+		},
+		{
+			name: "non-scalar tailscale-funnel values are dropped, with a warning each",
+			data: `
+[ingress.tailscale-funnel]
+authkey = ["a", "b"]
+hostname = { x = 1 }
+port = 2026-07-08T00:00:00Z
+funnel_port = [443]
+`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml [ingress.tailscale-funnel] authkey isn't a plain value (found array); ignoring it`,
+				`gosd.toml [ingress.tailscale-funnel] hostname isn't a plain value (found table); ignoring it`,
+				`gosd.toml [ingress.tailscale-funnel] port isn't a plain value (found time.Time); ignoring it`,
+				`gosd.toml [ingress.tailscale-funnel] funnel_port isn't a plain value (found array); ignoring it`,
+			},
+		},
+		{
+			name: "a tailscale-funnel port that isn't all digits when quoted is dropped, with a warning",
+			data: `
+[ingress.tailscale-funnel]
+port = "80-80"
+`,
+			want: Config{},
+			wantWarnings: []string{
+				`gosd.toml [ingress.tailscale-funnel] port is not a whole number; ignoring it`,
+			},
+		},
+		{
+			name: "a malformed tailscale-funnel entry still lets hostname parse",
+			data: `
+hostname = "my-device"
+
+[ingress.tailscale-funnel]
+authkey = ["a", "b"]
+`,
+			want:         Config{Hostname: "my-device"},
+			wantWarnings: []string{`gosd.toml [ingress.tailscale-funnel] authkey isn't a plain value (found array); ignoring it`},
+		},
 	}
 
 	for _, tt := range tests {
@@ -347,6 +471,59 @@ token = { value = "` + secretMarker + `" }
 	}
 }
 
+// TestTailscaleFunnelWarningsNeverIncludeTheAuthkeyValue mirrors
+// TestIngressWarningsNeverIncludeTheTokenValue for tailscale-funnel's own
+// secret field: authkey must never end up in a log line, however it's
+// malformed. Each case embeds a distinctive marker in the raw authkey value
+// and scans every warning Parse returns (not just the authkey-specific one
+// - a bug could just as easily leak it into an unrelated message) for it.
+func TestTailscaleFunnelWarningsNeverIncludeTheAuthkeyValue(t *testing.T) {
+	const secretMarker = "tskey-auth-super-secret-should-never-leak"
+
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "authkey coerced from a bare number",
+			data: "[ingress.tailscale-funnel]\nauthkey = 8471936502\n",
+		},
+		{
+			name: "authkey coerced from a bare boolean",
+			data: "[ingress.tailscale-funnel]\nauthkey = true\n",
+		},
+		{
+			name: "authkey dropped as an array",
+			data: `[ingress.tailscale-funnel]
+authkey = ["` + secretMarker + `"]
+`,
+		},
+		{
+			name: "authkey dropped as an inline table",
+			data: `[ingress.tailscale-funnel]
+authkey = { value = "` + secretMarker + `" }
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, warnings, err := Parse([]byte(tt.data))
+			if err != nil {
+				t.Fatalf("Parse(%q) unexpected error: %v", tt.data, err)
+			}
+			if len(warnings) == 0 {
+				t.Fatalf("Parse(%q) produced no warnings, want at least one", tt.data)
+			}
+			for _, w := range warnings {
+				if strings.Contains(w, secretMarker) || strings.Contains(w, "8471936502") {
+					t.Errorf("Parse(%q) warning %q leaks the authkey value", tt.data, w)
+				}
+			}
+		})
+	}
+}
+
 func TestIngressCloudflaredConfigured(t *testing.T) {
 	tests := []struct {
 		name string
@@ -363,6 +540,32 @@ func TestIngressCloudflaredConfigured(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.c.Configured(); got != tt.want {
 				t.Errorf("%+v.Configured() = %v, want %v", tt.c, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIngressTailscaleFunnelConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		t    IngressTailscaleFunnel
+		want bool
+	}{
+		{name: "zero value", t: IngressTailscaleFunnel{}, want: false},
+		{name: "authkey only", t: IngressTailscaleFunnel{Authkey: "tskey-auth-x"}, want: true},
+		{name: "hostname only", t: IngressTailscaleFunnel{Hostname: "my-device"}, want: true},
+		{name: "port only", t: IngressTailscaleFunnel{Port: 8080}, want: true},
+		{name: "funnel_port only", t: IngressTailscaleFunnel{FunnelPort: 8443}, want: true},
+		{
+			name: "all fields",
+			t:    IngressTailscaleFunnel{Authkey: "tskey-auth-x", Hostname: "my-device", Port: 8080, FunnelPort: 8443},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.t.Configured(); got != tt.want {
+				t.Errorf("%+v.Configured() = %v, want %v", tt.t, got, tt.want)
 			}
 		})
 	}
