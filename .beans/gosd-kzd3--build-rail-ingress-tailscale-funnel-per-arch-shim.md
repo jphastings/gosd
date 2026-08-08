@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T15:08:45Z
-updated_at: 2026-08-08T05:59:34Z
+updated_at: 2026-08-08T06:00:51Z
 parent: gosd-65uy
 blocked_by:
     - gosd-85bn
@@ -131,3 +131,9 @@ cloudflared's gosd-g4km, which lands the registry-shaped --ingress rail).
   needs the runtime supervisor wiring (a sibling bean, not yet landed) to be
   usable end-to-end; the overview table/help text already reflect the new
   flag value via `ingressAgentNames()`.
+
+
+
+## PR
+
+https://github.com/jphastings/gosd/pull/233 (stacked on #231)
