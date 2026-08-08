@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -36,6 +38,7 @@ var (
 	runBootSize     string
 	runDataFlush    bool
 	runIngress      []string
+	runDataSize     string
 )
 
 func newRunCmd() *cobra.Command {
@@ -72,13 +75,15 @@ place and prints its path instead.`,
 	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
 		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
 	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups")
+		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups; also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
 	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
 		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
 	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
 		"same flag as gosd build's --data-flush: mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
 	cmd.Flags().StringArrayVar(&runIngress, "ingress", nil,
-		"same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; only supported value: cloudflared) - qemu-virt is arm64, so this exercises the runtime path in CI")
+		fmt.Sprintf("same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s) - qemu-virt is arm64, so this exercises the runtime path in CI", strings.Join(ingressAgentNames(), ", ")))
+	cmd.Flags().StringVar(&runDataSize, "data-size", defaultDataSize,
+		"same flag as gosd build's --data-size: size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand'; default 0 omits the partition - required by some --ingress agents (e.g. tailscale-funnel) that need to persist state across reboots")
 
 	return cmd
 }
@@ -102,6 +107,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err := validateIngress([]boards.Board{b}, ingressSelected); err != nil {
+		return err
+	}
+
+	dataSizeBytes, dataExpand, err := parseDataSize(runDataSize)
+	if err != nil {
+		return err
+	}
+
+	if err := validateIngressDataPartition(ingressSelected, dataSizeBytes, dataExpand); err != nil {
 		return err
 	}
 
@@ -134,12 +148,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cross-compiling gosd-init failed: %w", err)
 	}
 
-	cacheDir, err := artifactCacheDir()
-	if err != nil {
-		return err
+	var tsfunnelBinary string
+	if ingressSelected.TailscaleFunnel {
+		tsfunnelBinary = filepath.Join(workDir, "gosd-tsfunnel")
+		if err := build.CrossCompileTsfunnel(tsfunnelBinary, runGosdInitSrc, b.Arch()); err != nil {
+			return fmt.Errorf("cross-compiling gosd-tsfunnel failed: %w", err)
+		}
 	}
 
-	dataSizeBytes, _, err := parseDataSize(defaultDataSize)
+	cacheDir, err := artifactCacheDir()
 	if err != nil {
 		return err
 	}
@@ -166,6 +183,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if tsfunnelBinary != "" {
+		tf, err := openTsfunnelBinary(tsfunnelBinary)
+		if err != nil {
+			return err
+		}
+		if extraExecutables == nil {
+			extraExecutables = make(map[string]io.Reader, 1)
+		}
+		extraExecutables[ingressTailscaleFunnelDest] = tf
+	}
+
 	opts := pipeline.Options{
 		Board:          b,
 		AppBinaryPath:  appBinary,
@@ -174,15 +202,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Hostname:         deviceHostname,
 			HostnameExplicit: hostnameExplicit,
 		},
-		ArtifactsDir:       runArtifactsDir,
-		CacheDir:           cacheDir,
-		OutputPath:         imgPath,
-		DataSizeBytes:      dataSizeBytes,
-		DataFlush:          runDataFlush,
-		BootSizeBytes:      bootSizeBytes,
-		ExtraFiles:         extraFiles,
-		ExtraExecutables:   extraExecutables,
-		IngressCloudflared: ingressSelected.Cloudflared,
+		ArtifactsDir:           runArtifactsDir,
+		CacheDir:               cacheDir,
+		OutputPath:             imgPath,
+		DataSizeBytes:          dataSizeBytes,
+		DataExpand:             dataExpand,
+		DataFlush:              runDataFlush,
+		BootSizeBytes:          bootSizeBytes,
+		ExtraFiles:             extraFiles,
+		ExtraExecutables:       extraExecutables,
+		IngressCloudflared:     ingressSelected.Cloudflared,
+		IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {

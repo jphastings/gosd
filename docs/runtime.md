@@ -1212,9 +1212,10 @@ Useful flags:
 - `--qemu-arg` passes an extra argument straight through to
   `qemu-system-aarch64` (repeatable) — an escape hatch for anything the
   above doesn't cover.
-- `--artifacts-dir` and `--gosd-init-src` work exactly as they do for
-  `gosd build`, for testing against a locally-built kernel or gosd-init
-  checkout.
+- `--artifacts-dir`, `--gosd-init-src` and `--data-size` work exactly as
+  they do for `gosd build`, for testing against a locally-built kernel or
+  gosd-init checkout, or exercising a data-partition-dependent feature (e.g.
+  `--ingress tailscale-funnel`) under qemu.
 
 If you already have a `--board=qemu-virt` image built (e.g. from CI, or
 because you want to boot the exact same image repeatedly without

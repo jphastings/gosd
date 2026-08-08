@@ -4,6 +4,7 @@ import (
 	"debug/elf"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -102,6 +103,31 @@ func TestModuleRootForModuleRejectsUnrelatedDir(t *testing.T) {
 // its own module version as "(devel)", so this exercises the real
 // actionable error a developer gets when gosd itself was built the same
 // way, outside of a checkout devCheckoutDir can find.
+// TestBuildGoBuildArgsOmitsTagsAndLdflagsWhenOptsIsZero pins
+// CrossCompileGosdInit's byte-identical-argv invariant (bean gosd-kzd3,
+// crossCompileOpts's docstring): gosd-init's build must never gain -tags or
+// -ldflags just because CrossCompileTsfunnel needs them, since gosd-init's
+// binary content feeds config.json's image identity and it is never
+// stripped, on purpose.
+func TestBuildGoBuildArgsOmitsTagsAndLdflagsWhenOptsIsZero(t *testing.T) {
+	got := buildGoBuildArgs("/src", "./cmd/gosd-init", "/out/gosd-init", crossCompileOpts{})
+	want := []string{"-C", "/src", "build", "-o", "/out/gosd-init", "./cmd/gosd-init"}
+	if !slices.Equal(got, want) {
+		t.Errorf("buildGoBuildArgs(zero opts) = %v, want %v", got, want)
+	}
+}
+
+// TestBuildGoBuildArgsAddsTagsAndLdflagsWhenSet confirms the other half:
+// CrossCompileTsfunnel's opts do reach the argv, in the order `go build`
+// expects (-tags then -ldflags, package path last).
+func TestBuildGoBuildArgsAddsTagsAndLdflagsWhenSet(t *testing.T) {
+	got := buildGoBuildArgs("/src", "./cmd/gosd-tsfunnel", "/out/gosd-tsfunnel", crossCompileOpts{tags: "ts_omit_ssh", ldflags: "-s -w"})
+	want := []string{"-C", "/src", "build", "-o", "/out/gosd-tsfunnel", "-tags", "ts_omit_ssh", "-ldflags", "-s -w", "./cmd/gosd-tsfunnel"}
+	if !slices.Equal(got, want) {
+		t.Errorf("buildGoBuildArgs(tags+ldflags) = %v, want %v", got, want)
+	}
+}
+
 func TestModuleCacheDirRejectsDevelVersion(t *testing.T) {
 	_, err := moduleCacheDir()
 	if err == nil {

@@ -79,7 +79,7 @@ func TestParseWithExternalFlagsRejectsDuplicateDest(t *testing.T) {
 }
 
 func TestParseWithExternalFlagsRejectsReservedDests(t *testing.T) {
-	for _, dest := range []string{"/init", "/app", "/etc/gosd/config.json", "/lib/firmware/brcm/x.bin", ingressCloudflaredDest, cacerts.InitramfsPath} {
+	for _, dest := range []string{"/init", "/app", "/etc/gosd/config.json", "/lib/firmware/brcm/x.bin", ingressCloudflaredDest, ingressTailscaleFunnelDest, cacerts.InitramfsPath} {
 		_, err := parseWithExternalFlags([]string{"./mpv:" + dest})
 		if err == nil {
 			t.Errorf("parseWithExternalFlags([./mpv:%s]) succeeded, want an error", dest)

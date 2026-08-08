@@ -33,6 +33,8 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 		"--artifacts-dir", "testdata/fake-artifacts",
 		"--hostname", "parity-test",
 		"--ingress", "cloudflared",
+		"--ingress", "tailscale-funnel",
+		"--data-size", "64MiB",
 		"-o", buildImg,
 	})
 	if err := buildCmd.Execute(); err != nil {
@@ -50,6 +52,8 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 		"--artifacts-dir", "testdata/fake-artifacts",
 		"--hostname", "parity-test",
 		"--ingress", "cloudflared",
+		"--ingress", "tailscale-funnel",
+		"--data-size", "64MiB",
 		"--keep",
 	})
 	if err := runCmd.Execute(); err != nil {
@@ -65,10 +69,17 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 	// Both sides must actually carry the --ingress content, not just agree
 	// by both omitting it - see sharedcontent.go's doc comment for why the
 	// CA bundle (and now cloudflared) is routed through one shared path
-	// specifically to prevent a build-only regression like this.
+	// specifically to prevent a build-only regression like this; gosd-kzd3
+	// extends the same guarantee to tailscale-funnel's per-arch-compiled
+	// shim, which reaches build.go and run.go through compileForBoards
+	// rather than sharedcontent.go, so this is the test that would catch a
+	// build.go-only (or run.go-only) wiring mistake for it.
 	for _, records := range [][]cpio.Record{buildRecords, runRecords} {
 		if !hasRecord(records, "bin/cloudflared") {
 			t.Fatalf("--ingress cloudflared build is missing bin/cloudflared; got entries %v", recordNames(records))
+		}
+		if !hasRecord(records, "bin/gosd-tsfunnel") {
+			t.Fatalf("--ingress tailscale-funnel build is missing bin/gosd-tsfunnel; got entries %v", recordNames(records))
 		}
 	}
 

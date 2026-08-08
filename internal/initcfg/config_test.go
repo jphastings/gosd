@@ -62,6 +62,16 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Hostname: "my-device"},
 		},
 		{
+			name: "ingressTailscaleFunnel marks a build with --ingress tailscale-funnel baked in",
+			data: `{"hostname":"my-device","ingressTailscaleFunnel":true}`,
+			want: Config{Hostname: "my-device", IngressTailscaleFunnel: true},
+		},
+		{
+			name: "config predating ingressTailscaleFunnel parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
 			name: "identity parses when present",
 			data: `{"hostname":"my-device","identity":"deadbeef"}`,
 			want: Config{Hostname: "my-device", Identity: "deadbeef"},

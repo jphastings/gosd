@@ -25,6 +25,16 @@ const ingressCloudflaredValue = "cloudflared"
 // embeds the cloudflared binary inside the initramfs.
 const ingressCloudflaredDest = "/bin/cloudflared"
 
+// ingressTailscaleFunnelValue is the tsnet Funnel shim's --ingress value
+// (epic gosd-65uy), matching gosdtoml's [ingress.tailscale-funnel] table
+// name exactly.
+const ingressTailscaleFunnelValue = "tailscale-funnel"
+
+// ingressTailscaleFunnelDest is where gosd build/run --ingress
+// tailscale-funnel embeds the per-arch-compiled cmd/gosd-tsfunnel shim
+// inside the initramfs (bean gosd-kzd3).
+const ingressTailscaleFunnelDest = "/bin/gosd-tsfunnel"
+
 // ingressAgent is one entry in gosd's registry of --ingress values it
 // understands: the name accepted on the command line, the board rule it
 // needs (which GOARCHes it can run on, with the exact refusal wording for
@@ -33,8 +43,10 @@ const ingressCloudflaredDest = "/bin/cloudflared"
 // second ingress agent (epic gosd-65uy) means adding one row here, not
 // touching parse, validate, or collision-check logic; that agent's own
 // resolve/open functions (mirroring resolveIngressCloudflared/
-// openIngressCloudflaredForBoard) are wired into resolveSharedContent/
-// openSharedContent by its own bean, the same way cloudflared's are today.
+// openIngressCloudflaredForBoard, or - for tailscale-funnel, which is
+// per-arch COMPILED rather than fetched - compileForBoards' third binary
+// pass, see archbuild.go) are wired into cmd/gosd's build/run commands by
+// its own bean, the same way cloudflared's are today.
 type ingressAgent struct {
 	name string
 
@@ -46,10 +58,17 @@ type ingressAgent struct {
 	// --with-external, paired with the description shown in a collision
 	// error (see reservedExternalDests).
 	reservedDests map[string]string
+
+	// requiresDataPartition, when non-empty, is the reason this agent needs
+	// a writable GOSD-DATA partition: validateIngressDataPartition refuses a
+	// build that selects this agent with no --data-size (dataSizeBytes==0
+	// and dataExpand false). Empty means the agent has no such requirement
+	// (cloudflared's tunnel credentials are stateless from gosd's point of
+	// view - see gosdtoml.IngressCloudflared).
+	requiresDataPartition string
 }
 
-// cloudflaredAgent is the registry's only entry today: gosd's sole --ingress
-// value (epic gosd-virc, v1).
+// cloudflaredAgent is gosd's original --ingress value (epic gosd-virc, v1).
 var cloudflaredAgent = ingressAgent{
 	name: ingressCloudflaredValue,
 	capableGOARCH: func(goarch string) (bool, string) {
@@ -74,8 +93,32 @@ var cloudflaredAgent = ingressAgent{
 	},
 }
 
+// tailscaleFunnelAgent is the second --ingress value (epic gosd-65uy):
+// gosd's own tsnet-based Funnel shim, compiled per-arch from gosd's own
+// source (bean gosd-kzd3, internal/build's CrossCompileTsfunnel) rather than
+// downloaded, so - unlike cloudflared, which is arm64-only because
+// upstream's arm release targets GOARM=7 - EVERY board's GOARCH is capable:
+// the epic's Funnel facts confirmed GOARM=6 self-compiles and runs, covering
+// pi-zero-w too.
+var tailscaleFunnelAgent = ingressAgent{
+	name: ingressTailscaleFunnelValue,
+	capableGOARCH: func(_ string) (bool, string) {
+		return true, ""
+	},
+	reservedDests: map[string]string{
+		ingressTailscaleFunnelDest: "gosd's --ingress tailscale-funnel shim binary",
+	},
+	// The shim's tailnet node identity lives in tsnet's state dir under
+	// /data (epic gosd-65uy decision 3): losing it means a new node
+	// identity and a new public URL on every reboot, so a build with no
+	// GOSD-DATA partition at all can never work correctly - refusing it at
+	// build time is strictly better than shipping a device that silently
+	// re-registers itself forever.
+	requiresDataPartition: "tailscale-funnel stores its tailnet identity on the GOSD-DATA partition",
+}
+
 // ingressAgents is gosd's registry of every --ingress value it understands.
-var ingressAgents = []ingressAgent{cloudflaredAgent}
+var ingressAgents = []ingressAgent{cloudflaredAgent, tailscaleFunnelAgent}
 
 // findIngressAgent looks up name in ingressAgents.
 func findIngressAgent(name string) (ingressAgent, bool) {
@@ -98,13 +141,15 @@ func ingressAgentNames() []string {
 }
 
 // ingressSelection is the registry-shaped result of parsing --ingress: which
-// known agents were requested. Cloudflared gets its own named field, rather
-// than a generic set, because it's still the only agent the rest of gosd
-// (resolveSharedContent, pipeline.Options.IngressCloudflared) understands -
-// a second agent's own field lands here alongside it, in the bean that
-// wires that agent all the way through.
+// known agents were requested. Each agent gets its own named field, rather
+// than a generic set, because the rest of gosd (resolveSharedContent/
+// compileForBoards, pipeline.Options.IngressCloudflared/
+// IngressTailscaleFunnel) needs to address a specific agent's content - a
+// third agent's own field would land here alongside these, in the bean that
+// wires it all the way through.
 type ingressSelection struct {
-	Cloudflared bool
+	Cloudflared     bool
+	TailscaleFunnel bool
 }
 
 // has reports whether name was selected, keyed by the same names
@@ -114,6 +159,8 @@ func (s ingressSelection) has(name string) bool {
 	switch name {
 	case ingressCloudflaredValue:
 		return s.Cloudflared
+	case ingressTailscaleFunnelValue:
+		return s.TailscaleFunnel
 	default:
 		return false
 	}
@@ -134,9 +181,35 @@ func parseIngressFlags(flags []string) (ingressSelection, error) {
 		switch agent.name {
 		case ingressCloudflaredValue:
 			sel.Cloudflared = true
+		case ingressTailscaleFunnelValue:
+			sel.TailscaleFunnel = true
 		}
 	}
 	return sel, nil
+}
+
+// validateIngressDataPartition fails fast when a selected --ingress agent
+// needs a writable GOSD-DATA partition (see
+// ingressAgent.requiresDataPartition) but the build has none: dataSizeBytes
+// is 0 and dataExpand is false. Without this check, `gosd build --ingress
+// tailscale-funnel` with no --data-size would boot a device that loses its
+// tsnet state - and therefore its public URL - on every single reboot,
+// discovered only in the field, long after the image shipped. A no-op when
+// dataSizeBytes>0, dataExpand is true, or no selected agent requires a data
+// partition; --data-size=expand satisfies the requirement even though the
+// image itself carries no partition (dataexpand creates one before
+// StartNetworking, per epic gosd-65uy decision 3).
+func validateIngressDataPartition(sel ingressSelection, dataSizeBytes int64, dataExpand bool) error {
+	if dataSizeBytes > 0 || dataExpand {
+		return nil
+	}
+	for _, agent := range ingressAgents {
+		if !sel.has(agent.name) || agent.requiresDataPartition == "" {
+			continue
+		}
+		return fmt.Errorf("--ingress %s failed: %s; pass --data-size (e.g. --data-size=64MiB or --data-size=expand)", agent.name, agent.requiresDataPartition)
+	}
+	return nil
 }
 
 // validateIngress fails fast when a selected --ingress agent has no pinned
@@ -265,6 +338,21 @@ func openIngressCloudflaredForBoard(paths map[string]string, b boards.Board) (io
 	if err := staticelf.Verify(f, f.Name(), b.Arch()); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("the cloudflared binary at %s failed verification for --board %s: %w; if you supplied it via --artifacts-dir, check it matches this board's architecture", path, b.Name(), err)
+	}
+	return f, nil
+}
+
+// openTsfunnelBinary opens a fresh reader for the gosd-tsfunnel shim
+// compileForBoards already cross-compiled at tsfunnelPath for this board's
+// arch. Unlike openIngressCloudflaredForBoard, no ELF pre-flight is needed:
+// this binary was just produced by the same host Go toolchain, targeting
+// this exact board's boards.Arch, in this same invocation - not a
+// downloaded/cached blob whose provenance --artifacts-dir might have
+// substituted.
+func openTsfunnelBinary(tsfunnelPath string) (io.Reader, error) {
+	f, err := os.Open(tsfunnelPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening the compiled gosd-tsfunnel binary at %s: %w", tsfunnelPath, err)
 	}
 	return f, nil
 }

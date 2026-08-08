@@ -137,6 +137,15 @@ type Options struct {
 	// flag.
 	IngressCloudflared bool
 
+	// IngressTailscaleFunnel is `gosd build --ingress tailscale-funnel`'s
+	// value, baked straight into config.json's IngressTailscaleFunnel field
+	// (see initcfg.Config.IngressTailscaleFunnel's doc comment). Mirrors
+	// IngressCloudflared exactly: cmd/gosd is responsible for actually
+	// putting the compiled shim into ExtraExecutables at
+	// /bin/gosd-tsfunnel - this field only carries the "is it baked" bit
+	// through to config.json.
+	IngressTailscaleFunnel bool
+
 	// BootSizeBytes is the size of the FAT32 GOSD-BOOT partition, passed
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
@@ -328,11 +337,12 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 			SSID:       opts.Config.WifiSSID,
 			Passphrase: opts.Config.WifiPassword,
 		},
-		Env:                opts.Config.Env,
-		DataExpand:         opts.DataExpand,
-		DataFlush:          opts.DataFlush,
-		IngressCloudflared: opts.IngressCloudflared,
-		Identity:           identity,
+		Env:                    opts.Config.Env,
+		DataExpand:             opts.DataExpand,
+		DataFlush:              opts.DataFlush,
+		IngressCloudflared:     opts.IngressCloudflared,
+		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
+		Identity:               identity,
 		// Wall-clock, taken here rather than threaded in via Options: it
 		// must vary build-to-build (that's the whole point, as
 		// timesync's clock floor), and config.json is excluded from

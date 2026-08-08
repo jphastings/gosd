@@ -19,13 +19,14 @@ type appCall struct {
 	arch boards.Arch
 }
 
-// countingCompiler records every compileApp/compileInit call it sees, so
-// tests can assert exactly how many real cross-compiles compileForBoards
-// triggers - the per-board app / per-arch init guarantee itself, not just
-// its output.
+// countingCompiler records every compileApp/compileInit/compileTsfunnel call
+// it sees, so tests can assert exactly how many real cross-compiles
+// compileForBoards triggers - the per-board app / per-arch init / per-arch
+// tsfunnel guarantee itself, not just its output.
 type countingCompiler struct {
-	appCalls  []appCall
-	initCalls []boards.Arch
+	appCalls      []appCall
+	initCalls     []boards.Arch
+	tsfunnelCalls []boards.Arch
 }
 
 func (c *countingCompiler) compileApp(_, _, tags string, arch boards.Arch) error {
@@ -35,6 +36,11 @@ func (c *countingCompiler) compileApp(_, _, tags string, arch boards.Arch) error
 
 func (c *countingCompiler) compileInit(_, _ string, arch boards.Arch) error {
 	c.initCalls = append(c.initCalls, arch)
+	return nil
+}
+
+func (c *countingCompiler) compileTsfunnel(_, _ string, arch boards.Arch) error {
+	c.tsfunnelCalls = append(c.tsfunnelCalls, arch)
 	return nil
 }
 
@@ -50,7 +56,7 @@ func TestCompileForBoardsCompilesAppOncePerBoardOnSharedArch(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), radxazero3e.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", c.compileApp, c.compileInit)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -92,7 +98,7 @@ func TestCompileForBoardsAddsOneInitPassPerDistinctArch(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), nanopizero2.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", c.compileApp, c.compileInit)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -122,13 +128,84 @@ func TestCompileForBoardsSurfacesAppCompileFailure(t *testing.T) {
 		initCalls++
 		return nil
 	}
+	compileTsfunnel := func(_, _ string, _ boards.Arch) error {
+		t.Fatal("compileTsfunnel was called despite needsTsfunnel=false")
+		return nil
+	}
 
-	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", compileApp, compileInit)
+	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", false, compileApp, compileInit, compileTsfunnel)
 	if err == nil {
 		t.Fatal("compileForBoards succeeded despite a failing compileApp, want an error")
 	}
 	if initCalls != 0 {
 		t.Errorf("compileInit was called after compileApp failed, want it skipped")
+	}
+}
+
+// TestCompileForBoardsSkipsTsfunnelWhenNotNeeded confirms compileTsfunnel is
+// never called when needsTsfunnel is false (--ingress tailscale-funnel was
+// not selected) - the default case, and the one every existing caller above
+// exercises implicitly via countingCompiler.tsfunnelCalls staying empty.
+func TestCompileForBoardsSkipsTsfunnelWhenNotNeeded(t *testing.T) {
+	c := &countingCompiler{}
+	selected := []boards.Board{pizero2w.New(), pizerow.New()}
+
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
+	if err != nil {
+		t.Fatalf("compileForBoards: %v", err)
+	}
+	if len(c.tsfunnelCalls) != 0 {
+		t.Errorf("compileTsfunnel was called %d times with needsTsfunnel=false, want 0", len(c.tsfunnelCalls))
+	}
+	for _, b := range selected {
+		if binaries[b.Name()].tsfunnelPath != "" {
+			t.Errorf("%s's tsfunnelPath = %q, want empty when needsTsfunnel=false", b.Name(), binaries[b.Name()].tsfunnelPath)
+		}
+	}
+}
+
+// TestCompileForBoardsAddsOneTsfunnelPassPerDistinctArchWhenNeeded mirrors
+// TestCompileForBoardsAddsOneInitPassPerDistinctArch for the shim (bean
+// gosd-kzd3): needsTsfunnel=true adds exactly one gosd-tsfunnel compile per
+// distinct arch among selected, sharing tsfunnelPath across same-arch
+// boards exactly like initPath does.
+func TestCompileForBoardsAddsOneTsfunnelPassPerDistinctArchWhenNeeded(t *testing.T) {
+	c := &countingCompiler{}
+	selected := []boards.Board{pizero2w.New(), nanopizero2.New(), pizerow.New()}
+
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", true, c.compileApp, c.compileInit, c.compileTsfunnel)
+	if err != nil {
+		t.Fatalf("compileForBoards: %v", err)
+	}
+
+	if len(c.tsfunnelCalls) != 2 {
+		t.Errorf("compileTsfunnel was called %d times for 2 arm64 boards + 1 arm-6 board, want exactly 2 (one per distinct arch)", len(c.tsfunnelCalls))
+	}
+	for _, b := range selected {
+		if binaries[b.Name()].tsfunnelPath == "" {
+			t.Errorf("%s's tsfunnelPath is empty, want a compiled shim path when needsTsfunnel=true", b.Name())
+		}
+	}
+	if binaries["pi-zero-2w"].tsfunnelPath != binaries["nanopi-zero2"].tsfunnelPath {
+		t.Errorf("pi-zero-2w and nanopi-zero2 (both arm64) got different tsfunnelPaths, want the same shared binary")
+	}
+	if binaries["pi-zero-2w"].tsfunnelPath == binaries["pi-zero-w"].tsfunnelPath {
+		t.Errorf("pi-zero-2w (arm64) and pi-zero-w (arm-6) share a tsfunnelPath, want distinct gosd-tsfunnel binaries")
+	}
+}
+
+// TestCompileForBoardsSurfacesTsfunnelCompileFailure confirms a
+// compileTsfunnel failure is reported, mirroring
+// TestCompileForBoardsSurfacesAppCompileFailure's shape for the third
+// binary.
+func TestCompileForBoardsSurfacesTsfunnelCompileFailure(t *testing.T) {
+	compileApp := func(_, _, _ string, _ boards.Arch) error { return nil }
+	compileInit := func(_, _ string, _ boards.Arch) error { return nil }
+	compileTsfunnel := func(_, _ string, _ boards.Arch) error { return errors.New("boom") }
+
+	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", true, compileApp, compileInit, compileTsfunnel)
+	if err == nil {
+		t.Fatal("compileForBoards succeeded despite a failing compileTsfunnel, want an error")
 	}
 }
 
@@ -140,7 +217,7 @@ func TestCompileForBoardsWritesDistinctAppPathsPerBoard(t *testing.T) {
 	tempDir := t.TempDir()
 	selected := []boards.Board{pizero2w.New(), radxazero3e.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, tempDir, "./pkg", "", c.compileApp, c.compileInit)
+	binaries, err := compileForBoards(selected, tempDir, "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}

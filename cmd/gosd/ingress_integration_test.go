@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"debug/elf"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,10 +89,116 @@ func TestBuildWithoutIngressOmitsCloudflaredBinaryAndConfigFlag(t *testing.T) {
 	if hasRecord(records, "bin/cloudflared") {
 		t.Error("initramfs unexpectedly contains bin/cloudflared without --ingress cloudflared")
 	}
+	if hasRecord(records, "bin/gosd-tsfunnel") {
+		t.Error("initramfs unexpectedly contains bin/gosd-tsfunnel without --ingress tailscale-funnel")
+	}
 
 	configJSON := string(recordContent(t, records, "etc/gosd/config.json"))
 	if strings.Contains(configJSON, "ingressCloudflared") {
 		t.Errorf("config.json = %s, should not mention ingressCloudflared without --ingress cloudflared", configJSON)
+	}
+	if strings.Contains(configJSON, "ingressTailscaleFunnel") {
+		t.Errorf("config.json = %s, should not mention ingressTailscaleFunnel without --ingress tailscale-funnel", configJSON)
+	}
+}
+
+// TestBuildIngressTailscaleFunnelEmbedsBinaryAndFlagsConfig is the
+// acceptance test for gosd-kzd3's build rail: --ingress tailscale-funnel,
+// compiled per-arch from LOCAL source (internal/build's
+// CrossCompileTsfunnel - no download, so noNetworkTransport's tripwire needs
+// no new fixture for it, unlike cloudflared's fake-ELF fixture), lands a
+// real ELF binary at /bin/gosd-tsfunnel mode 0755 and bakes config.json's
+// ingressTailscaleFunnel bit.
+func TestBuildIngressTailscaleFunnelEmbedsBinaryAndFlagsConfig(t *testing.T) {
+	noNetworkTransport(t)
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "tailscale-funnel",
+		"--data-size", "64MiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --ingress tailscale-funnel failed: %v", err)
+	}
+
+	records := readImageInitramfs(t, imgPath)
+	const wantName = "bin/gosd-tsfunnel"
+	rec, ok := findRecord(records, wantName)
+	if !ok {
+		t.Fatalf("initramfs is missing %q; got entries %v", wantName, recordNames(records))
+	}
+	if mode := rec.Mode & 0o777; mode != 0o755 {
+		t.Errorf("%s mode = %#o, want 0755", wantName, mode)
+	}
+
+	got := recordContent(t, records, wantName)
+	f, err := elf.NewFile(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("%s is not a valid ELF binary: %v", wantName, err)
+	}
+	defer func() { _ = f.Close() }()
+	if f.Class != elf.ELFCLASS64 || f.Machine != elf.EM_AARCH64 {
+		t.Errorf("%s is class=%v machine=%v, want a 64-bit arm64 binary (pi-zero-2w's arch)", wantName, f.Class, f.Machine)
+	}
+
+	configJSON := string(recordContent(t, records, "etc/gosd/config.json"))
+	if !strings.Contains(configJSON, `"ingressTailscaleFunnel":true`) {
+		t.Errorf("config.json = %s, want it to contain %q", configJSON, `"ingressTailscaleFunnel":true`)
+	}
+
+	gosdToml := string(readBootFile(t, imgPath, "gosd.toml"))
+	if !strings.Contains(gosdToml, "[ingress.tailscale-funnel]") {
+		t.Errorf("gosd.toml = %s, want it to contain the [ingress.tailscale-funnel] example", gosdToml)
+	}
+}
+
+// TestBuildIngressTailscaleFunnelRequiresDataPartition confirms epic
+// gosd-65uy decision 3's hard error: --ingress tailscale-funnel with no
+// --data-size (the default, 0) is refused before any compilation, since the
+// shim's tsnet state - and therefore its public URL - would be lost every
+// reboot.
+func TestBuildIngressTailscaleFunnelRequiresDataPartition(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "tailscale-funnel",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --ingress tailscale-funnel with no --data-size succeeded, want an error")
+	}
+	for _, want := range []string{"tailscale-funnel", "GOSD-DATA", "--data-size"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestBuildIngressTailscaleFunnelAcceptsDataSizeExpand confirms
+// --data-size=expand (no on-image data partition, but one is created on
+// first boot) satisfies the same requirement a concrete --data-size does.
+func TestBuildIngressTailscaleFunnelAcceptsDataSizeExpand(t *testing.T) {
+	noNetworkTransport(t)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "tailscale-funnel",
+		"--data-size", "expand",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --ingress tailscale-funnel --data-size=expand failed: %v", err)
 	}
 }
 
@@ -167,7 +275,7 @@ func TestBuildIngressRejectsPiZeroWButNamesCapableBoards(t *testing.T) {
 // same way TestBuildWithExternalRejectsCollisionWithReservedDest checks
 // /app.
 func TestBuildIngressCollidesWithReservedDest(t *testing.T) {
-	for _, dest := range []string{ingressCloudflaredDest, "/etc/ssl/certs/ca-certificates.crt"} {
+	for _, dest := range []string{ingressCloudflaredDest, "/etc/ssl/certs/ca-certificates.crt", ingressTailscaleFunnelDest} {
 		cmd := newRootCmd()
 		cmd.SetArgs([]string{
 			"build", "../../examples/hello",

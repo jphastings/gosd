@@ -83,6 +83,18 @@ type Config struct {
 	// in.
 	IngressCloudflared bool `json:"ingressCloudflared,omitempty"`
 
+	// IngressTailscaleFunnel marks an image built with `gosd build --ingress
+	// tailscale-funnel`: the tsnet-based Funnel shim (cmd/gosd-tsfunnel) is
+	// baked into the initramfs at /bin/gosd-tsfunnel (see internal/build's
+	// CrossCompileTsfunnel and cmd/gosd/ingress.go). Mirrors
+	// IngressCloudflared's contract exactly: this bit only says the binary
+	// is baked, nothing about whether or how Funnel is actually configured
+	// - that lives in gosd.toml's [ingress.tailscale-funnel] section (see
+	// gosdtoml.IngressTailscaleFunnel), which gosd-init reads separately at
+	// boot. Optional: absent - including every config.json baked before
+	// this field existed - means no shim binary was baked in.
+	IngressTailscaleFunnel bool `json:"ingressTailscaleFunnel,omitempty"`
+
 	// Identity is a content-derived digest of this build's boot payload,
 	// baked in by gosd build (see ComputeIdentity's docstring for the
 	// exact recipe, and internal/pipeline for where it's computed).

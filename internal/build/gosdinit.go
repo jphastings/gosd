@@ -30,7 +30,14 @@ const gosdInitRelPkg = "./cmd/gosd-init"
 // it inside their own app's repo has no local copy of gosd's own source.
 //
 // overrideDir, when non-empty, is the --gosd-init-src escape hatch (rung 3
-// below) and is used as-is, skipping detection entirely.
+// below) and is used as-is, skipping detection entirely. The same flag/
+// overrideDir value also locates cmd/gosd-tsfunnel's source for
+// CrossCompileTsfunnel (tsfunnel.go, bean gosd-kzd3): --gosd-init-src is
+// documented as pointing at gosd-init's own leaf package directory (e.g.
+// nix packaging's $out/share/gosd-src/cmd/gosd-init - bean gosd-bfhd), so
+// CrossCompileTsfunnel derives gosd-tsfunnel's directory as that directory's
+// "gosd-tsfunnel" sibling rather than reusing overrideDir directly - see
+// tsfunnel.go's docstring.
 //
 // Otherwise, source is located by a two-rung ladder:
 //
@@ -48,14 +55,19 @@ const gosdInitRelPkg = "./cmd/gosd-init"
 //     version; the module cache serves every build after that, same as
 //     gosd's other artifact caching.
 func CrossCompileGosdInit(outputPath, overrideDir string, arch boards.Arch) error {
+	// crossCompileOpts is deliberately the zero value here, every rung: image
+	// identity is content-derived and gosd-init is never stripped, so its
+	// `go build` argv must stay byte-identical to before opts existed - see
+	// crossCompileOpts's docstring and
+	// TestCrossCompileGosdInitArgvHasNoTagsOrLdflags.
 	if overrideDir != "" {
 		return crossCompileInDir(overrideDir, ".", outputPath, arch,
-			fmt.Sprintf("--gosd-init-src %s", overrideDir))
+			fmt.Sprintf("--gosd-init-src %s", overrideDir), crossCompileOpts{})
 	}
 
 	if dir, ok := devCheckoutDir(); ok {
 		return crossCompileInDir(dir, gosdInitRelPkg, outputPath, arch,
-			fmt.Sprintf("local checkout at %s", dir))
+			fmt.Sprintf("local checkout at %s", dir), crossCompileOpts{})
 	}
 
 	dir, err := moduleCacheDir()
@@ -63,15 +75,31 @@ func CrossCompileGosdInit(outputPath, overrideDir string, arch boards.Arch) erro
 		return err
 	}
 	return crossCompileInDir(dir, gosdInitRelPkg, outputPath, arch,
-		fmt.Sprintf("module cache at %s", dir))
+		fmt.Sprintf("module cache at %s", dir), crossCompileOpts{})
+}
+
+// crossCompileOpts are the extra `go build` flags crossCompileInDir may add
+// beyond the bare `go build -o <output> <pkg>` invocation every from-source
+// binary started with. The zero value - what CrossCompileGosdInit passes at
+// every rung - keeps that invocation completely unchanged: gosd-init is
+// never tagged and never stripped, on purpose (its binary's content feeds
+// config.json's image identity, see internal/initcfg.ComputeIdentity), so
+// this struct existing at all must never itself perturb gosd-init's argv.
+// CrossCompileTsfunnel (tsfunnel.go) is the one caller that sets these
+// (the epic's ts_omit_* tag set + -ldflags="-s -w", gosd-65uy decision 2).
+type crossCompileOpts struct {
+	tags    string
+	ldflags string
 }
 
 // crossCompileInDir builds relPkg (a package path relative to dir) as found
 // in dir, for arch, writing the result to outputPath. It runs `go` with `-C
 // dir` rather than cd-ing the current process into dir, so it works
 // regardless of gosd's own working directory, and never writes into dir
-// itself (dir may be a read-only module cache entry).
-func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source string) error {
+// itself (dir may be a read-only module cache entry). opts adds -tags/
+// -ldflags to the invocation when non-empty; source is used only to name
+// where the build came from in an error message.
+func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source string, opts crossCompileOpts) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("gosd-init source directory %s (%s) does not exist; try passing --gosd-init-src <dir>", dir, source)
 	}
@@ -81,7 +109,8 @@ func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source 
 		return fmt.Errorf("resolving output path %s: %w", outputPath, err)
 	}
 
-	cmd := exec.Command("go", "-C", dir, "build", "-o", absOutput, relPkg)
+	args := buildGoBuildArgs(dir, relPkg, absOutput, opts)
+	cmd := exec.Command("go", args...)
 	cmd.Env = archEnv(arch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -91,6 +120,21 @@ func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source 
 			source, dir, relPkg, stderr.String())
 	}
 	return nil
+}
+
+// buildGoBuildArgs assembles crossCompileInDir's `go` argv as a pure
+// function of its inputs, so CrossCompileGosdInit's byte-identical-argv
+// invariant (see crossCompileOpts's docstring) is unit-testable without
+// shelling out - see TestBuildGoBuildArgsOmitsTagsAndLdflagsWhenOptsIsZero.
+func buildGoBuildArgs(dir, relPkg, absOutput string, opts crossCompileOpts) []string {
+	args := []string{"-C", dir, "build", "-o", absOutput}
+	if opts.tags != "" {
+		args = append(args, "-tags", opts.tags)
+	}
+	if opts.ldflags != "" {
+		args = append(args, "-ldflags", opts.ldflags)
+	}
+	return append(args, relPkg)
 }
 
 // devCheckoutDir implements rung 1: it reports the root of a gosd checkout
