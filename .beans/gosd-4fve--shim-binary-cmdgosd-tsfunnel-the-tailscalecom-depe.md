@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T15:08:25Z
-updated_at: 2026-08-08T04:53:02Z
+updated_at: 2026-08-08T05:16:19Z
 parent: gosd-65uy
 blocked_by:
     - gosd-virc
@@ -150,3 +150,36 @@ does not reach gosd-init's build.
   cloudflared" paragraph — software beans may now proceed ahead of the
   cloudflared bench pass; only this epic's own bench bean (`gosd-79v8`)
   stays hardware-gated.
+
+
+
+## CI surprise: nix build red on the go-directive bump (not a vendorHash issue)
+
+PR #231's "nix build" job fails, but not with the usual "hash mismatch in
+fixed-output derivation" that `flake.nix`'s comment anticipates — it fails
+earlier, at `go build`, with:
+
+```
+go: go.mod requires go >= 1.26.5 (running go 1.26.4; GOTOOLCHAIN=local)
+```
+
+Root cause: `flake.nix` tracks `nixpkgs/nixos-unstable`, whose `go` package
+was still at 1.26.4 as of this PR's CI run — one patch release behind the
+go1.26.5 floor `tailscale.com` v1.102.2 now requires. `buildGoModule` sets
+`GOTOOLCHAIN=local` (the reproducible-build default, no network in the
+sandboxed build phase), so there's no equivalent of `GOTOOLCHAIN=auto`
+fetching the newer toolchain the way local/CI `go` commands do. This is
+independent of the epic's own "never accept a pin bump whose go floor
+exceeds the released Go toolchain" gate (decision 7) — go1.26.5 *is*
+released and stable (confirmed against go.dev/dl before pinning); nixpkgs's
+own Go package simply hadn't caught up yet at the time this PR's CI ran.
+No `vendorHash` update was needed or attempted — the build never got far
+enough to compute one.
+
+Every other CI job (gofmt, go vet, golangci-lint, both `test` matrix legs,
+cross-compile smoke, image smoke, both qemu jobs, both `js` legs) passed.
+Flagging for JP rather than working around it: nixpkgs-unstable typically
+catches up to a new Go patch release within days, so this is likely
+self-resolving; the alternative (repin `flake.nix`'s `nixpkgs` input to a
+newer commit once one ships 1.26.5, or override the `go` derivation) is an
+infra decision outside this bean's scope.
