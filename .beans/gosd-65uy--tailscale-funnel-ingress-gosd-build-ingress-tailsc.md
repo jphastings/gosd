@@ -5,9 +5,8 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-08-07T15:07:24Z
-updated_at: 2026-08-07T20:21:07Z
+updated_at: 2026-08-08T04:51:22Z
 blocked_by:
-    - gosd-virc
     - gosd-wxjy
 ---
 
@@ -26,7 +25,9 @@ table-driven provsnapshot classification; docs/ingress.md overview structure)
 never reached the implementing agents (they lived only in a working-tree
 stash while the backlog burndown ran); recovered verbatim from stash@{0} on
 2026-08-07 into the refactor bean [[gosd-wxjy]], which now blocks this epic
-alongside the bench gate.
+alongside the bench gate. AMENDED by JP 2026-08-08: software beans may
+proceed ahead of the cloudflared bench pass (gosd-igk0); only this epic's
+own bench bean gosd-79v8 remains hardware-gated.
 
 ## Locked decisions
 
