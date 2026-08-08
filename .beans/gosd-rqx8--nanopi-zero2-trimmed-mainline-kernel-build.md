@@ -1,11 +1,11 @@
 ---
 # gosd-rqx8
 title: 'NanoPi Zero2: trimmed mainline kernel build'
-status: in-progress
+status: completed
 type: task
 priority: low
 created_at: 2026-07-05T05:34:03Z
-updated_at: 2026-07-06T05:50:23Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-cwjf
 blocked_by:
     - gosd-vcae
@@ -29,3 +29,9 @@ The bean text says "USB gadget stack (per research: dwc2 or dwc3 + configfs func
 Every fragment option survived `make olddefconfig` in the committed kernel.config: ARCH_ROCKCHIP, MMC_DW(+_ROCKCHIP), MMC_SDHCI_OF_DWCMSHC, STMMAC_ETH(+PLATFORM), DWMAC_ROCKCHIP, REALTEK_PHY, GPIO_ROCKCHIP, GPIO_CDEV, I2C_RK3X, SPI_ROCKCHIP, SERIAL_8250(+CONSOLE,+DW), the initramfs-zstd/vfat/net baseline, CONFIG_MODULES unset, RD_* alternatives unset, WLAN/CFG80211/SOUND/BT/DRM off, DEBUG_INFO_NONE, CC_OPTIMIZE_FOR_PERFORMANCE. None were dropped.
 
 Finding worth recording: diffing the generated config against radxa-zero-3e's committed kernel.config, the ONLY option-line difference is CONFIG_MOTORCOMM_PHY (off here, on for radxa's YT8531 board variant). The arm64 defconfig baseline already enables the whole USB/dwc3/gadget-configfs stack on both boards — radxa's fragment USB block mostly restates defconfig. So this board's kernel still contains those USB symbols (=y, inert at runtime — no RK3528 controller DT node to bind); the fragment simply stops requiring or asserting them. Documented in the pipeline README's diff table.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

@@ -1,11 +1,11 @@
 ---
 # gosd-f39b
 title: 'NanoPi Zero2: U-Boot build pipeline'
-status: in-progress
+status: completed
 type: task
 priority: low
 created_at: 2026-07-05T05:34:03Z
-updated_at: 2026-07-07T19:37:18Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-cwjf
 blocked_by:
     - gosd-vcae
@@ -75,3 +75,9 @@ clean-machine `gosd build` (no --board, no --artifacts-dir) downloaded and
 sha256-verified this board's real artifacts and produced a working image.
 The hardware bring-up and re-pin-to-final-v2026.07-release checklist items
 on this bean remain open, unaffected by that PR.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

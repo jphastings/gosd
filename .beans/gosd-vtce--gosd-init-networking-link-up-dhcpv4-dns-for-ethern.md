@@ -1,11 +1,11 @@
 ---
 # gosd-vtce
 title: 'gosd-init networking: link up, DHCPv4, DNS, for Ethernet'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:03:54Z
-updated_at: 2026-07-03T17:59:38Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-ko20
 blocked_by:
     - gosd-kkz4
@@ -49,3 +49,9 @@ Chose **not** to mount a dedicated tmpfs over `/etc`. gosd-init's rootfs *is* th
 
 - Added a note to `gosd-mr2n` (Go developer quickstart + runtime documentation) about `GOSD_IP` not being settable post-launch, per this bean's instruction to document that there.
 - Hardware acceptance items (lease-within-3s-of-link-up timing, cable-plugged-in-later behavior) require the Radxa and are left unchecked above; this PR only covers the code and its unit tests. Kept the bean `in-progress` rather than `completed` for that reason, even though both code todos are checked.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

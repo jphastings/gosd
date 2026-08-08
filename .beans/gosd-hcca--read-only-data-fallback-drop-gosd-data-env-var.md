@@ -1,11 +1,11 @@
 ---
 # gosd-hcca
 title: Read-only /data fallback; drop GOSD_DATA env var
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-10T03:52:27Z
-updated_at: 2026-07-10T04:13:30Z
+updated_at: 2026-08-08T19:50:12Z
 ---
 
 Supersedes the `GOSD_DATA` env-var half of the data-partition contract
@@ -124,3 +124,9 @@ reached — capabilities don't override a read-only superblock.
 Supersedes the `GOSD_DATA` env-var half of gosd-xelb's locked decision (JP
 approved 2026-07-10; gosd not yet released publicly). gosd-xelb's pending
 hardware pull-power torture test is unaffected.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

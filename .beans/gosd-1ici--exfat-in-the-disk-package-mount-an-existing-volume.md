@@ -1,11 +1,11 @@
 ---
 # gosd-1ici
 title: 'exFAT in the disk package: mount an existing volume, format a new one'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-29T16:13:42Z
-updated_at: 2026-07-29T17:39:51Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-jge2
 ---
 
@@ -291,3 +291,9 @@ Rockchip kernels change, so this reaches real builds at the next artifacts
 release, which COMPATIBILITY.md's new "exFAT on attached disks" row states —
 ✅ for the three Pi boards and the ROCK 4SE today, 🚧 for the two Rockchip
 boards until then.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

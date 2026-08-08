@@ -1,11 +1,11 @@
 ---
 # gosd-d458
 title: 'Radxa Zero 3E: mainline U-Boot build (idbloader.img + u-boot.itb)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:02:28Z
-updated_at: 2026-07-03T18:23:31Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-v370
 ---
 
@@ -49,3 +49,9 @@ Implemented the build half of this task:
 Defconfig coverage claim: verified true, see the '## Defconfig coverage finding' section above.
 
 Not done (honesty): the on-hardware serial verification todo (U-Boot banner, extlinux discovery) is NOT done -- no hardware kit available in this environment. Bean stays in-progress; that todo is left unchecked and should be picked up alongside the Radxa Zero 3E hardware bring-up task.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

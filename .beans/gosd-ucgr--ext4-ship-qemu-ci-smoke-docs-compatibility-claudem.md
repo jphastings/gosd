@@ -1,11 +1,11 @@
 ---
 # gosd-ucgr
 title: 'ext4 ship: qemu CI smoke, docs, COMPATIBILITY, CLAUDE.md, minor version'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T09:58:20Z
-updated_at: 2026-08-07T14:45:04Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-lfu0
 blocked_by:
     - gosd-1c0x
@@ -141,3 +141,9 @@ foreground, before pushing.
 PR: https://github.com/jphastings/gosd/pull/194
 
 Quality-gates follow-up: all five ran and passed before the push above (the go test ./... paragraph a few lines up was written mid-run; it's now confirmed clean, including a second full-suite run after an earlier flaked cmd/gosd timeout that was resource contention, not a real failure — reproduced clean in isolation at 175s).
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

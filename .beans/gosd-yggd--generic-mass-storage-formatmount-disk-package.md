@@ -1,11 +1,11 @@
 ---
 # gosd-yggd
 title: Generic mass-storage format/mount (`disk` package)
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-29T15:29:09Z
-updated_at: 2026-07-29T15:45:41Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-jge2
 ---
 
@@ -235,3 +235,9 @@ Docs: new "Attached disk storage" section in `docs/runtime.md`, a `disk` row +
 `unix.Mount`" to the package, and `CLAUDE.md`'s public-API-surface bullet
 corrected — it named a `device/` package that has never existed and omitted
 `emmc/`.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

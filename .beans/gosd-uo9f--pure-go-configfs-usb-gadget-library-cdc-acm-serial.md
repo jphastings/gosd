@@ -1,11 +1,11 @@
 ---
 # gosd-uo9f
 title: Pure-Go configfs USB gadget library + CDC-ACM serial gadget
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-06T08:45:20Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-jge2
 blocked_by:
     - gosd-m9dj
@@ -63,3 +63,9 @@ item genuinely needs those to resolve first, and stays unchecked below.
 
 Not done: the "Hardware test both boards" checklist item, which needs real
 hardware (see the note above).
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

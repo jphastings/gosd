@@ -1,11 +1,11 @@
 ---
 # gosd-pctc
 title: 'Provisioning parser in gosd-init: consume Imager files from GOSD-BOOT'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-06T02:13:44Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-b22t
 blocked_by:
     - gosd-qvoq
@@ -74,3 +74,9 @@ All quality gates pass (`go test ./...`, `go vet ./...`, `gofmt -l .`,
 On-hardware verification (flash with real Imager, confirm the device joins
 WiFi) is unchecked and left for a human at the bench — this bean stays
 in-progress until that's done.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

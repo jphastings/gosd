@@ -1,11 +1,11 @@
 ---
 # gosd-r796
 title: 'mDNS: device answers <hostname>.local'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-04T21:38:07Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-b22t
 blocked_by:
     - gosd-vtce
@@ -41,3 +41,9 @@ Ran a real, no-fakes test locally on the implementing Mac (`TestNewServerAnswers
 
 - "Re-announce on address change" is implemented as full responder restart, not an in-place re-announcement, since `pion/mdns`'s `Conn` offers no API for the latter — explicitly accepted as sufficient by the bean text, and documented in `Run`'s doc comment.
 - The manual cross-OS test matrix (macOS `ping`, Windows 11, Linux avahi, iOS/Android browser hitting `http://hostname.local`) needs a second real device on the same LAN and is left unchecked; the localhost smoke test above is as close as this environment can get on its own. Bean stays `in-progress` for this reason, matching the same pattern gosd-vtce used for its own hardware-only acceptance items.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

@@ -1,11 +1,11 @@
 ---
 # gosd-ufeh
 title: End-user flash guide (screenshots, zero terminal)
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-06T13:18:06Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-b22t
 blocked_by:
     - gosd-pctc
@@ -47,3 +47,9 @@ Left unchecked: no non-technical reviewer was available in this session, so
 that todo and the bean's on-hardware-flavored acceptance criterion (a real
 first-time user following the guide end-to-end) remain open — bean stays
 in-progress.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

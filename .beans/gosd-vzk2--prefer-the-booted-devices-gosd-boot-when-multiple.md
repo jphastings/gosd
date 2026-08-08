@@ -1,10 +1,11 @@
 ---
 # gosd-vzk2
 title: Prefer the booted device's GOSD-BOOT when multiple GoSD boot partitions exist
-status: in-progress
+status: completed
 type: task
+priority: normal
 created_at: 2026-07-24T07:49:39Z
-updated_at: 2026-07-24T07:49:39Z
+updated_at: 2026-08-08T19:50:12Z
 ---
 
 gosd-pcwl fixed gosd-init's boot-partition probe to reject candidates that
@@ -116,3 +117,9 @@ Per-board feasibility:
       extlinux prompt (`printenv devtype devnum` after an interrupted
       boot) to confirm the bootstd finding on real hardware before
       scoping the U-Boot-side bean.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

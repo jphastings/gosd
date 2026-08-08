@@ -1,11 +1,11 @@
 ---
 # gosd-xelb
 title: Writable data partition (/data) surviving reboot and reflash-of-app
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-05T05:52:59Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-jge2
 blocked_by:
     - gosd-cvzt
@@ -57,3 +57,9 @@ test still needs real boards, so the bean stays in-progress.
 - `examples/hello`: persists a boot counter to `GOSD_DATA` using the
   documented write-temp/fsync/rename pattern; no-op (and no failure) when
   `GOSD_DATA` is unset. Stdlib only.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

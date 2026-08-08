@@ -1,11 +1,11 @@
 ---
 # gosd-70b2
 title: 'Pi Zero 2W kernel: trimmed arm64 build (kernel8.img)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T20:56:21Z
-updated_at: 2026-07-04T11:22:29Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-vmgw
 ---
 
@@ -65,3 +65,9 @@ gitignored and not committed.
 Boot-test on hardware remains the one open todo (no hardware here); the
 bean stays in-progress until the bring-up task confirms boot to
 gosd-init.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

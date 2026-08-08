@@ -1,11 +1,11 @@
 ---
 # gosd-c7tk
 title: 'Radxa Zero 3E kernel: trimmed mainline arm64 build'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:02:28Z
-updated_at: 2026-07-04T11:21:43Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-v370
 ---
 
@@ -62,3 +62,9 @@ mainline arm64 kernel for the Radxa Zero 3E.
 
 Boot-testing on hardware remains unchecked (no board here); it is tracked with
 the bring-up task. Bean stays in-progress.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.
