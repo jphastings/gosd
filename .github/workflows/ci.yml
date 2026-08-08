@@ -348,6 +348,57 @@ jobs:
             exit 1
           fi
 
+      # gosd-o68e: with --ingress tailscale-funnel baked in but no
+      # [ingress.tailscale-funnel] section in gosd.toml, tsfunnel's own
+      # resolveMode must log its one actionable "baked but not configured"
+      # line and nothing else - never start the shim, never loop. --data-size
+      # is required here: tailscale-funnel refuses to build with no GOSD-DATA
+      # partition (bean gosd-kzd3), since it has nowhere to persist its
+      # tailnet identity. A dummy-authkey supervisor-loop assertion (a real
+      # registration attempt against Tailscale's control plane) is
+      # deliberately NOT covered here, for the same class of reasons
+      # gosd-66ax gave for cloudflared's equivalent case above (a genuine
+      # network expectation beyond what this job otherwise needs, and an
+      # upstream error-wording detail this repo doesn't control) plus a
+      # stronger one specific to this agent: gosd.toml's ingress secrets are
+      # never baked at build/run time by design
+      # (internal/pipeline/pipeline.go's "never a real value to bake here"),
+      # so reaching that code path at all would need new image-editing
+      # tooling this bean doesn't add. Real invalid-authkey behavior (error
+      # vs hang, bounded by --register-timeout) is uncharacterized until TS-8
+      # (bean gosd-79v8) - real tunnel establishment is bench-only, same as
+      # cloudflared's.
+      - name: "gosd run --ingress tailscale-funnel: baked-but-not-configured logs exactly once"
+        run: |
+          expected="tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do"
+          ./dist/gosd-cli run ./examples/hello --ingress tailscale-funnel --data-size 64MiB --hostname ci-tsfunnel-baked > tsfunnel.log 2>&1 &
+          run_pid=$!
+
+          seen=0
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$run_pid" 2>/dev/null; then
+              echo "gosd run exited before the expected line ever appeared" >&2
+              break
+            fi
+            if grep -qF "$expected" tsfunnel.log; then
+              seen=1
+              break
+            fi
+            sleep 1
+          done
+
+          kill "$run_pid" 2>/dev/null || true
+          wait "$run_pid" 2>/dev/null || true
+
+          got=$(grep -cF "$expected" tsfunnel.log || true)
+          if [ "$seen" -ne 1 ] || [ "$got" -ne 1 ]; then
+            echo "::group::Captured gosd run output"
+            cat tsfunnel.log
+            echo "::endgroup::"
+            echo "want exactly one \"baked but not configured\" line, got $got (seen=$seen)" >&2
+            exit 1
+          fi
+
   # Proves --data-size=expand end-to-end on the real boot path: the image
   # ships with no data partition, the "card" (the raw image file, enlarged
   # after the build, exactly as flashing onto a bigger SD card leaves it)

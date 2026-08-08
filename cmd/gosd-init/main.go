@@ -20,6 +20,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
@@ -42,6 +43,15 @@ const (
 	// rather than imported, since that constant lives in the gosd CLI's own
 	// internal package, a different binary from gosd-init.
 	cloudflaredBinaryPath = "/bin/cloudflared"
+
+	// tsfunnelBinaryPath is where `gosd build --ingress tailscale-funnel`
+	// bakes the gosd-tsfunnel shim into the initramfs (see
+	// cmd/gosd/ingress.go's ingressTailscaleFunnelDest and
+	// initcfg.Config.IngressTailscaleFunnel's doc comment) — duplicated
+	// here for the same reason as cloudflaredBinaryPath above: that
+	// constant lives in the gosd CLI's own internal package, a different
+	// binary from gosd-init.
+	tsfunnelBinaryPath = "/bin/gosd-tsfunnel"
 
 	// dataMarkerPath is an empty file created on the GOSD-DATA partition
 	// the first time it's mounted, marking it as initialized by gosd.
@@ -187,6 +197,23 @@ func main() {
 					NetworkUpPollInterval:  cloudflared.DefaultNetworkUpPollInterval,
 					TimeSyncedTimeout:      cloudflared.DefaultTimeSyncedTimeout,
 					TimeSyncedPollInterval: cloudflared.DefaultTimeSyncedPollInterval,
+				})
+			})
+			// tailscale-funnel is the epic gosd-65uy's second gosd-SHIPPED
+			// system service under the same gosd-oyhi carve-out as
+			// cloudflared above (see that guard.Go call's comment) — same
+			// reasoning, same placement before the WiFi block below so an
+			// Ethernet-only board's early return can never skip starting it
+			// either.
+			guard.Go("tailscale-funnel", func() {
+				tsfunnel.Run(tsfunnelDeps(log, platform.Reaper.Wait), tsfunnel.Options{
+					BinaryPath:             tsfunnelBinaryPath,
+					Baked:                  cfg.IngressTailscaleFunnel,
+					Config:                 gosdToml.Ingress.TailscaleFunnel,
+					Hostname:               cfg.Hostname,
+					NetworkUpPollInterval:  tsfunnel.DefaultNetworkUpPollInterval,
+					TimeSyncedTimeout:      tsfunnel.DefaultTimeSyncedTimeout,
+					TimeSyncedPollInterval: tsfunnel.DefaultTimeSyncedPollInterval,
 				})
 			})
 
@@ -453,6 +480,30 @@ func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (i
 		Clock:        cloudflared.NewRealClock(),
 		NewBackoff: func() *childbackoff.Backoff {
 			return childbackoff.NewBackoff(cloudflared.DefaultBackoffBase, cloudflared.DefaultBackoffCap)
+		},
+		Log: log,
+	}
+}
+
+// tsfunnelDeps wires the real tailscale-funnel supervision implementation:
+// StartProcess is that package's own os/exec-backed starter (platform.go),
+// and wait is platform.Reaper.Wait — NEVER exec.Cmd.Wait, for the exact same
+// reaper-race reason cloudflaredDeps's doc comment gives. NetworkUp and
+// TimeSynced reuse the same two marker checks cloudflaredDeps wires through,
+// since both packages gate on the same network-up/time-synced markers; there
+// is no WriteFile here because, unlike cloudflared (which writes a
+// config.yml), tsfunnel's per-boot values travel entirely through argv/env
+// (see tsfunnel.runArgs/runEnv).
+func tsfunnelDeps(log func(format string, args ...any), wait func(pid int) (int, error)) tsfunnel.Deps {
+	return tsfunnel.Deps{
+		StartProcess: tsfunnel.StartProcess,
+		Wait:         wait,
+		NetworkUp:    func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
+		TimeSynced:   timeSyncedMarkerExists,
+		MkdirAll:     os.MkdirAll,
+		Clock:        tsfunnel.NewRealClock(),
+		NewBackoff: func() *childbackoff.Backoff {
+			return childbackoff.NewBackoff(tsfunnel.DefaultBackoffBase, tsfunnel.DefaultBackoffCap)
 		},
 		Log: log,
 	}

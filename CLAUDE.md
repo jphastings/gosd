@@ -215,7 +215,12 @@ say so in the bean rather than silently diverging.
   ever. Serial console output and app logs only. The only network listeners in
   gosd-init are mDNS (and, later, the explicitly-designed update endpoint).
   cloudflared (when baked via `--ingress cloudflared`) is an outbound-only
-  tunnel supervised by gosd-init — still no listeners, no shell.
+  tunnel supervised by gosd-init — still no listeners, no shell. Same for
+  tailscale-funnel (`--ingress tailscale-funnel`, epic gosd-65uy): the shim
+  runs entirely over tsnet's userspace netstack, dialing out over WireGuard
+  rather than binding a socket on any real host interface, so Funnel makes
+  the app publicly reachable without gosd-init or the shim adding a listener
+  either.
 - **`/data` durability is the app's choice (decided 2026-07-31):** the data
   partition is mounted without `dirsync`, so a write that must survive an
   immediate power cut uses the four-step fsync/rename pattern in
