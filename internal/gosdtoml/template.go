@@ -128,6 +128,53 @@ hostname = %q
 port = %d
 `
 
+// ingressTailscaleFunnelCommentedOut is shown when no Tailscale Funnel is
+// configured — an example for the user to uncomment and edit. As with
+// ingressCommentedOut, this only ever takes effect on an image built with
+// `gosd build --ingress tailscale-funnel` (which bakes the tsnet-based
+// shim in), so the comment says so up front. It also spells out that the
+// auth key is only needed once, since that's the one field here a user
+// might otherwise be tempted to leave in place (or worry about removing)
+// long after it's served its purpose.
+const ingressTailscaleFunnelCommentedOut = `
+# Makes an app on this device reachable from the internet through
+# Tailscale Funnel — a public address like
+# https://my-device.your-tailnet.ts.net, no port forwarding or public IP
+# address needed. This only works on a device built with
+# "gosd build --ingress tailscale-funnel"; on any other device, filling
+# this in does nothing.
+#
+# To turn this on, remove the "#" from the start of the lines below, then
+# fill in your own values:
+#   authkey: create a tagged, reusable auth key in your tailnet's admin
+#   console — the tag stops this device's key from expiring. It's only
+#   needed the first time this device registers with Tailscale; once
+#   that's done you can safely remove it again
+#   hostname: the public name to use, for example "device-name" — leave
+#   this out to use the device's own hostname
+#   port: the port number the app on this device listens on, for example
+#   8080
+#   funnel_port: which internet-facing port to use, one of 443, 8443 or
+#   10000 — leave this out to use the default, 443
+# [ingress.tailscale-funnel]
+# authkey = "tskey-auth-your-key-here"
+# hostname = "device-name"
+# port = 8080
+# funnel_port = 443
+`
+
+// ingressTailscaleFunnelTemplate is shown once a Tailscale Funnel is
+// configured.
+const ingressTailscaleFunnelTemplate = `
+# Makes this device's app reachable from the internet through Tailscale
+# Funnel. To change these, edit the values below.
+[ingress.tailscale-funnel]
+authkey = %q
+hostname = %q
+port = %d
+funnel_port = %d
+`
+
 // Render produces the gosd.toml file the builder writes onto every image:
 // the plain-language header, followed by the hostname, WiFi, [env] and
 // ingress settings — filled in with the build-time values when set, or
@@ -143,16 +190,17 @@ port = %d
 // gosd.toml > cloud-init > config.json precedence (bean gosd-4hz1). A
 // hand-edit that later uncomments the line always wins, same as today.
 //
-// ingress takes the WHOLE Ingress table, not just IngressCloudflared,
-// so a future agent's own [ingress.<agent>] section reaches Render without
-// another signature change at every call site (both here and in
-// cmd/gosd-init/internal/provsnapshot's re-render) — v1 only ever renders
-// the Cloudflared section, following the same on/off shape as WiFi: its
-// zero value renders the commented [ingress.cloudflared] example (shown on
-// every image, since there's no consumer-independent way to know whether
-// this image was built with --ingress cloudflared support baked in — the
-// comment itself says so), and a Configured() value renders the real
-// token/hostname/port.
+// ingress takes the WHOLE Ingress table, so each agent's own
+// [ingress.<agent>] section reaches Render without another signature
+// change at every call site (both here and in
+// cmd/gosd-init/internal/provsnapshot's re-render) — Cloudflared and
+// TailscaleFunnel each follow the same on/off shape as WiFi: a zero value
+// renders that provider's commented example (shown on every image, since
+// there's no consumer-independent way to know whether this image was built
+// with that provider's support baked in — each comment says so itself),
+// and a Configured() value renders the real fields. TailscaleFunnel's
+// block is appended after Cloudflared's, in the order the providers were
+// added.
 func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string, ingress Ingress) []byte {
 	out := header
 
@@ -190,6 +238,16 @@ func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		out += fmt.Sprintf(ingressTemplate, ingress.Cloudflared.Token, ingress.Cloudflared.Hostname, ingress.Cloudflared.Port)
 	} else {
 		out += ingressCommentedOut
+	}
+
+	if ingress.TailscaleFunnel.Configured() {
+		out += fmt.Sprintf(
+			ingressTailscaleFunnelTemplate,
+			ingress.TailscaleFunnel.Authkey, ingress.TailscaleFunnel.Hostname,
+			ingress.TailscaleFunnel.Port, ingress.TailscaleFunnel.FunnelPort,
+		)
+	} else {
+		out += ingressTailscaleFunnelCommentedOut
 	}
 
 	return []byte(out)
