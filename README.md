@@ -118,6 +118,13 @@ the people you send them to never need a terminal.
 
 ## Going further
 
+- **Caching** — downloaded board artifacts, the CA bundle, and any
+  `--ingress` binary are cached under your OS user cache dir (e.g.
+  `~/Library/Caches/gosd` on macOS, `~/.cache/gosd` on Linux) so repeat
+  builds work offline; a successful build automatically prunes anything left
+  over from an older gosd version or pin, so the cache holds only the
+  current version's assets instead of growing forever:
+  [`docs/artifacts.md`](docs/artifacts.md)
 - **The runtime contract** your app runs under once booted — supervision,
   environment variables, networking timing, storage, logging, and what
   survives an upgrade: [`docs/runtime.md`](docs/runtime.md)
