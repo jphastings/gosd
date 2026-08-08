@@ -22,7 +22,9 @@ boards. Most of what it does is board-independent — on every board, GoSD:
 - Can [bundle prebuilt static Linux binaries](docs/externals.md) beside
   the app (`--with-external`).
 - Can [expose an app to the internet with zero app code](docs/ingress.md)
-  via a Cloudflare Tunnel (`--ingress cloudflared`; arm64 boards only).
+  via a Cloudflare Tunnel (`--ingress cloudflared`; arm64 boards only) or a
+  Tailscale Funnel (`--ingress tailscale-funnel`; every board, needs a
+  `--data-size` data partition).
 - Reserves placeholder files for
   [post-build config injection](docs/image-injection.md) (`--placeholder`).
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
@@ -67,6 +69,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | exFAT on attached disks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
 | [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
+| [Ingress: Tailscale Funnel](docs/ingress.md) (`--ingress tailscale-funnel`) | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] |
 
 **Legend:** ✅ supported · 🚧 in progress · ➖ no such hardware on this
 board · ❌ not supported (see footnote).
@@ -155,6 +158,14 @@ board · ❌ not supported (see footnote).
     CPU; `gosd build --ingress cloudflared` refuses to build for it
     (revisit if upstream ever ships a GOARM=6 build). See
     `docs/ingress.md`.
+
+[^tsfunnel-bench]: Code-complete, unit- and QEMU-tested; not yet
+    hardware-verified against a real Tailscale Funnel (epic `gosd-65uy`'s
+    bench bean `gosd-79v8`). Unlike cloudflared, the shim is compiled by
+    gosd itself for every board's architecture (including pi-zero-w's
+    GOARM=6), so there is no upstream-asset gap here — `--data-size` (or
+    `--data-size=expand`) is required so the shim's tailnet identity
+    survives a reboot.
 
 ---
 

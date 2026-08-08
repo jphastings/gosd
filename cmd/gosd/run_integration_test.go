@@ -176,6 +176,68 @@ func TestRunIngressCloudflaredEmbedsBinary(t *testing.T) {
 	}
 }
 
+// TestRunIngressTailscaleFunnelEmbedsBinary confirms `gosd run --ingress
+// tailscale-funnel` (bean gosd-kzd3) compiles the shim from local source
+// (internal/build's CrossCompileTsfunnel, no download involved) and embeds
+// it at /bin/gosd-tsfunnel, and that --data-size's passthrough (also this
+// bean) is what lets the run satisfy the shim's data-partition requirement.
+func TestRunIngressTailscaleFunnelEmbedsBinary(t *testing.T) {
+	disableNetwork(t)
+
+	argsFile := filepath.Join(t.TempDir(), "qemu-args.txt")
+	fakeQemuBinary(t, argsFile)
+
+	var stderr bytes.Buffer
+	cmd := newRootCmd()
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"run", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "tailscale-funnel",
+		"--data-size", "64MiB",
+		"--keep",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd run --ingress tailscale-funnel --data-size 64MiB failed: %v", err)
+	}
+
+	kept := extractKeptPath(t, stderr.String())
+	defer func() { _ = os.RemoveAll(kept) }()
+
+	records := decodeInitramfs(t, readBootFile(t, filepath.Join(kept, "hello-qemu-virt.img"), "initramfs.cpio.zst"))
+	if !hasRecord(records, "bin/gosd-tsfunnel") {
+		t.Fatalf("initramfs is missing bin/gosd-tsfunnel; got entries %v", recordNames(records))
+	}
+
+	configJSON := string(recordContent(t, records, "etc/gosd/config.json"))
+	if !strings.Contains(configJSON, `"ingressTailscaleFunnel":true`) {
+		t.Errorf("config.json = %s, want it to contain %q", configJSON, `"ingressTailscaleFunnel":true`)
+	}
+}
+
+// TestRunIngressTailscaleFunnelRequiresDataPartition confirms `gosd run`
+// enforces the same data-partition requirement `gosd build` does (bean
+// gosd-kzd3): without --data-size (default 0), --ingress tailscale-funnel
+// fails fast before qemu is even invoked.
+func TestRunIngressTailscaleFunnelRequiresDataPartition(t *testing.T) {
+	disableNetwork(t)
+	fakeQemuBinary(t, filepath.Join(t.TempDir(), "qemu-args.txt"))
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"run", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "tailscale-funnel",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd run --ingress tailscale-funnel with no --data-size succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "--data-size") {
+		t.Errorf("error = %q, want it to mention --data-size", err.Error())
+	}
+}
+
 func extractKeptPath(t *testing.T, stderr string) string {
 	t.Helper()
 	const marker = "kept build artifacts at "

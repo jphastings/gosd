@@ -115,7 +115,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
 		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy)")
+		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy); also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
 		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().StringVar(&bootSize, "boot-size", defaultBootSize,
@@ -139,7 +139,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on GOSD-BOOT at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
-		"bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; only supported value: cloudflared); the tunnel itself is declared on-device via gosd.toml's [ingress.cloudflared] section - arm64 boards only, since cloudflared's official arm release is GOARM=7 and faults on pi-zero-w's armv6")
+		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
 
 	return cmd
 }
@@ -202,6 +202,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := validateIngressDataPartition(ingressSelected, dataSizeBytes, dataExpand); err != nil {
+		return err
+	}
+
 	appName, err := deriveAppName(pkgPath)
 	if err != nil {
 		return err
@@ -226,7 +230,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating a temp build directory failed: %w", err)
 	}
 
-	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, build.CrossCompile, build.CrossCompileGosdInit)
+	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, ingressSelected.TailscaleFunnel, build.CrossCompile, build.CrossCompileGosdInit, build.CrossCompileTsfunnel)
 	if err != nil {
 		return err
 	}
@@ -275,6 +279,17 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			extraExecutables[dest] = r
 		}
 
+		if bin.tsfunnelPath != "" {
+			tf, err := openTsfunnelBinary(bin.tsfunnelPath)
+			if err != nil {
+				return err
+			}
+			if extraExecutables == nil {
+				extraExecutables = make(map[string]io.Reader, 1)
+			}
+			extraExecutables[ingressTailscaleFunnelDest] = tf
+		}
+
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
@@ -288,18 +303,19 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				Env:              env,
 				ConsoleBaud:      consoleBaud,
 			},
-			ArtifactsDir:       artifactsDir,
-			CacheDir:           cacheDir,
-			OutputPath:         outputs[b.Name()],
-			DataSizeBytes:      dataSizeBytes,
-			DataExpand:         dataExpand,
-			DataFlush:          dataFlush,
-			BootSizeBytes:      bootSizeBytes,
-			ExtraFirmware:      extraFirmware,
-			ExtraExecutables:   extraExecutables,
-			ExtraFiles:         extraFiles,
-			Placeholders:       placeholderSpecs,
-			IngressCloudflared: ingressSelected.Cloudflared,
+			ArtifactsDir:           artifactsDir,
+			CacheDir:               cacheDir,
+			OutputPath:             outputs[b.Name()],
+			DataSizeBytes:          dataSizeBytes,
+			DataExpand:             dataExpand,
+			DataFlush:              dataFlush,
+			BootSizeBytes:          bootSizeBytes,
+			ExtraFirmware:          extraFirmware,
+			ExtraExecutables:       extraExecutables,
+			ExtraFiles:             extraFiles,
+			Placeholders:           placeholderSpecs,
+			IngressCloudflared:     ingressSelected.Cloudflared,
+			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
 		if err != nil {

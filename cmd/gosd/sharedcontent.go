@@ -31,6 +31,17 @@ import (
 // WiFi/UsbGadget/Env/ConsoleBaud, sizing, --with-external's own
 // ExtraExecutables) stay explicit at runBuild's and runRun's own call
 // sites, not here.
+//
+// The tailscale-funnel shim (bean gosd-kzd3) is deliberately NOT here: it's
+// compiled per-arch by compileForBoards (archbuild.go) alongside the app and
+// gosd-init, rather than resolved from a pinned/local artifact like the CA
+// bundle and cloudflared are, so build.go and run.go each open its compiled
+// binary straight from compileForBoards' result. The build+run parity this
+// type exists to protect still holds for it: both commands call
+// compileForBoards, so the same wiring mistake this type prevents for
+// fetched/cached content can't arise for compiled content either - see
+// buildrun_parity_integration_test.go, which asserts both agents' content
+// either way.
 type sharedContent struct {
 	caCertsPath string
 
