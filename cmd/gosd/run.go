@@ -223,6 +223,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	printBootVolumeUsage(cmd, "qemu-virt", report)
 
+	pruneDownloadCaches(cmd, runArtifactsDir)
+
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

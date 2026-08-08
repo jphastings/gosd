@@ -100,8 +100,18 @@ func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build <path-to-main-package>",
 		Short: "Cross-compile a Go app and assemble it into a bootable SD-card image",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runBuild,
+		Long: `Cross-compile a Go app and assemble it into a bootable SD-card image.
+
+Downloaded board artifacts (kernel/bootloader), the CA bundle, and any
+--ingress binary are cached under your OS user cache dir (e.g.
+~/Library/Caches/gosd on macOS, ~/.cache/gosd on Linux) so repeat builds
+work fully offline. After a successful build, gosd automatically prunes any
+cache entry left over from an older gosd version or pin, so the cache holds
+only the current version's assets rather than growing forever - see
+docs/artifacts.md. --artifacts-dir builds skip this pruning, since they may
+not touch the cache at all.`,
+		Args: cobra.ExactArgs(1),
+		RunE: runBuild,
 	}
 
 	cmd.Flags().StringArrayVar(&boardIDs, "board", nil,
@@ -334,6 +344,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			cmd.PrintErrf("gosd build: %s inject manifest: %s\n", b.Name(), manifestPath)
 		}
 	}
+
+	pruneDownloadCaches(cmd, artifactsDir)
 
 	if catalogFlag {
 		if err := writeCatalog(cmd, selected, appName, outputs); err != nil {

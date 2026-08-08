@@ -190,6 +190,29 @@ pinned to the same `internal/artifacts.Version` shares this cache; a second
 build (same or a different board) after the first successful one works
 fully offline.
 
+### The cache is self-bounding, not append-only (bean gosd-gdro)
+
+Without any cleanup, every `internal/artifacts.Version` bump would leave its
+predecessor's tree (tens of MiB) behind forever, alongside every past
+`internal/cacerts.Pin`/`internal/cloudflaredpin` bump's cached file - none of
+that content is ever revisited once gosd moves on to a new version/pin. To
+keep the everyday cache bounded to roughly the current version's footprint,
+`gosd build`/`gosd run` prune it after a build succeeds: `gosd/artifacts/`
+keeps only the currently pinned `<version>` directory (every sibling
+`vX.Y.Z` is removed), and `gosd/cacerts/`/`gosd/ingress/` keep only the
+file(s) matching the currently pinned CA bundle/cloudflared binary. This is
+cheap - it only ever deletes content gosd itself cached from a pinned
+URL/release, all of it trivially re-downloadable - and never breaks an
+offline re-run of the *same* pinned version, since that version's directory
+is exactly what's kept. Pruning is best-effort (a failure is logged, never
+a build failure) and is skipped entirely on an `--artifacts-dir` build,
+which may not touch this cache at all.
+
+This does **not** cover `gosd build-kernel`'s durable build-state cache
+(content-addressed, opt-in, expensive to rebuild - see
+`internal/kernelbuild`) or offer a manual `gosd cache` inspection/clean
+command; both are tracked as follow-ups on bean gosd-gdro.
+
 Failure modes are reported actionably rather than as a bare error chain:
 
 - **Checksum mismatch** — a downloaded file doesn't match the manifest's
