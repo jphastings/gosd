@@ -41,9 +41,14 @@ import (
 // trimmed mainline v6.18.37 kernel (the fleet's first Allwinner member),
 // and u-boot-sunxi-with-spl.bin - a single SPL+FIT bootloader image with
 // BL31 compiled from a pinned TF-A fork (mainline has no sun55i_a523
-// platform yet), no rkbin-style blobs. Every other board is an unchanged
-// rebuild of v0.8.0 from identical source pins and configs.
-const Version = "v0.9.0"
+// platform yet), no rkbin-style blobs.
+//
+// v0.10.0 (bean gosd-toic): the Pi-family kernels gain CONFIG_EXT4_FS=y
+// (bean gosd-19kw), unlocking ext4 - including disk's default - on
+// attached storage for pi-zero-2w/pi-zero-w/pi-3b, and it is the first
+// published build of the radxa-zero-3e/nanopi-zero2 exFAT fragments.
+// Other boards are unchanged rebuilds from identical source pins.
+const Version = "v0.10.0"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"

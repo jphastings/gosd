@@ -61,10 +61,10 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ |
 | Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
 | ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
-| exFAT on the eMMC | ➖ | ➖ | ➖ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ❌ [^cubie-emmc] |
+| exFAT on the eMMC | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
 | NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] |
-| ext4 on attached disks (the default) | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ❌ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
-| exFAT on attached disks | ✅ | ✅ | ✅ | 🚧 [^exfat-soon] | 🚧 [^exfat-soon] | ✅ | ✅ |
+| ext4 on attached disks (the default) | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
+| exFAT on attached disks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
 | [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
 
@@ -118,14 +118,10 @@ board · ❌ not supported (see footnote).
     arm64 defconfig inheritance as "ext4 on attached disks" below), so
     there is no eMMC-having board where the default fails.
 
-[^pi-ext4]: Enabled in these boards' kernel fragments (bean `gosd-19kw`) but
-    not yet in a published artifacts release; until then asking for ext4 —
-    including via the default — fails fast with `disk.ErrUnsupportedFS`.
-    Use FAT32 or exFAT here.
-
-[^exfat-soon]: Enabled in these boards' kernel fragments but not yet in a
-    published artifacts release; until then exFAT fails fast with
-    `disk.ErrUnsupportedFS`.
+[^pi-ext4]: Shipped in artifacts v0.10.0 (bean `gosd-19kw`); the
+    `/proc/filesystems` preflight passes from that release on. Not yet
+    exercised on Pi hardware — an on-device spot-check rides the next
+    bench pass.
 
 [^zero3e-audio]: Recipe written, never compiled or heard (bean
     `gosd-lrxz`).

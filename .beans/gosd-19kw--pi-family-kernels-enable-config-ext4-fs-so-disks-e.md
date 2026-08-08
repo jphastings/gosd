@@ -1,11 +1,11 @@
 ---
 # gosd-19kw
 title: 'Pi-family kernels: enable CONFIG_EXT4_FS so disk/''s ext4 default works on Pi USB drives'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-08-07T19:11:14Z
-updated_at: 2026-08-07T19:40:38Z
+updated_at: 2026-08-08T00:25:12Z
 parent: gosd-lfu0
 ---
 
@@ -36,3 +36,9 @@ PR: https://github.com/jphastings/gosd/pull/223
 Rebased onto latest main (fast-forward + a clean rebase past two more incoming merges — no conflicts). All quality gates green: go test ./..., go vet ./..., gofmt -l ., golangci-lint run ./..., GOOS=linux golangci-lint run ./... (see the ENOSPC note above for the bumpy road getting there — none of it was code-related).
 
 workflow_dispatch run (build-artifacts.yml on bean/gosd-19kw-pi-ext4): https://github.com/jphastings/gosd/actions/runs/31212493453 — includes the pi-zero-2w, pi-zero-w and pi-3b kernel jobs this change touches. Stopping here per the task instructions; orchestrator monitors the run. Remaining after merge: JP pushes the artifacts/vX.Y.Z tag (shared with gosd-10fn's btrfs trim), then a follow-up PR bumps internal/artifacts.Version and flips COMPATIBILITY.md's Pi ext4 row symbols.
+
+
+
+---
+
+Completed 2026-08-08: shipped in artifacts/v0.10.0 (JP tagged; Build artifacts run succeeded). Verified in the release by bean gosd-toic's three-way check: all three Pi kernel.configs carry CONFIG_EXT4_FS=y and the compiled kernel8.img contains the ext4 driver. internal/artifacts.Version bumped to v0.10.0 and COMPATIBILITY pi-ext4 cells flipped in the same PR. Remaining on-device spot-check rides the next bench pass (noted in the reworded [^pi-ext4] footnote).
