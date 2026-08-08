@@ -1,11 +1,11 @@
 ---
 # gosd-1cqa
 title: docs/ingress.md tailscale-funnel section + COMPATIBILITY.md row
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T15:10:02Z
-updated_at: 2026-08-07T15:10:06Z
+updated_at: 2026-08-08T06:57:47Z
 parent: gosd-65uy
 blocked_by:
     - gosd-o68e
@@ -45,5 +45,45 @@ this bean adds the tailscale-funnel section beside cloudflared's).
 
 ## Todos
 
-[ ] docs/ingress.md tailscale-funnel section
-[ ] COMPATIBILITY.md row + footnotes
+[x] docs/ingress.md tailscale-funnel section
+[x] COMPATIBILITY.md row + footnotes
+
+
+## Summary of Changes
+
+- `docs/ingress.md`: added the full Tailscale Funnel section (mirroring
+  Cloudflare Tunnel's shape) — prerequisites the device can't set for
+  itself (MagicDNS, HTTPS Certificates, the `funnel` ACL nodeAttr, with a
+  policy-file JSON snippet), the runbook (build with `--data-size`, set up
+  the tailnet, create a tagged reusable auth key and why, paste
+  authkey+port into `gosd.toml`, delete the key afterwards), a
+  `gosd.toml` key reference table (`authkey`/`port`/`hostname`/
+  `funnel_port`, defaults, the `{443, 8443, 10000}` set), the data-partition
+  hard-error requirement (quoting `cmd/gosd/ingress.go`'s exact refusal
+  text), what gets written on the device (argv/env only, no config file,
+  `TS_AUTHKEY` never in argv), secrets-on-FAT-partition, clock/TLS and
+  restart-backoff behavior, the reflash story (zero re-auth via
+  `/data/.gosd/tailscale`, plus the `hostname-1` lost-state recovery path),
+  troubleshooting (verbatim log lines from
+  `cmd/gosd-init/internal/tsfunnel/mode.go`/`tsfunnel.go` and the shim's own
+  wrapped errors from `cmd/gosd-tsfunnel/errors.go`), and caveats (no custom
+  domains, bandwidth caps, RAM footprint, not-yet-bench-verified pointing at
+  `gosd-79v8`). The "Choosing an ingress" overview table gained the
+  Tailscale Funnel row/columns (board support, TLS termination, whose
+  account, public URL shape, reflash story) and the shared intro bullets
+  were corrected where they assumed a single Cloudflare-edge TLS model.
+  `COMPATIBILITY.md`'s row and footnotes were already added by `gosd-kzd3`
+  — verified accurate, no changes needed.
+- `docs/runtime.md`: generalized the "Ingress" section heading/intro from
+  cloudflared-only to cover both agents, fixed the `/data/.gosd/`
+  bookkeeping-namespace note to mention the tailscale state directory, and
+  updated the provisioning-snapshot reflash prose (both the restore-logic
+  list and the "what does not come back" line) to include
+  `[ingress.tailscale-funnel]` alongside `[ingress.cloudflared]` — these
+  were left stale by `gosd-o68e`, which fixed the other cloudflared-only
+  mentions in that file but explicitly deferred `docs/ingress.md`/
+  `COMPATIBILITY.md` to this bean.
+- Verified against real Tailscale docs (kb/1223 Funnel, kb/1085 auth keys)
+  that the ACL nodeAttr JSON shape, the 1-90-day auth key expiry range, and
+  "tagging disables node key expiry by default" all match this bean's and
+  the epic's locked claims.
