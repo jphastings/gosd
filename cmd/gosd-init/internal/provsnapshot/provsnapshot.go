@@ -357,7 +357,7 @@ func heal(deps Deps, in Input, snap Snapshot) (Result, bool) {
 	// restored section(s) when the plan included any (see apply), so this
 	// write can't blank a hand-edited [ingress.cloudflared] table out as a
 	// side effect either way.
-	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, merged.Env, merged.Ingress)
+	rendered := gosdtoml.Render(merged.Hostname, true, merged.Wifi.SSID, merged.Wifi.Passphrase, gosdtoml.EnvSection{Values: merged.Env}, merged.Ingress)
 	if err := deps.WriteBootFile(BootConfigFile, rendered); err != nil {
 		// The values still apply to this boot, so the board comes back
 		// now; leaving the snapshot untouched is what makes the next boot
@@ -645,7 +645,7 @@ type bakedWifi struct {
 // token included - the same trust level as the WiFi passphrase already
 // stored here in plain text.
 func (s Snapshot) encode() ([]byte, []byte, error) {
-	tomlData := gosdtoml.Render(s.Effective.Hostname, true, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, s.Effective.Env, s.Effective.Ingress)
+	tomlData := gosdtoml.Render(s.Effective.Hostname, true, s.Effective.Wifi.SSID, s.Effective.Wifi.Passphrase, gosdtoml.EnvSection{Values: s.Effective.Env}, s.Effective.Ingress)
 	meta := snapshotMeta{
 		Schema:   schemaVersion,
 		Identity: s.Identity,

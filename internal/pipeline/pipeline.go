@@ -62,6 +62,15 @@ type Options struct {
 	// board's BootFiles.
 	Config boards.BuildConfig
 
+	// EnvBody is a developer-authored [env] section body to splice verbatim
+	// into gosd.toml (gosd build --env-file; see cmd/gosd), preserving its
+	// comments and commented-out "suggested" entries. It's rendered under a
+	// bare "[env]" line as-is. Config.Env still carries the active (baked)
+	// defaults into config.json — cmd/gosd derives it from the same file, so
+	// the two agree. When EnvBody is empty, Config.Env drives the plain,
+	// sorted [env] rendering as before (--env, or no env at all).
+	EnvBody string
+
 	// ExtraFirmware holds additional runtime firmware files to land under
 	// /lib/firmware in the initramfs, alongside the board's own
 	// FirmwareFiles() - keyed the same way, by path relative to
@@ -248,7 +257,12 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// ingressCloudflared bit), never a real token/hostname/port — that's a
 	// per-device secret nothing at build time could supply — so there's
 	// never a real value to bake here.
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, opts.Config.Env, gosdtoml.Ingress{}))
+	//
+	// A developer-authored [env] body (gosd build --env-file) is spliced
+	// verbatim; otherwise Config.Env's baked defaults render the plain, sorted
+	// [env] as before (see Options.EnvBody).
+	envSection := gosdtoml.EnvSection{Values: opts.Config.Env, Verbatim: opts.EnvBody}
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}))
 
 	// opts.Placeholders land at the FAT root the same way, right after
 	// gosd.toml and still before the read-and-hash loop below, so they're

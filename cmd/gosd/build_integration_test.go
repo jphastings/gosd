@@ -1847,6 +1847,85 @@ func TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml(t *testing.T) {
 	}
 }
 
+// TestBuildEnvFileDocumentsAndSuggestsInGosdToml is the acceptance test for
+// gosd-zj13: `gosd build --env-file` splices a developer-authored [env] body
+// verbatim into the card's gosd.toml — comments and a commented-out "suggested"
+// entry included — while baking only the active entries into config.json (a
+// suggested entry is off until the user uncomments it, so it must not become a
+// runtime default).
+func TestBuildEnvFileDocumentsAndSuggestsInGosdToml(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	envFilePath := writeEnvFile(t, `# uncomment this if you want the demo to run
+# RUN_DEMO = true
+
+# Where telemetry is posted; leave blank to disable
+API_URL = "https://example.com"
+`)
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--env-file", envFilePath,
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --env-file failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(configJSON), `"API_URL":"https://example.com"`) {
+		t.Errorf("config.json = %q, want the active API_URL baked in", configJSON)
+	}
+	if strings.Contains(string(configJSON), "RUN_DEMO") {
+		t.Errorf("config.json = %q, want the suggested RUN_DEMO left OUT of baked defaults", configJSON)
+	}
+
+	gosdToml, err := fs.ReadFile("gosd.toml")
+	if err != nil {
+		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+	}
+	for _, want := range []string{
+		"[env]",
+		"# uncomment this if you want the demo to run",
+		"# RUN_DEMO = true", // spliced verbatim, exactly as authored (unquoted)
+		"# Where telemetry is posted; leave blank to disable",
+		`API_URL = "https://example.com"`,
+	} {
+		if !strings.Contains(string(gosdToml), want) {
+			t.Errorf("gosd.toml = %s\nwant it to contain %q", gosdToml, want)
+		}
+	}
+	// The suggested line must be commented out, not active.
+	if strings.Contains(string(gosdToml), "\nRUN_DEMO = ") {
+		t.Errorf("gosd.toml = %s\nwant RUN_DEMO commented out, not active", gosdToml)
+	}
+}
+
 // buildConfigJSON runs `gosd build` for pi-zero-2w with extraArgs appended
 // to the fixture flags every other build_integration_test.go test shares
 // (no network, fake artifacts), and returns the resulting config.json,

@@ -76,6 +76,7 @@ var (
 	publishBaseURL string
 	usbGadget      bool
 	envFlags       []string
+	envFile        string
 	kernelCfgPath  string
 	withExternal   []string
 	consoleBaud    int
@@ -137,7 +138,9 @@ not touch the cache at all.`,
 	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil,
-		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key")
+		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key; use --env-file instead to write the whole [env] section yourself with comments and commented-out suggestions")
+	cmd.Flags().StringVar(&envFile, "env-file", "",
+		"path to a TOML file whose contents become the card's gosd.toml [env] section verbatim - KEY = \"value\" lines and comments exactly as you write them, no [env] header or other sections (see docs/gosd.toml.md); active entries are also baked into config.json; cannot be combined with --env")
 	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
 		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
 	cmd.Flags().StringArrayVar(&withExternal, "with-external", nil,
@@ -161,9 +164,26 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
 	}
 
+	if len(envFlags) > 0 && envFile != "" {
+		return fmt.Errorf("--env and --env-file can't be combined; put every default in the --env-file (it is the whole [env] section, comments and all), or use --env alone")
+	}
+	// env is the active KEY->VALUE map baked into config.json; envBody is a
+	// developer-authored [env] section spliced verbatim into gosd.toml. With
+	// --env-file both come from the file; with --env only env is set and the
+	// [env] section is rendered plainly from it.
 	env, err := parseEnvFlags(envFlags)
 	if err != nil {
 		return err
+	}
+	envBody, fileEnv, envWarnings, err := parseEnvFile(envFile)
+	if err != nil {
+		return err
+	}
+	if envFile != "" {
+		env = fileEnv
+		for _, w := range envWarnings {
+			cmd.PrintErrf("gosd build: --env-file %s: %s\n", envFile, w)
+		}
 	}
 
 	externalSpecs, err := parseWithExternalFlags(withExternal)
@@ -313,6 +333,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 				Env:              env,
 				ConsoleBaud:      consoleBaud,
 			},
+			EnvBody:                envBody,
 			ArtifactsDir:           artifactsDir,
 			CacheDir:               cacheDir,
 			OutputPath:             outputs[b.Name()],

@@ -128,6 +128,10 @@ the people you send them to never need a terminal.
 - **The runtime contract** your app runs under once booted — supervision,
   environment variables, networking timing, storage, logging, and what
   survives an upgrade: [`docs/runtime.md`](docs/runtime.md)
+- **The device's `gosd.toml`** — the hand-editable settings file on every
+  card. Pre-populate and *document* your app's environment variables with
+  per-key comments and commented-out suggestions (`gosd build --env` /
+  `--env-file`): [`docs/gosd.toml.md`](docs/gosd.toml.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
   Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in
