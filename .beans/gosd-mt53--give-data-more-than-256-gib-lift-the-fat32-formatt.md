@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-07-31T03:31:51Z
-updated_at: 2026-07-31T03:31:51Z
+updated_at: 2026-08-09T09:55:19Z
 ---
 
 GoSD cannot give an app more than 256 GiB of `/data`. Three caps enforce that
@@ -132,3 +132,9 @@ change at all.
 - [ ] Implement it and remove all three caps together
 - [ ] Bench-verify on a >256 GiB card, both `--data-size=expand` and a fixed
       size at the old boundary
+
+## Update 2026-08-09: ext4 partially relieves this
+
+Bean gosd-95yu shipped `gosd build --data-filesystem=ext4` (PR #242). An ext4 GOSD-DATA has no 256GiB ceiling — that cap is a go-diskfs FAT32 formatter limit, and `dataexpand`'s `maxPartitionBytes` is now applied only to FAT32, so `--data-filesystem=ext4 --data-size=expand` already fills a card of any size today.
+
+That does NOT close this bean. ext4 is unreadable from a macOS or Windows host, which is the whole reason FAT32 is GOSD-DATA's default, and it is refused on the Pi family (no CONFIG_EXT4_FS). So this bean's real remaining scope narrows to: **a >256GiB /data that stays readable in a card reader** — i.e. Route B (exFAT), for which ext4 is not a substitute. Route A (lifting go-diskfs's FAT32 uint16 sectors-per-FAT truncation) is likewise untouched.
