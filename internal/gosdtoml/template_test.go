@@ -8,7 +8,7 @@ import (
 
 func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 	env := map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}
-	out := Render("my-device", true, "home-network", "hunter2", env, Ingress{})
+	out := Render("my-device", true, "home-network", "hunter2", EnvSection{Values: env}, Ingress{})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestRenderWithValuesRoundTripsThroughParse(t *testing.T) {
 }
 
 func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing.T) {
-	out := Render("", false, "", "", nil, Ingress{})
+	out := Render("", false, "", "", EnvSection{}, Ingress{})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 		t.Errorf("Parse(Render(...)) warnings = %v, want none", warnings)
 	}
 	if !reflect.DeepEqual(got, Config{}) {
-		t.Errorf(`Parse(Render("", false, "", "", nil, Ingress{})) = %+v, want zero Config (all commented out)`, got)
+		t.Errorf(`Parse(Render("", false, "", "", EnvSection{}, Ingress{})) = %+v, want zero Config (all commented out)`, got)
 	}
 
 	for _, want := range []string{
@@ -66,7 +66,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 		`# authkey = "tskey-auth-your-key-here"`,
 	} {
 		if !strings.Contains(string(out), want) {
-			t.Errorf(`Render("", false, "", "", nil, Ingress{}) missing example line %q:`+"\n%s", want, out)
+			t.Errorf(`Render("", false, "", "", EnvSection{}, Ingress{}) missing example line %q:`+"\n%s", want, out)
 		}
 	}
 }
@@ -79,7 +79,7 @@ func TestRenderWithoutValuesProducesCommentedExamplesThatParseAsEmpty(t *testing
 // hostname at all, so a wizard-provided cloud-init hostname is free to take
 // effect (bean gosd-4hz1).
 func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
-	out := Render("default-app-name", false, "", "", nil, Ingress{})
+	out := Render("default-app-name", false, "", "", EnvSection{}, Ingress{})
 
 	got, _, err := Parse(out)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
 		t.Errorf("Parse(Render(\"default-app-name\", false, ...)).Hostname = %q, want empty (commented out)", got.Hostname)
 	}
 	if !strings.Contains(string(out), `# hostname = "default-app-name"`) {
-		t.Errorf(`Render("default-app-name", false, "", "", nil, Ingress{}) missing commented example line for the default hostname:`+"\n%s", out)
+		t.Errorf(`Render("default-app-name", false, "", "", EnvSection{}, Ingress{}) missing commented example line for the default hostname:`+"\n%s", out)
 	}
 	if strings.Contains(string(out), "\nhostname = ") {
 		t.Errorf("Render() baked an uncommented hostname line despite bakeHostname=false:\n%s", out)
@@ -97,7 +97,7 @@ func TestRenderWithUnbakedHostnameShowsItAsACommentedExample(t *testing.T) {
 }
 
 func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
-	out := string(Render("", false, "", "", nil, Ingress{}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{}))
 
 	for _, want := range []string{"text editor", "Notepad", "restart it"} {
 		if !strings.Contains(out, want) {
@@ -107,7 +107,7 @@ func TestRenderIncludesPlainLanguageHeader(t *testing.T) {
 }
 
 func TestRenderEnvExactOutputWithoutBakedValues(t *testing.T) {
-	out := string(Render("", false, "", "", nil, Ingress{}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{}))
 
 	const want = `
 # Extra settings your app reads when it starts, sometimes called
@@ -119,7 +119,7 @@ func TestRenderEnvExactOutputWithoutBakedValues(t *testing.T) {
 # NAME = "value"
 `
 	if !strings.Contains(out, want) {
-		t.Errorf("Render(\"\", \"\", \"\", nil, Ingress{}) missing expected [env] section:\ngot:\n%s\nwant substring:\n%s", out, want)
+		t.Errorf("Render(\"\", \"\", \"\", EnvSection{}, Ingress{}) missing expected [env] section:\ngot:\n%s\nwant substring:\n%s", out, want)
 	}
 }
 
@@ -138,10 +138,69 @@ ZEBRA = "z"
 `
 
 	for i := 0; i < 5; i++ {
-		out := string(Render("", false, "", "", env, Ingress{}))
+		out := string(Render("", false, "", "", EnvSection{Values: env}, Ingress{}))
 		if !strings.Contains(out, want) {
 			t.Fatalf("Render() [env] section not sorted/deterministic on iteration %d:\ngot:\n%s\nwant substring:\n%s", i, out, want)
 		}
+	}
+}
+
+// TestRenderEnvVerbatimSplicesBodyUnderBareEnvHeader is the gosd build
+// --env-file golden: a developer-authored [env] body — comments, a
+// commented-out "suggested" entry, and an active entry — is spliced verbatim
+// under a bare "[env]" line, exactly as written (including the unquoted
+// suggested value the developer chose), with none of gosd's generic [env]
+// preamble.
+func TestRenderEnvVerbatimSplicesBodyUnderBareEnvHeader(t *testing.T) {
+	body := `# uncomment this if you want the demo to run
+# RUN_DEMO = true
+
+# Where telemetry is posted; leave blank to disable
+API_URL = "https://example.com"`
+	out := string(Render("", false, "", "", EnvSection{Verbatim: body}, Ingress{}))
+
+	const want = `
+[env]
+# uncomment this if you want the demo to run
+# RUN_DEMO = true
+
+# Where telemetry is posted; leave blank to disable
+API_URL = "https://example.com"
+`
+	if !strings.Contains(out, want) {
+		t.Errorf("Render() verbatim [env]:\ngot:\n%s\nwant substring:\n%s", out, want)
+	}
+	// The generic "Extra settings your app reads" preamble is gosd's, and the
+	// developer owns this section, so it must not appear.
+	if strings.Contains(out, "Extra settings your app reads") {
+		t.Errorf("Render() added its generic [env] preamble to a verbatim body:\n%s", out)
+	}
+	// The whole file must still parse, with the suggested entry commented out.
+	got, _, err := Parse([]byte(out))
+	if err != nil {
+		t.Fatalf("Parse(Render(verbatim)) error: %v", err)
+	}
+	if got.Env["API_URL"] != "https://example.com" {
+		t.Errorf("active entry API_URL = %q, want the spliced value", got.Env["API_URL"])
+	}
+	if _, ok := got.Env["RUN_DEMO"]; ok {
+		t.Errorf("suggested (commented-out) RUN_DEMO must not be parsed as active: %+v", got.Env)
+	}
+}
+
+// TestRenderEnvVerbatimTakesPrecedenceOverValues confirms a verbatim body wins
+// over Values (which is still set so config.json can bake the active defaults).
+func TestRenderEnvVerbatimTakesPrecedenceOverValues(t *testing.T) {
+	out := string(Render("", false, "", "", EnvSection{
+		Values:   map[string]string{"API_URL": "https://example.com"},
+		Verbatim: "# hand-written\nAPI_URL = \"https://example.com\"",
+	}, Ingress{}))
+
+	if !strings.Contains(out, "# hand-written") {
+		t.Errorf("Render() ignored the verbatim body when Values was also set:\n%s", out)
+	}
+	if strings.Contains(out, "Extra settings your app reads") {
+		t.Errorf("Render() used the plain Values rendering despite a verbatim body:\n%s", out)
 	}
 }
 
@@ -153,7 +212,7 @@ ZEBRA = "z"
 // `gosd build --ingress cloudflared` requirement up front so a hand-
 // editing user on any other image knows why filling this in does nothing.
 func TestRenderIngressExactOutputWithoutValues(t *testing.T) {
-	out := string(Render("", false, "", "", nil, Ingress{}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{}))
 
 	const want = `
 # Makes an app on this device reachable from the internet through a free
@@ -184,7 +243,7 @@ func TestRenderIngressExactOutputWithoutValues(t *testing.T) {
 // build-requirement prose is dropped since it plainly took effect.
 func TestRenderIngressExactOutputWithValues(t *testing.T) {
 	cloudflared := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
-	out := string(Render("", false, "", "", nil, Ingress{Cloudflared: cloudflared}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{Cloudflared: cloudflared}))
 
 	const want = `
 # Makes this device's app reachable from the internet through Cloudflare
@@ -205,7 +264,7 @@ port = 8080
 // commented example text is absent (it's the real block instead).
 func TestRenderWithIngressRoundTripsThroughParse(t *testing.T) {
 	cloudflared := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
-	out := Render("my-device", true, "", "", nil, Ingress{Cloudflared: cloudflared})
+	out := Render("my-device", true, "", "", EnvSection{}, Ingress{Cloudflared: cloudflared})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -229,7 +288,7 @@ func TestRenderWithIngressRoundTripsThroughParse(t *testing.T) {
 // `gosd build --ingress tailscale-funnel` requirement and that the auth
 // key is only needed for first registration.
 func TestRenderIngressTailscaleFunnelExactOutputWithoutValues(t *testing.T) {
-	out := string(Render("", false, "", "", nil, Ingress{}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{}))
 
 	const want = `
 # Makes an app on this device reachable from the internet through
@@ -279,7 +338,7 @@ func TestRenderIngressTailscaleFunnelExactOutputWithValues(t *testing.T) {
 		Port:       8080,
 		FunnelPort: 8443,
 	}
-	out := string(Render("", false, "", "", nil, Ingress{TailscaleFunnel: tailscaleFunnel}))
+	out := string(Render("", false, "", "", EnvSection{}, Ingress{TailscaleFunnel: tailscaleFunnel}))
 
 	const want = `
 # Makes this device's app reachable from the internet through Tailscale
@@ -307,7 +366,7 @@ func TestRenderWithTailscaleFunnelRoundTripsThroughParse(t *testing.T) {
 		Port:       8080,
 		FunnelPort: 8443,
 	}
-	out := Render("my-device", true, "", "", nil, Ingress{TailscaleFunnel: tailscaleFunnel})
+	out := Render("my-device", true, "", "", EnvSection{}, Ingress{TailscaleFunnel: tailscaleFunnel})
 
 	got, warnings, err := Parse(out)
 	if err != nil {
@@ -330,7 +389,7 @@ func TestRenderWithTailscaleFunnelRoundTripsThroughParse(t *testing.T) {
 func TestRenderBothIngressBlocksTogether(t *testing.T) {
 	cloudflared := IngressCloudflared{Token: "example-tunnel-token", Hostname: "app.example.com", Port: 8080}
 	tailscaleFunnel := IngressTailscaleFunnel{Authkey: "tskey-auth-example", Port: 9090}
-	out := string(Render("my-device", true, "", "", nil, Ingress{Cloudflared: cloudflared, TailscaleFunnel: tailscaleFunnel}))
+	out := string(Render("my-device", true, "", "", EnvSection{}, Ingress{Cloudflared: cloudflared, TailscaleFunnel: tailscaleFunnel}))
 
 	cloudflaredIdx := strings.Index(out, "[ingress.cloudflared]")
 	tailscaleFunnelIdx := strings.Index(out, "[ingress.tailscale-funnel]")

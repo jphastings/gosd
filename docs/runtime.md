@@ -98,6 +98,10 @@ Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
 `LOG_LEVEL` alongside the baked `API_URL` — not one source or the other
 in its entirety.
 
+To *document* those baked defaults for whoever holds the card — per-key
+comments, and commented-out "suggested" settings a user opts into — build
+with `gosd build --env-file`; see [`docs/gosd.toml.md`](gosd.toml.md).
+
 Your app's environment is otherwise a clean slate: it gets exactly the
 `GOSD_*` vars above plus this merged user env, not a copy of
 `gosd-init`'s own environment (`os.Environ()`).

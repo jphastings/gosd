@@ -1,7 +1,7 @@
 ---
 # gosd-zj13
 title: 'gosd build --env-file: app-supplied [env] docs and commented-out suggestions'
-status: todo
+status: in-progress
 type: feature
 priority: normal
 created_at: 2026-08-09T02:46:52Z
@@ -37,54 +37,45 @@ opts into by uncommenting.
 
 ## Locked decisions
 
-- **Authoring surface: a declarative env-manifest file** passed via a new
-  `gosd build --env-file <path>` flag (JP, 2026-08-09; chosen over cramming
-  comments into `--env` flags, and over a full free-text template that would
-  fight the "safe for non-technical users to edit" schema intent). Single path;
-  a repeated `--env-file` is an error.
-- **Manifest format is TOML, array-of-tables**, consistent with `gosd.toml`
-  itself and the existing TOML dependency. One `[[env]]` table per variable:
-  - `key`   (string, **required**; validated `^[A-Za-z_][A-Za-z0-9_]*$`, `GOSD_*`
-             rejected — same rules as `--env`, see `cmd/gosd/build.go:551,577`)
-  - `value` (string, optional, default `""`)
-  - `comment` (string, optional; a `\n` splits it into multiple `# ` lines)
-  - `suggested` (bool, optional, default `false`)
-  Decode **strictly** (unknown fields → error): this is a developer-facing build
-  input, so fail fast on typos like `commnet =`, unlike the deliberately-lenient
-  runtime `gosd.toml` parser.
-- **Rendering:**
-  - active entry (`suggested=false`): comment lines (if any), then
-    `KEY = "value"`.
-  - suggested entry (`suggested=true`): comment lines (if any), then
-    `# KEY = "value"` (the whole assignment commented out).
-  - one blank line separating consecutive documented entries; the generic
-    `envHeader` paragraph is **kept** above them (it still orients a
-    non-technical reader).
-- **Values render quoted (`%q`) always** — including inside the commented
-  suggestion (`# RUN_DEMO = "true"`, not `# RUN_DEMO = true`). This is a
-  deliberate one-character deviation from JP's example: an unquoted `[env]`
-  scalar parses but emits a boot-time console warning ("bare bool, not a quoted
-  string; add quotes to silence", `internal/gosdtoml/config.go:258`), so the
-  uncomment path must land warning-free.
-- **Merge with `--env` flags** (command line wins, standard convention):
-  - `--env KEY=VALUE` for a key **in** the manifest → overrides its value and
-    forces it **active** (suggested→false), keeping the manifest comment. Lets CI
-    set a value without editing the file, and lets an operator "turn on" a
-    suggestion.
-  - `--env KEY=VALUE` for a key **not** in the manifest → appended after all
-    manifest entries, sorted, active, no comment (today's behaviour, unchanged).
-  - Manifest entries render in **declaration order**; flag-only entries sorted
-    after them.
-- **Build-side only (no build→runtime contract change) — Option A.** Confirmed
-  safe by inspection: `mergeUserEnv` (`cmd/gosd-init/internal/boot/sequence.go:500`)
-  applies *any* `gosd.toml [env]` key at runtime, baked or not, so a user who
-  uncomments a suggested line gets it applied via the normal card-override path.
-  Therefore:
-  - `initcfg.Config.Env` stays `map[string]string` and holds **only active**
-    effective entries (manifest-active ∪ `--env`); **suggested entries are never
-    baked**, so they can't accidentally become runtime defaults — correct by
-    construction.
-  - Only the **build** render path learns about comments/suggestions.
+> **Design revised 2026-08-09 (JP): verbatim splice, not a structured
+> manifest.** The first cut used a `[[env]]` array-of-tables manifest
+> (`key`/`value`/`comment`/`suggested`); JP found the "TOML describing TOML"
+> shape obtuse and asked instead for a plain TOML file transplanted into `[env]`
+> verbatim. The decisions below reflect the delivered design; the manifest
+> approach is retired.
+
+- **Authoring surface: a verbatim `[env]`-body file** passed via
+  `gosd build --env-file <path>` (single path). The file's contents *are* the
+  card's `[env]` section, spliced in unchanged — the developer writes the
+  comments, blank lines, active `KEY = "value"` entries and commented-out
+  "suggested" entries exactly as they should appear. No structured schema to
+  learn; the example in Context is literally a valid `--env-file`.
+- **The file is the section body, no headers.** It carries only top-level
+  `KEY = value` pairs and comments — no `[env]` header of its own (gosd frames
+  it) and no other TOML section. JP's build steps: (1) parse it to confirm it's
+  valid TOML with **no subheadings**; (2) render the rest of gosd.toml; (3) drop
+  the file's text into the `[env]` section verbatim. Implemented as
+  `gosdtoml.ParseEnvBody` (decode standalone; reject any table / array-of-tables
+  as a section header) + `gosdtoml.EnvSection{Verbatim}` (splice under a bare
+  `[env]`, no generic preamble).
+- **Validation, so a bad file fails the build, not the boot:** valid TOML, no
+  section headers, and every *active* key matches `^[A-Za-z_][A-Za-z0-9_]*$`
+  with no `GOSD_*` prefix (same rules as `--env`). Actionable errors.
+- **Active entries are still baked into `config.json`** (`initcfg.Config.Env`),
+  so a default set here survives the user deleting `gosd.toml`, exactly like
+  `--env`. Commented-out ("suggested") entries don't parse, so they're never
+  baked — they do nothing until the user uncomments them, at which point
+  `mergeUserEnv` (`cmd/gosd-init/internal/boot/sequence.go:500`) applies them
+  from the card like any other hand-edit. Build-side only; no build→runtime
+  contract change.
+- **Verbatim means the developer owns quoting.** No forced re-quoting. An
+  *active* bare scalar (`PORT = 8080`) is coerced to a string with a warning
+  (on the console at boot and at build time), matching the on-card parser, so
+  the docs advise quoting values meant to stay strings; a commented-out
+  suggestion is free text (`# RUN_DEMO = true` is fine, per JP's example).
+- **`--env` and `--env-file` are mutually exclusive** — the file is the whole
+  section, so combining them is rejected with an actionable error rather than
+  defining a merge.
 
 ## Known limitation (accepted for this bean; follow-up noted)
 
@@ -101,6 +92,11 @@ through `initcfg` into `config.json` and teach provsnapshot's merge to preserve
 it while recomputing active/suggested from the effective env.
 
 ## Design / files
+
+> **Superseded** by the verbatim-splice revision — see the note under Locked
+> decisions and the Summary of Changes for what actually shipped. The
+> `EnvEntry`/structured-manifest details below describe the retired first cut and
+> are kept only for context.
 
 - `internal/gosdtoml/`: new exported type
   ```go
@@ -149,16 +145,45 @@ it while recomputing active/suggested from the effective env.
 
 ## Todos
 
-- [ ] `EnvEntry` type + `Render([]EnvEntry, …)` signature change + multi-line
+- [x] `EnvEntry` type + `Render([]EnvEntry, …)` signature change + multi-line
       comment / quoted-value rendering; `EnvEntriesFromMap` helper.
-- [ ] Update provsnapshot's two `Render` callers via `EnvEntriesFromMap`.
-- [ ] Env-manifest TOML parser + strict decode + validation with actionable
+- [x] Update provsnapshot's two `Render` callers via `EnvEntriesFromMap`.
+- [x] Env-manifest TOML parser + strict decode + validation with actionable
       errors.
-- [ ] `--env-file` flag, manifest↔`--env` merge, active-only baked map, `--env`
+- [x] `--env-file` flag, manifest↔`--env` merge, active-only baked map, `--env`
       help cross-reference.
-- [ ] Pipeline passes merged `[]EnvEntry` to `Render`.
-- [ ] Unit tests (parse, render golden, merge, baked-defaults) + integration
-      test.
-- [ ] Docs: `--env-file` section with the worked example + quoting note +
+- [x] Pipeline splices the verbatim `[env]` body via `Render`.
+- [x] Unit tests (ParseEnvBody, verbatim render, envfile parse/validate) +
+      integration test.
+- [x] Docs: `--env-file` section with the worked example + quoting note +
       reflash-self-heal limitation.
-- [ ] Quality gates green; PR with bean status/todos updated.
+- [x] Quality gates green; PR with bean status/todos updated.
+
+## Summary of Changes
+
+Added `gosd build --env-file <path>`: a plain TOML file whose contents become the
+card's `gosd.toml [env]` section **verbatim** — the developer writes the section
+(comments, active entries, commented-out "suggested" entries) exactly as it
+should appear. Build-side only — no build→runtime contract change.
+
+- `internal/gosdtoml`: `Render`'s env parameter is now an `EnvSection` — either
+  a `Verbatim` body (spliced under a bare `[env]`, no generic preamble) or plain
+  `Values` (the sorted `KEY = "value"` rendering used by `--env` and
+  provsnapshot); empty renders the commented example. New `ParseEnvBody` decodes
+  a standalone env body, **rejects any section header** (its own `[env]`, a stray
+  `[wifi]`, `[[x]]`), and returns the active scalar entries + coercion warnings.
+- `cmd/gosd`: `envfile.go`'s `parseEnvFile` returns the verbatim body + active
+  defaults + warnings; validates via `ParseEnvBody` and the `--env` key rules;
+  `--env`/`--env-file` are mutually exclusive. Active entries bake into
+  `config.json`; commented-out ones don't parse, so they're never baked.
+- `internal/pipeline`: `Options.EnvBody` carries the verbatim body;
+  `Render` gets `EnvSection{Values: Config.Env, Verbatim: EnvBody}`.
+- `cmd/gosd-init/internal/provsnapshot`: its two `Render` callers pass
+  `EnvSection{Values: ...}` (identical output to before).
+- Docs: new `docs/gosd.toml.md` (the file-format + `--env-file` authoring
+  reference), linked from `README.md` and `docs/runtime.md`.
+
+The verbatim design keeps JP's example working exactly as written, including the
+unquoted `# RUN_DEMO = true` suggestion (docs advise quoting *active* values to
+avoid the on-card bare-scalar warning). Accepted limitation recorded in the docs:
+comments don't survive a reflash+snapshot self-heal (values do).

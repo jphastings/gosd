@@ -194,6 +194,31 @@ func Parse(data []byte) (Config, []string, error) {
 	return cfg, warnings, nil
 }
 
+// ParseEnvBody validates the body of an [env] section — the KEY = "value"
+// lines and comments a `gosd build --env-file` supplies to be spliced verbatim
+// into gosd.toml — and returns its active (uncommented, scalar) entries as the
+// map gosd bakes into config.json, plus any coercion warnings for the caller
+// to surface (a bare active scalar, a dropped non-scalar). The file must be a
+// standalone list of key/value pairs with NO section headers: any TOML table
+// or array-of-tables (its own [env], a stray [wifi], anything) is rejected,
+// since [env] is the header gosd adds around this body. Coercion reuses the
+// exact on-card [env] rules (coerceEnv), so a body that parses cleanly here is
+// one the device will accept.
+func ParseEnvBody(content string) (map[string]string, []string, error) {
+	var raw map[string]any
+	if _, err := toml.Decode(content, &raw); err != nil {
+		return nil, nil, err
+	}
+	for key, value := range raw {
+		switch value.(type) {
+		case map[string]any, []map[string]any:
+			return nil, nil, fmt.Errorf("the [%s] section header isn't allowed here; an --env-file is only the body of the [env] section — KEY = \"value\" lines and comments, no section headers (gosd adds [env] itself)", key)
+		}
+	}
+	env, warnings := coerceEnv(raw)
+	return env, warnings, nil
+}
+
 // coerceDataFlush turns the raw data_flush value into a *bool override, or
 // nil ("absent — use config.json's baked default") plus a warning to log —
 // [env]'s coercion leniency, mirrored the other way around: data_flush is

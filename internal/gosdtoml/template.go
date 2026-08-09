@@ -3,7 +3,23 @@ package gosdtoml
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
+
+// EnvSection is the [env] content Render should write, in one of two forms.
+// Verbatim, when non-empty, is spliced under a bare "[env]" line exactly as
+// given — the developer authored the whole section themselves (gosd build
+// --env-file), so their comments, blank lines and commented-out "suggested"
+// entries all survive unchanged. Otherwise Values renders the plain, sorted
+// KEY = "value" lines gosd has always produced from --env defaults and from
+// gosd-init's provisioning-snapshot re-render. Both empty renders the generic
+// commented-out example. Values is still set alongside Verbatim so config.json
+// can bake the active defaults, but it never affects rendering while Verbatim
+// wins.
+type EnvSection struct {
+	Values   map[string]string
+	Verbatim string
+}
 
 // header is written in plain language for a non-technical audience: whoever
 // opens gosd.toml may never have edited a config file before, so it spells
@@ -181,6 +197,12 @@ funnel_port = %d
 // left as commented-out examples when they're not, so a hand-edited card
 // always shows the user exactly what to type and where.
 //
+// env is the [env] section (see EnvSection): a developer-authored Verbatim
+// body spliced under a bare "[env]" line unchanged (gosd build --env-file),
+// or, failing that, Values rendered as the plain sorted KEY = "value" lines
+// gosd has always produced from --env defaults and provsnapshot's re-render.
+// Both empty renders the generic commented [env] example instead.
+//
 // bakeHostname distinguishes an operator-chosen hostname from the sanitized
 // -package-name default: only bakeHostname=true renders the hostname line
 // uncommented (hostname must also be non-empty). A commented default still
@@ -201,7 +223,7 @@ funnel_port = %d
 // and a Configured() value renders the real fields. TailscaleFunnel's
 // block is appended after Cloudflared's, in the order the providers were
 // added.
-func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env map[string]string, ingress Ingress) []byte {
+func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env EnvSection, ingress Ingress) []byte {
 	out := header
 
 	if hostname != "" && bakeHostname {
@@ -220,18 +242,21 @@ func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		out += fmt.Sprintf(wifiTemplate, wifiSSID, wifiPassphrase)
 	}
 
-	if len(env) == 0 {
-		out += envCommentedOut
-	} else {
+	switch {
+	case env.Verbatim != "":
+		out += "\n[env]\n" + strings.Trim(env.Verbatim, "\r\n") + "\n"
+	case len(env.Values) > 0:
 		out += envHeader
-		keys := make([]string, 0, len(env))
-		for key := range env {
+		keys := make([]string, 0, len(env.Values))
+		for key := range env.Values {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			out += fmt.Sprintf("%s = %q\n", key, env[key])
+			out += fmt.Sprintf("%s = %q\n", key, env.Values[key])
 		}
+	default:
+		out += envCommentedOut
 	}
 
 	if ingress.Cloudflared.Configured() {
