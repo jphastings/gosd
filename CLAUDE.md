@@ -163,6 +163,49 @@ say so in the bean rather than silently diverging.
   `disk.rank`'s explicit regex (`gosd-ix38`) — that split predates this
   bean and is unrelated to which filesystem is requested; see
   `internal/blockmount`'s package doc for the full detail.
+- **GOSD-DATA is FAT32 by default; ext4 is an opt-in (decided 2026-08-09,
+  bean `gosd-95yu`) — this AMENDS `gosd-lfu0`'s "/data on the SD card stays
+  FAT" non-goal without overturning it.** `gosd build --data-filesystem`
+  takes `fat32` (default) or `ext4`. FAT32 stays the default because the
+  point of the default is that a flashed card reads in any computer's SD
+  reader; ext4 is for apps that need `/data` to survive rapid power-off, and
+  pays for it by being unreadable — and unrepairable — from a macOS or
+  Windows host. The journal buys metadata crash-consistency and mount-time
+  replay, never data durability: `docs/runtime.md`'s fsync sequence is the
+  app-facing contract for both filesystems. The choice is baked into
+  config.json only (no gosd.toml key, no `GOSD_*` override) and is part of
+  the app's on-card ABI, like `--boot-size`. Refused at build time for any
+  selected board whose pinned kernel lacks `CONFIG_EXT4_FS` — the whole Pi
+  family — which matters because a bare `gosd build` builds every public
+  board; see `boards.EXT4Support`. `--data-flush` is refused alongside it
+  (`flush` is a vfat-only mount option), and `dataexpand`'s 256GiB
+  `maxPartitionBytes` is FAT32-only, so ext4 `expand` fills the whole card.
+  **Consequence worth knowing before touching either package:** because
+  `diskfmt.FormatEXT4` writes a fixed 512MiB golden and cannot grow in Go,
+  EVERY ext4 data partition — fixed-size as well as `expand` — ships that
+  golden and grows once on first boot via `EXT4_IOC_RESIZE_FS`, so
+  `dataexpand` now runs for any ext4 image rather than only `expand` ones.
+  The two paths carry deliberately different crash-safety arguments: the
+  expand path keeps "an MBR entry only ever exists over a filesystem proven
+  finished", while the fixed-size path (entry already present) only ever
+  GROWS AND MARKS, never formats — growing is non-destructive and the resize
+  ioctl no-ops once the filesystem already fits, which is why it needs none
+  of `blockmount.runEXT4`'s `RootHasOtherContent` second opinion.
+- **The ext4 golden's "8 TiB" is not a ceiling — don't encode it as one.**
+  `internal/diskfmt/ext4golden/manifest.json`'s `verifiedGrowthCeilingBytes`
+  reads like a capability limit and is not: 8 TiB is (a) the cap of
+  `resize_inode`, the approach the recipe deliberately REJECTED — its
+  reserved GDT blocks are reached through a single indirect block, a hard
+  `blocksize/4` cap — and (b) a build-host artifact, because `build.sh` tries
+  16 TiB and falls back until the host's own filesystem can represent a file
+  that large (colima's VM root is a non-64bit ext4). The golden ships
+  `^resize_inode,meta_bg` precisely to escape that, and `meta_bg` is
+  documented to 2^32 groups / 512 PiB. Capping anything at 8 TiB would
+  re-impose the limitation `meta_bg` was chosen to remove. Re-proving the
+  real ceiling is bean `gosd-2ssb`. Relatedly, the golden is 512MiB because
+  the 128MiB journal can NEVER be resized after format and so must be sized
+  for the grown volume's whole life — a floor on the seed, not a cap on the
+  result (`ext4golden/README.md` has the full argument).
 - **Layout ABI (decided 2026-07-31, docs/design/upgrade-path.md):** the boot
   volume size is per-app (`gosd build --boot-size`, default 256MiB) and is
   that app's on-card ABI — changing it in a later release erases GOSD-DATA
