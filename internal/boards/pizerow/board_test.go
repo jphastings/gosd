@@ -286,3 +286,13 @@ func TestUsbGadgetSupportIsSupported(t *testing.T) {
 		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dwc2 overlay puts the port into peripheral mode)", got)
 	}
 }
+
+func TestEXT4SupportIsUnsupportedWithReason(t *testing.T) {
+	got := pizerow.New().EXT4Support()
+	if got.Supported {
+		t.Fatalf("EXT4Support() = %+v, want Supported: false (the stock kernel has no CONFIG_EXT4_FS)", got)
+	}
+	if !strings.Contains(got.Reason, "CONFIG_EXT4_FS") {
+		t.Errorf("EXT4Support().Reason = %q, want it to name the missing kernel option", got.Reason)
+	}
+}

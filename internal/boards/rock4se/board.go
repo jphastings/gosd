@@ -188,3 +188,10 @@ func (board) UsbGadgetSupport() boards.GadgetSupport {
 func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 	return boards.ConsoleBaudSupport{Supported: true}
 }
+
+// EXT4Support implements boards.Board: supported. This board's stock kernel
+// builds CONFIG_EXT4_FS=y (see COMPATIBILITY.md), so GOSD-DATA can mount
+// ext4 when --data-filesystem=ext4 is passed.
+func (board) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{Supported: true}
+}

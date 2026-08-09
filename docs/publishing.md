@@ -139,6 +139,26 @@ adopting it — a clean wipe, not corruption, but real data loss for anyone
 who upgrades. If a release must change `--boot-size`, say so at
 release-notes level, the same as any other breaking change.
 
+## Choosing the data partition's filesystem (`--data-filesystem`)
+
+`gosd build`'s `GOSD-DATA` partition defaults to FAT32 — readable and
+repairable from any computer's SD card reader. Build with
+`--data-filesystem=ext4` instead if your app needs metadata
+crash-consistency across power cuts (a journal, and mount-time replay);
+see [`docs/runtime.md`'s "Choosing a filesystem: FAT32 or
+ext4"](runtime.md#choosing-a-filesystem-fat32-or-ext4) for what that does
+and doesn't buy you, and for which boards support it at all (the Pi
+family doesn't — see `COMPATIBILITY.md`'s ext4 `GOSD-DATA` row).
+
+**Like `--boot-size`, the filesystem you ship becomes part of your app's
+on-disk layout ABI.** A FAT32 `GOSD-DATA` is not an ext4 one: a later
+release that switches `--data-filesystem` can't recognize what's already
+on the card as its own `/data`, and the next reflash formats a fresh one
+in the newly requested filesystem instead of adopting it — a clean wipe,
+not corruption, but real data loss for anyone who upgrades. If a release
+must change `--data-filesystem`, say so at release-notes level, the same
+as any other breaking change.
+
 ## Device filtering: which boards show up for which device selection
 
 Imager's first wizard page asks the user to pick their device, and then

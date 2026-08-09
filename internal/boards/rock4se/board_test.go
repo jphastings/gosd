@@ -261,3 +261,9 @@ func TestUsbGadgetSupportIsSupported(t *testing.T) {
 		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dr_mode DTS patch bakes gadget mode into the device tree)", got)
 	}
 }
+
+func TestEXT4SupportIsSupported(t *testing.T) {
+	if got := rock4se.New().EXT4Support(); !got.Supported {
+		t.Errorf("EXT4Support() = %+v, want Supported: true (stock kernel builds CONFIG_EXT4_FS=y)", got)
+	}
+}

@@ -182,3 +182,14 @@ func (board) UsbGadgetSupport() boards.GadgetSupport {
 func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 	return boards.ConsoleBaudSupport{Supported: true}
 }
+
+// EXT4Support implements boards.Board: unsupported. The stock pi-3b kernel
+// doesn't build CONFIG_EXT4_FS in (see COMPATIBILITY.md and
+// internal/blockmount's remedyFor) - GOSD-DATA has no ext4 driver to mount
+// with.
+func (board) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{
+		Supported: false,
+		Reason:    "the stock pi-3b kernel doesn't build CONFIG_EXT4_FS in; keep the default FAT32 data partition, or build a custom kernel with ext4 support (see docs/custom-kernels.md)",
+	}
+}

@@ -125,6 +125,12 @@ func TestConsoleBaudSupportIsUnsupported(t *testing.T) {
 	}
 }
 
+func TestEXT4SupportIsSupported(t *testing.T) {
+	if got := qemuvirt.New().EXT4Support(); !got.Supported {
+		t.Errorf("EXT4Support() = %+v, want Supported: true (this profile's kernel builds CONFIG_EXT4_FS=y)", got)
+	}
+}
+
 func TestFirmwareFilesIsEmpty(t *testing.T) {
 	if got := qemuvirt.New().FirmwareFiles(boards.Artifacts{}); len(got) != 0 {
 		t.Errorf("FirmwareFiles() = %v, want empty: virtio devices need no runtime-loaded firmware", got)

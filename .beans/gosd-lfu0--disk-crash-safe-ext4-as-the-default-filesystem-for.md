@@ -3,8 +3,9 @@
 title: 'disk/: crash-safe ext4 as the default filesystem for internal drives'
 status: todo
 type: epic
+priority: normal
 created_at: 2026-08-07T09:57:26Z
-updated_at: 2026-08-07T09:57:26Z
+updated_at: 2026-08-09T09:01:01Z
 ---
 
 JP (2026-08-07): FAT on internal drives (eMMC-attached NVMe, USB drives via disk/) is causing real problems — power-cut corruption and the FAT32 size ceiling. Add ext4 as a disk/ filesystem option and make it the DEFAULT: disk.FormatAndMount is almost always used for internal drives, where host-OS readability doesn't matter and crash-safety does.
@@ -21,7 +22,7 @@ JP (2026-08-07): FAT on internal drives (eMMC-attached NVMe, USB drives via disk
 
 ## Non-goals
 
-- /data on the SD card stays FAT (removable interop is the point there; gosd-mt53 tracks its size ceiling separately — ext4 here does NOT subsume it).
+- /data on the SD card stays FAT **by default** (removable interop is the point there; gosd-mt53 tracks its size ceiling separately — ext4 here does NOT subsume it). AMENDED 2026-08-09 by bean gosd-95yu, at JP's request: ext4 GOSD-DATA is now available as an explicit build-time opt-in (`gosd build --data-filesystem=ext4`) for apps that need /data to survive rapid power-off. The non-goal's rationale is preserved — FAT32 remains the default precisely so a flashed card stays readable in any computer's SD reader — and this remains a non-goal as originally written: ext4 is never the /data default.
 - F2FS/btrfs: out (no viable no-userland format path; revisit F2FS only if the externals epic gosd-oyhi lands a bundled mkfs.f2fs).
 - Pi-family ext4 kernel enablement: out until a concrete need.
 

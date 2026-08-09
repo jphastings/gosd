@@ -188,6 +188,43 @@ func FormatEXT4(devicePath, volumeLabel string) (err error) {
 	return nil
 }
 
+// EXT4SizeLimitReason says, in one clause, why no region smaller than
+// MinEXT4Bytes can hold an ext4 filesystem FormatEXT4 or WriteEXT4 writes.
+// Every refusal quotes it, mirroring FAT32SizeLimitReason.
+const EXT4SizeLimitReason = "the golden ext4 image GoSD ships is a fixed 512MiB seed that is grown to the partition's real size on first boot"
+
+// MinEXT4Bytes is the smallest region FormatEXT4 or WriteEXT4 can write: the
+// embedded golden image's fixed decompressed size (internal/diskfmt/ext4golden.RawBytes).
+// Callers that must validate a region's size before the region exists (e.g.
+// `gosd build --data-size` sizing GOSD-DATA) compare against it so an
+// impossible size is refused before any bytes are written, mirroring
+// MaxFAT32Bytes.
+func MinEXT4Bytes() int64 { return ext4golden.RawBytes }
+
+// WriteEXT4 streams GoSD's embedded ext4 golden image into w starting at
+// whatever offset w is already positioned at: unlike FormatEXT4, which owns
+// a whole device from byte 0, WriteEXT4 has no notion of "the start of the
+// device" — every WriteAt it issues is relative to w, so the caller owns the
+// offset entirely (e.g. internal/image embeds an ext4 filesystem inside one
+// partition of a larger .img file by shifting w's offsets itself).
+//
+// sizeBytes is the size of the region available to write into; it must be at
+// least MinEXT4Bytes(), or WriteEXT4 refuses (see EXT4SizeLimitReason).
+// WriteEXT4 always writes exactly that fixed ~512MiB golden filesystem — it
+// does NOT grow it to fill a larger region, even when sizeBytes exceeds
+// MinEXT4Bytes(). Growing the written filesystem to the region's real size
+// is a separate runtime step (EXT4_IOC_RESIZE_FS,
+// internal/blockmount.GrowEXT4), entirely outside this function's scope.
+//
+// As with FormatEXT4, nothing WriteEXT4 writes is "established" in GoSD's
+// crash-ordering sense (see FormatEXT4's doc comment for the full argument):
+// a probe that reads back fine is not proof the whole image reached the
+// medium, and the write → sync → marker → sync commit record that makes it
+// so is blockmount's responsibility, not this function's.
+func WriteEXT4(w io.WriterAt, sizeBytes int64, volumeLabel string) error {
+	return writeEXT4(w, sizeBytes, volumeLabel)
+}
+
 // writeEXT4 streams the embedded ext4 golden image into w, patching the
 // primary superblock and its backups with volumeLabel and a fresh random
 // UUID as they pass through. It is separated from FormatEXT4 so the on-disk

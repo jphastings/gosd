@@ -40,6 +40,23 @@ type fakeCard struct {
 	// AddKernelPartition succeeds. Defaults true via newFakeCard.
 	nodeAppearsOnAdd bool
 
+	// ext4Marked is marked's ext4 equivalent: whether
+	// blockmount.EXT4EstablishedMarker is already there, as reported by
+	// Deps.EXT4Established (which EstablishEXT4 also sets once it
+	// "succeeds", mirroring CreateMarker setting marked above).
+	// ext4CheckErr simulates EXT4Established failing to mount the
+	// partition at all, and ext4EstablishErr simulates EstablishEXT4's
+	// grow-and-mark failing.
+	ext4Marked       bool
+	ext4CheckErr     error
+	ext4EstablishErr error
+	// filesystemSupported/filesystemSupportedErr script
+	// Deps.FilesystemSupported's ext4 preflight. Defaults to true via
+	// newFakeCard, matching every board gosd build actually lets ship
+	// --data-filesystem=ext4 on.
+	filesystemSupported    bool
+	filesystemSupportedErr error
+
 	actions    []string
 	wroteMBR   []byte
 	addedStart int64
@@ -48,7 +65,7 @@ type fakeCard struct {
 }
 
 func newFakeCard(mbr []byte, sizeBytes int64) *fakeCard {
-	return &fakeCard{mbr: mbr, sizeBytes: sizeBytes, nodeAppearsOnAdd: true}
+	return &fakeCard{mbr: mbr, sizeBytes: sizeBytes, nodeAppearsOnAdd: true, filesystemSupported: true}
 }
 
 func (c *fakeCard) deps() Deps {
@@ -91,8 +108,24 @@ func (c *fakeCard) deps() Deps {
 			return nil
 		},
 		MarkerExists: func(string) (bool, error) { return c.marked, c.markerErr },
-		SyncDevice:   func(string) error { c.actions = append(c.actions, "sync-partition"); return nil },
-		PathExists:   func(string) bool { return c.nodeExists },
+		FormatEXT4:   func(_, label string) error { c.actions = append(c.actions, "format-ext4-"+label); return nil },
+		EstablishEXT4: func(string) error {
+			c.actions = append(c.actions, "establish-ext4")
+			if c.ext4EstablishErr != nil {
+				return c.ext4EstablishErr
+			}
+			c.ext4Marked = true
+			return nil
+		},
+		EXT4Established: func(string) (bool, error) {
+			if c.ext4CheckErr != nil {
+				return false, c.ext4CheckErr
+			}
+			return c.ext4Marked, nil
+		},
+		FilesystemSupported: func(diskfmt.FS) (bool, error) { return c.filesystemSupported, c.filesystemSupportedErr },
+		SyncDevice:          func(string) error { c.actions = append(c.actions, "sync-partition"); return nil },
+		PathExists:          func(string) bool { return c.nodeExists },
 		Sleep: func(d time.Duration) {
 			clock.mu.Lock()
 			clock.now = clock.now.Add(d)
@@ -116,12 +149,28 @@ func (c *fakeCard) logged(substr string) bool {
 	return false
 }
 
+// testOptions is the FAT32-expand-image baseline every pre-existing test in
+// this file was written against, before Options grew Filesystem/Expand:
+// FAT32 is the default filesystem, and --data-size=expand is what this
+// whole package originally existed to handle, so both fields are set to
+// keep every one of those tests passing unchanged.
 func testOptions() Options {
 	return Options{
 		Device:          "/dev/mmcblk0",
 		PartitionDevice: "/dev/mmcblk0p2",
 		NodeTimeout:     5 * time.Second,
+		Filesystem:      diskfmt.FAT32,
+		Expand:          true,
 	}
+}
+
+// ext4Options mirrors testOptions for the ext4 tests, with expand exposed so
+// the fixed-size (Expand: false) first-boot cases can share it.
+func ext4Options(expand bool) Options {
+	opts := testOptions()
+	opts.Filesystem = diskfmt.EXT4
+	opts.Expand = expand
+	return opts
 }
 
 // defaultDataStartLBA is where partition 2 belongs on an image built with the
@@ -147,11 +196,20 @@ func gosdMBR(bootSizeBytes int64) []byte {
 // volume size.
 func defaultMBR() []byte { return gosdMBR(256 * 1024 * 1024) }
 
-// withDataEntry returns defaultMBR plus a partition-2 entry, as a card looks
-// after a completed (or interrupted-after-the-MBR-write) first boot.
+// withDataEntry returns defaultMBR plus a FAT32 partition-2 entry, as a card
+// looks after a completed (or interrupted-after-the-MBR-write) first boot.
 func withDataEntry(sizeLBA uint32) []byte {
+	return withDataEntryFS(sizeLBA, diskfmt.FAT32)
+}
+
+// withDataEntryFS is withDataEntry generalised to any filesystem's MBR
+// partition type, for the ext4 fixed-size-image tests: those images ship
+// partition 2's entry from their very first boot (see the package comment),
+// unlike an expand image's FAT32 entry, which only exists once a completed
+// first boot writes it.
+func withDataEntryFS(sizeLBA uint32, fs diskfmt.FS) []byte {
 	mbr := defaultMBR()
-	writeDataEntry(mbr, defaultDataStartLBA, sizeLBA)
+	writeDataEntry(mbr, defaultDataStartLBA, sizeLBA, partitionType(fs))
 	return mbr
 }
 
@@ -460,6 +518,169 @@ func TestRunCapsThePartitionForTheFAT32Formatter(t *testing.T) {
 	}
 	if !card.logged("capping the data partition") {
 		t.Errorf("logs = %q, want a mention of the cap", card.logs)
+	}
+}
+
+func TestRunDoesNotCapAnEXT4Partition(t *testing.T) {
+	// The 256GiB cap is a go-diskfs FAT32 formatter limit; ext4 never goes
+	// through go-diskfs, so it gets the whole card regardless of size.
+	card := newFakeCard(defaultMBR(), 1<<40) // 1TiB
+
+	if err := Run(card.deps(), ext4Options(true)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	_, _, size := readEntry(card.wroteMBR, dataPartitionNumber)
+	if want := uint32(1<<40/sectorSize - defaultDataStartLBA); size != want {
+		t.Errorf("partition size = %d sectors, want %d (uncapped)", size, want)
+	}
+	if card.logged("capping the data partition") {
+		t.Errorf("logs = %q, want no mention of a cap for ext4", card.logs)
+	}
+}
+
+func TestRunCreatesAnEXT4DataPartitionOnFirstBoot(t *testing.T) {
+	const cardSize = 8 << 30
+	card := newFakeCard(defaultMBR(), cardSize)
+
+	if err := Run(card.deps(), ext4Options(true)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	// Same crash-safety shape as FAT32 (format, sync, mark, sync, commit),
+	// with EstablishEXT4 standing in for CreateMarker's raw-device write
+	// since ext4's grow-and-mark both need a live mount.
+	wantActions := []string{"add-partition-2", "format-ext4-" + Label, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
+	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
+		t.Fatalf("actions = %v, want %v", card.actions, wantActions)
+	}
+
+	partType, start, _ := readEntry(card.wroteMBR, dataPartitionNumber)
+	if partType != ext4PartitionType || start != defaultDataStartLBA {
+		t.Errorf("partition 2 entry = type %#02x start %d, want type %#02x start %d",
+			partType, start, ext4PartitionType, defaultDataStartLBA)
+	}
+}
+
+func TestRunAdoptsASurvivingEXT4DataPartitionAfterAReflash(t *testing.T) {
+	// The exact reflash-recovery scenario this bean was asked to preserve
+	// for ext4: reflashing rewrites the MBR (no partition 2) but never
+	// touches the bytes beyond the boot partition, so an established ext4
+	// GOSD-DATA volume must be re-adopted with its data intact, exactly as
+	// a FAT32 one already is.
+	card := newFakeCard(defaultMBR(), 8<<30)
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.ext4Marked = true
+
+	if err := Run(card.deps(), ext4Options(true)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	wantActions := []string{"add-partition-2", "write-mbr"}
+	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
+		t.Fatalf("actions = %v, want %v (the survivor must not be formatted)", card.actions, wantActions)
+	}
+	partType, start, _ := readEntry(card.wroteMBR, dataPartitionNumber)
+	if partType != ext4PartitionType || start != defaultDataStartLBA {
+		t.Errorf("partition 2 entry = type %#02x start %d, want type %#02x start %d",
+			partType, start, ext4PartitionType, defaultDataStartLBA)
+	}
+	if !card.logged("re-adopted") {
+		t.Errorf("logs = %q, want a mention that the partition was re-adopted", card.logs)
+	}
+}
+
+func TestRunReformatsAnEXT4SurvivorWithNoMarker(t *testing.T) {
+	// A matching label and filesystem with no establishment marker is
+	// indistinguishable from the debris of an interrupted format — the
+	// same "no proof it finished" reasoning FAT32's marker check applies.
+	card := newFakeCard(defaultMBR(), 8<<30)
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	// card.ext4Marked left false: no marker.
+
+	if err := Run(card.deps(), ext4Options(true)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	wantActions := []string{"add-partition-2", "format-ext4-" + Label, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
+	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
+		t.Errorf("actions = %v, want %v (an unmarked survivor must be reformatted)", card.actions, wantActions)
+	}
+}
+
+func TestRunGrowsAFixedSizeEXT4PartitionOnItsFirstBoot(t *testing.T) {
+	// A fixed-size --data-filesystem=ext4 image ships partition 2 already
+	// formatted (diskfmt's golden image) with its MBR entry present from
+	// the very first boot — the only work left is growing it to the
+	// partition's real size, and this must never format anything.
+	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
+	card.nodeExists = true
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	// card.ext4Marked left false: not yet grown.
+
+	if err := Run(card.deps(), ext4Options(false)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if got := strings.Join(card.actions, ","); got != "establish-ext4" {
+		t.Errorf("actions = %v, want exactly [establish-ext4] (grow only, never format or write an MBR entry)", card.actions)
+	}
+	if !card.logged("growing") {
+		t.Errorf("logs = %q, want a mention that the filesystem was grown", card.logs)
+	}
+}
+
+func TestRunLeavesAnEstablishedFixedSizeEXT4PartitionAlone(t *testing.T) {
+	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
+	card.nodeExists = true
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.ext4Marked = true
+
+	if err := Run(card.deps(), ext4Options(false)); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if len(card.actions) != 0 {
+		t.Errorf("an already-established later boot performed %v, want nothing", card.actions)
+	}
+	if !card.logged("already present") {
+		t.Errorf("logs = %q, want a mention that the partition is already present", card.logs)
+	}
+}
+
+func TestRunTreatsATransientEXT4MountFailureOnAnEstablishedPartitionAsNonFatal(t *testing.T) {
+	// Unlike survivorPresent's identically-shaped check, a mount failure
+	// while checking an already-established partition must never be read
+	// as "not established" (which would trigger a grow) nor as corruption
+	// — it is reported plainly, and /data falls back read-only this boot.
+	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
+	card.nodeExists = true
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.ext4CheckErr = errors.New("mount: I/O error")
+
+	err := Run(card.deps(), ext4Options(false))
+	if err == nil {
+		t.Fatal("Run() = nil, want the mount failure reported")
+	}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("a transient ext4 mount failure must not be reported as corruption")
+	}
+	if len(card.actions) != 0 {
+		t.Errorf("a transient mount failure saw %v, want nothing (never grow against an unproven filesystem)", card.actions)
+	}
+}
+
+func TestRunRefusesAnEXT4ImageOnAKernelWithoutEXT4Support(t *testing.T) {
+	// gosd build already refuses to pair --data-filesystem=ext4 with such
+	// a board, so this is the on-device honest failure for the case where
+	// it somehow isn't caught: the card must not be touched at all.
+	card := newFakeCard(defaultMBR(), 8<<30)
+	card.filesystemSupported = false
+
+	err := Run(card.deps(), ext4Options(true))
+	if err == nil {
+		t.Fatal("Run() = nil, want a refusal naming the missing kernel support")
+	}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("missing kernel support must not be reported as corruption")
+	}
+	if len(card.actions) != 0 {
+		t.Errorf("actions = %v, want nothing (never format on an unsupported kernel)", card.actions)
 	}
 }
 

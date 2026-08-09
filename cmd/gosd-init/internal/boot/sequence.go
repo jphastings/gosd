@@ -11,6 +11,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
@@ -91,20 +92,27 @@ type Deps struct {
 	// first boot). Only called after the data partition mounts.
 	EnsureDataMarker func() error
 
-	// ExpandData creates the GOSD-DATA partition for images built with
-	// --data-size=expand (config.json's dataExpand): the image ships with
-	// no partition 2, and this fills the rest of the card with one on
-	// first boot, before the data mount runs (see
+	// ExpandData does the GOSD-DATA partition's first-boot work: for images
+	// built with --data-size=expand (config.json's dataExpand), the image
+	// ships with no partition 2 at all, and this fills the rest of the
+	// card with one; for a fixed-size --data-filesystem=ext4 image
+	// (config.json's dataFilesystem), partition 2 already exists
+	// pre-formatted at diskfmt's checked-in golden size, and the only
+	// first-boot work left is growing it to the partition's real size.
+	// Either way it runs before the data mount (see
 	// cmd/gosd-init/internal/dataexpand). It is passed the boot-partition
 	// device the GOSD-BOOT mount actually used, so only the disk the
 	// system truly booted from is ever touched — the same reasoning that
-	// makes MountBootPartition's sentinel check necessary. Nil-checked
+	// makes MountBootPartition's sentinel check necessary — plus the
+	// resolved data filesystem and whether this image was built with
+	// --data-size=expand, both of which Run derives once (see
+	// resolveDataFilesystem) and passes through unchanged. Nil-checked
 	// like the other optional deps. An ordinary failure is logged and boot
 	// proceeds to the read-only /data fallback; dataexpand.ErrDataCorrupt
 	// — an established partition whose filesystem is gone, app data
 	// possibly at stake — instead records the failure via WriteBootFailure
 	// and halts the device.
-	ExpandData func(bootPartitionDevice string, log func(format string, args ...any)) error
+	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, expand bool, log func(format string, args ...any)) error
 
 	// ProvisionSnapshot, if non-nil, is called once the data partition is
 	// mounted and this boot's provisioning has settled: it keeps the
@@ -303,6 +311,16 @@ func Run(deps Deps, opts Options) error {
 		applyHostname(deps, log, cfg.Hostname, "cloud-init")
 	}
 
+	// dataFilesystem is decided once, from config.json's baked
+	// --data-filesystem choice alone: unlike Hostname/Wifi/Env/DataFlush,
+	// nothing on the GOSD-BOOT partition (gosd.toml, cloud-init) can
+	// override it — the filesystem a partition holds is fixed for the
+	// life of the card, chosen at build time and baked into the image
+	// gosd build produced. Both the dataexpand call and mountData below
+	// use this one resolved value.
+	dataFilesystem := resolveDataFilesystem(cfg.DataFilesystem)
+	log("data partition filesystem: %s", dataFilesystem)
+
 	// Computed now, from gosdToml as read straight off the card: /data's
 	// mount below and the GOSD_DATA_FLUSH env var built further down both
 	// have to agree, and a ProvisionSnapshot restore (below) can go on to
@@ -315,14 +333,19 @@ func Run(deps Deps, opts Options) error {
 		log("data partition flush: %t (%s)", dataFlush, dataFlushSource)
 	}
 
-	if cfg.DataExpand && deps.ExpandData != nil {
-		if err := deps.ExpandData(bootDevice, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
+	// dataexpand also needs to run for a fixed-size ext4 image (config.json's
+	// dataFilesystem, not dataExpand): unlike FAT32, ext4 ships pre-formatted
+	// at diskfmt's checked-in golden size and needs a one-time grow to the
+	// partition's real size on its actual first boot — see
+	// cmd/gosd-init/internal/dataexpand's package comment.
+	if deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4) {
+		if err := deps.ExpandData(bootDevice, dataFilesystem, cfg.DataExpand, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
 			return haltForDataCorruption(deps, log, err)
 		} else if err != nil {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
 	}
-	mountData(deps, opts, dataFlush, log)
+	mountData(deps, opts, dataFilesystem, dataFlush, log)
 
 	// Provisioning has settled, and /data — where the snapshot lives — is
 	// as mounted as it's going to get, so this is the first and last moment
@@ -414,6 +437,19 @@ func RunAndReboot(deps Deps, opts Options) {
 	guard.Reboot(fmt.Sprintf("the boot sequence returned (%v)", err))
 }
 
+// resolveDataFilesystem maps config.json's baked dataFilesystem field
+// (gosd build --data-filesystem) to the diskfmt.FS token both the
+// dataexpand step and the data mount need. "" (an image built before this
+// field existed) and any value dataexpand doesn't build are treated as
+// diskfmt.FAT32 — FAT32 is, and remains, the default — rather than
+// rejected, so an old config.json keeps behaving exactly as it always did.
+func resolveDataFilesystem(raw string) diskfmt.FS {
+	if diskfmt.FS(raw) == diskfmt.EXT4 {
+		return diskfmt.EXT4
+	}
+	return diskfmt.FAT32
+}
+
 // effectiveDataFlush resolves the vfat "flush" mount option's effective
 // value for this boot: gosd.toml's data_flush key, when the operator set
 // one (override non-nil), else config.json's baked gosd build --data-flush
@@ -439,15 +475,17 @@ func dataFlushEnvValue(flush bool) string {
 	return "0"
 }
 
-// mountData mounts the GOSD-DATA partition read-write at opts.DataTarget when
-// it exists, and otherwise mounts an empty read-only tmpfs there so that app
-// writes fail loudly with EROFS instead of silently landing in the RAM-backed
-// rootfs and vanishing on reboot (see MountDataReadOnlyFallback). Nothing here
-// is ever fatal: a missing partition (an image built with --data-size=0, or
+// mountData mounts the GOSD-DATA partition (fs — FAT32 or ext4, see
+// resolveDataFilesystem) read-write at opts.DataTarget when it exists, and
+// otherwise mounts an empty read-only tmpfs there so that app writes fail
+// loudly with EROFS instead of silently landing in the RAM-backed rootfs
+// and vanishing on reboot (see MountDataReadOnlyFallback). Nothing here is
+// ever fatal: a missing partition (an image built with --data-size=0, or
 // from before the partition existed) or a failing mount just means no
 // persistent storage this boot. flush is the effective data-flush setting
-// (see effectiveDataFlush), passed through to MountDataPartition.
-func mountData(deps Deps, opts Options, flush bool, log func(format string, args ...any)) {
+// (see effectiveDataFlush), passed through to MountDataPartition (a no-op
+// for anything other than FAT32 — see dataMountOption).
+func mountData(deps Deps, opts Options, fs diskfmt.FS, flush bool, log func(format string, args ...any)) {
 	if opts.DataTarget == "" {
 		return
 	}
@@ -461,7 +499,7 @@ func mountData(deps Deps, opts Options, flush bool, log func(format string, args
 		}
 	}
 
-	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, flush, deps.Sleep, deps.Now); err != nil {
+	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, fs, flush, deps.Sleep, deps.Now); err != nil {
 		if errors.Is(err, ErrDataPartitionMissing) {
 			log("no data partition on this image; mounting %s read-only", opts.DataTarget)
 		} else {

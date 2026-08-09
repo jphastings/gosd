@@ -19,6 +19,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/artifacts"
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
@@ -135,6 +136,19 @@ type Options struct {
 	// is why this is a plain baked default and not a template value like
 	// Config.Env — gosd-init computes the effective setting itself.
 	DataFlush bool
+
+	// DataFilesystem is gosd build --data-filesystem's resolved value:
+	// which filesystem GOSD-DATA is formatted as. It's threaded straight
+	// into both image.Spec.DataFilesystem (which governs what Write
+	// actually formats the partition as, when one exists in the image)
+	// and config.json's DataFilesystem field (initcfg.Config.
+	// DataFilesystem, via a plain string conversion), so gosd-init mounts
+	// GOSD-DATA the same way whether it ships in the image or
+	// (DataExpand) is created on first boot. Zero value "" means
+	// diskfmt.FAT32, mirroring image.Spec.DataFilesystem's own
+	// zero-value convention; cmd/gosd always resolves --data-filesystem
+	// to a concrete diskfmt.FAT32 or diskfmt.EXT4 before calling Assemble.
+	DataFilesystem diskfmt.FS
 
 	// IngressCloudflared is `gosd build --ingress cloudflared`'s value,
 	// baked straight into config.json's IngressCloudflared field (see
@@ -354,6 +368,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		Env:                    opts.Config.Env,
 		DataExpand:             opts.DataExpand,
 		DataFlush:              opts.DataFlush,
+		DataFilesystem:         string(opts.DataFilesystem),
 		IngressCloudflared:     opts.IngressCloudflared,
 		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
 		Identity:               identity,
@@ -398,11 +413,12 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	bootFiles[initramfsKey] = &initramfsBuf
 
 	report, err := image.Write(opts.OutputPath, image.Spec{
-		BootFiles:     bootFiles,
-		RawWrites:     opts.Board.RawWrites(resolved),
-		DataSizeBytes: opts.DataSizeBytes,
-		BootSizeBytes: opts.BootSizeBytes,
-		ReportRanges:  reportRanges,
+		BootFiles:      bootFiles,
+		RawWrites:      opts.Board.RawWrites(resolved),
+		DataSizeBytes:  opts.DataSizeBytes,
+		DataFilesystem: opts.DataFilesystem,
+		BootSizeBytes:  opts.BootSizeBytes,
+		ReportRanges:   reportRanges,
 	})
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("writing the image for %s to %s: %w", opts.Board.Name(), opts.OutputPath, err)

@@ -18,6 +18,7 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -61,6 +62,10 @@ func (b *fakeBoard) UsbGadgetSupport() boards.GadgetSupport {
 
 func (b *fakeBoard) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 	return boards.ConsoleBaudSupport{Supported: true}
+}
+
+func (b *fakeBoard) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{Supported: true}
 }
 
 func writeTempFile(t *testing.T, dir, name, content string) string {
@@ -329,6 +334,49 @@ func TestAssembleBakesDataFlushIntoConfigJSON(t *testing.T) {
 	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
 	if !strings.Contains(string(config), `"dataFlush":true`) {
 		t.Errorf("config.json = %s, want it to contain %q", config, `"dataFlush":true`)
+	}
+}
+
+// TestAssembleBakesDataFilesystemIntoConfigJSON confirms Options.
+// DataFilesystem reaches config.json's dataFilesystem field verbatim,
+// mirroring TestAssembleBakesDataFlushIntoConfigJSON's shape for its own
+// flag. DataSizeBytes is left at zero: DataFilesystem only affects an
+// in-image partition when one actually exists (see
+// image.Spec.DataFilesystem's docstring), so this only needs to check the
+// value threads through to config.json, without paying for a real ext4
+// golden-image format.
+func TestAssembleBakesDataFilesystemIntoConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	imgPath := filepath.Join(dir, "out.img")
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath:     imgPath,
+		DataFilesystem: diskfmt.EXT4,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	config := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(config), `"dataFilesystem":"ext4"`) {
+		t.Errorf("config.json = %s, want it to contain %q", config, `"dataFilesystem":"ext4"`)
 	}
 }
 

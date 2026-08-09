@@ -1,7 +1,9 @@
 // Package image writes flashable SD-card .img files: an MBR partition table
-// with a FAT32 boot partition (and an optional second FAT32 data partition),
-// built entirely in Go via github.com/diskfs/go-diskfs (no root, no external
-// mkfs/fdisk tooling).
+// with a FAT32 boot partition and an optional second data partition (FAT32
+// or ext4). The FAT32 work is built entirely in Go via
+// github.com/diskfs/go-diskfs (no root, no external mkfs/fdisk tooling); an
+// ext4 data partition instead uses internal/diskfmt's pure-Go golden-image
+// writer.
 //
 // The on-disk layout is locked except for the boot partition's size, which is
 // per-build (Spec.BootSizeBytes, defaulting to today's 256MiB - see
@@ -13,14 +15,19 @@
 //	                            embed task)
 //	byte 16MiB                  partition 1: FAT32, type 0x0C, label
 //	                            GOSD-BOOT, Spec.BootSizeBytes (default 256MiB)
-//	byte 16MiB+BootSizeBytes    partition 2 (optional): FAT32, type 0x0C,
-//	                            label GOSD-DATA, size from Spec.DataSizeBytes,
-//	                            immediately after partition 1
+//	byte 16MiB+BootSizeBytes    partition 2 (optional): label GOSD-DATA, size
+//	                            from Spec.DataSizeBytes, immediately after
+//	                            partition 1; type 0x0C (FAT32, the default) or
+//	                            0x83 (ext4), per Spec.DataFilesystem
 //	end of image                (16MiB+BootSizeBytes, or +Spec.DataSizeBytes
 //	                            if partition 2 exists)
 //
 // Partition 2 is omitted entirely (single-partition layout, unchanged from
-// earlier versions) when Spec.DataSizeBytes is zero.
+// earlier versions) when Spec.DataSizeBytes is zero. An ext4 partition 2
+// ships only a fixed ~512MiB golden filesystem (diskfmt.WriteEXT4) regardless
+// of the partition's real size - growing it to fill the partition is a
+// first-boot runtime step (EXT4_IOC_RESIZE_FS,
+// internal/blockmount.GrowEXT4), entirely outside this package.
 //
 // The chosen boot size becomes part of an app's on-disk layout: a later
 // build that changes it moves partition 2's start, so a device upgraded via
@@ -106,14 +113,33 @@ type Spec struct {
 	// the MBR and partition 1, after partitioning and formatting.
 	RawWrites []RawWrite
 
-	// DataSizeBytes is the size of the optional second partition (FAT32,
-	// label GOSD-DATA, type 0x0C), created immediately after the boot
-	// partition. Zero disables the partition entirely, producing the
-	// single-partition layout (older images, or an explicit
-	// --data-size=0). Non-zero sizes are rounded down to the nearest
-	// whole sector, and then to the largest size go-diskfs formats into a
-	// self-consistent FAT32 volume (at most two clusters less).
+	// DataSizeBytes is the size of the optional second partition (label
+	// GOSD-DATA), created immediately after the boot partition, in the
+	// filesystem DataFilesystem selects. Zero disables the partition
+	// entirely, producing the single-partition layout (older images, or
+	// an explicit --data-size=0). Non-zero sizes are rounded down to the
+	// nearest whole sector. When DataFilesystem is FAT32 (the default),
+	// sizes are then further trimmed to the largest size go-diskfs
+	// formats into a self-consistent FAT32 volume (at most two clusters
+	// less) - the same trim BootSizeBytes gets. That trim is a
+	// workaround for a go-diskfs defect and does NOT apply to ext4; an
+	// ext4 DataSizeBytes must instead be at least diskfmt.MinEXT4Bytes(),
+	// or Write refuses.
 	DataSizeBytes int64
+
+	// DataFilesystem selects the filesystem written into the data
+	// partition. The zero value ("") means diskfmt.FAT32 (today's
+	// default, unchanged). diskfmt.EXT4 writes a crash-resilient ext4
+	// filesystem instead, via diskfmt.WriteEXT4 - see that function's doc
+	// comment for what "written" does and does not mean yet (it ships a
+	// fixed ~512MiB golden filesystem; growing it to the partition's real
+	// size is a first-boot runtime step, outside this package). Only
+	// diskfmt.FAT32 and diskfmt.EXT4 are accepted - diskfmt.ExFAT is
+	// deliberately not supported here yet - any other value is a Write-time
+	// error naming this field and its accepted values. Meaningless (and
+	// ignored) when DataSizeBytes is zero: there is no data partition to
+	// format at all.
+	DataFilesystem diskfmt.FS
 
 	// BootSizeBytes is the size of the FAT32 boot partition (label
 	// GOSD-BOOT), which always starts at byte 16MiB. Zero means
@@ -175,7 +201,12 @@ type layout struct {
 
 // computeLayout turns Spec.BootSizeBytes and Spec.DataSizeBytes into a
 // concrete layout, rejecting sizes that can't produce a valid partition.
-func computeLayout(bootSizeBytes, dataSizeBytes int64) (layout, error) {
+// dataFS is the already-validated data filesystem (validateDataFilesystem's
+// result): it decides whether the data partition gets FAT32's
+// self-consistency trim (skipped for ext4, which has no such go-diskfs
+// defect) or a minimum-size check against diskfmt.MinEXT4Bytes() (skipped
+// for FAT32, which has no fixed golden-image floor).
+func computeLayout(bootSizeBytes, dataSizeBytes int64, dataFS diskfmt.FS) (layout, error) {
 	if bootSizeBytes < 0 {
 		return layout{}, fmt.Errorf("boot partition size %d bytes is negative", bootSizeBytes)
 	}
@@ -225,8 +256,18 @@ func computeLayout(bootSizeBytes, dataSizeBytes int64) (layout, error) {
 		return layout{}, fmt.Errorf("data partition size %d bytes is too large for an MBR partition", dataSizeBytes)
 	}
 
-	// Same trim as the boot partition above.
-	sizeInLBAs = diskfmt.LargestSelfConsistentFAT32Bytes(sizeInLBAs*sectorSizeBytes) / sectorSizeBytes
+	if dataFS == diskfmt.EXT4 {
+		if trimmed := sizeInLBAs * sectorSizeBytes; trimmed < diskfmt.MinEXT4Bytes() {
+			return layout{}, fmt.Errorf(
+				"data partition size %d bytes (%.2f MiB) is smaller than the smallest ext4 volume GoSD can write (%d bytes / %.2f MiB): %s; pass a larger --data-size, or build with --data-filesystem=fat32",
+				trimmed, float64(trimmed)/(1<<20), diskfmt.MinEXT4Bytes(), float64(diskfmt.MinEXT4Bytes())/(1<<20), diskfmt.EXT4SizeLimitReason)
+		}
+	} else {
+		// Same trim as the boot partition above - a go-diskfs FAT32
+		// sizing workaround with no ext4 equivalent (WriteEXT4 never
+		// touches go-diskfs at all).
+		sizeInLBAs = diskfmt.LargestSelfConsistentFAT32Bytes(sizeInLBAs*sectorSizeBytes) / sectorSizeBytes
+	}
 
 	lay.hasDataPartition = true
 	lay.dataPartitionSizeInLBAs = uint32(sizeInLBAs)
@@ -241,7 +282,12 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		return WriteReport{}, err
 	}
 
-	lay, err := computeLayout(spec.BootSizeBytes, spec.DataSizeBytes)
+	dataFS, err := validateDataFilesystem(spec.DataFilesystem)
+	if err != nil {
+		return WriteReport{}, err
+	}
+
+	lay, err := computeLayout(spec.BootSizeBytes, spec.DataSizeBytes, dataFS)
 	if err != nil {
 		return WriteReport{}, fmt.Errorf("computing image layout for %s failed: %w", imgPath, err)
 	}
@@ -265,9 +311,13 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		},
 	}
 	if lay.hasDataPartition {
+		dataPartitionType := mbr.Fat32LBA
+		if dataFS == diskfmt.EXT4 {
+			dataPartitionType = mbr.Linux
+		}
 		partitions = append(partitions, &mbr.Partition{
 			Index: dataPartitionIndex,
-			Type:  mbr.Fat32LBA,
+			Type:  dataPartitionType,
 			Start: lay.dataPartitionStartLBA,
 			Size:  lay.dataPartitionSizeInLBAs,
 		})
@@ -307,7 +357,11 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 	}
 
 	if lay.hasDataPartition {
-		if _, err := d.CreateFilesystem(disk.FilesystemSpec{
+		if dataFS == diskfmt.EXT4 {
+			if err := writeEXT4DataPartition(d, lay); err != nil {
+				return WriteReport{}, err
+			}
+		} else if _, err := d.CreateFilesystem(disk.FilesystemSpec{
 			Partition:   dataPartitionIndex,
 			FSType:      filesystem.TypeFat32,
 			VolumeLabel: dataPartitionLabel,
@@ -325,6 +379,21 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		BootPartitionPayloadBytes: payloadBytes,
 		FileRanges:                fileRanges,
 	}, nil
+}
+
+// validateDataFilesystem resolves Spec.DataFilesystem's zero value to
+// diskfmt.FAT32 (today's default) and rejects anything other than FAT32 or
+// EXT4 - diskfmt.ExFAT is a real diskfmt filesystem but is not yet wired up
+// here, and any other value is simply not a filesystem GoSD knows.
+func validateDataFilesystem(fs diskfmt.FS) (diskfmt.FS, error) {
+	switch fs {
+	case "":
+		return diskfmt.FAT32, nil
+	case diskfmt.FAT32, diskfmt.EXT4:
+		return fs, nil
+	default:
+		return "", fmt.Errorf("Spec.DataFilesystem %q is not supported; only diskfmt.FAT32 (or the zero value) and diskfmt.EXT4 are accepted here (exFAT is not yet supported for the data partition)", string(fs))
+	}
 }
 
 // validateReportRanges checks that every path in reportRanges is a key of
@@ -487,6 +556,48 @@ func absoluteContentRanges(diskRanges []fat12.DiskRange, contentSize int64, lay 
 		seen += r.LengthBytes
 	}
 	return clipped, nil
+}
+
+// writeEXT4DataPartition writes the data partition's ext4 golden filesystem
+// directly to the image's backing file, bypassing go-diskfs entirely (unlike
+// the FAT32 branch's d.CreateFilesystem): diskfmt.WriteEXT4 needs only an
+// io.WriterAt, which offsetPartitionWriter supplies confined to the data
+// partition's own byte range within the image.
+func writeEXT4DataPartition(d *disk.Disk, lay layout) error {
+	w, err := d.Backend.Writable()
+	if err != nil {
+		return fmt.Errorf("opening the image for the %s ext4 data partition failed: %w", dataPartitionLabel, err)
+	}
+
+	sizeBytes := int64(lay.dataPartitionSizeInLBAs) * sectorSizeBytes
+	shifted := offsetPartitionWriter{w: w, base: lay.dataPartitionOffsetBytes, limit: sizeBytes}
+	if err := diskfmt.WriteEXT4(shifted, sizeBytes, dataPartitionLabel); err != nil {
+		return fmt.Errorf("writing the %s ext4 data partition failed: %w", dataPartitionLabel, err)
+	}
+	return nil
+}
+
+// offsetPartitionWriter confines an io.WriterAt to the byte range
+// [base, base+limit), rewriting every WriteAt as relative to that range's
+// start: diskfmt.WriteEXT4 addresses the region it is given as if it began
+// at byte 0, so this is what lets it write a self-contained ext4 filesystem
+// into the data partition without ever knowing that partition's offset
+// inside the image, and without any possibility of overrunning into the
+// boot partition or past the end of the image.
+type offsetPartitionWriter struct {
+	w     io.WriterAt
+	base  int64
+	limit int64
+}
+
+func (o offsetPartitionWriter) WriteAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("write at negative offset %d within the data partition", off)
+	}
+	if end := off + int64(len(p)); end > o.limit {
+		return 0, fmt.Errorf("write of %d bytes at offset %d would end at byte %d, past the end of the %d-byte data partition", len(p), off, end, o.limit)
+	}
+	return o.w.WriteAt(p, o.base+off)
 }
 
 // resolvedRawWrite is a RawWrite whose content has been read into memory, so

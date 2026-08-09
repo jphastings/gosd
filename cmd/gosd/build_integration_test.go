@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1109,6 +1110,173 @@ func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
 	assertCACertsBaked(t, decodeInitramfs(t, initramfsBytes))
 }
 
+// extractPartitionRegion copies the byte range [offset, offset+length) of
+// imgPath into a fresh temp file, so a partition's raw bytes can be handed to
+// diskfmt.Inspect exactly as it would see a real block device - mirrors
+// internal/image's own extractRegion test helper (image_test.go), which this
+// package can't import directly since it's an internal test helper of
+// another package.
+func extractPartitionRegion(t *testing.T, imgPath string, offset, length int64) string {
+	t.Helper()
+	src, err := os.Open(imgPath)
+	if err != nil {
+		t.Fatalf("opening %s to extract a region: %v", imgPath, err)
+	}
+	defer func() { _ = src.Close() }()
+
+	regionPath := filepath.Join(t.TempDir(), "region.img")
+	dst, err := os.Create(regionPath)
+	if err != nil {
+		t.Fatalf("creating %s: %v", regionPath, err)
+	}
+	if _, err := io.Copy(dst, io.NewSectionReader(src, offset, length)); err != nil {
+		t.Fatalf("copying region [%d, %d) from %s: %v", offset, offset+length, imgPath, err)
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatalf("closing %s: %v", regionPath, err)
+	}
+	return regionPath
+}
+
+// TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition is bean
+// gosd-95yu's build-level acceptance test: `gosd build --board=qemu-virt
+// --data-filesystem=ext4` (qemu-virt is one of the boards ext4 is supported
+// on - see internal/boards/qemuvirt.EXT4Support) must mark partition 2 as
+// MBR type 0x83 (Linux/ext4), format it as a real ext4 filesystem labelled
+// GOSD-DATA that diskfmt.Inspect reads back, and bake config.json's
+// dataFilesystem field as "ext4".
+func TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-qemu-virt.img")
+	dataSizeBytes := diskfmt.MinEXT4Bytes()
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "qemu-virt",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-filesystem", "ext4",
+		"--data-size", strconv.FormatInt(dataSizeBytes, 10),
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --data-filesystem=ext4 failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	assertMBRPartitionType(t, d, 2, mbr.Linux)
+
+	dataPart, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got := dataPart.GetSize(); got != dataSizeBytes {
+		t.Errorf("partition 2 size = %d bytes, want %d (the requested --data-size)", got, dataSizeBytes)
+	}
+
+	regionPath := extractPartitionRegion(t, imgPath, dataPart.GetStart(), dataPart.GetSize())
+	contents, err := diskfmt.Inspect(regionPath)
+	if err != nil {
+		t.Fatalf("diskfmt.Inspect on the extracted ext4 data partition failed: %v", err)
+	}
+	if contents.FS != diskfmt.EXT4 {
+		t.Errorf("Inspect().FS = %v, want ext4", contents.FS)
+	}
+	if contents.Label != "GOSD-DATA" {
+		t.Errorf("Inspect().Label = %q, want GOSD-DATA", contents.Label)
+	}
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(configJSON), `"dataFilesystem":"ext4"`) {
+		t.Errorf("config.json = %q, want it to contain %q", configJSON, `"dataFilesystem":"ext4"`)
+	}
+}
+
+// TestBuildDefaultDataFilesystemIsStillFAT32 confirms that omitting
+// --data-filesystem entirely still produces a FAT32 (MBR type 0x0C)
+// GOSD-DATA partition and bakes config.json's dataFilesystem as "fat32" -
+// bean gosd-95yu's default must never be able to flip to ext4 silently.
+func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-size", "8MiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	assertMBRPartitionType(t, d, 2, mbr.Fat32LBA)
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+	if !strings.Contains(string(configJSON), `"dataFilesystem":"fat32"`) {
+		t.Errorf("config.json = %q, want it to contain %q", configJSON, `"dataFilesystem":"fat32"`)
+	}
+}
+
+// TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard confirms
+// --data-filesystem=ext4 refuses to build for a Pi board (whose stock kernel
+// has no CONFIG_EXT4_FS - see internal/boards/pizero2w.EXT4Support) rather
+// than shipping an image whose GOSD-DATA the kernel can never mount.
+func TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--data-filesystem", "ext4",
+		"--data-size", "1GiB",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --board=pi-zero-2w --data-filesystem=ext4 succeeded, want an error")
+	}
+	for _, want := range []string{"pi-zero-2w", "COMPATIBILITY.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
 // TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
 // behavior for --catalog when every selected board is internal-only: no
 // os_list.json is written, and the build itself still succeeds (this is not
@@ -1969,6 +2137,48 @@ func buildConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.
 	return cfg
 }
 
+// buildQemuVirtConfigJSON mirrors buildConfigJSON but builds for qemu-virt
+// instead of pi-zero-2w - needed for flags like --data-filesystem=ext4 that
+// only some boards support (see internal/boards.Board.EXT4Support).
+func buildQemuVirtConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.Config {
+	t.Helper()
+
+	args := append([]string{
+		"build", "../../examples/hello",
+		"--board", "qemu-virt",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	}, extraArgs...)
+
+	cmd := newRootCmd()
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+
+	var cfg initcfg.Config
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
+	}
+	return cfg
+}
+
 // TestBuildBakesImageIdentityIntoConfigJSON is the acceptance test for
 // gosd-acdn (docs/design/upgrade-path.md §4): config.json carries a
 // content-derived image identity - a hex SHA-256 digest, never a
@@ -2087,6 +2297,37 @@ func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
 	}
 	if withoutFlush.Identity != withFlush.Identity {
 		t.Errorf("identity differed across builds that only differed by --data-flush: %q vs %q", withoutFlush.Identity, withFlush.Identity)
+	}
+}
+
+// TestBuildIdentityUnaffectedByDataFilesystem is TestBuildIdentityUnaffected
+// ByDataFlush's counterpart for bean gosd-95yu's --data-filesystem flag.
+// Unlike DataFlush, this flag DOES change GOSD-DATA's on-card layout (see
+// initcfg.Config.DataFilesystem's docstring for the full rationale), but
+// config.json is still excluded from ComputeIdentity's hashed payload in its
+// entirety, and DataFilesystem has no footprint anywhere else in that
+// payload (no gosd.toml presence, unlike Hostname/Wifi/Env) - so two builds
+// differing only by --data-filesystem must still produce the same identity.
+// Built for qemu-virt rather than pi-zero-2w (the other identity tests'
+// board): pi-zero-2w's stock kernel doesn't support ext4 (see
+// internal/boards.Board.EXT4Support).
+func TestBuildIdentityUnaffectedByDataFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	withoutExt4 := buildQemuVirtConfigJSON(t, filepath.Join(dir, "fat32.img"))
+	withExt4 := buildQemuVirtConfigJSON(t, filepath.Join(dir, "ext4.img"),
+		"--data-filesystem", "ext4", "--data-size", strconv.FormatInt(diskfmt.MinEXT4Bytes(), 10))
+
+	if withExt4.DataFilesystem != "ext4" {
+		t.Fatal("config.json's dataFilesystem is not ext4 after --data-filesystem=ext4")
+	}
+	if withoutExt4.DataFilesystem != "fat32" {
+		t.Fatalf("config.json's dataFilesystem = %q without --data-filesystem, want fat32", withoutExt4.DataFilesystem)
+	}
+	if withoutExt4.Identity == "" {
+		t.Fatal("the fat32 build's identity is empty")
+	}
+	if withoutExt4.Identity != withExt4.Identity {
+		t.Errorf("identity differed across builds that only differed by --data-filesystem: %q vs %q", withoutExt4.Identity, withExt4.Identity)
 	}
 }
 

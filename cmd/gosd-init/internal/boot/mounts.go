@@ -7,6 +7,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
 // Linux mount(2) flags, mirrored here (rather than imported from
@@ -186,31 +188,38 @@ func onDisk(dev, disk string) bool {
 // treat this as "no persistent storage", never as a boot failure.
 var ErrDataPartitionMissing = errors.New("no data partition device exists")
 
-// dataMountOption maps the effective data-flush setting (config.json's
-// baked gosd build --data-flush default, overridable per-device via
-// gosd.toml's data_flush key — see sequence.go's effectiveDataFlush) to the
-// vfat mount(2) option string MountDataPartition passes for /data. Kept as
-// its own pure function — this file has no build tag, so it's tested
-// without a Linux host — so the mapping can't silently drift from
-// internal/blockmount's identical one for emmc/disk vfat mounts (see that
-// package's vfatMountOption, which reads the same decision back out of the
-// GOSD_DATA_FLUSH env var this process exports to /app).
-func dataMountOption(flush bool) string {
-	if flush {
-		return "flush"
+// dataMountOption maps the data partition's filesystem and the effective
+// data-flush setting (config.json's baked gosd build --data-flush default,
+// overridable per-device via gosd.toml's data_flush key — see sequence.go's
+// effectiveDataFlush) to the mount(2) option string MountDataPartition
+// passes for /data. "flush" is a vfat-only option: mount(2) rejects an
+// option its filesystem driver doesn't recognise, so it must never be
+// passed for ext4 (or anything else that isn't FAT32) regardless of flush —
+// this mirrors internal/blockmount's identical rule for emmc/disk mounts
+// (see that package's mountData, which dispatches on the same diskfmt.FAT32
+// check before ever consulting its own vfatMountOption). Kept as its own
+// pure function — this file has no build tag, so it's tested without a
+// Linux host — so the mapping can't silently drift from blockmount's.
+func dataMountOption(filesystem diskfmt.FS, flush bool) string {
+	if filesystem != diskfmt.FAT32 || !flush {
+		return ""
 	}
-	return ""
+	return "flush"
 }
 
-// MountDataPartition mounts the GOSD-DATA FAT partition read-write at
-// target, trying each candidate device in turn with the same retry pattern
-// as MountBootPartition. flush selects the vfat "flush" mount option, which
+// MountDataPartition mounts the GOSD-DATA partition (filesystem — FAT32 or
+// ext4; see config.json's dataFilesystem) read-write at target, trying each
+// candidate device in turn with the same retry pattern as
+// MountBootPartition. flush selects the vfat "flush" mount option, which
 // pushes a file's data and metadata to storage promptly on close(2) — FAT
 // has no journal, so the less time dirty data sits in RAM on a device with
 // no clean-shutdown story, the better — at a real write-throughput cost;
 // default false (see dataMountOption) trades that for normal Linux
 // writeback (~30s dirty_expire), which is enough for apps using the
-// documented durable-write sequence either way (bean gosd-9m1k).
+// documented durable-write sequence either way (bean gosd-9m1k). flush is
+// silently a no-op for any filesystem other than FAT32 (see
+// dataMountOption) — ext4's own journal is what buys its crash-consistency
+// story instead.
 //
 // A round in which every candidate fails with "no such file or directory"
 // means the device nodes simply don't exist. This step runs only after the
@@ -224,13 +233,13 @@ func dataMountOption(flush bool) string {
 // from is the one already known-scanned, and only real hardware/VM ever
 // exposes one of them at a time, so "every candidate" and "the one that
 // matters" are the same check in practice.
-func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, flush bool, sleep func(time.Duration), now func() time.Time) error {
+func MountDataPartition(m Mounter, target string, devices []string, timeout time.Duration, filesystem diskfmt.FS, flush bool, sleep func(time.Duration), now func() time.Time) error {
 	deadline := now().Add(timeout)
 	var lastErr error
 	for {
 		allMissing := true
 		for _, dev := range devices {
-			err := m.Mount(dev, target, "vfat", msNoSuid|msNoDev, dataMountOption(flush))
+			err := m.Mount(dev, target, filesystem.MountType(), msNoSuid|msNoDev, dataMountOption(filesystem, flush))
 			if err == nil {
 				return nil
 			}

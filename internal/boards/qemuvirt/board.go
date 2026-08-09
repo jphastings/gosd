@@ -127,3 +127,10 @@ func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 		Reason:    "qemu-virt's console is a fixed QEMU -append argument (console=ttyAMA0) with no baud rate at all; it's a CI/local-test profile, not real hardware with a real adapter to accommodate",
 	}
 }
+
+// EXT4Support implements boards.Board: supported. This profile's kernel
+// builds CONFIG_EXT4_FS=y (see COMPATIBILITY.md), so GOSD-DATA can mount
+// ext4 when --data-filesystem=ext4 is passed.
+func (board) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{Supported: true}
+}
