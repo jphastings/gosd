@@ -244,7 +244,7 @@ license = "GPL-2.0-or-later"
 
 ## Fitting inside the boot partition
 
-`GOSD-BOOT`, the FAT32 partition the kernel, initramfs (which embeds your
+The boot partition, the FAT32 partition the kernel, initramfs (which embeds your
 app and every bundled external), and bootloader all share, is a fixed
 256MiB. A large external (a full-featured video player, e.g.) can eat a
 meaningful fraction of that on its own — check the actual built binary's

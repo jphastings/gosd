@@ -27,7 +27,7 @@ const tsfunnelSrcDirName = "gosd-tsfunnel"
 // tsfunnelLDFlags is gosd-65uy decision 2's "-ldflags=-s -w": the shim is
 // stripped (no symbol table, no DWARF) since, unlike gosd-init, its content
 // never needs to be inspected in the field and every byte counts against
-// GOSD-BOOT's budget - measured at ~23% smaller in gosd-4fve's bean.
+// the boot partition's budget - measured at ~23% smaller in gosd-4fve's bean.
 const tsfunnelLDFlags = "-s -w"
 
 // tsfunnelOpts is the crossCompileOpts every CrossCompileTsfunnel rung uses.

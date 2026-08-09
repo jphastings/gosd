@@ -24,7 +24,7 @@ invocation lives in `../../../build/ext4-golden/Dockerfile`; regenerate with
 | `-E lazy_itable_init=1`, `-E lazy_journal_init=1` | on | Ship without fully zeroing the inode table or journal; the kernel finishes in the background after mount. See "Crash safety of the lazy flags" below. |
 | `-J size=128` (128 MiB journal) | fixed | The journal does **not** grow when the filesystem is resized (see below) -- it has to be sized up front for the *grown* filesystem's lifetime, not the golden's 512 MiB. |
 | `-U` (fixed placeholder UUID) | `4c1a41c8-20b8-4c50-8399-7fae324e8398` | Arbitrary but fixed, for byte-reproducible builds. gosd-apmv overwrites it with a fresh random UUID per volume at format time. |
-| `-L` (label) | `""` (empty) | Same reasoning -- gosd-apmv stamps the real label (≤16 bytes, ext4's limit; `GOSD-DATA` fits). |
+| `-L` (label) | `""` (empty) | Same reasoning -- gosd-apmv stamps the real label at the same site, whatever the image was built with (per-app since gosd-lo7k; ext4's limit is 16 bytes, far more than a label needs). |
 | `-E hash_seed` | `da89e13f-1cf4-4015-a4e0-0e9abbd2aabd` | Directory-hash seed; fixed rather than random, again for reproducible builds (mke2fs's own `-E hash_seed=` doc: "Intended for use with reproducible builds"). |
 | `E2FSPROGS_FAKE_TIME=1735689600` | fixed | e2fsprogs-specific env var that fakes "now" for every on-disk timestamp (`s_mkfs_time`, `s_lastcheck`, inode ctime/mtime). Without it, every rebuild's raw image differs only in these bytes but still fails a byte-for-byte diff. |
 | Golden virtual size | 512 MiB | See "Golden image size" below. |

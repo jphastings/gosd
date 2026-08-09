@@ -1,7 +1,7 @@
 # `gosd.toml`: the device's hand-editable settings
 
 Every image `gosd build` produces carries a `gosd.toml` at the root of its
-`GOSD-BOOT` (FAT) partition. It is the always-present, any-flasher fallback for
+boot (FAT) partition. It is the always-present, any-flasher fallback for
 configuring a device: plug the card into any computer and open `gosd.toml` in a
 plain-text editor to set the hostname, join a WiFi network, change the app's
 environment variables, or declare an internet tunnel. `gosd-init` reads it once,

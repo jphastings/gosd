@@ -20,7 +20,7 @@ func TestArgsUsesDefaultsWhenPortAndMemoryAreZero(t *testing.T) {
 	assertFlag(t, args, "-m", "512")
 	assertFlag(t, args, "-kernel", filepath.Join("/work", "Image"))
 	assertFlag(t, args, "-initrd", filepath.Join("/work", "initramfs.cpio.zst"))
-	// gosd.bootdev=vda keeps gosd-init's GOSD-BOOT probe on the virtio disk
+	// gosd.bootdev=vda keeps gosd-init's boot-partition probe on the virtio disk
 	// the kernel booted from, exercising the gosd-vzk2 mechanism end to end.
 	assertFlag(t, args, "-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10")
 	assertContains(t, args, "-drive", "if=none,file=/img.img,format=raw,id=hd0")
@@ -89,6 +89,8 @@ func contains(args []string, want string) bool {
 func TestExtractBootFilesCopiesEveryBootPartitionFile(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "qemu-virt.img")
 	if _, err := image.Write(imgPath, image.Spec{
+		BootLabel: "test-boot",
+		DataLabel: "test-data",
 		BootFiles: map[string]io.Reader{
 			"Image":              strings.NewReader("fake kernel bytes"),
 			"initramfs.cpio.zst": strings.NewReader("fake initramfs bytes"),
@@ -140,6 +142,8 @@ func TestRunOnANonQemuVirtImageFailsActionably(t *testing.T) {
 
 	imgPath := filepath.Join(t.TempDir(), "not-qemu-virt.img")
 	if _, err := image.Write(imgPath, image.Spec{
+		BootLabel: "test-boot",
+		DataLabel: "test-data",
 		BootFiles: map[string]io.Reader{
 			"gosd.toml": strings.NewReader("hostname = \"test\"\n"),
 		},

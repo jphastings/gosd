@@ -175,7 +175,7 @@ func TestBuildIngressTailscaleFunnelRequiresDataPartition(t *testing.T) {
 	if err == nil {
 		t.Fatal("gosd build --ingress tailscale-funnel with no --data-size succeeded, want an error")
 	}
-	for _, want := range []string{"tailscale-funnel", "GOSD-DATA", "--data-size"} {
+	for _, want := range []string{"tailscale-funnel", "data partition", "--data-size"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
 		}

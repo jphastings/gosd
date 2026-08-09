@@ -82,23 +82,24 @@ var (
 	consoleBaud    int
 	dataFlush      bool
 	dataFilesystem string
+	labelPrefix    string
 	placeholders   []string
 	ingressFlags   []string
 )
 
-// defaultDataSize is the GOSD-DATA partition size used when --data-size is
+// defaultDataSize is the data partition's size when --data-size is
 // not given. It defaults to 0 (no data partition): persistence is opt-in, so
 // appliance images that don't need /data don't pay its image-size and
 // flash-time cost.
 const defaultDataSize = "0"
 
-// defaultBootSize is the GOSD-BOOT partition size used when --boot-size is
+// defaultBootSize is the boot partition's size when --boot-size is
 // not given: today's locked constant, unchanged from before the flag
 // existed. TestDefaultBootSizeMatchesImagePackage pins it against
 // image.DefaultBootPartitionSizeBytes so the two can't silently drift apart.
 const defaultBootSize = "256MiB"
 
-// defaultDataFilesystem is the GOSD-DATA filesystem used when
+// defaultDataFilesystem is the data partition's filesystem when
 // --data-filesystem is not given: FAT32, unchanged from before the flag
 // existed, because it's readable and repairable from any computer's SD card
 // reader - the property an opt-in ext4 partition trades away for crash
@@ -136,9 +137,9 @@ not touch the cache at all.`,
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy); also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
 	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
-		"size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
+		"size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().StringVar(&bootSize, "boot-size", defaultBootSize,
-		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); default 256MiB fits every stock board's kernel/initramfs, but a large app may need more - the build fails with an actionable error naming this flag if it doesn't fit; this size becomes part of the app's on-disk layout, so changing it in a later release erases GOSD-DATA on upgrade (see docs/design/upgrade-path.md §0.4)")
+		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); default 256MiB fits every stock board's kernel/initramfs, but a large app may need more - the build fails with an actionable error naming this flag if it doesn't fit; this size becomes part of the app's on-disk layout, so changing it in a later release erases the data partition on upgrade (see docs/design/upgrade-path.md §0.4)")
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
@@ -156,11 +157,14 @@ not touch the cache at all.`,
 	cmd.Flags().IntVar(&consoleBaud, "console-baud", 0,
 		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
 	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
-		"mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
+		"mount the data partition, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
 	cmd.Flags().StringVar(&dataFilesystem, "data-filesystem", defaultDataFilesystem,
-		"filesystem for the writable GOSD-DATA partition, fat32 or ext4; default fat32 is readable in any computer's SD card reader, while ext4 is journaled and survives rapid power-off but cannot be read by macOS or Windows hosts and is unavailable on the Pi family (see COMPATIBILITY.md's ext4 GOSD-DATA row); changing it between releases is an on-disk layout change like --boot-size, so an upgrading device's existing GOSD-DATA is erased and re-established (see docs/design/upgrade-path.md)")
+		"filesystem for the writable data partition, fat32 or ext4; default fat32 is readable in any computer's SD card reader, while ext4 is journaled and survives rapid power-off but cannot be read by macOS or Windows hosts and is unavailable on the Pi family (see COMPATIBILITY.md's ext4 data partition row); changing it between releases is an on-disk layout change like --boot-size, so an upgrading device's existing data partition is erased and re-established (see docs/design/upgrade-path.md)")
+	cmd.Flags().StringVar(&labelPrefix, "label-prefix", "",
+		fmt.Sprintf("prefix for the two partition volume labels, at most %d characters of [A-Za-z0-9_-]: the partitions are labelled <prefix>%s and <prefix>%s, so a flashed card shows up on a computer named after your app (default: the app's name, truncated to fit); the label is part of the app's on-disk layout like --boot-size, so changing it in a later release erases the data partition on upgrade (see docs/design/upgrade-path.md §0.4)",
+			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
-		"reserve a fixed-size comment-padded placeholder file on GOSD-BOOT at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
+		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
 
@@ -263,6 +267,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix"), appName)
+	if err != nil {
+		return err
+	}
+	printPartitionLabels(cmd, "gosd build", labels, dataSizeBytes > 0 || dataExpand)
+
 	hostnameExplicit := hostname != ""
 	deviceHostname := hostname
 	if deviceHostname == "" {
@@ -360,6 +371,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ArtifactsDir:           artifactsDir,
 			CacheDir:               cacheDir,
 			OutputPath:             outputs[b.Name()],
+			Labels:                 labels,
 			DataSizeBytes:          dataSizeBytes,
 			DataExpand:             dataExpand,
 			DataFlush:              dataFlush,
@@ -494,7 +506,7 @@ func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error
 
 	if fs == diskfmt.EXT4 {
 		if size == 0 {
-			return 0, false, fmt.Errorf("--data-filesystem=ext4 needs a writable GOSD-DATA partition to format, but --data-size=0 (the default) means none is created; pass --data-size (e.g. --data-size=1GiB) or --data-size=expand, or drop --data-filesystem=ext4 to build without a data partition")
+			return 0, false, fmt.Errorf("--data-filesystem=ext4 needs a writable data partition to format, but --data-size=0 (the default) means none is created; pass --data-size (e.g. --data-size=1GiB) or --data-size=expand, or drop --data-filesystem=ext4 to build without a data partition")
 		}
 		if minBytes := diskfmt.MinEXT4Bytes(); size < minBytes {
 			return 0, false, fmt.Errorf("--data-size %q is smaller than the %s minimum GoSD's ext4 formatter needs, because %s; use --data-size=%s or larger (--data-size=%d for the exact minimum), or --data-size=expand which always clears it, or build with --data-filesystem=fat32 instead",
@@ -504,7 +516,7 @@ func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error
 	}
 
 	if size > diskfmt.MaxFAT32Bytes() {
-		return 0, false, fmt.Errorf("--data-size %q is larger than GoSD can format: the largest GOSD-DATA partition it will create is %s (%d bytes), because %s; use --data-size=256GiB or less (--data-size=%d for the exact maximum), or --data-size=expand to fill the card up to 256GiB on first boot; if the app needs more storage than that, attach a disk and format it exFAT with the disk package, which has no such ceiling - see %s",
+		return 0, false, fmt.Errorf("--data-size %q is larger than GoSD can format: the largest data partition it will create is %s (%d bytes), because %s; use --data-size=256GiB or less (--data-size=%d for the exact maximum), or --data-size=expand to fill the card up to 256GiB on first boot; if the app needs more storage than that, attach a disk and format it exFAT with the disk package, which has no such ceiling - see %s",
 			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason, diskfmt.MaxFAT32Bytes(), dataSizeLimitDocsURL)
 	}
 	return size, false, nil
@@ -542,14 +554,14 @@ func validateDataFlushExt4Conflict(fs diskfmt.FS, dataFlush bool) error {
 	if fs != diskfmt.EXT4 || !dataFlush {
 		return nil
 	}
-	return fmt.Errorf("--data-filesystem=ext4 can't be combined with --data-flush: \"flush\" is a vfat-only mount option and has no effect on an ext4 GOSD-DATA - durability already comes from the fsync sequence documented in docs/runtime.md regardless of filesystem; drop --data-flush, or drop --data-filesystem=ext4 to use FAT32 (which --data-flush does affect)")
+	return fmt.Errorf("--data-filesystem=ext4 can't be combined with --data-flush: \"flush\" is a vfat-only mount option and has no effect on an ext4 data partition - durability already comes from the fsync sequence documented in docs/runtime.md regardless of filesystem; drop --data-flush, or drop --data-filesystem=ext4 to use FAT32 (which --data-flush does affect)")
 }
 
 // validateDataFilesystemSupport fails fast when --data-filesystem=ext4 is
 // selected and any board in selected has no ext4-capable stock kernel (see
 // boards.Board.EXT4Support) - without this check, gosd build
 // --data-filesystem=ext4 for such a board would either fail deep inside
-// image.Write or, worse, ship an image whose GOSD-DATA the kernel can never
+// image.Write or, worse, ship an image whose data partition the kernel can never
 // mount. Mirrors validateUsbGadget's shape exactly, including naming
 // --board as the fix: remember a bare `gosd build` with no --board builds
 // every public board, so an ext4 refusal must point at restricting the
@@ -574,7 +586,7 @@ func validateDataFilesystemSupport(selected []boards.Board, fs diskfmt.FS) error
 	}
 
 	msg := fmt.Sprintf(
-		"--data-filesystem=ext4 failed: no ext4 support in the pinned kernel for %s; see COMPATIBILITY.md's ext4 GOSD-DATA row",
+		"--data-filesystem=ext4 failed: no ext4 support in the pinned kernel for %s; see COMPATIBILITY.md's ext4 data partition row",
 		strings.Join(incapable, "; "),
 	)
 	if len(capable) > 0 {
@@ -616,7 +628,7 @@ func parseBootSize(s string) (int64, error) {
 			s, size, minBootSizeBytes)
 	}
 	if size > diskfmt.MaxFAT32Bytes() {
-		return 0, fmt.Errorf("--boot-size %q is larger than GoSD can format: the largest GOSD-BOOT partition it will create is %s (%d bytes), because %s",
+		return 0, fmt.Errorf("--boot-size %q is larger than GoSD can format: the largest boot partition it will create is %s (%d bytes), because %s",
 			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason)
 	}
 	if size%bootSizeAlignmentBytes != 0 {

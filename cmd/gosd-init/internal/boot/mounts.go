@@ -66,7 +66,7 @@ func mountEarly(m Mounter) error {
 // to key off across the whole board matrix.
 const bootSentinelFile = "gosd.toml"
 
-// MountBootPartition mounts the GOSD-BOOT FAT partition read-only at
+// MountBootPartition mounts the FAT boot partition read-only at
 // target, trying each candidate device in turn, and returns the device it
 // mounted from. The MMC controller may still be probing when gosd-init
 // reaches this step (no udev is available to wait on), so failures are
@@ -107,9 +107,9 @@ func MountBootPartition(m Mounter, target string, devices []string, timeout time
 			if pathExists(path.Join(target, bootSentinelFile)) {
 				return dev, nil
 			}
-			lastErr = fmt.Errorf("%s mounted as a valid FAT filesystem but has no %s at its root: not the GOSD-BOOT partition", dev, bootSentinelFile)
+			lastErr = fmt.Errorf("%s mounted as a valid FAT filesystem but has no %s at its root: not a GoSD boot partition", dev, bootSentinelFile)
 			if err := m.Unmount(target); err != nil {
-				return "", fmt.Errorf("unmounting %s after it failed the GOSD-BOOT sentinel check: %w", dev, err)
+				return "", fmt.Errorf("unmounting %s after it failed the boot-partition sentinel check: %w", dev, err)
 			}
 		}
 		if !now().Before(deadline) {
@@ -182,7 +182,7 @@ func onDisk(dev, disk string) bool {
 	return true
 }
 
-// ErrDataPartitionMissing reports that no candidate GOSD-DATA device node
+// ErrDataPartitionMissing reports that no candidate data-partition device node
 // exists at all: the image was built without a data partition
 // (--data-size=0, or an image from before the partition existed). Callers
 // treat this as "no persistent storage", never as a boot failure.
@@ -207,7 +207,7 @@ func dataMountOption(filesystem diskfmt.FS, flush bool) string {
 	return "flush"
 }
 
-// MountDataPartition mounts the GOSD-DATA partition (filesystem — FAT32 or
+// MountDataPartition mounts the data partition (filesystem — FAT32 or
 // ext4; see config.json's dataFilesystem) read-write at target, trying each
 // candidate device in turn with the same retry pattern as
 // MountBootPartition. flush selects the vfat "flush" mount option, which
@@ -260,7 +260,7 @@ func MountDataPartition(m Mounter, target string, devices []string, timeout time
 }
 
 // MountDataReadOnlyFallback mounts an empty read-only tmpfs over target, used
-// when no writable GOSD-DATA partition is available (absent or unmountable).
+// when no writable data partition is available (absent or unmountable).
 // It exists so that a write to /data fails loudly instead of silently: /app
 // runs as root, whose CAP_DAC_OVERRIDE bypasses directory permission bits, so
 // a mode-restricted mountpoint wouldn't stop it — but a read-only superblock

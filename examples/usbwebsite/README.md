@@ -9,9 +9,10 @@ A GoSD example that turns a board into a tiny website appliance:
   power it standalone again to serve them.
 
 The volume is the **onboard eMMC** on boards with one fitted (a drive
-labelled `WEBSITE`), and otherwise the **SD card's `GOSD-DATA` partition**
-(a drive labelled `GOSD-DATA`, carrying gosd-init's `.gosd-data` marker
-file) — which is how eMMC-less boards like the Raspberry Pi Zero W and
+labelled `WEBSITE`), and otherwise the **SD card's data partition**
+(a drive labelled `usbweb-data` by default — derived from this app's name,
+see `gosd build --label-prefix` — and carrying gosd-init's `.gosd-data`
+marker file) — which is how eMMC-less boards like the Raspberry Pi Zero W and
 Zero 2W work. The SD partition is created pre-formatted by
 `gosd build --data-size`, so the app never formats anything on that path; it
 only mounts the partition to serve, or unmounts it to hand the raw device to
@@ -20,7 +21,7 @@ a connected computer.
 It's the worked example for [`gadget.MassStorage`](../../gadget), built on
 the [`emmc`](../../emmc) package (`emmc.FormatAndMount` formats the eMMC on
 first boot and hands back the block device behind the mount) and on
-gosd-init's `GOSD-DATA` auto-mount at `/data`.
+gosd-init's data-partition auto-mount at `/data`.
 
 ## What it demonstrates
 
@@ -52,12 +53,12 @@ it just serves.
 Real hardware often ships with something already on the eMMC — vendor
 firmware, a prior project. `usbwebsite` refuses to touch that without
 explicit consent: set `WEBSITE_WIPE_EMMC = "yes"` in the `[env]` table of
-`gosd.toml` on the `GOSD-BOOT` partition (see docs/runtime.md's "App
+`gosd.toml` on the boot partition (see docs/runtime.md's "App
 environment variables"), then reboot. Without it, the app logs what to do
 and idles rather than exiting, since `gosd-init` restarts exited apps
 regardless of exit code and would otherwise crash-loop it forever.
 
-The SD path needs no consent knob: the `GOSD-DATA` partition exists solely
+The SD path needs no consent knob: the data partition exists solely
 for app data, and the app never reformats or relabels it.
 
 ## Build & run
@@ -78,9 +79,9 @@ eMMC-capable board whose eMMC isn't fitted.
 Flash `usbwebsite.img` (see `docs/flashing.md`) and provision WiFi as usual.
 
 - **To add content:** connect the board to a computer with a USB cable. A
-  drive named `WEBSITE` (eMMC) or `GOSD-DATA` (SD) appears; drop your site's
-  files on it (an `index.html` at the top level is the home page), then eject
-  it.
+  drive named `WEBSITE` (eMMC) or `usbweb-data` (SD, by default) appears;
+  drop your site's files on it (an `index.html` at the top level is the home
+  page), then eject it.
 - **To serve:** power the board on its own (a wall charger, or a power-only
   input) and browse to `http://<hostname>.local` — the default hostname is
   `usbwebsite` unless you override it. A brand-new board serves a starter

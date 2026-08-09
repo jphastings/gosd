@@ -105,7 +105,7 @@ func installHint() string {
 	}
 }
 
-// ExtractBootFiles copies every file at the root of imgPath's GOSD-BOOT
+// ExtractBootFiles copies every file at the root of imgPath's boot
 // FAT partition into destDir, without root and without mtools: it opens
 // the image read-only via go-diskfs and reads the FAT32 filesystem
 // directly.
@@ -200,7 +200,7 @@ func Args(workDir, imgPath string, opts Options) []string {
 		"-kernel", filepath.Join(workDir, "Image"),
 		"-initrd", filepath.Join(workDir, "initramfs.cpio.zst"),
 		// gosd.bootdev names the disk the kernel was booted from (the
-		// virtio-blk drive below, always vda) so gosd-init's GOSD-BOOT
+		// virtio-blk drive below, always vda) so gosd-init's boot-partition
 		// probe skips any other candidate — the same mechanism real
 		// bootloaders would use to point past a stale eMMC image (see
 		// gosd-vzk2), exercised end-to-end on every qemu boot.

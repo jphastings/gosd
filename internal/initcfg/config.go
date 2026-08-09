@@ -37,14 +37,14 @@ type Config struct {
 	Env map[string]string `json:"env,omitempty"`
 
 	// DataExpand marks an image built with --data-size=expand: it ships
-	// with no GOSD-DATA partition, and gosd-init creates and formats one
+	// with no data partition, and gosd-init creates and formats one
 	// filling the rest of the card on first boot (see
 	// cmd/gosd-init/internal/dataexpand). Optional: absent — including
 	// every config.json baked before this field existed — means no
 	// expansion, exactly like --data-size=0.
 	DataExpand bool `json:"dataExpand,omitempty"`
 
-	// DataFlush marks whether gosd-init mounts GOSD-DATA, and blockmount
+	// DataFlush marks whether gosd-init mounts the data partition, and blockmount
 	// mounts any emmc/disk vfat volume, with the vfat "flush" option: it
 	// pushes a file's data and metadata to the card promptly on close(2),
 	// at a real write-throughput cost. Baked in by gosd build --data-flush;
@@ -69,20 +69,20 @@ type Config struct {
 	DataFlush bool `json:"dataFlush,omitempty"`
 
 	// DataFilesystem records gosd build --data-filesystem: which
-	// filesystem GOSD-DATA is formatted as (fat32, the universal default
-	// every host can read and repair, or ext4, journaled and
+	// filesystem the data partition is formatted as (fat32, the universal
+	// default every host can read and repair, or ext4, journaled and
 	// crash-resilient but unreadable from a macOS or Windows host and
-	// unsupported on the Pi family - see COMPATIBILITY.md's ext4
-	// GOSD-DATA row). gosd-init maps this string to a diskfmt.FS and
+	// unsupported on the Pi family - see COMPATIBILITY.md's ext4 data
+	// partition row). gosd-init maps this string to a diskfmt.FS and
 	// mounts /data with it, whether the partition ships in the image or
 	// (DataExpand) is created and formatted on first boot. Optional:
 	// absent - including every config.json baked before this field
 	// existed - means fat32.
 	//
-	// Unlike DataFlush, this is not a mere mount tweak: it changes
-	// GOSD-DATA's on-card layout, the same on-disk-ABI category
+	// Unlike DataFlush, this is not a mere mount tweak: it changes the
+	// data partition's on-card layout, the same on-disk-ABI category
 	// --boot-size is in (see docs/design/upgrade-path.md) - an app that
-	// changes it between releases loses its existing GOSD-DATA on the
+	// changes it between releases loses its existing data partition on the
 	// next upgrade, reformatted to the newly requested filesystem, rather
 	// than adopted. Despite that, it is still deliberately excluded from
 	// ComputeIdentity's hashed payload, for the same structural reason
@@ -100,6 +100,34 @@ type Config struct {
 	// TestBuildIdentityUnaffectedByDataFilesystem
 	// (cmd/gosd/build_integration_test.go).
 	DataFilesystem string `json:"dataFilesystem,omitempty"`
+
+	// DataLabel is the volume label the data partition carries - per-app
+	// (`gosd build --label-prefix`, see internal/naming.LabelsFor), so a
+	// flashed card shows up on a person's desktop named after the app
+	// rather than after GoSD. gosd-init compares it against what the
+	// partition actually holds before adopting a survivor a reflash left
+	// behind, and stamps it onto anything it formats itself (see
+	// cmd/gosd-init/internal/dataexpand). Nothing on-device reads the boot
+	// partition's label, so only this one is baked in.
+	//
+	// Not optional, and deliberately without omitempty: `gosd build`
+	// always resolves a label pair, so every config.json this version
+	// writes carries one, and an empty value is a wiring bug rather than
+	// a default to fill in - dataexpand refuses it outright rather than
+	// guessing a label to compare against.
+	//
+	// Like DataFilesystem (and unlike DataFlush) this is on-card ABI, in
+	// --boot-size's category (see docs/design/upgrade-path.md): an app
+	// that changes its label prefix - or is renamed, since the default
+	// prefix follows the app's name - between releases finds its old data
+	// partition unadoptable on the next reflash-upgrade, and it is
+	// reformatted rather than kept. Also deliberately excluded from
+	// ComputeIdentity's hashed payload, for exactly the structural reason
+	// DataFilesystem is: config.json is excluded from that payload in its
+	// entirety, and this field appears nowhere else in it. Pinned by
+	// TestBuildIdentityUnaffectedByLabelPrefix
+	// (cmd/gosd/build_integration_test.go).
+	DataLabel string `json:"dataLabel"`
 
 	// IngressCloudflared marks an image built with `gosd build --ingress
 	// cloudflared`: a cloudflared binary is baked into the initramfs at

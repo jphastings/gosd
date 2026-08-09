@@ -98,7 +98,7 @@ no rebuild needed on their end.
 
 If you expect to ship a second release of this app, build with
 `--data-size=expand` rather than a fixed `--data-size`. A fixed size
-embeds a freshly formatted `GOSD-DATA` partition inside the `.img` file
+embeds a freshly formatted data partition inside the `.img` file
 itself, so flashing any later version overwrites that region directly —
 `/data` is wiped on every reflash, with no exceptions. `expand` ships no
 data partition at all and has the device grow one on first boot instead;
@@ -115,7 +115,7 @@ This survival only holds across a reflash that keeps the same
 
 ## Sizing the boot volume (`--boot-size`)
 
-`gosd build`'s `GOSD-BOOT` partition defaults to 256MiB, enough for every
+`gosd build`'s boot partition defaults to 256MiB, enough for every
 stock board's kernel and initramfs. An app bundling a large companion
 binary (see [`--with-external`](runtime.md#bundling-a-companion-binary---with-external))
 may need more:
@@ -141,23 +141,52 @@ release-notes level, the same as any other breaking change.
 
 ## Choosing the data partition's filesystem (`--data-filesystem`)
 
-`gosd build`'s `GOSD-DATA` partition defaults to FAT32 — readable and
+`gosd build`'s data partition defaults to FAT32 — readable and
 repairable from any computer's SD card reader. Build with
 `--data-filesystem=ext4` instead if your app needs metadata
 crash-consistency across power cuts (a journal, and mount-time replay);
 see [`docs/runtime.md`'s "Choosing a filesystem: FAT32 or
 ext4"](runtime.md#choosing-a-filesystem-fat32-or-ext4) for what that does
 and doesn't buy you, and for which boards support it at all (the Pi
-family doesn't — see `COMPATIBILITY.md`'s ext4 `GOSD-DATA` row).
+family doesn't — see `COMPATIBILITY.md`'s ext4 data partition row).
 
 **Like `--boot-size`, the filesystem you ship becomes part of your app's
-on-disk layout ABI.** A FAT32 `GOSD-DATA` is not an ext4 one: a later
+on-disk layout ABI.** A FAT32 data partition is not an ext4 one: a later
 release that switches `--data-filesystem` can't recognize what's already
 on the card as its own `/data`, and the next reflash formats a fresh one
 in the newly requested filesystem instead of adopting it — a clean wipe,
 not corruption, but real data loss for anyone who upgrades. If a release
 must change `--data-filesystem`, say so at release-notes level, the same
 as any other breaking change.
+
+## Naming the drives your users see (`--label-prefix`)
+
+Every image carries two FAT volume labels: `<prefix>-boot` and
+`<prefix>-data`, where `<prefix>` defaults to your app's own name
+(sanitized and truncated to 6 bytes) — so an app called `hello` ships a
+drive named `hello-boot` (and, if `/data` is FAT32, `hello-data`) when the
+card is plugged into a computer. Override it with `gosd build
+--label-prefix`; an explicit prefix is used verbatim (no sanitizing or
+lowercasing) and may hold up to 6 letters, digits, hyphens or underscores —
+a volume label is stored as a FAT short-name entry, so the punctuation that
+entry reserves is refused rather than quietly mangled. The chosen labels are
+printed during the build.
+
+**Like `--boot-size` and `--data-filesystem`, the label pair is part of
+your app's on-disk layout ABI.** A later release that changes
+`--label-prefix` — or simply renames the app, since the prefix defaults
+to it — means the next reflash-upgrade finds a data partition labelled
+with the old prefix, treats it as debris, and cleanly reformats it
+instead of adopting it: a clean wipe, not corruption, but real data loss
+for anyone who upgrades, and the boot partition is unaffected either way.
+This is also a **clean break with no migration** for anyone whose card was
+flashed by a build of your app made with a pre-`--label-prefix` release of
+gosd: their card carries the old fixed `GOSD-DATA` label, which a rebuilt
+image no longer recognizes, so their first reflash-upgrade reformats it
+too — a one-time cost of upgrading gosd itself, not something a release of
+your app can avoid. If a release changes `--label-prefix` (or the app's
+name), say so at release-notes level, the same as any other breaking
+change.
 
 ## Device filtering: which boards show up for which device selection
 

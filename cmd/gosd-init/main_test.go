@@ -14,7 +14,7 @@ func TestBootDevicesIncludesVirtioAfterMMC(t *testing.T) {
 }
 
 // TestDataDevicesIncludesVirtioAfterMMC is TestBootDevicesIncludesVirtioAfterMMC's
-// counterpart for the optional GOSD-DATA partition's candidate list.
+// counterpart for the optional data partition's candidate list.
 func TestDataDevicesIncludesVirtioAfterMMC(t *testing.T) {
 	want := []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
 	if !equal(dataDevices, want) {

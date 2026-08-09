@@ -1,14 +1,14 @@
 // Package provsnapshot keeps a copy of a device's settled provisioning on
 // the data partition, and uses it to heal the first boot after a reflash.
 //
-// Reflashing a card rewrites the whole of GOSD-BOOT, so every hand-edited
+// Reflashing a card rewrites the whole boot partition, so every hand-edited
 // gosd.toml value and every wizard-provided hostname/WiFi credential is
-// replaced by the new image's baked defaults, while GOSD-DATA survives
+// replaced by the new image's baked defaults, while the data partition survives
 // (see docs/design/upgrade-path.md §2 and §3). This package closes that
 // gap: after provisioning settles on each successful boot it writes a
 // snapshot into /data, and when a later boot finds the running image's
 // identity differs from the one the snapshot was taken under, it puts the
-// operator's provisioning back — into gosd.toml on GOSD-BOOT, so it stays
+// operator's provisioning back — into gosd.toml on the boot partition, so it stays
 // visible and editable exactly where they left it.
 //
 // # What the snapshot is
@@ -97,7 +97,7 @@
 // snapshotted one is". There is no cloud-init equivalent (the Imager
 // wizard has no concept of a tunnel), so fresh intent comes from gosd.toml
 // alone. Because gosd.toml is the *only* place the token ever lives — no
-// separate credentials file exists on GOSD-BOOT (epic gosd-virc decision
+// separate credentials file exists on the boot partition (epic gosd-virc decision
 // 3) — restoring the whole section through the same mechanism as WiFi is
 // what lets a Cloudflare Tunnel survive a plain Imager reflash exactly
 // like a hand-edited WiFi passphrase does.
@@ -113,12 +113,12 @@
 // anything this package does. The two layers stack: this package's job is
 // only to keep the operator-facing hostname/port/funnel_port (and the
 // authkey, while it's still there) from evaporating out of gosd.toml on
-// GOSD-BOOT, exactly as it does for a Cloudflare Tunnel; the node keeping
+// the boot partition, exactly as it does for a Cloudflare Tunnel; the node keeping
 // its identity and public URL across that same reflash is a property of
 // /data alone, holding even when the restored section carries no authkey at
 // all because the operator already removed it.
 //
-// Restores are written back to gosd.toml on GOSD-BOOT (durably, briefly
+// Restores are written back to gosd.toml on the boot partition (durably, briefly
 // remounting it read-write) and applied in memory for the boot in progress,
 // so a reflashed board rejoins its network without a second reboot. Writing
 // the file re-renders it from the gosd CLI's template: an operator's own
@@ -133,7 +133,7 @@
 // An image built before config.json carried an identity, or a snapshot
 // taken by one, cannot detect a reflash at all; the snapshot is still kept
 // up to date, and the self-heal is skipped with a log line. When the
-// write-back to GOSD-BOOT fails the snapshot is deliberately *not*
+// write-back to the boot partition fails the snapshot is deliberately *not*
 // refreshed, so the next boot still sees the identity skew and retries the
 // heal rather than silently forgetting it.
 package provsnapshot
@@ -158,7 +158,7 @@ import (
 const Dir = ".gosd/provision-snapshot"
 
 // BootConfigFile is the name of the hand-editable config file at the root
-// of GOSD-BOOT that a restore writes back to.
+// of the boot partition that a restore writes back to.
 const BootConfigFile = "gosd.toml"
 
 const (
@@ -206,7 +206,7 @@ func (s Snapshot) equal(other Snapshot) bool {
 		s.Baked.equal(other.Baked)
 }
 
-// CloudInit is what the Raspberry Pi Imager wizard left on GOSD-BOOT this
+// CloudInit is what the Raspberry Pi Imager wizard left on the boot partition this
 // boot (see internal/provision); both fields are empty when the wizard was
 // skipped.
 type CloudInit struct {
@@ -262,7 +262,7 @@ type Deps struct {
 	WriteFile func(name string, data []byte) error
 
 	// WriteBootFile durably writes one file at the root of the normally
-	// read-only GOSD-BOOT partition.
+	// read-only boot partition.
 	WriteBootFile func(name string, data []byte) error
 
 	Log func(format string, args ...any)
@@ -270,7 +270,7 @@ type Deps struct {
 
 // NewDeps wires Deps against the real filesystem: dataDir is the snapshot
 // directory on the mounted data partition (dataMount/Dir), and
-// writeBootFile writes a named file at the root of the mounted GOSD-BOOT
+// writeBootFile writes a named file at the root of the mounted boot
 // partition (see boot.Platform.WriteBootFile, which handles the
 // read-write remount that needs).
 func NewDeps(dataDir string, writeBootFile func(name string, data []byte) error, log func(format string, args ...any)) Deps {
@@ -638,7 +638,7 @@ type bakedWifi struct {
 
 // encode renders the two snapshot files, in write order. bakeHostname is
 // always true: this gosd.toml lives in the snapshot directory, never on
-// GOSD-BOOT, so the "leave it commented for the wizard" concern that
+// the boot partition, so the "leave it commented for the wizard" concern that
 // gosdtoml.Render's bakeHostname flag exists for doesn't apply here - the
 // snapshot must round-trip whatever Effective.Hostname actually is through
 // decode's gosdtoml.Parse. Effective.Ingress round-trips the same way,

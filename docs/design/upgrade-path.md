@@ -45,18 +45,39 @@ already did — flash the SD card with Raspberry Pi Imager per
 5. **The data partition's filesystem is per-app, exactly like its size**
    (JP, 2026-08-09, bean `gosd-95yu`). `gosd build --data-filesystem`
    chooses `fat32` (default, universally readable) or `ext4` (journaled,
-   gated per-board — see `COMPATIBILITY.md`'s ext4 `GOSD-DATA` row), and
+   gated per-board — see `COMPATIBILITY.md`'s ext4 data partition row), and
    like `--boot-size` in decision 4, that choice becomes part of the
-   app's on-card layout ABI: a FAT32 `GOSD-DATA` is not an ext4 one, so a
+   app's on-card layout ABI: a FAT32 data partition is not an ext4 one, so a
    later release that switches filesystems can't simply adopt what's
    already on the card. §2's adoption gate treats a filesystem mismatch
    the same way it already treats a boot-size-driven offset mismatch — a
    clean reformat to the new choice on the next upgrade, never
    corruption, and a release-notes-level breaking change for that app.
+6. **The boot/data volume labels are per-app, and are on-card ABI too**
+   (JP, 2026-08-09, bean `gosd-lo7k`). Labels stop being the fixed
+   `GOSD-BOOT`/`GOSD-DATA` and become `<prefix>-boot`/`<prefix>-data`,
+   where `<prefix>` defaults to the app's sanitized name (truncated to 6
+   bytes) and is overridable with `gosd build --label-prefix`. Exactly
+   like decisions 4 and 5, the label pair joins `--boot-size` and
+   `--data-filesystem` as part of the app's on-card layout ABI: §2's
+   adoption gate now checks the data partition's label against this
+   image's configured data label, so changing the prefix (or renaming the
+   app, since the prefix defaults to it) between releases means the next
+   reflash-upgrade finds the old label, treats the partition as debris,
+   and cleanly reformats it — never a halt, and the boot partition is
+   unaffected. **Clean break, no migration:** cards flashed by a
+   pre-`gosd-lo7k` release carry `GOSD-DATA`, which no image built after
+   this change will ever recognize as its own, so their first
+   reflash-upgrade reformats the data partition — a release-notes-level
+   breaking change. A side effect: cross-app reflash no longer silently
+   inherits the previous app's data the way sharing one universal
+   `GOSD-DATA` label always did — unless two apps happen to share the
+   same 6-byte prefix, which re-adopts across them exactly as before,
+   just narrower.
 
 ## 1. The four routes, against the constraint
 
-| Route | Operator effort | Offline boards | GOSD-DATA | gosd.toml | New tooling |
+| Route | Operator effort | Offline boards | Data partition | gosd.toml | New tooling |
 |---|---|---|---|---|---|
 | 1 self-update | zero (automatic) | ✗ never works | survives | survives | update endpoint (gosd-vxal) |
 | 2 custom flasher | new tool, same clicks | ✓ | survives | survives | GUI × 3 OSes, signed, maintained |
@@ -72,13 +93,13 @@ already half-designed (`ab-updates` §6's endpoint, HMAC auth, and
 phase 2, out of scope here. Route 4 shares phase 2's staging/verify
 design and is deferred with it.
 
-## 2. Making plain reflash non-destructive (GOSD-DATA re-adoption)
+## 2. Making plain reflash non-destructive (data partition re-adoption)
 
 Why reflashing destroys `/data` today: writing the image rewrites the
 MBR, whose partition table has no partition 2 — the entry is dropped even
 though, for a `--data-size=expand` image, the image file *ends* at the
 boot partition and the data region's bytes are never touched by the
-flash. (A fixed-size image embeds a freshly formatted GOSD-DATA in the
+flash. (A fixed-size image embeds a freshly formatted data partition in the
 image itself, so the flash overwrites the data region directly — nothing
 can save it. Consequence: **`--data-size=expand` is the recommended mode
 for updatable deployments**, and the docs will say so.)
@@ -97,7 +118,7 @@ always right for the image that was actually flashed.
 offset := end of MBR partition 1        # CHANGED: derived, not constant
 AddKernelPartition(...)                 # partition node appears (existing)
 contents := Inspect(partitionDevice)    # NEW: look before formatting
-if contents is FAT32 labelled GOSD-DATA:
+if contents is FAT32 labelled with this image's configured data label:
     skip FormatFAT32                    # adopt the survivor
 FormatFAT32(...)                        # otherwise, as today
 WriteMBR(...)                           # commit record, as today
@@ -109,7 +130,9 @@ leaves no entry, and the next boot redoes everything, now finding and
 adopting the same survivor).
 
 Adoption is gated on **four** things: the derived offset, FAT32, the
-exact label — and a **format-completion marker** dataexpand itself wrote
+app's configured data label (matched case-insensitively, so a host tool
+that displays or rewrites it uppercased can't trigger a spurious reformat)
+— and a **format-completion marker** dataexpand itself wrote
 into the filesystem's root after the format's sync barrier (write file →
 sync → marker → sync). The marker exists because a filesystem probe is
 not proof of a *completed* format: go-diskfs writes the volume label
@@ -130,7 +153,7 @@ already-committed MBR entry is deliberately NOT treated as corruption
 
 What happens when a release changes the boot volume size (§0.4's
 caveat, mechanically): if it **grew**, the flash itself overwrote the
-old GOSD-DATA's superblock (the bigger image extends past the old data
+old data partition's superblock (the bigger image extends past the old data
 offset), the new offset holds unrecognizable mid-partition bytes, and
 dataexpand formats fresh — a clean wipe, indistinguishable from a first
 flash. If it **shrank**, the old superblock actually survives (it lies
@@ -164,7 +187,7 @@ re-applies it on the first boot after a reflash.
   is the updatable-deployment default).
 - **Detect "first boot after reflash":** the snapshot's recorded image
   identity differs from the running image's (§4). Wizard re-provisioning
-  is visible independently: fresh cloud-init files on GOSD-BOOT.
+  is visible independently: fresh cloud-init files on the boot partition.
 - **Restore precedence (freshest intent wins):**
   1. Anything the operator just provided via the wizard (fresh cloud-init
      hostname/WiFi) is applied as normal and *also refreshes the
@@ -172,7 +195,7 @@ re-applies it on the first boot after a reflash.
   2. `[env]` keys in the snapshot whose values differ from their
      *contemporaneous* baked defaults (i.e. provable hand-edits) are
      restored into the new card's `gosd.toml` — written back to
-     GOSD-BOOT so the operator can still see and edit them — unless the
+     the boot partition so the operator can still see and edit them — unless the
      new image's template itself changed that key's baked default AND the
      snapshot value equals the old default (not a hand-edit at all).
   3. Hostname/WiFi restore from the snapshot only when the fresh boot has
@@ -196,12 +219,12 @@ anywhere).
 ## 5. The stale-file question, answered
 
 "How does a new firmware delete files of a previous firmware?" — under
-route 3 the question dissolves: the flash rewrites all of GOSD-BOOT, so
-stale files cannot exist; the only thing that survives is what §3
-deliberately restores. The manifest-of-owned-paths scheme is therefore
-NOT needed for the baseline. It returns in phase 2 (self-update writes
-into a live GOSD-BOOT and must delete what the new payload doesn't
-carry) and is recorded there, not built now.
+route 3 the question dissolves: the flash rewrites all of the boot
+partition, so stale files cannot exist; the only thing that survives is
+what §3 deliberately restores. The manifest-of-owned-paths scheme is
+therefore NOT needed for the baseline. It returns in phase 2 (self-update
+writes into a live boot partition and must delete what the new payload
+doesn't carry) and is recorded there, not built now.
 
 ## 6. Phasing and implementation beans
 
@@ -211,8 +234,8 @@ Phase 1 (this design, buildable now):
   build-time fit validation and a usage report so developers watch their
   headroom (§0.4).
 - `gosd-lirl` — dataexpand: derive the data offset from the flashed MBR
-  (deleting the mirrored constant) and re-adopt an orphaned GOSD-DATA on
-  first boot (§2).
+  (deleting the mirrored constant) and re-adopt an orphaned data partition
+  on first boot (§2).
 - `gosd-acdn` — image identity in config.json (§4).
 - `gosd-ry3b` — provisioning snapshot + first-boot self-heal (§3;
   blocked by `gosd-acdn`).
@@ -222,7 +245,7 @@ Phase 1 (this design, buildable now):
 
 Phase 2 (deferred, new design work, after `gosd-vxal` lands its
 endpoint): self-update of boot files over the network — staging area on
-GOSD-BOOT, verify-then-commit, the manifest scheme from §5, and the
+the boot partition, verify-then-commit, the manifest scheme from §5, and the
 sneakernet bundle (route 4) as the offline carrier of the same payload
 format. Tracked as `gosd-522n` (blocked by `gosd-vxal`).
 

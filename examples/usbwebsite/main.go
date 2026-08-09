@@ -5,7 +5,7 @@
 // the site's files, then power it standalone again to serve them.
 //
 // The volume is the onboard eMMC on boards that have one fitted, and
-// otherwise the SD card's GOSD-DATA partition — so eMMC-less boards like the
+// otherwise the SD card's data partition — so eMMC-less boards like the
 // Raspberry Pi Zeros work too, as long as the image was built with
 // `gosd build --data-size` (which creates that partition pre-formatted; the
 // app never formats anything on the SD card). The board must be built with
@@ -15,7 +15,7 @@
 // just serves.
 //
 // It demonstrates gadget.MassStorage (sharing a block device over USB) on top
-// of the emmc package and gosd-init's GOSD-DATA auto-mount. The
+// of the emmc package and gosd-init's data-partition auto-mount. The
 // USB-vs-website decision is made once per boot: presenting the drive and
 // mounting it locally must never be live at the same time (the host writes
 // raw blocks with no knowledge of our filesystem), so the app either hands
@@ -32,7 +32,7 @@
 // reformat that eMMC. Without consent it leaves the eMMC untouched, logs
 // what to do about it, and idles rather than exiting — gosd-init restarts
 // exited apps regardless of exit code, so exiting here would just crash-loop.
-// The GOSD-DATA path needs no such consent: that partition is created by
+// The data-partition path needs no such consent: that partition is created by
 // `gosd build` for app data, and this app only ever mounts and shares it.
 package main
 
@@ -54,10 +54,10 @@ const (
 	emmcMountpoint = "/storage"
 	httpAddr       = ":80"
 
-	// dataMountpoint is where gosd-init mounts the GOSD-DATA partition on
-	// every boot; bootMountpoint is where it mounts GOSD-BOOT (partition 1
-	// of the same disk), from which the data partition's device node can be
-	// derived when it isn't currently mounted.
+	// dataMountpoint is where gosd-init mounts the data partition on
+	// every boot; bootMountpoint is where it mounts the boot partition
+	// (partition 1 of the same disk), from which the data partition's device
+	// node can be derived when it isn't currently mounted.
 	dataMountpoint = "/data"
 	bootMountpoint = "/boot"
 
@@ -89,7 +89,7 @@ const (
 // storage is the volume this boot serves and shares: where its filesystem is
 // mounted, the block device behind it (handed raw to gadget.MassStorage),
 // and how to release and restore the mount when switching between the two —
-// which differs between the eMMC and GOSD-DATA backings.
+// which differs between the eMMC and data-partition backings.
 type storage struct {
 	mountpoint string
 	device     string
@@ -132,7 +132,7 @@ func emmcOptions(destructive bool) emmc.Options {
 
 // claimStorage picks this boot's website volume: the onboard eMMC when the
 // board has one (formatted on first use, with the same consent gate as
-// before), otherwise the SD card's GOSD-DATA partition, which `gosd build
+// before), otherwise the SD card's data partition, which `gosd build
 // --data-size` creates pre-formatted and gosd-init mounts at /data. It
 // returns ok=false — after logging the action that would fix it — when the
 // board has neither volume or the eMMC needs consent the user hasn't given;
@@ -159,7 +159,7 @@ func claimStorage() (storage, bool) {
 		return claimDataPartition()
 	case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
 		fmt.Printf("gosd usbwebsite: %v\n", res.Err)
-		fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the GOSD-BOOT partition, then reboot\n", wipeConsentEnv)
+		fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the boot partition, then reboot\n", wipeConsentEnv)
 		return storage{}, false
 	default:
 		fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
@@ -168,7 +168,7 @@ func claimStorage() (storage, bool) {
 	return storage{}, false // unreachable: every case above returns or exits
 }
 
-// claimDataPartition claims the SD card's GOSD-DATA partition as the website
+// claimDataPartition claims the SD card's data partition as the website
 // volume. gosd-init normally has it mounted at /data already; when it isn't
 // mounted but its device node exists (a mount raced or failed at boot, or a
 // warm restart after this app released it), the partition is mounted here.
@@ -178,14 +178,14 @@ func claimStorage() (storage, bool) {
 func claimDataPartition() (storage, bool) {
 	part, err := findDataPartition()
 	if err != nil {
-		fmt.Println("gosd usbwebsite: no onboard eMMC on this board, and no GOSD-DATA partition to fall back to")
+		fmt.Println("gosd usbwebsite: no onboard eMMC on this board, and no data partition to fall back to")
 		fmt.Printf("gosd usbwebsite: %v\n", err)
 		fmt.Println("gosd usbwebsite: rebuild the image with `gosd build --usb-gadget --data-size 256MiB` (or larger) to give the website somewhere to live")
 		return storage{}, false
 	}
 	if !part.mounted {
 		if err := mountVFAT(part.device, dataMountpoint); err != nil {
-			fmt.Printf("gosd usbwebsite: the GOSD-DATA partition (%s) exists but could not be mounted: %v\n", part.device, err)
+			fmt.Printf("gosd usbwebsite: the data partition (%s) exists but could not be mounted: %v\n", part.device, err)
 			fmt.Println("gosd usbwebsite: its filesystem may be damaged — repair it on a computer, or reflash the image")
 			return storage{}, false
 		}
@@ -193,24 +193,24 @@ func claimDataPartition() (storage, bool) {
 	return storage{
 		mountpoint: dataMountpoint,
 		device:     part.device,
-		source:     "SD card GOSD-DATA partition",
+		source:     "SD card data partition",
 		unmount:    func() error { return unmountVFAT(dataMountpoint) },
 		remount:    func() error { return mountVFAT(part.device, dataMountpoint) },
 	}, true
 }
 
-// dataPartition locates the GOSD-DATA partition: the device node backing it
+// dataPartition locates the data partition: the device node backing it
 // and whether it is currently mounted at dataMountpoint.
 type dataPartition struct {
 	device  string
 	mounted bool
 }
 
-// procMounts is the kernel's mount table, read to locate the GOSD-DATA
+// procMounts is the kernel's mount table, read to locate the data
 // partition and whether gosd-init already mounted it.
 const procMounts = "/proc/mounts"
 
-// findDataPartition locates the GOSD-DATA partition on the booted disk and
+// findDataPartition locates the data partition on the booted disk and
 // reports whether it's currently mounted at dataMountpoint. An error means
 // there is none to use — the caller's cue that this image was built without
 // `--data-size`.
@@ -231,7 +231,7 @@ func findDataPartition() (dataPartition, error) {
 	return part, nil
 }
 
-// dataPartitionFromMounts finds the GOSD-DATA partition in a mount table
+// dataPartitionFromMounts finds the data partition in a mount table
 // (/proc/mounts format): the block device mounted at dataMountpoint when
 // gosd-init mounted it at boot, otherwise the second partition of the disk
 // the boot partition mounted from — the same p1→p2 relationship gosd-init's
@@ -379,9 +379,10 @@ const starterPage = `<!doctype html>
 <h1>It works!</h1>
 <p>This page is served by a GoSD board from its website storage.</p>
 <p>Plug the board into a computer over USB and it appears as a removable drive
-(labelled WEBSITE when backed by onboard eMMC, GOSD-DATA when backed by the SD
-card). Replace this index.html (and add whatever else you like), eject the
-drive, then power the board on its own again to serve your site.</p>
+(labelled WEBSITE when backed by onboard eMMC, or usbweb-data — derived from
+this app's name — when backed by the SD card). Replace this index.html (and
+add whatever else you like), eject the drive, then power the board on its
+own again to serve your site.</p>
 `
 
 // ensureStarterPage writes the placeholder index.html when the site has none,
@@ -427,7 +428,7 @@ func isTruncatedStarter(content string) bool {
 // on the card by the time it returns: write a temp file, fsync it, rename it
 // over the real name, then fsync the renamed file and its directory. Both
 // backings usbwebsite serves from (the eMMC's whole-device FAT and the SD
-// card's GOSD-DATA FAT32 partition) share the same weak crash-safety, so the
+// card's data FAT32 partition) share the same weak crash-safety, so the
 // same pattern applies — see docs/runtime.md's "Making a write durable".
 func writeFileDurably(path string, data []byte) error {
 	tmp := path + ".tmp"

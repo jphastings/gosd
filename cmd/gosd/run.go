@@ -40,6 +40,7 @@ var (
 	runDataFlush    bool
 	runIngress      []string
 	runDataSize     string
+	runLabelPrefix  string
 )
 
 func newRunCmd() *cobra.Command {
@@ -78,13 +79,16 @@ place and prints its path instead.`,
 	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
 		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups; also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
 	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
-		"size of the FAT32 GOSD-BOOT partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
+		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
 	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
-		"same flag as gosd build's --data-flush: mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
+		"same flag as gosd build's --data-flush: mount the data partition, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
+	cmd.Flags().StringVar(&runLabelPrefix, "label-prefix", "",
+		fmt.Sprintf("same flag as gosd build's --label-prefix: prefix for the two partition volume labels, at most %d characters of [A-Za-z0-9_-], so the partitions are labelled <prefix>%s and <prefix>%s (default: the app's name, truncated to fit)",
+			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&runIngress, "ingress", nil,
 		fmt.Sprintf("same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s) - qemu-virt is arm64, so this exercises the runtime path in CI", strings.Join(ingressAgentNames(), ", ")))
 	cmd.Flags().StringVar(&runDataSize, "data-size", defaultDataSize,
-		"same flag as gosd build's --data-size: size of the writable GOSD-DATA partition (e.g. 512MiB, 2GiB), or 'expand'; default 0 omits the partition - required by some --ingress agents (e.g. tailscale-funnel) that need to persist state across reboots")
+		"same flag as gosd build's --data-size: size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand'; default 0 omits the partition - required by some --ingress agents (e.g. tailscale-funnel) that need to persist state across reboots")
 
 	return cmd
 }
@@ -123,7 +127,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	appName := naming.Sanitize(filepath.Base(filepath.Clean(pkgPath)))
+	appName, err := deriveAppName(pkgPath)
+	if err != nil {
+		return err
+	}
+
+	labels, err := resolveLabels(runLabelPrefix, cmd.Flags().Changed("label-prefix"), appName)
+	if err != nil {
+		return err
+	}
+	printPartitionLabels(cmd, "gosd run", labels, dataSizeBytes > 0 || dataExpand)
+
 	hostnameExplicit := runHostname != ""
 	deviceHostname := runHostname
 	if deviceHostname == "" {
@@ -209,6 +223,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		ArtifactsDir:           runArtifactsDir,
 		CacheDir:               cacheDir,
 		OutputPath:             imgPath,
+		Labels:                 labels,
 		DataSizeBytes:          dataSizeBytes,
 		DataExpand:             dataExpand,
 		DataFlush:              runDataFlush,

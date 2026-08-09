@@ -12,7 +12,7 @@ import (
 // fsync the file again (the rename leaves the new directory entry with a
 // zero start cluster until it does), then fsync the containing directory.
 //
-// Both filesystems gosd-init writes to — GOSD-DATA and GOSD-BOOT — are FAT,
+// Both filesystems gosd-init writes to — the data and boot partitions — are FAT,
 // which has no journal and holds the rename's directory blocks dirty for
 // the kernel's full writeback expiry (~30s) without those last two syncs.
 // A gosd-init write that a reboot or power cut can silently undo is worse

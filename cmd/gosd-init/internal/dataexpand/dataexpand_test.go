@@ -149,6 +149,11 @@ func (c *fakeCard) logged(substr string) bool {
 	return false
 }
 
+// testDataLabel stands in for whatever label `gosd build --label-prefix`
+// baked into the image under test: labels are per app now, so no value here
+// is special, and every gate below has to work off the configured one.
+const testDataLabel = "myapp-data"
+
 // testOptions is the FAT32-expand-image baseline every pre-existing test in
 // this file was written against, before Options grew Filesystem/Expand:
 // FAT32 is the default filesystem, and --data-size=expand is what this
@@ -160,6 +165,7 @@ func testOptions() Options {
 		PartitionDevice: "/dev/mmcblk0p2",
 		NodeTimeout:     5 * time.Second,
 		Filesystem:      diskfmt.FAT32,
+		DataLabel:       testDataLabel,
 		Expand:          true,
 	}
 }
@@ -225,7 +231,7 @@ func TestRunCreatesTheDataPartitionOnFirstBoot(t *testing.T) {
 	// record, written only after the formatted filesystem is durable, so
 	// power loss at any earlier point leaves no entry and the next boot
 	// redoes everything.
-	wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
+	wantActions := []string{"add-partition-2", "format-" + testDataLabel, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
 	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 		t.Fatalf("actions = %v, want %v", card.actions, wantActions)
 	}
@@ -272,7 +278,7 @@ func TestRunAdoptsASurvivingDataPartitionAfterAReflash(t *testing.T) {
 	// Reflashing rewrites the MBR (no partition 2) but never touches the
 	// bytes beyond the boot partition, so the app's data is still there.
 	card := newFakeCard(defaultMBR(), 8<<30)
-	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel}
 	card.marked = true
 
 	if err := Run(card.deps(), testOptions()); err != nil {
@@ -295,8 +301,8 @@ func TestRunAdoptsASurvivingDataPartitionAfterAReflash(t *testing.T) {
 func TestRunFormatsWhateverIsNotASurvivingDataPartition(t *testing.T) {
 	// The last two cases are the debris of an interrupted format: go-diskfs
 	// writes the volume label last and syncs nothing along the way, so a
-	// power cut can leave a volume that inspects as GOSD-DATA over
-	// incomplete FAT tables. Only the marker — written after this package's
+	// power cut can leave a volume that inspects as a correctly labelled
+	// volume over incomplete FAT tables. Only the marker — written after this package's
 	// own sync barrier — separates that from a real survivor, and adopting
 	// it would commit an MBR entry over a broken filesystem forever.
 	cases := []struct {
@@ -311,11 +317,11 @@ func TestRunFormatsWhateverIsNotASurvivingDataPartition(t *testing.T) {
 		{name: "mid-partition rubble", contents: diskfmt.Contents{}},
 		{
 			name:     "a labelled volume with no completion marker",
-			contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: Label},
+			contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel},
 		},
 		{
 			name:      "a labelled volume whose root directory will not read",
-			contents:  diskfmt.Contents{FS: diskfmt.FAT32, Label: Label},
+			contents:  diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel},
 			marked:    true,
 			markerErr: errors.New("invalid argument"),
 		},
@@ -328,7 +334,7 @@ func TestRunFormatsWhateverIsNotASurvivingDataPartition(t *testing.T) {
 			if err := Run(card.deps(), testOptions()); err != nil {
 				t.Fatalf("Run() = %v, want nil", err)
 			}
-			wantActions := []string{"add-partition-2", "format-" + Label, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
+			wantActions := []string{"add-partition-2", "format-" + testDataLabel, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
 			if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 				t.Errorf("actions = %v, want %v", card.actions, wantActions)
 			}
@@ -359,7 +365,7 @@ func TestRunResumesCleanlyAfterAnInterruptedFirstBoot(t *testing.T) {
 	committed := card.wroteMBR
 
 	resumed := newFakeCard(defaultMBR(), 8<<30) // the MBR write never landed
-	resumed.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	resumed.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel}
 	resumed.marked = card.marked // exactly what the first boot left behind
 	if err := Run(resumed.deps(), testOptions()); err != nil {
 		t.Fatalf("second boot: Run() = %v, want nil", err)
@@ -391,7 +397,7 @@ func TestRunAlignsThePartitionDownTo4MiB(t *testing.T) {
 func TestRunLeavesAHealthyDataPartitionAlone(t *testing.T) {
 	card := newFakeCard(withDataEntry(1<<21), 8<<30)
 	card.nodeExists = true
-	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel}
 
 	if err := Run(card.deps(), testOptions()); err != nil {
 		t.Fatalf("Run() = %v, want nil", err)
@@ -406,7 +412,7 @@ func TestRunLeavesAHealthyDataPartitionAlone(t *testing.T) {
 
 func TestRunReportsCorruptionInsteadOfTouchingAnEstablishedPartition(t *testing.T) {
 	// The entry is only ever written after a completed, synced format, so an
-	// entry over anything but the GOSD-DATA filesystem means an established
+	// entry over anything but this image's own filesystem means an established
 	// partition — possibly holding app data — has been damaged. Nothing may
 	// repair, reformat, or otherwise touch it.
 	cases := []struct {
@@ -415,6 +421,7 @@ func TestRunReportsCorruptionInsteadOfTouchingAnEstablishedPartition(t *testing.
 	}{
 		{"blank space", diskfmt.Contents{Blank: true}},
 		{"a foreign volume", diskfmt.Contents{FS: diskfmt.FAT32, Label: "HOLIDAY"}},
+		{"another image's data partition", diskfmt.Contents{FS: diskfmt.FAT32, Label: "other-data"}},
 		{"unreadable content", diskfmt.Contents{OtherFS: "exFAT"}},
 	}
 	for _, c := range cases {
@@ -426,6 +433,9 @@ func TestRunReportsCorruptionInsteadOfTouchingAnEstablishedPartition(t *testing.
 			err := Run(card.deps(), testOptions())
 			if !errors.Is(err, ErrDataCorrupt) {
 				t.Fatalf("Run() = %v, want ErrDataCorrupt", err)
+			}
+			if !strings.Contains(err.Error(), testDataLabel) {
+				t.Errorf("error = %q, want it to name the label this image expects (%s)", err, testDataLabel)
 			}
 			if len(card.actions) != 0 {
 				t.Errorf("a corrupt partition saw %v, want nothing", card.actions)
@@ -440,7 +450,7 @@ func TestRunVerifiesAnEstablishedPartitionDespiteATransientReadFailure(t *testin
 	// the read had succeeded first try (bean gosd-6i2a).
 	card := newFakeCard(withDataEntry(1<<21), 8<<30)
 	card.nodeExists = true
-	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: testDataLabel}
 	card.inspectErr = errors.New("EIO")
 	card.inspectFailCalls = 3
 
@@ -549,7 +559,7 @@ func TestRunCreatesAnEXT4DataPartitionOnFirstBoot(t *testing.T) {
 	// Same crash-safety shape as FAT32 (format, sync, mark, sync, commit),
 	// with EstablishEXT4 standing in for CreateMarker's raw-device write
 	// since ext4's grow-and-mark both need a live mount.
-	wantActions := []string{"add-partition-2", "format-ext4-" + Label, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
+	wantActions := []string{"add-partition-2", "format-ext4-" + testDataLabel, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
 	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 		t.Fatalf("actions = %v, want %v", card.actions, wantActions)
 	}
@@ -565,10 +575,10 @@ func TestRunAdoptsASurvivingEXT4DataPartitionAfterAReflash(t *testing.T) {
 	// The exact reflash-recovery scenario this bean was asked to preserve
 	// for ext4: reflashing rewrites the MBR (no partition 2) but never
 	// touches the bytes beyond the boot partition, so an established ext4
-	// GOSD-DATA volume must be re-adopted with its data intact, exactly as
-	// a FAT32 one already is.
+	// data volume must be re-adopted with its data intact, exactly as a
+	// FAT32 one already is.
 	card := newFakeCard(defaultMBR(), 8<<30)
-	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: testDataLabel}
 	card.ext4Marked = true
 
 	if err := Run(card.deps(), ext4Options(true)); err != nil {
@@ -593,13 +603,13 @@ func TestRunReformatsAnEXT4SurvivorWithNoMarker(t *testing.T) {
 	// indistinguishable from the debris of an interrupted format — the
 	// same "no proof it finished" reasoning FAT32's marker check applies.
 	card := newFakeCard(defaultMBR(), 8<<30)
-	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: testDataLabel}
 	// card.ext4Marked left false: no marker.
 
 	if err := Run(card.deps(), ext4Options(true)); err != nil {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
-	wantActions := []string{"add-partition-2", "format-ext4-" + Label, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
+	wantActions := []string{"add-partition-2", "format-ext4-" + testDataLabel, "sync-partition", "establish-ext4", "sync-partition", "write-mbr"}
 	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
 		t.Errorf("actions = %v, want %v (an unmarked survivor must be reformatted)", card.actions, wantActions)
 	}
@@ -612,7 +622,7 @@ func TestRunGrowsAFixedSizeEXT4PartitionOnItsFirstBoot(t *testing.T) {
 	// partition's real size, and this must never format anything.
 	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
 	card.nodeExists = true
-	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: testDataLabel}
 	// card.ext4Marked left false: not yet grown.
 
 	if err := Run(card.deps(), ext4Options(false)); err != nil {
@@ -629,7 +639,7 @@ func TestRunGrowsAFixedSizeEXT4PartitionOnItsFirstBoot(t *testing.T) {
 func TestRunLeavesAnEstablishedFixedSizeEXT4PartitionAlone(t *testing.T) {
 	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
 	card.nodeExists = true
-	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: testDataLabel}
 	card.ext4Marked = true
 
 	if err := Run(card.deps(), ext4Options(false)); err != nil {
@@ -650,7 +660,7 @@ func TestRunTreatsATransientEXT4MountFailureOnAnEstablishedPartitionAsNonFatal(t
 	// — it is reported plainly, and /data falls back read-only this boot.
 	card := newFakeCard(withDataEntryFS(1<<21, diskfmt.EXT4), 8<<30)
 	card.nodeExists = true
-	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: Label}
+	card.contents = diskfmt.Contents{FS: diskfmt.EXT4, Label: testDataLabel}
 	card.ext4CheckErr = errors.New("mount: I/O error")
 
 	err := Run(card.deps(), ext4Options(false))
@@ -732,6 +742,93 @@ func TestRunReportsANodeThatNeverAppears(t *testing.T) {
 	// falsely commit a format that never ran.
 	if got := strings.Join(card.actions, ","); got != "add-partition-2" {
 		t.Errorf("actions = %v, want only the kernel registration", card.actions)
+	}
+}
+
+func TestRunRefusesAnImageWithNoDataLabel(t *testing.T) {
+	// Without a label there is no way to tell an adoptable volume from
+	// another app's data, so the refusal has to come before anything reads
+	// or writes the card at all.
+	card := newFakeCard(defaultMBR(), 8<<30)
+	opts := testOptions()
+	opts.DataLabel = ""
+
+	err := Run(card.deps(), opts)
+	if err == nil {
+		t.Fatal("Run() = nil, want a refusal naming the missing label")
+	}
+	if errors.Is(err, ErrDataCorrupt) {
+		t.Error("a missing label must not be reported as corruption; /data just falls back read-only")
+	}
+	if !strings.Contains(err.Error(), "dataLabel") {
+		t.Errorf("error = %q, want it to name config.json's dataLabel", err)
+	}
+	if len(card.actions) != 0 || card.wroteMBR != nil {
+		t.Errorf("actions = %v, want nothing (the device must be untouched)", card.actions)
+	}
+}
+
+func TestRunReformatsASurvivorLabelledForAnotherImage(t *testing.T) {
+	// The clean break: labels are per app, so a survivor carrying anyone
+	// else's label — including the fixed GOSD-DATA every card written before
+	// labels were per-app carries — matches nothing this image asks for and
+	// is debris to the creation gate, marker or no marker. Reformatting it
+	// is the intended, documented upgrade consequence.
+	cases := map[string]string{
+		"a card flashed before labels were per-app": "GOSD-DATA",
+		"another app's data partition":              "other-data",
+	}
+	for name, label := range cases {
+		t.Run(name, func(t *testing.T) {
+			card := newFakeCard(defaultMBR(), 8<<30)
+			card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: label}
+			card.marked = true
+
+			if err := Run(card.deps(), testOptions()); err != nil {
+				t.Fatalf("Run() = %v, want nil", err)
+			}
+			wantActions := []string{"add-partition-2", "format-" + testDataLabel, "sync-partition", "write-marker", "sync-partition", "write-mbr"}
+			if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
+				t.Errorf("actions = %v, want %v (a foreign label is never adopted)", card.actions, wantActions)
+			}
+			if card.logged("re-adopted") {
+				t.Errorf("logs = %q, want no claim that a %s volume was re-adopted", card.logs, label)
+			}
+		})
+	}
+}
+
+func TestRunAdoptsASurvivorWhoseLabelDiffersOnlyInCase(t *testing.T) {
+	// Labels are matched the way blockmount matches them everywhere else, so
+	// a volume some other tool relabelled with its own upper-casing habit is
+	// still recognisably this image's own — reformatting it would destroy
+	// app data over nothing but a capital letter.
+	card := newFakeCard(defaultMBR(), 8<<30)
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: strings.ToUpper(testDataLabel)}
+	card.marked = true
+
+	if err := Run(card.deps(), testOptions()); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	wantActions := []string{"add-partition-2", "write-mbr"}
+	if got := strings.Join(card.actions, ","); got != strings.Join(wantActions, ",") {
+		t.Fatalf("actions = %v, want %v (the survivor must not be formatted)", card.actions, wantActions)
+	}
+}
+
+func TestRunLeavesAnEstablishedPartitionAloneWhenItsLabelDiffersOnlyInCase(t *testing.T) {
+	// verifyEstablished's mirror of the case-insensitive match above: an
+	// established partition relabelled in another case is not corruption,
+	// and must not halt the device.
+	card := newFakeCard(withDataEntry(1<<21), 8<<30)
+	card.nodeExists = true
+	card.contents = diskfmt.Contents{FS: diskfmt.FAT32, Label: strings.ToUpper(testDataLabel)}
+
+	if err := Run(card.deps(), testOptions()); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if len(card.actions) != 0 {
+		t.Errorf("a healthy later boot performed %v, want nothing", card.actions)
 	}
 }
 

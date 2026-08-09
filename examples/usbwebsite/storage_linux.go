@@ -9,7 +9,7 @@ import (
 )
 
 // mountVFAT mounts the FAT partition at device read-write on mountpoint,
-// with the same options gosd-init uses for GOSD-DATA: nosuid/nodev, and
+// with the same options gosd-init uses for the data partition: nosuid/nodev, and
 // vfat's "flush" so a journal-less FAT doesn't sit with dirty data in RAM
 // on a board with no clean-shutdown story.
 func mountVFAT(device, mountpoint string) error {

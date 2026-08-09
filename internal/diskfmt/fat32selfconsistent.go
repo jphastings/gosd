@@ -36,7 +36,7 @@ package diskfmt
 //
 // Callers that choose a FAT32 volume's size before handing it to go-diskfs —
 // FormatFAT32 for a whole device or partition, internal/image for the
-// GOSD-DATA partition it lays out — pass it through here first.
+// data partition it lays out — pass it through here first.
 func LargestSelfConsistentFAT32Bytes(sizeBytes int64) int64 {
 	candidate := sizeBytes
 	for {

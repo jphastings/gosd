@@ -26,6 +26,7 @@ import (
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/initramfs"
 	"github.com/jphastings/gosd/internal/inject"
+	"github.com/jphastings/gosd/internal/naming"
 )
 
 const (
@@ -117,10 +118,22 @@ type Options struct {
 	// OutputPath is where the finished .img file is written.
 	OutputPath string
 
-	// DataSizeBytes is the size of the optional writable GOSD-DATA
-	// partition, passed straight through to image.Spec.DataSizeBytes.
-	// Zero disables the partition.
+	// DataSizeBytes is the size of the optional writable data partition,
+	// passed straight through to image.Spec.DataSizeBytes. Zero disables
+	// the partition.
 	DataSizeBytes int64
+
+	// Labels are the per-app volume labels both partitions are formatted
+	// with (`gosd build --label-prefix`, see internal/naming.LabelsFor).
+	// Required, with no default: Boot and Data are threaded straight into
+	// image.Spec.BootLabel/DataLabel, and Data additionally into
+	// config.json's DataLabel field (initcfg.Config.DataLabel) in every
+	// data-size mode, including --data-size=0, so gosd-init compares
+	// against exactly what was written. cmd/gosd resolves the pair once
+	// (see its resolveLabels) and validates it against
+	// blockmount.ValidateLabel before calling Assemble; an empty label
+	// reaching image.Write is refused there as a programming error.
+	Labels naming.PartitionLabels
 
 	// DataExpand marks an image built with --data-size=expand: the image
 	// itself gets no data partition (DataSizeBytes stays 0), and
@@ -129,21 +142,21 @@ type Options struct {
 	DataExpand bool
 
 	// DataFlush is gosd build --data-flush's value, baked straight into
-	// config.json's DataFlush field: whether GOSD-DATA (and any emmc/disk
-	// vfat mount) uses the vfat "flush" mount option by default. Default
-	// false (see internal/initcfg.Config.DataFlush and bean gosd-9m1k);
+	// config.json's DataFlush field: whether the data partition (and any
+	// emmc/disk vfat mount) uses the vfat "flush" mount option by default.
+	// Default false (see internal/initcfg.Config.DataFlush and gosd-9m1k);
 	// overridable per-device via gosd.toml's data_flush key at boot, which
 	// is why this is a plain baked default and not a template value like
 	// Config.Env — gosd-init computes the effective setting itself.
 	DataFlush bool
 
 	// DataFilesystem is gosd build --data-filesystem's resolved value:
-	// which filesystem GOSD-DATA is formatted as. It's threaded straight
-	// into both image.Spec.DataFilesystem (which governs what Write
+	// which filesystem the data partition is formatted as. It's threaded
+	// straight into both image.Spec.DataFilesystem (which governs what Write
 	// actually formats the partition as, when one exists in the image)
 	// and config.json's DataFilesystem field (initcfg.Config.
 	// DataFilesystem, via a plain string conversion), so gosd-init mounts
-	// GOSD-DATA the same way whether it ships in the image or
+	// the data partition the same way whether it ships in the image or
 	// (DataExpand) is created on first boot. Zero value "" means
 	// diskfmt.FAT32, mirroring image.Spec.DataFilesystem's own
 	// zero-value convention; cmd/gosd always resolves --data-filesystem
@@ -169,16 +182,16 @@ type Options struct {
 	// through to config.json.
 	IngressTailscaleFunnel bool
 
-	// BootSizeBytes is the size of the FAT32 GOSD-BOOT partition, passed
+	// BootSizeBytes is the size of the FAT32 boot partition, passed
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
 	BootSizeBytes int64
 
 	// Placeholders are `gosd build --placeholder <path>=<size>` entries:
 	// rendered deterministically (see inject.Render), they land at the
-	// FAT root of GOSD-BOOT alongside gosd.toml, are covered by the image
-	// identity exactly like every other FAT-root file, and their content
-	// byte ranges are reported back in the image.WriteReport's
+	// FAT root of the boot partition alongside gosd.toml, are covered by
+	// the image identity exactly like every other FAT-root file, and their
+	// content byte ranges are reported back in the image.WriteReport's
 	// FileRanges - the raw material for cmd/gosd's <image>.inject.json
 	// sidecar (see internal/inject.WriteManifest).
 	Placeholders []inject.Placeholder
@@ -189,6 +202,10 @@ type Options struct {
 // write the resulting flashable image to opts.OutputPath. The returned
 // image.WriteReport lets a caller print a boot-volume usage summary.
 func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
+	if err := checkLabels(opts.Labels); err != nil {
+		return image.WriteReport{}, err
+	}
+
 	resolved, err := boards.ResolveArtifacts(ctx, opts.Board.Name(), opts.Board.Artifacts(), opts.ArtifactsDir, opts.CacheDir, fetchBoardArtifacts)
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("resolving artifacts for %s: %w", opts.Board.Name(), err)
@@ -369,6 +386,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		DataExpand:             opts.DataExpand,
 		DataFlush:              opts.DataFlush,
 		DataFilesystem:         string(opts.DataFilesystem),
+		DataLabel:              opts.Labels.Data,
 		IngressCloudflared:     opts.IngressCloudflared,
 		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
 		Identity:               identity,
@@ -415,6 +433,8 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	report, err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:      bootFiles,
 		RawWrites:      opts.Board.RawWrites(resolved),
+		BootLabel:      opts.Labels.Boot,
+		DataLabel:      opts.Labels.Data,
 		DataSizeBytes:  opts.DataSizeBytes,
 		DataFilesystem: opts.DataFilesystem,
 		BootSizeBytes:  opts.BootSizeBytes,
@@ -425,6 +445,27 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	}
 
 	return report, nil
+}
+
+// checkLabels refuses an Options carrying an incomplete label pair, before
+// anything is built. image.Write has its own guard, but it only checks
+// Spec.DataLabel when the image actually contains a partition 2 to label —
+// so a --data-size=expand (or --data-size=0) build with an unset data label
+// would sail past it and bake dataLabel:"" into config.json, and the device
+// would then refuse to create or adopt its data partition on first boot with
+// nothing at build time having complained. Both labels are always resolved
+// together (cmd/gosd's resolveLabels), so a missing one is a wiring bug in
+// this repo rather than anything a person typed.
+func checkLabels(labels naming.PartitionLabels) error {
+	for _, l := range []struct{ field, value string }{
+		{"Boot", labels.Boot},
+		{"Data", labels.Data},
+	} {
+		if l.value == "" {
+			return fmt.Errorf("pipeline.Options.Labels.%s is empty; every image is built with both volume labels resolved up front (see cmd/gosd's resolveLabels, which populates them)", l.field)
+		}
+	}
+	return nil
 }
 
 // fetchBoardArtifacts is the boards.BoardArtifactsFunc every real build uses:

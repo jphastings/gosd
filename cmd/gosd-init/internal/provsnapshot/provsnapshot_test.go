@@ -324,8 +324,8 @@ func TestSnapshotRecordsAHandSetIngressSection(t *testing.T) {
 // TestIngressSurvivesAPlainReflashWithNoCredentialsFile is the bean gosd-tgzo
 // property: since the tunnel token lives nowhere but gosd.toml (epic
 // gosd-virc decision 3 - no separate credentials file exists anywhere on
-// GOSD-BOOT), restoring the whole [ingress.cloudflared] section from the
-// snapshot is the entire mechanism by which a hand-configured tunnel
+// the boot partition), restoring the whole [ingress.cloudflared] section
+// from the snapshot is the entire mechanism by which a hand-configured tunnel
 // survives an ordinary Raspberry Pi Imager reflash, exactly like a
 // hand-edited WiFi passphrase already does.
 func TestIngressSurvivesAPlainReflashWithNoCredentialsFile(t *testing.T) {

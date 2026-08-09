@@ -196,7 +196,7 @@ const EXT4SizeLimitReason = "the golden ext4 image GoSD ships is a fixed 512MiB 
 // MinEXT4Bytes is the smallest region FormatEXT4 or WriteEXT4 can write: the
 // embedded golden image's fixed decompressed size (internal/diskfmt/ext4golden.RawBytes).
 // Callers that must validate a region's size before the region exists (e.g.
-// `gosd build --data-size` sizing GOSD-DATA) compare against it so an
+// `gosd build --data-size` sizing the data partition) compare against it so an
 // impossible size is refused before any bytes are written, mirroring
 // MaxFAT32Bytes.
 func MinEXT4Bytes() int64 { return ext4golden.RawBytes }

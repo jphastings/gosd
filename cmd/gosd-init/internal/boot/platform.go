@@ -20,11 +20,11 @@ type Platform struct {
 	IgnoreShutdownSignals func()
 
 	// WriteBootFailure records a fatal failure as boot-failure.log at the
-	// root of the GOSD-BOOT partition mounted (read-only) at target,
+	// root of the boot partition mounted (read-only) at target,
 	// briefly remounting it read-write to do so.
 	WriteBootFailure func(target, msg string) error
 
-	// WriteBootFile durably writes name at the root of the GOSD-BOOT
+	// WriteBootFile durably writes name at the root of the boot
 	// partition mounted (read-only) at target, briefly remounting it
 	// read-write, and restores the read-only mount afterwards. Unlike
 	// WriteBootFailure this happens on a device that carries on booting,

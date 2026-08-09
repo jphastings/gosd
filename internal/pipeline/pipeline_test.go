@@ -23,8 +23,14 @@ import (
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/inject"
+	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
+
+// testLabels is the volume-label pair every Assemble call here is given:
+// required Options (see `gosd build --label-prefix`), with nothing special
+// about these particular values.
+var testLabels = naming.LabelsFor("test")
 
 // fakeBoard is a minimal boards.Board that records what the pipeline passes
 // it, so tests can assert on build order and data flow without needing a
@@ -89,6 +95,7 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Labels:         testLabels,
 		Board:          b,
 		AppBinaryPath:  appPath,
 		InitBinaryPath: initPath,
@@ -158,6 +165,7 @@ func TestAssembleBakesStaticHostsIntoInitramfs(t *testing.T) {
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Labels:         testLabels,
 		Board:          b,
 		AppBinaryPath:  appPath,
 		InitBinaryPath: initPath,
@@ -202,6 +210,7 @@ func TestAssembleWritesExtraFilesAtMode0644AndChangesIdentity(t *testing.T) {
 		build++
 		imgPath := filepath.Join(dir, fmt.Sprintf("out%d.img", build))
 		if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
+			Labels:         testLabels,
 			Board:          &fakeBoard{name: "fake-board"},
 			AppBinaryPath:  appPath,
 			InitBinaryPath: initPath,
@@ -268,7 +277,8 @@ func TestAssembleBakesDataExpandIntoConfigJSON(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath,
 		DataExpand: true,
 	})
@@ -309,7 +319,8 @@ func TestAssembleBakesDataFlushIntoConfigJSON(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath,
 		DataFlush:  true,
 	})
@@ -352,7 +363,8 @@ func TestAssembleBakesDataFilesystemIntoConfigJSON(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:     imgPath,
 		DataFilesystem: diskfmt.EXT4,
 	})
@@ -380,6 +392,112 @@ func TestAssembleBakesDataFilesystemIntoConfigJSON(t *testing.T) {
 	}
 }
 
+// TestAssembleBakesTheDataLabelIntoConfigJSONInEveryDataSizeMode is the
+// label half of the same contract, with one extra requirement of its own:
+// gosd-init compares config.json's dataLabel against what a partition
+// actually holds before adopting or reformatting it, and an image built with
+// --data-size=0 or --data-size=expand ships no partition to read the label
+// off - so the label has to be baked in whether or not this build wrote a
+// partition 2 at all.
+func TestAssembleBakesTheDataLabelIntoConfigJSONInEveryDataSizeMode(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	modes := map[string]pipeline.Options{
+		"--data-size=0":               {},
+		"--data-size=expand":          {DataExpand: true},
+		"a fixed-size data partition": {DataSizeBytes: 4 * 1024 * 1024},
+	}
+	for name, mode := range modes {
+		t.Run(name, func(t *testing.T) {
+			opts := mode
+			opts.Labels = testLabels
+			opts.Board = &fakeBoard{name: "fake-board"}
+			opts.AppBinaryPath, opts.InitBinaryPath = appPath, initPath
+			opts.OutputPath = filepath.Join(t.TempDir(), "out.img")
+
+			if _, err := pipeline.Assemble(context.Background(), opts); err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+
+			cfg := readConfigJSON(t, opts.OutputPath)
+			if cfg.DataLabel != testLabels.Data {
+				t.Errorf("config.json's dataLabel = %q, want %q", cfg.DataLabel, testLabels.Data)
+			}
+		})
+	}
+}
+
+// TestAssembleRefusesAnIncompleteLabelPair guards the wiring: image.Write
+// only checks the data label when the image contains a partition to label,
+// so a --data-size=expand build with an unset label would otherwise bake an
+// empty dataLabel into config.json and break /data on first boot with
+// nothing at build time noticing.
+func TestAssembleRefusesAnIncompleteLabelPair(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	cases := map[string]struct {
+		labels    naming.PartitionLabels
+		wantField string
+	}{
+		"neither label": {naming.PartitionLabels{}, "Labels.Boot"},
+		"no data label": {naming.PartitionLabels{Boot: "app-boot"}, "Labels.Data"},
+		"no boot label": {naming.PartitionLabels{Data: "app-data"}, "Labels.Boot"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "out.img")
+			_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+				Labels:         c.labels,
+				DataExpand:     true,
+				Board:          &fakeBoard{name: "fake-board"},
+				AppBinaryPath:  appPath,
+				InitBinaryPath: initPath,
+				OutputPath:     imgPath,
+			})
+			if err == nil {
+				t.Fatal("Assemble = nil, want a refusal")
+			}
+			if !strings.Contains(err.Error(), c.wantField) {
+				t.Errorf("error = %q, want it to name %s", err, c.wantField)
+			}
+			if _, statErr := os.Stat(imgPath); statErr == nil {
+				t.Error("an image was written despite the refusal")
+			}
+		})
+	}
+}
+
+// readConfigJSON reads a built image's baked /etc/gosd/config.json back,
+// parsed.
+func readConfigJSON(t *testing.T, imgPath string) initcfg.Config {
+	t.Helper()
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
+	if err != nil {
+		t.Fatalf("reading initramfs.cpio.zst: %v", err)
+	}
+
+	cfg, err := initcfg.ParseConfig(recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json"))
+	if err != nil {
+		t.Fatalf("parsing config.json: %v", err)
+	}
+	return cfg
+}
+
 // TestAssembleBakesIngressCloudflaredIntoConfigJSON confirms
 // Options.IngressCloudflared reaches config.json's ingressCloudflared field
 // - the entire build->runtime contract for gosd build --ingress cloudflared
@@ -392,7 +510,8 @@ func TestAssembleBakesIngressCloudflaredIntoConfigJSON(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:         imgPath,
 		IngressCloudflared: true,
 	})
@@ -432,7 +551,8 @@ func TestAssembleBakesIngressTailscaleFunnelIntoConfigJSON(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:             imgPath,
 		IngressTailscaleFunnel: true,
 	})
@@ -473,7 +593,8 @@ func TestAssembleBakesBuildTimestampIntoConfigJSON(t *testing.T) {
 	before := time.Now().Add(-time.Minute)
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath,
 	})
 	if err != nil {
@@ -519,7 +640,8 @@ func TestAssembleBakesEnvIntoConfigJSONAndGosdToml(t *testing.T) {
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		Config:     boards.BuildConfig{Env: map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}},
 		OutputPath: imgPath,
 	})
@@ -569,7 +691,8 @@ func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -609,7 +732,8 @@ func TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault(t *testing
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
 		Config: boards.BuildConfig{Hostname: "sanitized-default"},
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -660,7 +784,8 @@ func TestAssembleAppliesRawWrites(t *testing.T) {
 
 	imgPath := filepath.Join(dir, "out.img")
 	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -689,7 +814,8 @@ func TestAssembleThreadsDataSizeBytesIntoTheImage(t *testing.T) {
 	imgPath := filepath.Join(dir, "out.img")
 	const dataSizeBytes = 4 * 1024 * 1024
 	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: imgPath, DataSizeBytes: dataSizeBytes,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -705,8 +831,8 @@ func TestAssembleThreadsDataSizeBytesIntoTheImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFilesystem(2): %v", err)
 	}
-	if label := strings.TrimSpace(fs.Label()); label != "GOSD-DATA" {
-		t.Errorf("partition 2 label = %q, want GOSD-DATA", label)
+	if label := strings.TrimSpace(fs.Label()); label != testLabels.Data {
+		t.Errorf("partition 2 label = %q, want %q (Options.Labels.Data)", label, testLabels.Data)
 	}
 }
 
@@ -719,7 +845,8 @@ func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 	b := &fakeBoard{name: "fake-board", bootFilesErr: wantErr}
 
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath: filepath.Join(dir, "out.img"),
 	})
 	if !errors.Is(err, wantErr) {
@@ -740,7 +867,8 @@ func TestAssembleRendersPlaceholdersAndReportsTheirRanges(t *testing.T) {
 	placeholder := inject.Placeholder{Path: "backupist.yaml", SizeBytes: 4096}
 	imgPath := filepath.Join(dir, "out.img")
 	report, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  &fakeBoard{name: "fake-board"}, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:   imgPath,
 		Placeholders: []inject.Placeholder{placeholder},
 	})
@@ -793,7 +921,8 @@ func TestAssembleRejectsPlaceholderCollidingWithABoardBootFile(t *testing.T) {
 
 	b := &fakeBoard{name: "fake-board"} // BootFiles returns "initramfs.cpio.zst"
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:   filepath.Join(dir, "out.img"),
 		Placeholders: []inject.Placeholder{{Path: "initramfs.cpio.zst", SizeBytes: 4096}},
 	})
@@ -815,7 +944,8 @@ func TestAssembleRejectsPlaceholderCollidingWithGosdTomlCaseInsensitively(t *tes
 
 	b := &fakeBoard{name: "fake-board"}
 	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Board: b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:   filepath.Join(dir, "out.img"),
 		Placeholders: []inject.Placeholder{{Path: "GOSD.TOML", SizeBytes: 4096}},
 	})

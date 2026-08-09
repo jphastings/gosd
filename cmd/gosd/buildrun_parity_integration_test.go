@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/u-root/u-root/pkg/cpio"
+
+	"github.com/jphastings/gosd/internal/initcfg"
 )
 
 // TestBuildAndRunProduceIdenticalInitramfsContent is gosd-x3j5's durable
@@ -84,6 +88,68 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 	}
 
 	assertIdenticalInitramfsContent(t, buildRecords, runRecords)
+	assertIdenticalVolumeLabels(t, buildImg, runImg)
+
+	// config.json is exempt from the byte-compare above (its build
+	// timestamp), so the one field of it that has to match — the data label
+	// gosd-init compares a partition against before adopting or reformatting
+	// it — is compared on its own.
+	buildCfg := parseConfigJSON(t, recordContent(t, buildRecords, "etc/gosd/config.json"))
+	runCfg := parseConfigJSON(t, recordContent(t, runRecords, "etc/gosd/config.json"))
+	if buildCfg.DataLabel != runCfg.DataLabel {
+		t.Errorf("config.json's dataLabel differs: gosd build %q, gosd run %q", buildCfg.DataLabel, runCfg.DataLabel)
+	}
+	if buildCfg.DataLabel == "" {
+		t.Error("config.json's dataLabel is empty; neither side derived a label from the app's name")
+	}
+}
+
+// assertIdenticalVolumeLabels fails the test unless both images' partitions
+// carry the same volume labels. Both sides derive them from the app's own
+// name here (no --label-prefix), so this covers the default-derivation path
+// build.go and run.go each run for themselves — the half a wiring mistake
+// would most easily diverge.
+func assertIdenticalVolumeLabels(t *testing.T, buildImg, runImg string) {
+	t.Helper()
+
+	for _, partition := range []int{1, 2} {
+		buildLabel := volumeLabel(t, buildImg, partition)
+		runLabel := volumeLabel(t, runImg, partition)
+		if buildLabel != runLabel {
+			t.Errorf("partition %d's volume label differs: gosd build %q, gosd run %q", partition, buildLabel, runLabel)
+		}
+		if buildLabel == "" {
+			t.Errorf("partition %d has no volume label at all", partition)
+		}
+	}
+}
+
+// volumeLabel reads one partition's volume label back out of a built image.
+func volumeLabel(t *testing.T, imgPath string, partition int) string {
+	t.Helper()
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening %s failed: %v", imgPath, err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(partition)
+	if err != nil {
+		t.Fatalf("GetFilesystem(%d) for %s failed: %v", partition, imgPath, err)
+	}
+	return strings.TrimSpace(fs.Label())
+}
+
+// parseConfigJSON decodes an initramfs' etc/gosd/config.json entry.
+func parseConfigJSON(t *testing.T, content []byte) initcfg.Config {
+	t.Helper()
+
+	var cfg initcfg.Config
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		t.Fatalf("config.json = %s is not valid JSON: %v", content, err)
+	}
+	return cfg
 }
 
 // readBootFile reopens the .img at imgPath and reads name back from its

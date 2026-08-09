@@ -1,6 +1,7 @@
 // Package naming sanitizes free-form strings (like a main package's
-// basename) into the restricted character set gosd uses for hostnames and
-// output filenames.
+// basename) into the restricted character set gosd uses for hostnames,
+// output filenames, and the per-app partition volume labels an image is
+// built with (see LabelPrefix and LabelsFor).
 package naming
 
 import (

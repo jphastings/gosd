@@ -145,8 +145,11 @@ redoing anything:
 
 1. Take the memory card out of the device and put it back into your
    computer.
-2. A drive named **GOSD-BOOT** should appear, the same way a USB stick
-   would. Open it.
+2. A drive should appear, the same way a USB stick would — named after the
+   app itself (e.g. **hello-boot** for an app called `hello`). Open it.
+   Don't rename it, or any other drive from this card: the device
+   recognises its own storage by name, and treats a renamed data drive as a
+   damaged one — it will refuse to start until the name is put back.
 3. Inside, you'll find a file called `gosd.toml` — open it with any plain
    text editor (Notepad on Windows, TextEdit on a Mac, or similar). The
    file itself explains, in plain language at the top, exactly what to

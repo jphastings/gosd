@@ -356,7 +356,7 @@ way it does.
 ## What gosd-init parses, and its precedence
 
 `gosd-init` reads provisioning through `internal/provision`
-(`provision.Read`), called once, right after the `GOSD-BOOT` partition
+(`provision.Read`), called once, right after the boot partition
 mounts (`cmd/gosd-init/internal/boot/sequence.go`). It consumes exactly two
 things, both from cloud-init's YAML:
 

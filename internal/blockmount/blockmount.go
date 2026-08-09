@@ -57,9 +57,11 @@ var ErrRefusedFormat = errors.New("refusing to reformat")
 var ErrUnsupportedFS = errors.New("filesystem not supported by this board's kernel")
 
 // maxLabelLen is the volume-label limit both FAT (11 bytes) and exFAT (11
-// UTF-16 characters) impose. FAT also stores labels upper-cased; the mount-only
-// decision matches them case-insensitively so the label a caller passes
-// round-trips regardless.
+// UTF-16 characters) impose. Every formatter in this stack stores a label's
+// case exactly as given, and reads it back the same way; the mount-only
+// decision still matches labels case-insensitively, so a volume relabelled
+// by some other tool's upper-casing convention is recognised rather than
+// destroyed.
 const maxLabelLen = 11
 
 // ext4MaxLabelLen mirrors internal/diskfmt's ext4LabelBytes: ext4's

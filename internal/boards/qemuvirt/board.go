@@ -129,7 +129,7 @@ func (board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 }
 
 // EXT4Support implements boards.Board: supported. This profile's kernel
-// builds CONFIG_EXT4_FS=y (see COMPATIBILITY.md), so GOSD-DATA can mount
+// builds CONFIG_EXT4_FS=y (see COMPATIBILITY.md), so the data partition can mount
 // ext4 when --data-filesystem=ext4 is passed.
 func (board) EXT4Support() boards.EXT4Support {
 	return boards.EXT4Support{Supported: true}

@@ -137,8 +137,8 @@ type GadgetSupport struct {
 // EXT4Support reports whether this board's stock kernel can mount ext4 —
 // specifically, whether it builds CONFIG_EXT4_FS at all. `gosd build
 // --data-filesystem=ext4` checks, board by board, before assembling any
-// image (see COMPATIBILITY.md's ext4 GOSD-DATA row and bean gosd-95yu). Like
-// GadgetSupport, this is a static fact about the pinned kernel, not a
+// image (see COMPATIBILITY.md's ext4 data partition row and bean gosd-95yu).
+// Like GadgetSupport, this is a static fact about the pinned kernel, not a
 // build-time choice.
 type EXT4Support struct {
 	// Supported is false when the board's pinned kernel doesn't build
