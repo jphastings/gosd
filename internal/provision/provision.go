@@ -1,5 +1,5 @@
 // Package provision reads what Raspberry Pi Imager (or a hand-editing user)
-// left on the GOSD-BOOT partition and extracts the subset gosd-init
+// left on the boot partition and extracts the subset gosd-init
 // consumes: a hostname (from cloud-init's user-data) and WiFi access points
 // (from cloud-init's network-config).
 //
@@ -26,7 +26,7 @@ import (
 )
 
 // Result is what gosd-init consumes from cloud-init provisioning found on
-// the GOSD-BOOT partition.
+// the boot partition.
 type Result struct {
 	// Hostname is the hostname cloud-init's user-data requested, or "" if
 	// user-data was absent, unreadable, malformed, or didn't set one.
@@ -73,7 +73,7 @@ const (
 )
 
 // Read looks for cloud-init's user-data and network-config, and for a
-// firstrun.sh, directly inside bootDir (the mounted GOSD-BOOT partition),
+// firstrun.sh, directly inside bootDir (the mounted boot partition),
 // and extracts what gosd-init consumes. Missing files are silent — most
 // images will never carry any of them — but a present, unreadable, or
 // malformed file is logged through log and then skipped, falling back to

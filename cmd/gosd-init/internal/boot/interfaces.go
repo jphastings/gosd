@@ -1,5 +1,5 @@
 // Package boot implements the gosd-init boot sequence: early mounts,
-// console logging, the GOSD-BOOT partition mount retry, and /app
+// console logging, the boot partition mount retry, and /app
 // supervision with restart backoff and zombie reaping.
 //
 // The sequencing and decision logic in this package (Run, Supervisor,
@@ -18,7 +18,7 @@ import "io"
 // mount(2)/umount(2) syscall signatures so the real implementation is a thin
 // wrapper around golang.org/x/sys/unix. Unmount is only needed to reverse a
 // mount that turns out to be wrong after the fact — see
-// MountBootPartition's GOSD-BOOT sentinel check.
+// MountBootPartition's boot-partition sentinel check.
 type Mounter interface {
 	Mount(source, target, fstype string, flags uintptr, data string) error
 	Unmount(target string) error

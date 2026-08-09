@@ -12,7 +12,7 @@ type CmdlineArgs struct {
 	// BootDev names the disk the bootloader actually loaded the kernel
 	// from, from gosd.bootdev=<name>: a kernel block-device name with an
 	// optional /dev/ prefix (e.g. vda, mmcblk1, /dev/mmcblk1). gosd-init
-	// uses it to probe only that disk's partitions for GOSD-BOOT, so a
+	// uses it to probe only that disk's partitions for the boot partition, so a
 	// stale GoSD image on another medium (eMMC vs SD) can't win by
 	// device-name order. Empty when the bootloader can't supply it — all
 	// current real-hardware images — in which case the probe walks every

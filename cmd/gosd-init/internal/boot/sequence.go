@@ -29,7 +29,7 @@ type Deps struct {
 	Rebooter   Rebooter
 
 	// PathExists checks whether a path exists, used by MountBootPartition
-	// to confirm a freshly-mounted FAT candidate is really the GOSD-BOOT
+	// to confirm a freshly-mounted FAT candidate is really the boot
 	// partition (see gosd-pcwl) rather than just a filesystem the kernel
 	// was willing to mount as FAT. Nil-checked like the other optional
 	// deps below: Run defaults it to "always true" so tests that don't
@@ -58,10 +58,10 @@ type Deps struct {
 	ReadCmdline func() (initcfg.CmdlineArgs, error)
 
 	// ReadGosdToml reads and parses /boot/gosd.toml, the hand-editable
-	// fallback config on the GOSD-BOOT partition. It's nil-checked (like
+	// fallback config on the boot partition. It's nil-checked (like
 	// StartNetworking) rather than required, so tests that don't care
 	// about gosd.toml can leave it unset. Unlike ReadConfig, this can only
-	// be called after the GOSD-BOOT partition is mounted (step 5), which
+	// be called after the boot partition is mounted (step 5), which
 	// is why Run calls it right after MountBootPartition succeeds — and
 	// why the hostname it may override has to be re-applied there too,
 	// even though step 4 already applied config.json's value. The
@@ -71,7 +71,7 @@ type Deps struct {
 	ReadGosdToml func() (gosdtoml.Config, []string, error)
 
 	// ReadProvisioning reads cloud-init's user-data/network-config (and
-	// checks for firstrun.sh) on the just-mounted GOSD-BOOT partition —
+	// checks for firstrun.sh) on the just-mounted boot partition —
 	// see internal/provision. Nil-checked like ReadGosdToml; it sits
 	// between config.json and gosd.toml in the locked precedence chain
 	// (gosd.toml > cloud-init > config.json), so Run reads it first and
@@ -92,7 +92,7 @@ type Deps struct {
 	// first boot). Only called after the data partition mounts.
 	EnsureDataMarker func() error
 
-	// ExpandData does the GOSD-DATA partition's first-boot work: for images
+	// ExpandData does the data partition's first-boot work: for images
 	// built with --data-size=expand (config.json's dataExpand), the image
 	// ships with no partition 2 at all, and this fills the rest of the
 	// card with one; for a fixed-size --data-filesystem=ext4 image
@@ -101,18 +101,20 @@ type Deps struct {
 	// first-boot work left is growing it to the partition's real size.
 	// Either way it runs before the data mount (see
 	// cmd/gosd-init/internal/dataexpand). It is passed the boot-partition
-	// device the GOSD-BOOT mount actually used, so only the disk the
+	// device the boot mount actually used, so only the disk the
 	// system truly booted from is ever touched — the same reasoning that
 	// makes MountBootPartition's sentinel check necessary — plus the
-	// resolved data filesystem and whether this image was built with
-	// --data-size=expand, both of which Run derives once (see
-	// resolveDataFilesystem) and passes through unchanged. Nil-checked
-	// like the other optional deps. An ordinary failure is logged and boot
-	// proceeds to the read-only /data fallback; dataexpand.ErrDataCorrupt
-	// — an established partition whose filesystem is gone, app data
-	// possibly at stake — instead records the failure via WriteBootFailure
-	// and halts the device.
-	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, expand bool, log func(format string, args ...any)) error
+	// resolved data filesystem, this image's per-app data-partition label
+	// (config.json's dataLabel, which decides both what a fresh format is
+	// stamped with and which survivor may be adopted), and whether this
+	// image was built with --data-size=expand, all of which Run derives
+	// once (see resolveDataFilesystem) and passes through unchanged.
+	// Nil-checked like the other optional deps. An ordinary failure is
+	// logged and boot proceeds to the read-only /data fallback;
+	// dataexpand.ErrDataCorrupt — an established partition whose
+	// filesystem is gone, app data possibly at stake — instead records the
+	// failure via WriteBootFailure and halts the device.
+	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error
 
 	// ProvisionSnapshot, if non-nil, is called once the data partition is
 	// mounted and this boot's provisioning has settled: it keeps the
@@ -140,7 +142,7 @@ type Deps struct {
 	WriteHosts func(hostname string) error
 
 	// WriteBootFailure records a fatal, human-actionable failure as
-	// boot-failure.log at the root of the GOSD-BOOT partition (briefly
+	// boot-failure.log at the root of the boot partition (briefly
 	// remounting it read-write), so whoever collects an unattended device
 	// can read the latest run's fatal issue by plugging the card into any
 	// computer. The file is overwritten each time. Nil-checked; adopting
@@ -174,7 +176,7 @@ type Options struct {
 	BootDevices []string
 	BootTimeout time.Duration
 
-	// DataTarget is where the GOSD-DATA partition is mounted read-write;
+	// DataTarget is where the data partition is mounted read-write;
 	// empty skips the data mount entirely (tests that don't care about
 	// it). A missing or unmountable data partition is never fatal — an
 	// empty read-only tmpfs is mounted there instead, so app writes fail
@@ -190,7 +192,7 @@ type Options struct {
 }
 
 // Run executes the locked gosd-init boot sequence: early mounts, console
-// logging, config/cmdline, hostname, the GOSD-BOOT partition mount, then
+// logging, config/cmdline, hostname, the boot partition mount, then
 // /app supervision for the rest of the process's life. It only returns if
 // supervision is stopped (tests) or a fatal error triggers the
 // log+sync+sleep+reboot path (step 8); in the latter case it returns the
@@ -255,7 +257,7 @@ func Run(deps Deps, opts Options) error {
 	if bootDev != "" {
 		if filtered, matched := FilterBootDevices(bootDevices, bootDev); matched {
 			bootDevices = filtered
-			log("gosd.bootdev=%s: probing only its partitions for GOSD-BOOT (%s)", bootDev, strings.Join(filtered, ", "))
+			log("gosd.bootdev=%s: probing only its partitions for the boot partition (%s)", bootDev, strings.Join(filtered, ", "))
 		} else {
 			log("gosd.bootdev=%s matches no boot partition candidate; probing all of %s", bootDev, strings.Join(bootDevices, ", "))
 		}
@@ -267,7 +269,7 @@ func Run(deps Deps, opts Options) error {
 	log("boot partition mounted at %s from %s", opts.BootTarget, bootDevice)
 
 	// gosd.toml and cloud-init provisioning both live on the just-mounted
-	// GOSD-BOOT partition, so neither can be read before now. Precedence
+	// boot partition, so neither can be read before now. Precedence
 	// (locked, see docs/provisioning-formats.md) is
 	// gosd.toml > cloud-init > config.json: cloud-init is read first so a
 	// subsequent gosd.toml value can still override it, and either one
@@ -313,7 +315,7 @@ func Run(deps Deps, opts Options) error {
 
 	// dataFilesystem is decided once, from config.json's baked
 	// --data-filesystem choice alone: unlike Hostname/Wifi/Env/DataFlush,
-	// nothing on the GOSD-BOOT partition (gosd.toml, cloud-init) can
+	// nothing on the boot partition (gosd.toml, cloud-init) can
 	// override it — the filesystem a partition holds is fixed for the
 	// life of the card, chosen at build time and baked into the image
 	// gosd build produced. Both the dataexpand call and mountData below
@@ -339,8 +341,8 @@ func Run(deps Deps, opts Options) error {
 	// partition's real size on its actual first boot — see
 	// cmd/gosd-init/internal/dataexpand's package comment.
 	if deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4) {
-		if err := deps.ExpandData(bootDevice, dataFilesystem, cfg.DataExpand, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
-			return haltForDataCorruption(deps, log, err)
+		if err := deps.ExpandData(bootDevice, dataFilesystem, cfg.DataLabel, cfg.DataExpand, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
+			return haltForDataCorruption(deps, log, cfg.DataLabel, dataFilesystem, cfg.DataExpand, err)
 		} else if err != nil {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
@@ -475,7 +477,7 @@ func dataFlushEnvValue(flush bool) string {
 	return "0"
 }
 
-// mountData mounts the GOSD-DATA partition (fs — FAT32 or ext4, see
+// mountData mounts the data partition (fs — FAT32 or ext4, see
 // resolveDataFilesystem) read-write at opts.DataTarget when it exists, and
 // otherwise mounts an empty read-only tmpfs there so that app writes fail
 // loudly with EROFS instead of silently landing in the RAM-backed rootfs
@@ -593,22 +595,33 @@ func describeEnvSources(fromGosdToml, fromBaked []string) string {
 // haltForDataCorruption is the unattended-device version of a refusal: the
 // established data partition no longer holds the filesystem a completed
 // first boot left, and anything that "fixed" it would destroy whatever the
-// app had stored. The failure is recorded to boot-failure.log on the
-// GOSD-BOOT partition — readable on any computer the card is plugged into —
-// and the device halts rather than rebooting, because no retry can improve
-// a corrupt filesystem and a reboot loop would only mask it. Like fatal, it
-// returns the wrapped error for callers and tests; in production the
+// app had stored. The failure is recorded to boot-failure.log on the boot
+// partition — readable on any computer the card is plugged into — and the
+// device halts rather than rebooting, because no retry can improve a
+// corrupt filesystem and a reboot loop would only mask it. dataLabel and fs
+// are this image's own baked choices (config.json's dataLabel and
+// dataFilesystem), so the recovery instructions name the exact volume the
+// next boot will accept rather than a generic one; dataExpand decides which
+// second option is actually true of this image, since only a
+// --data-size=expand image creates a missing data partition for itself
+// (dataexpand.Run returns early otherwise, so deleting a fixed-size image's
+// partition 2 leaves it gone until the card is flashed again). Like fatal,
+// it returns the wrapped error for callers and tests; in production the
 // machine has halted before that matters.
-func haltForDataCorruption(deps Deps, log func(format string, args ...any), cause error) error {
+func haltForDataCorruption(deps Deps, log func(format string, args ...any), dataLabel string, fs diskfmt.FS, dataExpand bool, cause error) error {
 	log("fatal: %v; halting (details in boot-failure.log on the boot partition)", cause)
 	if deps.WriteBootFailure != nil {
+		orStartOver := "delete partition 2 and flash this image to the card\nagain, which restores that partition empty"
+		if dataExpand {
+			orStartOver = "delete partition 2 entirely — the next boot will\nrecreate it, empty"
+		}
 		msg := fmt.Sprintf(`gosd-init could not start the app because %v.
 
 The device was halted to protect whatever data is still on that partition.
-To recover: plug the card into a computer, salvage what you need from the
-GOSD-DATA partition, then either reformat it as FAT32 labelled GOSD-DATA or
-delete partition 2 entirely — the next boot will recreate it, empty.
-`, cause)
+To recover: plug the card into a computer, salvage what you need from
+partition 2, then either reformat it as %s labelled %s or
+%s.
+`, cause, fs, dataLabel, orStartOver)
 		if err := deps.WriteBootFailure(msg); err != nil {
 			log("recording the failure to boot-failure.log also failed: %v", err)
 		}

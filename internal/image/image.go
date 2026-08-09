@@ -14,11 +14,13 @@
 //	                            here on boards that need it - see the Radxa
 //	                            embed task)
 //	byte 16MiB                  partition 1: FAT32, type 0x0C, label
-//	                            GOSD-BOOT, Spec.BootSizeBytes (default 256MiB)
-//	byte 16MiB+BootSizeBytes    partition 2 (optional): label GOSD-DATA, size
-//	                            from Spec.DataSizeBytes, immediately after
-//	                            partition 1; type 0x0C (FAT32, the default) or
-//	                            0x83 (ext4), per Spec.DataFilesystem
+//	                            Spec.BootLabel, Spec.BootSizeBytes (default
+//	                            256MiB)
+//	byte 16MiB+BootSizeBytes    partition 2 (optional): label Spec.DataLabel,
+//	                            size from Spec.DataSizeBytes, immediately
+//	                            after partition 1; type 0x0C (FAT32, the
+//	                            default) or 0x83 (ext4), per
+//	                            Spec.DataFilesystem
 //	end of image                (16MiB+BootSizeBytes, or +Spec.DataSizeBytes
 //	                            if partition 2 exists)
 //
@@ -31,9 +33,12 @@
 //
 // The chosen boot size becomes part of an app's on-disk layout: a later
 // build that changes it moves partition 2's start, so a device upgraded via
-// plain reflash finds its old GOSD-DATA superblock at the wrong offset (or
-// gone) and re-formats - a deliberate, documented consequence (see
-// docs/design/upgrade-path.md §0.4 and §2), not a bug here.
+// plain reflash finds its old data-partition superblock at the wrong offset
+// (or gone) and re-formats - a deliberate, documented consequence (see
+// docs/design/upgrade-path.md §0.4 and §2), not a bug here. The labels are
+// in that same category: they're per-app (`gosd build --label-prefix`), and
+// gosd-init only adopts a surviving data partition whose label matches the
+// one this image was built with.
 //
 // Write is the only entry point; RawWrites into the gap and BootFiles into
 // the FAT partition are both validated so a caller cannot accidentally
@@ -79,12 +84,17 @@ const (
 	// own flag default) don't duplicate the number.
 	DefaultBootPartitionSizeBytes = 256 * 1024 * 1024
 
-	bootPartitionLabel    = "GOSD-BOOT"
 	bootPartitionIndex    = 1
 	bootPartitionStartLBA = bootPartitionOffsetBytes / sectorSizeBytes
 
-	dataPartitionLabel = "GOSD-DATA"
 	dataPartitionIndex = 2
+
+	// maxLabelLen is FAT's 11-byte volume-label limit, the only label rule
+	// this package enforces itself (see checkLabels): every other rule -
+	// charset, spaces, the 8th-byte hazard - is
+	// internal/blockmount.ValidateLabel's, applied at the CLI boundary where
+	// a bad value is a user's typo rather than a programming error.
+	maxLabelLen = 11
 )
 
 // RawWrite is a raw byte write into the unpartitioned gap between the MBR
@@ -113,8 +123,23 @@ type Spec struct {
 	// the MBR and partition 1, after partitioning and formatting.
 	RawWrites []RawWrite
 
-	// DataSizeBytes is the size of the optional second partition (label
-	// GOSD-DATA), created immediately after the boot partition, in the
+	// BootLabel and DataLabel are the volume labels partition 1 and
+	// partition 2 are formatted with - per-app, so a flashed card appears
+	// on a person's desktop named after the app rather than after GoSD
+	// (`gosd build --label-prefix`, see internal/naming.LabelsFor).
+	//
+	// Both are required, with no default: a caller that has resolved a
+	// label pair once, at the CLI boundary, cannot then accidentally ship
+	// an image labelled something else, and gosd-init's adoption gate
+	// compares against exactly the label baked in beside it (see
+	// internal/initcfg.Config.DataLabel). Write refuses an empty or
+	// over-long label before it creates the image file at all; DataLabel
+	// is ignored (and needn't be set) when DataSizeBytes is zero, since
+	// there is no partition 2 to label.
+	BootLabel, DataLabel string
+
+	// DataSizeBytes is the size of the optional second partition (labelled
+	// DataLabel), created immediately after the boot partition, in the
 	// filesystem DataFilesystem selects. Zero disables the partition
 	// entirely, producing the single-partition layout (older images, or
 	// an explicit --data-size=0). Non-zero sizes are rounded down to the
@@ -141,8 +166,8 @@ type Spec struct {
 	// format at all.
 	DataFilesystem diskfmt.FS
 
-	// BootSizeBytes is the size of the FAT32 boot partition (label
-	// GOSD-BOOT), which always starts at byte 16MiB. Zero means
+	// BootSizeBytes is the size of the FAT32 boot partition (labelled
+	// BootLabel), which always starts at byte 16MiB. Zero means
 	// DefaultBootPartitionSizeBytes (256MiB, the size every image used
 	// before `gosd build --boot-size` existed). Non-zero sizes are rounded
 	// down to the nearest whole sector, and then to the largest size
@@ -287,6 +312,10 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		return WriteReport{}, err
 	}
 
+	if err := checkLabels(spec); err != nil {
+		return WriteReport{}, err
+	}
+
 	lay, err := computeLayout(spec.BootSizeBytes, spec.DataSizeBytes, dataFS)
 	if err != nil {
 		return WriteReport{}, fmt.Errorf("computing image layout for %s failed: %w", imgPath, err)
@@ -334,10 +363,10 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 	fs, err := d.CreateFilesystem(disk.FilesystemSpec{
 		Partition:   bootPartitionIndex,
 		FSType:      filesystem.TypeFat32,
-		VolumeLabel: bootPartitionLabel,
+		VolumeLabel: spec.BootLabel,
 	})
 	if err != nil {
-		return WriteReport{}, fmt.Errorf("formatting the %s FAT32 boot partition failed: %w", bootPartitionLabel, err)
+		return WriteReport{}, fmt.Errorf("formatting the %s FAT32 boot partition failed: %w", spec.BootLabel, err)
 	}
 
 	fileSizes, payloadBytes, err := writeBootFiles(fs, spec.BootFiles)
@@ -358,15 +387,15 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 
 	if lay.hasDataPartition {
 		if dataFS == diskfmt.EXT4 {
-			if err := writeEXT4DataPartition(d, lay); err != nil {
+			if err := writeEXT4DataPartition(d, lay, spec.DataLabel); err != nil {
 				return WriteReport{}, err
 			}
 		} else if _, err := d.CreateFilesystem(disk.FilesystemSpec{
 			Partition:   dataPartitionIndex,
 			FSType:      filesystem.TypeFat32,
-			VolumeLabel: dataPartitionLabel,
+			VolumeLabel: spec.DataLabel,
 		}); err != nil {
-			return WriteReport{}, fmt.Errorf("formatting the %s FAT32 data partition failed: %w", dataPartitionLabel, err)
+			return WriteReport{}, fmt.Errorf("formatting the %s FAT32 data partition failed: %w", spec.DataLabel, err)
 		}
 	}
 
@@ -379,6 +408,41 @@ func Write(imgPath string, spec Spec) (report WriteReport, err error) {
 		BootPartitionPayloadBytes: payloadBytes,
 		FileRanges:                fileRanges,
 	}, nil
+}
+
+// checkLabels rejects a Spec whose applicable volume labels can't be written
+// as given, before diskfs.Create makes any image file exist. Only emptiness
+// and FAT's 11-byte cap are checked here, and only as a guard against a
+// programming error: go-diskfs formats a label through a "%-11.11s" verb,
+// which silently truncates an over-long one - so an image would ship
+// labelled something other than what its own config.json tells gosd-init to
+// look for, and the device would reformat its data partition on the next
+// boot. Every other label rule (charset, spaces, FAT's 8th-byte hazard)
+// belongs to internal/blockmount.ValidateLabel, which the gosd CLI applies
+// to --label-prefix at the boundary where a bad value is a person's typo -
+// that function, not this one, is the full rule set.
+//
+// Spec.DataLabel is only checked when there is a partition 2 to label.
+func checkLabels(spec Spec) error {
+	if err := checkLabel("Spec.BootLabel", spec.BootLabel); err != nil {
+		return err
+	}
+	if spec.DataSizeBytes == 0 {
+		return nil
+	}
+	return checkLabel("Spec.DataLabel", spec.DataLabel)
+}
+
+// checkLabel is checkLabels' per-field check; field names the Spec field in
+// the error, since both failures are a caller's bug to fix in code.
+func checkLabel(field, label string) error {
+	switch {
+	case label == "":
+		return fmt.Errorf("%s is empty; every image is built with an explicit volume label pair (see internal/naming.LabelsFor, and internal/blockmount.ValidateLabel for the rules the gosd CLI checks them against)", field)
+	case len(label) > maxLabelLen:
+		return fmt.Errorf("%s %q is %d bytes; a volume label is at most %d (see internal/blockmount.ValidateLabel for the full rule set)", field, label, len(label), maxLabelLen)
+	}
+	return nil
 }
 
 // validateDataFilesystem resolves Spec.DataFilesystem's zero value to
@@ -563,16 +627,16 @@ func absoluteContentRanges(diskRanges []fat12.DiskRange, contentSize int64, lay 
 // the FAT32 branch's d.CreateFilesystem): diskfmt.WriteEXT4 needs only an
 // io.WriterAt, which offsetPartitionWriter supplies confined to the data
 // partition's own byte range within the image.
-func writeEXT4DataPartition(d *disk.Disk, lay layout) error {
+func writeEXT4DataPartition(d *disk.Disk, lay layout, label string) error {
 	w, err := d.Backend.Writable()
 	if err != nil {
-		return fmt.Errorf("opening the image for the %s ext4 data partition failed: %w", dataPartitionLabel, err)
+		return fmt.Errorf("opening the image for the %s ext4 data partition failed: %w", label, err)
 	}
 
 	sizeBytes := int64(lay.dataPartitionSizeInLBAs) * sectorSizeBytes
 	shifted := offsetPartitionWriter{w: w, base: lay.dataPartitionOffsetBytes, limit: sizeBytes}
-	if err := diskfmt.WriteEXT4(shifted, sizeBytes, dataPartitionLabel); err != nil {
-		return fmt.Errorf("writing the %s ext4 data partition failed: %w", dataPartitionLabel, err)
+	if err := diskfmt.WriteEXT4(shifted, sizeBytes, label); err != nil {
+		return fmt.Errorf("writing the %s ext4 data partition failed: %w", label, err)
 	}
 	return nil
 }
@@ -700,9 +764,9 @@ func checkRawWriteBounds(offset, length int64, lay layout) error {
 	}
 
 	if lay.hasDataPartition && rangesOverlap(offset, end, lay.dataPartitionOffsetBytes, lay.totalSizeBytes) {
-		return fmt.Errorf("%w: write at offset %d (%d bytes) overlaps the %s data partition (bytes %d-%d); "+
+		return fmt.Errorf("%w: write at offset %d (%d bytes) overlaps partition 2, the data partition (bytes %d-%d); "+
 			"raw writes must stay within the unpartitioned gap (bytes %d-%d)",
-			ErrRawWriteOverlap, offset, length, dataPartitionLabel, lay.dataPartitionOffsetBytes, lay.totalSizeBytes,
+			ErrRawWriteOverlap, offset, length, lay.dataPartitionOffsetBytes, lay.totalSizeBytes,
 			mbrSizeBytes, bootPartitionOffsetBytes)
 	}
 

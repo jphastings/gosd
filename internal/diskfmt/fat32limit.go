@@ -44,7 +44,7 @@ const FAT32SizeLimitReason = "GoSD's FAT32 formatter counts the sectors in each 
 
 // MaxFAT32Bytes is the largest FAT32 volume GoSD will create. Callers that fix
 // a volume's size before the volume exists — `gosd build --data-size` sizing
-// GOSD-DATA — compare against it so an impossible size is refused at the flag
+// the data partition — compare against it so an impossible size is refused at the flag
 // rather than written into an image.
 func MaxFAT32Bytes() int64 { return maxFAT32Bytes }
 

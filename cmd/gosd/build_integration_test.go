@@ -28,6 +28,15 @@ import (
 	"github.com/jphastings/gosd/internal/inject"
 )
 
+// helloBootLabel and helloDataLabel are the volume labels every test here
+// gets by building ../../examples/hello with no --label-prefix: the app's
+// own name, short enough to need no truncation (see
+// internal/naming.LabelPrefix).
+const (
+	helloBootLabel = "hello-boot"
+	helloDataLabel = "hello-data"
+)
+
 // caCertsFixtureContent is testdata/fake-artifacts/ca-certificates.crt's
 // exact content: a few lines of fake PEM text, never the real ~186KB
 // Mozilla bundle, so every build-integration test that touches
@@ -175,7 +184,7 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 
 	assertCACertsBaked(t, records)
 
-	// With no --data-size flag, the default (0, no GOSD-DATA partition) must
+	// With no --data-size flag, the default (0, no data partition) must
 	// produce the single-partition layout. The MBR always has 4 entry slots;
 	// an unused slot reads back as a zero-sized partition rather than an
 	// error.
@@ -259,8 +268,8 @@ func TestBuildWithDataSizeExpandShipsNoPartitionButFlagsConfig(t *testing.T) {
 }
 
 // TestBuildWithExplicitDataSizeAddsTheDataPartition covers the opt-in path:
-// --data-size must produce a second FAT32 GOSD-DATA partition sized as
-// requested, starting immediately after GOSD-BOOT.
+// --data-size must produce a second FAT32 data partition sized as
+// requested, starting immediately after the boot partition.
 func TestBuildWithExplicitDataSizeAddsTheDataPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
 
@@ -287,7 +296,7 @@ func TestBuildWithExplicitDataSizeAddsTheDataPartition(t *testing.T) {
 		t.Fatalf("GetPartition(2) failed: %v", err)
 	}
 	if got, want := dataPart.GetStart(), int64(272*1024*1024); got != want {
-		t.Errorf("partition 2 starts at byte %d, want %d (immediately after GOSD-BOOT)", got, want)
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after the boot partition)", got, want)
 	}
 	if got, want := dataPart.GetSize(), int64(512*1024*1024); got != want {
 		t.Errorf("partition 2 size = %d bytes, want %d (the requested 512MiB)", got, want)
@@ -298,14 +307,86 @@ func TestBuildWithExplicitDataSizeAddsTheDataPartition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFilesystem(2) failed: %v", err)
 	}
-	if label := strings.TrimSpace(dataFS.Label()); label != "GOSD-DATA" {
-		t.Errorf("data partition label = %q, want GOSD-DATA", label)
+	if label := strings.TrimSpace(dataFS.Label()); label != helloDataLabel {
+		t.Errorf("data partition label = %q, want %q", label, helloDataLabel)
+	}
+}
+
+// TestBuildStampsPerAppVolumeLabels is bean gosd-lo7k's acceptance test: the
+// two partitions are labelled after the app rather than after GoSD, so a
+// flashed card appears on a person's desktop named for what it does — and
+// the data label is baked into config.json too, since that is the only thing
+// gosd-init has to compare a survivor against on a later boot.
+func TestBuildStampsPerAppVolumeLabels(t *testing.T) {
+	cases := map[string]struct {
+		extraArgs          []string
+		wantBoot, wantData string
+	}{
+		"the app's own name by default": {wantBoot: helloBootLabel, wantData: helloDataLabel},
+		"an explicit --label-prefix": {
+			extraArgs: []string{"--label-prefix", "web"},
+			wantBoot:  "web-boot",
+			wantData:  "web-data",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+			args := append([]string{
+				"build", "../../examples/hello",
+				"--board", "pi-zero-2w",
+				"--artifacts-dir", "testdata/fake-artifacts",
+				"--data-size", "512MiB",
+				"-o", imgPath,
+			}, c.extraArgs...)
+			cmd := newRootCmd()
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("gosd build failed: %v", err)
+			}
+
+			d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+			if err != nil {
+				t.Fatalf("reopening the built image failed: %v", err)
+			}
+			defer func() { _ = d.Close() }()
+
+			bootFS, err := d.GetFilesystem(1)
+			if err != nil {
+				t.Fatalf("GetFilesystem(1) failed: %v", err)
+			}
+			if label := strings.TrimSpace(bootFS.Label()); label != c.wantBoot {
+				t.Errorf("boot partition label = %q, want %q", label, c.wantBoot)
+			}
+
+			dataFS, err := d.GetFilesystem(2)
+			if err != nil {
+				t.Fatalf("GetFilesystem(2) failed: %v", err)
+			}
+			if label := strings.TrimSpace(dataFS.Label()); label != c.wantData {
+				t.Errorf("data partition label = %q, want %q", label, c.wantData)
+			}
+
+			initramfsBytes, err := bootFS.ReadFile("initramfs.cpio.zst")
+			if err != nil {
+				t.Fatalf("reading initramfs.cpio.zst: %v", err)
+			}
+			configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
+			var cfg initcfg.Config
+			if err := json.Unmarshal(configJSON, &cfg); err != nil {
+				t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
+			}
+			if cfg.DataLabel != c.wantData {
+				t.Errorf("config.json's dataLabel = %q, want %q (it must match the label actually written)", cfg.DataLabel, c.wantData)
+			}
+		})
 	}
 }
 
 // TestBuildRefusesADataSizeFAT32CannotHold is the acceptance test for bean
 // gosd-mt53: a --data-size past the FAT32 formatter's ceiling has to be
-// refused before the build starts, not turned into an image whose GOSD-DATA
+// refused before the build starts, not turned into an image whose data
 // partition is silently corrupt (bean gosd-8kdm).
 func TestBuildRefusesADataSizeFAT32CannotHold(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
@@ -334,7 +415,7 @@ func TestBuildRefusesADataSizeFAT32CannotHold(t *testing.T) {
 
 // TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition is
 // the acceptance test for bean gosd-m70t: a non-default --boot-size must
-// resize GOSD-BOOT (partition 1) and shift GOSD-DATA (partition 2) to start
+// resize the boot partition (partition 1) and shift the data partition to start
 // immediately after it, and the build must print a boot-volume usage summary
 // naming the board.
 func TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition(t *testing.T) {
@@ -393,7 +474,7 @@ func TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition(t *te
 		t.Fatalf("GetPartition(2) failed: %v", err)
 	}
 	if got := dataPart.GetStart(); got != wantDataOffset {
-		t.Errorf("partition 2 starts at byte %d, want %d (immediately after the resized GOSD-BOOT)", got, wantDataOffset)
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after the resized boot partition)", got, wantDataOffset)
 	}
 	if got, want := dataPart.GetSize(), int64(dataSizeBytes); got != want {
 		t.Errorf("partition 2 size = %d bytes, want %d (the requested --data-size)", got, want)
@@ -405,10 +486,10 @@ func TestBuildWithBootSizeResizesTheBootPartitionAndShiftsTheDataPartition(t *te
 }
 
 // TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly is the seam test the
-// bean flagged: with gosd-lirl's dataexpand now deriving GOSD-DATA's offset
+// bean flagged: with gosd-lirl's dataexpand now deriving the data partition's offset
 // from the flashed MBR (partition 1's start + size) instead of a mirrored
 // 272MiB constant, a non-default --boot-size must produce an image whose MBR
-// partition 1 alone already tells gosd-init exactly where to grow GOSD-DATA
+// partition 1 alone already tells gosd-init exactly where to grow the data partition
 // on first boot - the image itself still ships no partition 2 (that's the
 // point of --data-size=expand), so this only has the MBR to check.
 func TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly(t *testing.T) {
@@ -449,7 +530,7 @@ func TestBuildWithBootSizeAndDataSizeExpandComposeCorrectly(t *testing.T) {
 		t.Errorf("partition 1 starts at byte %d, want %d (16MiB)", got, want)
 	}
 	if got, want := bootPart.GetSize(), int64(bootSizeBytes); got != want {
-		t.Errorf("partition 1 size = %d bytes, want %d (the requested --boot-size); this is exactly what dataexpand reads back to derive GOSD-DATA's offset", got, want)
+		t.Errorf("partition 1 size = %d bytes, want %d (the requested --boot-size); this is exactly what dataexpand reads back to derive the data partition's offset", got, want)
 	}
 
 	// --data-size=expand must still keep the image itself single-partition,
@@ -1143,7 +1224,7 @@ func extractPartitionRegion(t *testing.T, imgPath string, offset, length int64) 
 // --data-filesystem=ext4` (qemu-virt is one of the boards ext4 is supported
 // on - see internal/boards/qemuvirt.EXT4Support) must mark partition 2 as
 // MBR type 0x83 (Linux/ext4), format it as a real ext4 filesystem labelled
-// GOSD-DATA that diskfmt.Inspect reads back, and bake config.json's
+// data partition that diskfmt.Inspect reads back, and bake config.json's
 // dataFilesystem field as "ext4".
 func TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition(t *testing.T) {
 	origTransport := http.DefaultTransport
@@ -1193,8 +1274,8 @@ func TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition(t *testing.T)
 	if contents.FS != diskfmt.EXT4 {
 		t.Errorf("Inspect().FS = %v, want ext4", contents.FS)
 	}
-	if contents.Label != "GOSD-DATA" {
-		t.Errorf("Inspect().Label = %q, want GOSD-DATA", contents.Label)
+	if contents.Label != helloDataLabel {
+		t.Errorf("Inspect().Label = %q, want %q", contents.Label, helloDataLabel)
 	}
 
 	fs, err := d.GetFilesystem(1)
@@ -1213,7 +1294,7 @@ func TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition(t *testing.T)
 
 // TestBuildDefaultDataFilesystemIsStillFAT32 confirms that omitting
 // --data-filesystem entirely still produces a FAT32 (MBR type 0x0C)
-// GOSD-DATA partition and bakes config.json's dataFilesystem as "fat32" -
+// FAT32 data partition and bakes config.json's dataFilesystem as "fat32" -
 // bean gosd-95yu's default must never be able to flip to ext4 silently.
 func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
@@ -1255,7 +1336,7 @@ func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 // TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard confirms
 // --data-filesystem=ext4 refuses to build for a Pi board (whose stock kernel
 // has no CONFIG_EXT4_FS - see internal/boards/pizero2w.EXT4Support) rather
-// than shipping an image whose GOSD-DATA the kernel can never mount.
+// than shipping an image whose data partition the kernel can never mount.
 func TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
@@ -2302,7 +2383,7 @@ func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
 
 // TestBuildIdentityUnaffectedByDataFilesystem is TestBuildIdentityUnaffected
 // ByDataFlush's counterpart for bean gosd-95yu's --data-filesystem flag.
-// Unlike DataFlush, this flag DOES change GOSD-DATA's on-card layout (see
+// Unlike DataFlush, this flag DOES change the data partition's on-card layout (see
 // initcfg.Config.DataFilesystem's docstring for the full rationale), but
 // config.json is still excluded from ComputeIdentity's hashed payload in its
 // entirety, and DataFilesystem has no footprint anywhere else in that
@@ -2328,6 +2409,32 @@ func TestBuildIdentityUnaffectedByDataFilesystem(t *testing.T) {
 	}
 	if withoutExt4.Identity != withExt4.Identity {
 		t.Errorf("identity differed across builds that only differed by --data-filesystem: %q vs %q", withoutExt4.Identity, withExt4.Identity)
+	}
+}
+
+// TestBuildIdentityUnaffectedByLabelPrefix is TestBuildIdentityUnaffected
+// ByDataFilesystem's counterpart for --label-prefix, and holds for the same
+// structural reason: the label reaches config.json and nowhere else in
+// ComputeIdentity's hashed payload, and config.json is excluded from that
+// payload in its entirety. So two builds differing only by --label-prefix
+// produce the same identity, even though they produce differently labelled
+// cards (a real on-disk-ABI difference, see initcfg.Config.DataLabel).
+func TestBuildIdentityUnaffectedByLabelPrefix(t *testing.T) {
+	dir := t.TempDir()
+	defaultLabels := buildConfigJSON(t, filepath.Join(dir, "default.img"))
+	customLabels := buildConfigJSON(t, filepath.Join(dir, "custom.img"), "--label-prefix", "web")
+
+	if defaultLabels.DataLabel != helloDataLabel {
+		t.Fatalf("config.json's dataLabel = %q without --label-prefix, want %q", defaultLabels.DataLabel, helloDataLabel)
+	}
+	if customLabels.DataLabel != "web-data" {
+		t.Fatalf("config.json's dataLabel = %q after --label-prefix=web, want web-data", customLabels.DataLabel)
+	}
+	if defaultLabels.Identity == "" {
+		t.Fatal("the default-label build's identity is empty")
+	}
+	if defaultLabels.Identity != customLabels.Identity {
+		t.Errorf("identity differed across builds that only differed by --label-prefix: %q vs %q", defaultLabels.Identity, customLabels.Identity)
 	}
 }
 

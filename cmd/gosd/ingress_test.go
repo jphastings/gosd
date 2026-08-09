@@ -56,7 +56,7 @@ func TestValidateIngressDataPartitionRefusesTailscaleFunnelWithNoDataPartition(t
 	if err == nil {
 		t.Fatal("validateIngressDataPartition(tailscale-funnel, no data partition) succeeded, want an error")
 	}
-	for _, want := range []string{"tailscale-funnel", "GOSD-DATA", "--data-size", "--data-size=expand"} {
+	for _, want := range []string{"tailscale-funnel", "data partition", "--data-size", "--data-size=expand"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
 		}

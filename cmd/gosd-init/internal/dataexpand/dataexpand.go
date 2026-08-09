@@ -1,6 +1,8 @@
-// Package dataexpand does two related jobs on the GOSD-DATA partition,
-// gated on config.json's baked dataFilesystem/dataExpand choices (see
-// initcfg.Config) and always run before the normal data-partition mount:
+// Package dataexpand does two related jobs on the data partition — labelled
+// per app at build time (Options.DataLabel, from config.json's dataLabel;
+// see initcfg.Config.DataLabel) — gated on config.json's baked
+// dataFilesystem/dataExpand choices (see initcfg.Config) and always run
+// before the normal data-partition mount:
 //
 //   - For an image built with --data-size=expand (no partition 2 at all),
 //     it creates one on first boot by telling the running kernel about the
@@ -28,20 +30,47 @@
 // is (re)done from scratch — power loss anywhere mid-creation lands back
 // here, as does reflashing the card (which rewrites the MBR without a
 // partition 2 while leaving the data region's bytes untouched), so what
-// already occupies the partition is inspected and a marked GOSD-DATA
-// filesystem adopted rather than reformatted; an entry over a mountable,
-// matching GOSD-DATA filesystem means everything already happened — except
-// that, for ext4 alone, "everything" additionally requires the
-// establishment marker to be present, since a fixed-size ext4 image ships
-// its MBR entry from the very first boot, before that filesystem has
-// necessarily been grown (see verifyEstablished); an entry over something a
-// read *successfully* shows to be anything else means an established
-// partition — possibly carrying app data — has been corrupted, reported as
-// ErrDataCorrupt so the caller can halt the device rather than let anything
-// destroy what might be recoverable. Every other failure, including one
-// that stops the read itself from happening at all, is ordinary and
-// non-fatal: the caller logs it and falls back to the read-only /data
-// placeholder for this boot, and the whole check retries next boot.
+// already occupies the partition is inspected and a marked filesystem
+// carrying this image's own data label adopted rather than reformatted; an
+// entry over a mountable, matching filesystem means everything already
+// happened — except that, for ext4 alone, "everything" additionally
+// requires the establishment marker to be present, since a fixed-size ext4
+// image ships its MBR entry from the very first boot, before that filesystem
+// has necessarily been grown (see verifyEstablished); an entry over
+// something a read *successfully* shows to be anything else means an
+// established partition — possibly carrying app data — has been corrupted,
+// reported as ErrDataCorrupt so the caller can halt the device rather than
+// let anything destroy what might be recoverable. Every other failure,
+// including one that stops the read itself from happening at all, is
+// ordinary and non-fatal: the caller logs it and falls back to the
+// read-only /data placeholder for this boot, and the whole check retries
+// next boot.
+//
+// Labels are compared case-insensitively (strings.EqualFold, matching
+// blockmount's own labelMatches) but otherwise exactly, and nothing here
+// ever relabels a volume it adopts. Since the label is per app, a survivor
+// labelled by a different app — including any card written before labels
+// were per-app, which carries the old fixed GOSD-DATA label — matches
+// nothing this image asks for and is simply debris to the creation gate,
+// reformatted like any other foreign volume. That is the intended clean
+// break, and it costs no crash-safety: the creation order below (write →
+// sync → marker → sync → MBR entry) is untouched by per-app labels, which
+// changed only which string a gate compares against.
+//
+// That break is safe because of a property of flashing rather than of
+// anything here: installing an image rewrites the MBR (dropping an expand
+// image's partition 2 entry, so a mismatched survivor is only ever met by
+// the creation gate) and/or overwrites partition 2's bytes with a
+// filesystem carrying the new image's own label — so the label a gate
+// compares against and the label on the volume it reads always change
+// together. A phase-2 self-update (docs/design/ab-updates.md, bean
+// gosd-522n) deliberately touches neither the partition table nor
+// partition 2, so it has neither property: a payload that changed
+// config.json's dataLabel would leave a healthy, established partition
+// carrying the previous label, which verifyEstablished can only report as
+// ErrDataCorrupt — halting a device that was working perfectly. A
+// self-update payload must therefore never change dataLabel, unless
+// relabelling and re-establishing the volume is part of the update itself.
 package dataexpand
 
 import (
@@ -58,9 +87,9 @@ import (
 // ErrDataCorrupt reports the one state Run refuses to repair: the partition
 // table says the data partition is established (its entry is only ever
 // written after a completed, synced format), but what it holds is not the
-// GOSD-DATA filesystem that format left. App data may be at stake, so
-// callers are expected to halt the device rather than mount around it —
-// see boot.Run's handling.
+// filesystem that format left. App data may be at stake, so callers are
+// expected to halt the device rather than mount around it — see boot.Run's
+// handling.
 var ErrDataCorrupt = errors.New("the data partition is corrupt")
 
 const (
@@ -82,20 +111,17 @@ const (
 	// byte, so this is what fdisk/parted/internal/image all use.
 	ext4PartitionType = 0x83
 
-	// Label is the volume label the created filesystem carries, identical
-	// to the GOSD-DATA partition a fixed --data-size build ships.
-	Label = "GOSD-DATA"
-
 	// EstablishedMarker is an empty file this package writes into the root
 	// of a filesystem it has just formatted AND flushed, and looks for
 	// before adopting one it finds (see survivorPresent). It exists because
 	// the volume label is not evidence of a finished format: go-diskfs
 	// writes the boot sector, FATs, root directory and finally the label
 	// with no sync between them, so a power cut mid-format can leave a
-	// volume that inspects as FAT32 labelled GOSD-DATA over incomplete FAT
-	// tables. Adopting that debris would commit an MBR entry over a broken
-	// filesystem forever; the marker, written only after the format's sync
-	// barrier, means "everything before that barrier reached the medium".
+	// volume that inspects as a correctly labelled FAT32 filesystem over
+	// incomplete FAT tables. Adopting that debris would commit an MBR entry
+	// over a broken filesystem forever; the marker, written only after the
+	// format's sync barrier, means "everything before that barrier reached
+	// the medium".
 	//
 	// It is reserved: apps must leave it alone. Deleting it costs nothing
 	// on an established partition (verifyEstablished never looks for it,
@@ -106,8 +132,8 @@ const (
 	// cannot create a leading-dot name it can later find (see
 	// diskfmt.CreateEmptyFile).
 	//
-	// The GOSD-DATA a fixed --data-size image embeds carries no marker, by
-	// choice: that partition ships with an MBR entry, so it is never a
+	// The data partition a fixed --data-size image embeds carries no marker,
+	// by choice: that partition ships with an MBR entry, so it is never a
 	// candidate for adoption, and a card reflashed from a fixed-size image
 	// to an expand one is reformatted exactly as it was before this marker
 	// existed.
@@ -235,6 +261,17 @@ type Options struct {
 	// after telling the kernel about the partition.
 	NodeTimeout time.Duration
 
+	// DataLabel is the volume label gosd build baked this image's data
+	// partition with (config.json's dataLabel — see
+	// initcfg.Config.DataLabel): both the label stamped onto anything Run
+	// formats, and the one a survivor's own label is matched against
+	// (case-insensitively) before it is ever adopted. It is required:
+	// there is no default to fall back on, since guessing one would risk
+	// either reformatting another app's data or adopting a volume this
+	// image never wrote, so Run refuses an empty value before touching the
+	// device at all.
+	DataLabel string
+
 	// Filesystem is what gosd build baked this image's data partition as
 	// (config.json's dataFilesystem — see initcfg.Config.DataFilesystem):
 	// diskfmt.FAT32 or diskfmt.EXT4. It decides which establishment path
@@ -260,6 +297,13 @@ type Options struct {
 // on the card); an error means /data will be read-only this boot, and is the
 // caller's to log — never fatal.
 func Run(deps Deps, opts Options) error {
+	// First, before the device is read let alone written: every decision
+	// below turns on comparing this label, so without one there is no safe
+	// way to tell an adoptable volume from another app's data.
+	if opts.DataLabel == "" {
+		return fmt.Errorf("this image carries no data-partition label (config.json's dataLabel is missing or empty), so %s cannot be told apart from another app's data; leaving it untouched and /data read-only this boot — rebuild the image with a gosd release that bakes a label in", opts.PartitionDevice)
+	}
+
 	mbr, err := deps.ReadMBR(opts.Device)
 	if err != nil {
 		return fmt.Errorf("reading %s's partition table: %w", opts.Device, err)
@@ -350,8 +394,8 @@ func Run(deps Deps, opts Options) error {
 	}
 	if !adopt {
 		if opts.Filesystem == diskfmt.EXT4 {
-			deps.Log("formatting %s as ext4 (%s) — one-time first-boot setup", opts.PartitionDevice, sizeString(sizeSectors*sectorSize))
-			if err := deps.FormatEXT4(opts.PartitionDevice, Label); err != nil {
+			deps.Log("formatting %s as ext4 labelled %s (%s) — one-time first-boot setup", opts.PartitionDevice, opts.DataLabel, sizeString(sizeSectors*sectorSize))
+			if err := deps.FormatEXT4(opts.PartitionDevice, opts.DataLabel); err != nil {
 				return err
 			}
 			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
@@ -364,8 +408,8 @@ func Run(deps Deps, opts Options) error {
 				return fmt.Errorf("flushing the established ext4 filesystem on %s: %w", opts.PartitionDevice, err)
 			}
 		} else {
-			deps.Log("formatting %s as %s (%s) — one-time first-boot setup", opts.PartitionDevice, Label, sizeString(sizeSectors*sectorSize))
-			if err := deps.FormatFAT32(opts.PartitionDevice, Label); err != nil {
+			deps.Log("formatting %s as FAT32 labelled %s (%s) — one-time first-boot setup", opts.PartitionDevice, opts.DataLabel, sizeString(sizeSectors*sectorSize))
+			if err := deps.FormatFAT32(opts.PartitionDevice, opts.DataLabel); err != nil {
 				return err
 			}
 			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
@@ -392,25 +436,26 @@ func Run(deps Deps, opts Options) error {
 	return nil
 }
 
-// survivorPresent reports whether the partition already holds a GOSD-DATA
-// filesystem worth keeping — the state a plain reflash leaves behind, since
-// writing an image rewrites the MBR (dropping partition 2's entry) without
-// touching the bytes beyond the boot partition. Adoption needs the derived
-// offset, opts.Filesystem, the exact label (the gate blockmount applies to
-// every other mount decision) AND a completion marker — FAT32's
-// EstablishedMarker or ext4's EXT4EstablishedMarker, whichever
-// opts.Filesystem calls for — which is the only proof the format that wrote
-// that label ever finished. Anything else — blank space, a foreign volume,
-// a *different* filesystem than the image was built for, the unrecognisable
-// middle of a filesystem whose start a differently sized boot volume
-// overwrote, the debris of an interrupted format — is formatted fresh, as
-// it always was.
+// survivorPresent reports whether the partition already holds a filesystem
+// worth keeping — the state a plain reflash leaves behind, since writing an
+// image rewrites the MBR (dropping partition 2's entry) without touching the
+// bytes beyond the boot partition. Adoption needs the derived offset,
+// opts.Filesystem, opts.DataLabel (matched case-insensitively, the gate
+// blockmount applies to every other mount decision) AND a completion
+// marker — FAT32's EstablishedMarker or ext4's EXT4EstablishedMarker,
+// whichever opts.Filesystem calls for — which is the only proof the format
+// that wrote that label ever finished. Anything else — blank space, a
+// foreign volume, a volume labelled for a *different* app (including a card
+// written before labels were per-app), a *different* filesystem than the
+// image was built for, the unrecognisable middle of a filesystem whose start
+// a differently sized boot volume overwrote, the debris of an interrupted
+// format — is formatted fresh, as it always was.
 //
 // A partition that fails to identify at all is not "anything else": nothing
 // may be formatted over contents that could not be seen, so this boot gives
 // up (leaving /data read-only) and the next one tries again. A partition
-// that identifies as GOSD-DATA but whose completion marker then fails to
-// read (FAT32's root directory, or an ext4 mount attempt) IS: that
+// whose filesystem and label both match, but whose completion marker then
+// fails to read (FAT32's root directory, or an ext4 mount attempt) IS: that
 // combination is a hallmark of a half-written filesystem, and treating it as
 // unadoptable is what keeps an interrupted format self-healing rather than
 // wedging the device forever. This is also the reasoning for reading an
@@ -431,20 +476,20 @@ func survivorPresent(deps Deps, opts Options) (bool, error) {
 	partitionDevice := opts.PartitionDevice
 	contents, err := deps.Inspect(partitionDevice)
 	if err != nil {
-		return false, fmt.Errorf("reading %s to check whether it already holds %s data: %w", partitionDevice, Label, err)
+		return false, fmt.Errorf("reading %s to check whether it already holds %s data: %w", partitionDevice, opts.DataLabel, err)
 	}
-	if contents.FS != opts.Filesystem || contents.Label != Label {
+	if contents.FS != opts.Filesystem || !strings.EqualFold(contents.Label, opts.DataLabel) {
 		return false, nil
 	}
 
 	if opts.Filesystem == diskfmt.EXT4 {
 		established, err := deps.EXT4Established(partitionDevice)
 		if err != nil {
-			deps.Log("%s looks like %s but its ext4 filesystem could not be mounted to check for a format-completion marker (%v); treating it as the debris of an interrupted format", partitionDevice, Label, err)
+			deps.Log("%s looks like %s but its ext4 filesystem could not be mounted to check for a format-completion marker (%v); treating it as the debris of an interrupted format", partitionDevice, opts.DataLabel, err)
 			return false, nil
 		}
 		if !established {
-			deps.Log("%s looks like %s but carries no format-completion marker; treating it as the debris of an interrupted format", partitionDevice, Label)
+			deps.Log("%s looks like %s but carries no format-completion marker; treating it as the debris of an interrupted format", partitionDevice, opts.DataLabel)
 			return false, nil
 		}
 		return true, nil
@@ -452,11 +497,11 @@ func survivorPresent(deps Deps, opts Options) (bool, error) {
 
 	marked, err := deps.MarkerExists(partitionDevice)
 	if err != nil {
-		deps.Log("%s looks like %s but its root directory could not be read (%v); treating it as the debris of an interrupted format", partitionDevice, Label, err)
+		deps.Log("%s looks like %s but its root directory could not be read (%v); treating it as the debris of an interrupted format", partitionDevice, opts.DataLabel, err)
 		return false, nil
 	}
 	if !marked {
-		deps.Log("%s looks like %s but carries no format-completion marker; treating it as the debris of an interrupted format", partitionDevice, Label)
+		deps.Log("%s looks like %s but carries no format-completion marker; treating it as the debris of an interrupted format", partitionDevice, opts.DataLabel)
 		return false, nil
 	}
 	return true, nil
@@ -477,10 +522,10 @@ func dataStartLBA(mbr []byte) int64 {
 // finished — formatted, flushed and marked here, or adopted only once a
 // completion marker showed an earlier boot's format finished (see Run) — and
 // flashing an image rewrites the MBR without an entry, so an entry means an
-// established partition that may hold app data. Either it still carries its
-// GOSD-DATA filesystem (the every-later-boot happy path: nothing to do), or
-// a *successful* read shows something else entirely — reported as
-// ErrDataCorrupt, never repaired here.
+// established partition that may hold app data. Either it still carries the
+// filesystem and label this image was built for (the every-later-boot happy
+// path: nothing to do), or a *successful* read shows something else entirely
+// — reported as ErrDataCorrupt, never repaired here.
 //
 // Getting to that read is itself allowed to fail transiently: there is no
 // udev to synchronize on for the device node (same reasoning as
@@ -494,7 +539,19 @@ func dataStartLBA(mbr []byte) int64 {
 // applies to a read failure on the creation path (see its doc comment).
 // ErrDataCorrupt is reserved for the one case neither retry nor a future
 // boot can fix on its own: a read that succeeded and definitively shows a
-// non-GOSD-DATA volume where the table says an established one belongs.
+// volume that is not this image's own where the table says an established
+// one belongs. A card flashed by an older, pre-per-app-label release can
+// never reach that state, by one of two mechanisms depending on which
+// kind of image replaced it. An expand image ships no partition 2 at all,
+// so the reflash that installed it dropped the old MBR entry, and the
+// legacy volume is met by the creation path's survivor gate (debris,
+// reformatted) rather than here. A fixed-size image does ship an MBR
+// entry it never established — but the same flash also overwrote
+// partition 2's filesystem with one stamped with this image's own label,
+// so the volume this function goes on to read is always this image's own.
+// Both routes rest on installing an image rewriting the MBR and/or
+// partition 2's bytes; see the package comment for what that means for a
+// future self-update, which does neither.
 //
 // The FAT32 marker deliberately plays no part in the FS/label check above:
 // /data belongs to the app from here on, and an app that tidies away a file
@@ -519,8 +576,8 @@ func verifyEstablished(deps Deps, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("reading %s failed repeatedly: %w; leaving /data read-only this boot", opts.PartitionDevice, err)
 	}
-	if contents.FS != opts.Filesystem || contents.Label != Label {
-		return fmt.Errorf("%w: %s holds %s where a %s filesystem labelled %s should be", ErrDataCorrupt, opts.PartitionDevice, describeContents(contents), opts.Filesystem, Label)
+	if contents.FS != opts.Filesystem || !strings.EqualFold(contents.Label, opts.DataLabel) {
+		return fmt.Errorf("%w: %s holds %s where a %s filesystem labelled %s should be", ErrDataCorrupt, opts.PartitionDevice, describeContents(contents), opts.Filesystem, opts.DataLabel)
 	}
 	if opts.Filesystem != diskfmt.EXT4 {
 		deps.Log("data partition already present on %s", opts.PartitionDevice)

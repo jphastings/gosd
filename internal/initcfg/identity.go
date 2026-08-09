@@ -25,7 +25,7 @@ type PayloadFile struct {
 // # Recipe
 //
 // The digest covers the boot payload set: every file gosd build writes to
-// the GOSD-BOOT FAT partition, whether it lands directly at that
+// the FAT boot partition, whether it lands directly at that
 // partition's root (the kernel image, DTB(s), the board's own boot-config
 // file — config.txt/cmdline.txt or extlinux.conf — any USB-gadget overlay,
 // and the rendered gosd.toml template) or gets packed into the initramfs
@@ -63,7 +63,7 @@ type PayloadFile struct {
 // "initramfs:/init"). The "initramfs:" prefix — disjoint from every
 // FAT-root path, which never starts with "/" — keeps the two namespaces
 // from ever colliding, so a future reader re-deriving Identity from a
-// built image alone (list the GOSD-BOOT root, drop config.json, unpack
+// built image alone (list the boot partition's root, drop config.json, unpack
 // initramfs.cpio.zst and list its members minus /etc/gosd/config.json) can
 // reproduce the exact input set with nothing beyond what's on the card.
 func ComputeIdentity(files []PayloadFile) string {

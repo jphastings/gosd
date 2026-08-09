@@ -46,7 +46,7 @@ func TestMountEarlyStopsAtFirstFailure(t *testing.T) {
 }
 
 // alwaysExists is a pathExists stub for tests that don't care about the
-// GOSD-BOOT sentinel check itself, only about device-candidate behavior.
+// boot-partition sentinel check itself, only about device-candidate behavior.
 func alwaysExists(string) bool { return true }
 
 func TestMountBootPartitionTriesEachDeviceInOrder(t *testing.T) {
@@ -92,7 +92,7 @@ func TestMountBootPartitionAcceptsSingleCandidateWithSentinelPresent(t *testing.
 // TestMountBootPartitionSkipsCandidateMissingGosdBootSentinel is the exact
 // hardware scenario from gosd-pcwl: with an eMMC fitted, its first
 // partition (mmcblk0p1) sorts before the SD card's (mmcblk1p1) and mounts
-// as valid FAT, but it isn't GOSD-BOOT. The probe must reject it via the
+// as valid FAT, but it isn't a GoSD boot partition. The probe must reject it via the
 // sentinel check and move on to the SD card instead of accepting the first
 // FAT-valid mount it finds.
 func TestMountBootPartitionSkipsCandidateMissingGosdBootSentinel(t *testing.T) {

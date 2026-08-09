@@ -290,7 +290,7 @@ func TestParseDataSizeRejectsInvalidValues(t *testing.T) {
 
 // TestParseDataSizeRefusesMoreThanFAT32CanHold is bean gosd-mt53's guard: a
 // --data-size past the largest FAT32 volume GoSD can lay out used to build an
-// image whose GOSD-DATA partition was silently corrupt (bean gosd-8kdm).
+// image whose data partition was silently corrupt (bean gosd-8kdm).
 func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
 	maxBytes := diskfmt.MaxFAT32Bytes()
 

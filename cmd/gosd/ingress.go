@@ -60,7 +60,7 @@ type ingressAgent struct {
 	reservedDests map[string]string
 
 	// requiresDataPartition, when non-empty, is the reason this agent needs
-	// a writable GOSD-DATA partition: validateIngressDataPartition refuses a
+	// a writable data partition: validateIngressDataPartition refuses a
 	// build that selects this agent with no --data-size (dataSizeBytes==0
 	// and dataExpand false). Empty means the agent has no such requirement
 	// (cloudflared's tunnel credentials are stateless from gosd's point of
@@ -111,10 +111,10 @@ var tailscaleFunnelAgent = ingressAgent{
 	// The shim's tailnet node identity lives in tsnet's state dir under
 	// /data (epic gosd-65uy decision 3): losing it means a new node
 	// identity and a new public URL on every reboot, so a build with no
-	// GOSD-DATA partition at all can never work correctly - refusing it at
+	// data partition at all can never work correctly - refusing it at
 	// build time is strictly better than shipping a device that silently
 	// re-registers itself forever.
-	requiresDataPartition: "tailscale-funnel stores its tailnet identity on the GOSD-DATA partition",
+	requiresDataPartition: "tailscale-funnel stores its tailnet identity on the data partition",
 }
 
 // ingressAgents is gosd's registry of every --ingress value it understands.
@@ -189,7 +189,7 @@ func parseIngressFlags(flags []string) (ingressSelection, error) {
 }
 
 // validateIngressDataPartition fails fast when a selected --ingress agent
-// needs a writable GOSD-DATA partition (see
+// needs a writable data partition (see
 // ingressAgent.requiresDataPartition) but the build has none: dataSizeBytes
 // is 0 and dataExpand is false. Without this check, `gosd build --ingress
 // tailscale-funnel` with no --data-size would boot a device that loses its

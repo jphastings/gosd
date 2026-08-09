@@ -1,6 +1,6 @@
 // Package inject implements the gosd side of the image-injection contract:
 // deterministic, comment-padded placeholder files pre-created on the FAT32
-// GOSD-BOOT partition at build time (`gosd build --placeholder
+// boot partition at build time (`gosd build --placeholder
 // <path>=<size>`), and the <image basename>.inject.json manifest that
 // records the absolute byte ranges each placeholder's content occupies in
 // the finished .img. A provisioning tool downloads the image, verifies
@@ -27,7 +27,7 @@ import (
 )
 
 // Placeholder describes one --placeholder <path>=<size> flag: a file gosd
-// build reserves at Path on the FAT root of GOSD-BOOT, rendered
+// build reserves at Path on the FAT root of the boot partition, rendered
 // deterministically to exactly SizeBytes bytes (see Render).
 type Placeholder struct {
 	// Path is the placeholder's location on the FAT root: forward-slash
@@ -84,7 +84,7 @@ func (p Placeholder) Validate() error {
 		return errors.New("--placeholder path must not be empty")
 	}
 	if strings.HasPrefix(p.Path, "/") {
-		return fmt.Errorf("--placeholder path %q must not start with '/'; it's relative to the FAT root of GOSD-BOOT", p.Path)
+		return fmt.Errorf("--placeholder path %q must not start with '/'; it's relative to the FAT root of the boot partition", p.Path)
 	}
 	for _, seg := range strings.Split(p.Path, "/") {
 		if seg == "." || seg == ".." {

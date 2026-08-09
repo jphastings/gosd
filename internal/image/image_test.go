@@ -20,6 +20,12 @@ import (
 const (
 	bootPartitionOffsetBytes = 16 * 1024 * 1024  // locked layout: partition 1 starts at 16MiB
 	dataPartitionOffsetBytes = 272 * 1024 * 1024 // locked layout: partition 2 starts right after partition 1
+
+	// The labels a `gosd build` for an app called "test" would resolve
+	// (see internal/naming.LabelsFor): required Spec fields, with nothing
+	// special about these particular values.
+	testBootLabel = "test-boot"
+	testDataLabel = "test-data"
 )
 
 func TestWriteProducesAReadableImage(t *testing.T) {
@@ -30,6 +36,8 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 	raw := []byte("raw-bootloader-payload")
 
 	report, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		BootFiles: map[string]io.Reader{
 			"gosd.toml":           bytes.NewReader(topLevel),
 			"nested/dir/boot.scr": bytes.NewReader(nested),
@@ -66,8 +74,8 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFilesystem(1) failed: %v", err)
 	}
-	if label := strings.TrimSpace(fs.Label()); label != "GOSD-BOOT" {
-		t.Errorf("boot partition label = %q, want GOSD-BOOT", label)
+	if label := strings.TrimSpace(fs.Label()); label != testBootLabel {
+		t.Errorf("boot partition label = %q, want %q (Spec.BootLabel, verbatim)", label, testBootLabel)
 	}
 
 	gotTop, err := fs.ReadFile("gosd.toml")
@@ -108,6 +116,8 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 	const dataSizeBytes = 4 * 1024 * 1024 // small, so the test doesn't need a full 1GiB partition
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:     testBootLabel,
+		DataLabel:     testDataLabel,
 		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
 		DataSizeBytes: dataSizeBytes,
 	})
@@ -159,8 +169,8 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFilesystem(2) failed: %v", err)
 	}
-	if label := strings.TrimSpace(fs.Label()); label != "GOSD-DATA" {
-		t.Errorf("data partition label = %q, want GOSD-DATA", label)
+	if label := strings.TrimSpace(fs.Label()); label != testDataLabel {
+		t.Errorf("data partition label = %q, want %q (Spec.DataLabel, verbatim)", label, testDataLabel)
 	}
 
 	// Partition 1 must still be intact and untouched by the new partition.
@@ -183,7 +193,7 @@ func TestWriteFormatsBothPartitionsWithAddressableFATs(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	const dataSizeBytes = 64 * 1024 * 1024
-	if _, err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
+	if _, err := image.Write(imgPath, image.Spec{BootLabel: testBootLabel, DataLabel: testDataLabel, DataSizeBytes: dataSizeBytes}); err != nil {
 		t.Fatalf("Write() failed: %v", err)
 	}
 
@@ -191,8 +201,8 @@ func TestWriteFormatsBothPartitionsWithAddressableFATs(t *testing.T) {
 		name   string
 		offset int64
 	}{
-		{"GOSD-BOOT", bootPartitionOffsetBytes},
-		{"GOSD-DATA", dataPartitionOffsetBytes},
+		{testBootLabel, bootPartitionOffsetBytes},
+		{testDataLabel, dataPartitionOffsetBytes},
 	} {
 		clusters, entries := fat32ClusterAndEntryCounts(t, imgPath, part.offset)
 		if entries < clusters+2 {
@@ -232,10 +242,104 @@ func fat32ClusterAndEntryCounts(t *testing.T, imgPath string, offset int64) (clu
 	return clusters, sectorsPerFAT * bytesPerSector / 4
 }
 
+// TestWriteRefusesUnusableLabelsBeforeCreatingTheImage covers the guard
+// go-diskfs cannot: it formats a volume label through a "%-11.11s" verb, so
+// an over-long label would silently ship as a truncated one - an image
+// labelled something other than what its own config.json tells gosd-init to
+// look for, which reformats the data partition on the next boot. An empty
+// label is the same class of caller bug (see internal/naming.LabelsFor and
+// `gosd build --label-prefix`). Both must be refused before any image file
+// exists at all, so a failed build leaves nothing behind.
+func TestWriteRefusesUnusableLabelsBeforeCreatingTheImage(t *testing.T) {
+	cases := []struct {
+		name string
+		spec image.Spec
+	}{
+		{"an empty boot label", image.Spec{DataLabel: testDataLabel}},
+		{"an over-long boot label", image.Spec{BootLabel: "twelvechars!", DataLabel: testDataLabel}},
+		{
+			name: "an empty data label with a data partition",
+			spec: image.Spec{BootLabel: testBootLabel, DataSizeBytes: 4 * 1024 * 1024},
+		},
+		{
+			name: "an over-long data label with a data partition",
+			spec: image.Spec{BootLabel: testBootLabel, DataLabel: "twelvechars!", DataSizeBytes: 4 * 1024 * 1024},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "test.img")
+			if _, err := image.Write(imgPath, c.spec); err == nil {
+				t.Fatal("Write() = nil, want a refusal naming the offending Spec field")
+			}
+			if _, err := os.Stat(imgPath); !os.IsNotExist(err) {
+				t.Errorf("os.Stat(%s) = %v, want the image never to have been created", imgPath, err)
+			}
+		})
+	}
+}
+
+// An empty Spec.DataLabel is only a problem when there is a partition 2 to
+// label - a --data-size=0 build has none, and needn't invent one.
+func TestWriteAcceptsAnEmptyDataLabelWithNoDataPartition(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	if _, err := image.Write(imgPath, image.Spec{BootLabel: testBootLabel}); err != nil {
+		t.Fatalf("Write() = %v, want nil", err)
+	}
+}
+
+// Labels are lowercase per-app names now, and nothing in the stack may
+// upper-case, trim or otherwise rewrite them - a label that doesn't round
+// trip is a data partition reformatted on the next boot. 11 bytes is FAT's
+// maximum, the case most likely to be mangled.
+func TestWriteRoundTripsLabelsVerbatim(t *testing.T) {
+	pairs := map[string]struct{ boot, data string }{
+		// 11 bytes each: the longest prefix (6) plus a 5-byte suffix.
+		"the longest labels FAT allows": {"eleven-boot", "eleven-data"},
+		// `gosd build --label-prefix` is used exactly as typed, so a
+		// mixed-case prefix must survive the FAT formatter unaltered too.
+		"a mixed-case prefix": {"Web-boot", "Web-data"},
+	}
+	for name, pair := range pairs {
+		t.Run(name, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "test.img")
+			if _, err := image.Write(imgPath, image.Spec{
+				BootLabel:     pair.boot,
+				DataLabel:     pair.data,
+				DataSizeBytes: 64 * 1024 * 1024,
+			}); err != nil {
+				t.Fatalf("Write() failed: %v", err)
+			}
+
+			d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+			if err != nil {
+				t.Fatalf("reopening the written image failed: %v", err)
+			}
+			defer func() { _ = d.Close() }()
+
+			for _, part := range []struct {
+				index int
+				want  string
+			}{{1, pair.boot}, {2, pair.data}} {
+				fs, err := d.GetFilesystem(part.index)
+				if err != nil {
+					t.Fatalf("GetFilesystem(%d) failed: %v", part.index, err)
+				}
+				if got := strings.TrimSpace(fs.Label()); got != part.want {
+					t.Errorf("partition %d label = %q, want %q unchanged", part.index, got, part.want)
+				}
+			}
+		})
+	}
+}
+
 func TestWriteRejectsRawWriteOverlappingDataPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:     testBootLabel,
+		DataLabel:     testDataLabel,
 		DataSizeBytes: 4 * 1024 * 1024,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: dataPartitionOffsetBytes, Content: bytes.NewReader([]byte("clobber"))},
@@ -250,6 +354,8 @@ func TestWriteRejectsRawWriteOverlappingMBR(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: 0, Content: bytes.NewReader([]byte("clobber"))},
 		},
@@ -263,6 +369,8 @@ func TestWriteRejectsRawWriteOverlappingBootPartition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: bootPartitionOffsetBytes, Content: bytes.NewReader([]byte("clobber"))},
 		},
@@ -285,6 +393,8 @@ func TestWriteRejectsTwoRawWritesThatOverlapEachOther(t *testing.T) {
 	uboot := []byte("u-boot payload")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: idbloaderOffset, Content: bytes.NewReader(idbloader)},
 			{OffsetBytes: ubootOffset, Content: bytes.NewReader(uboot)},
@@ -306,6 +416,8 @@ func TestWriteRejectsRawWriteStraddlingIntoBootPartition(t *testing.T) {
 	// Starts inside the gap but is long enough to run into partition 1.
 	content := bytes.Repeat([]byte{0xff}, 1024)
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		RawWrites: []image.RawWrite{
 			{OffsetBytes: bootPartitionOffsetBytes - 512, Content: bytes.NewReader(content)},
 		},
@@ -330,6 +442,8 @@ func TestWriteWithBootSizeMovesTheDataPartitionOffset(t *testing.T) {
 	)
 
 	report, err := image.Write(imgPath, image.Spec{
+		BootLabel:     testBootLabel,
+		DataLabel:     testDataLabel,
 		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
 		BootSizeBytes: bootSizeBytes,
 		DataSizeBytes: dataSizeBytes,
@@ -381,6 +495,8 @@ func TestWriteReportsExactAbsoluteFileRanges(t *testing.T) {
 	original := bytes.Repeat([]byte("0123456789"), 500) // exactly 5000 bytes
 
 	report, err := image.Write(imgPath, image.Spec{
+		BootLabel: testBootLabel,
+		DataLabel: testDataLabel,
 		BootFiles: map[string]io.Reader{
 			"gosd.toml":     strings.NewReader("hostname = \"x\"\n"),
 			placeholderName: bytes.NewReader(original),
@@ -476,6 +592,8 @@ func TestWriteRejectsReportRangesPathNotInBootFiles(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:    testBootLabel,
+		DataLabel:    testDataLabel,
 		BootFiles:    map[string]io.Reader{"gosd.toml": strings.NewReader("hostname = \"x\"\n")},
 		ReportRanges: []string{"not-a-boot-file.yaml"},
 	})
@@ -504,6 +622,8 @@ func TestWriteWrapsGoDiskfsDiskFullError(t *testing.T) {
 	payload := bytes.Repeat([]byte{0xaa}, 2*1024*1024)
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:     testBootLabel,
+		DataLabel:     testDataLabel,
 		BootFiles:     map[string]io.Reader{"big-file.bin": bytes.NewReader(payload)},
 		BootSizeBytes: tinyBootSizeBytes,
 	})
@@ -568,12 +688,14 @@ func extractRegion(t *testing.T, imgPath string, offset, length int64) string {
 // TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition is the
 // acceptance test for bean gosd-95yu's image half: DataFilesystem: EXT4 must
 // mark partition 2 as Linux (0x83), not FAT32 (0x0C), and its bytes must be a
-// real ext4 filesystem labelled GOSD-DATA that diskfmt.Inspect can read back.
+// real ext4 filesystem labelled with Spec.DataLabel that diskfmt.Inspect can read back.
 func TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	dataSizeBytes := diskfmt.MinEXT4Bytes()
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:      testBootLabel,
+		DataLabel:      testDataLabel,
 		DataSizeBytes:  dataSizeBytes,
 		DataFilesystem: diskfmt.EXT4,
 	})
@@ -611,8 +733,8 @@ func TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition(t *testing.T)
 	if contents.FS != diskfmt.EXT4 {
 		t.Errorf("Inspect().FS = %v, want ext4", contents.FS)
 	}
-	if contents.Label != "GOSD-DATA" {
-		t.Errorf("Inspect().Label = %q, want GOSD-DATA", contents.Label)
+	if contents.Label != testDataLabel {
+		t.Errorf("Inspect().Label = %q, want %q (Spec.DataLabel, stamped into the ext4 golden too)", contents.Label, testDataLabel)
 	}
 }
 
@@ -623,7 +745,7 @@ func TestWriteDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 	const dataSizeBytes = 4 * 1024 * 1024
 
-	if _, err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
+	if _, err := image.Write(imgPath, image.Spec{BootLabel: testBootLabel, DataLabel: testDataLabel, DataSizeBytes: dataSizeBytes}); err != nil {
 		t.Fatalf("Write() failed: %v", err)
 	}
 
@@ -640,6 +762,8 @@ func TestWriteRejectsEXT4DataSizeBelowTheGoldenMinimum(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:      testBootLabel,
+		DataLabel:      testDataLabel,
 		DataSizeBytes:  diskfmt.MinEXT4Bytes() - 1,
 		DataFilesystem: diskfmt.EXT4,
 	})
@@ -661,6 +785,8 @@ func TestWriteRejectsAnUnsupportedDataFilesystem(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:      testBootLabel,
+		DataLabel:      testDataLabel,
 		DataSizeBytes:  4 * 1024 * 1024,
 		DataFilesystem: diskfmt.ExFAT,
 	})
@@ -685,6 +811,8 @@ func TestWriteWithEXT4DoesNotApplyTheFAT32SizingTrim(t *testing.T) {
 	dataSizeBytes := firstFAT32TrimmedSizeAtOrAbove(t, diskfmt.MinEXT4Bytes())
 
 	_, err := image.Write(imgPath, image.Spec{
+		BootLabel:      testBootLabel,
+		DataLabel:      testDataLabel,
 		DataSizeBytes:  dataSizeBytes,
 		DataFilesystem: diskfmt.EXT4,
 	})

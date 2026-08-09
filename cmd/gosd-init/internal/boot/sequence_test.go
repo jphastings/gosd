@@ -252,7 +252,7 @@ func TestRunProbesOnlyTheBootdevDiskForGosdBoot(t *testing.T) {
 
 	for _, call := range mounter.calls {
 		if call.target == "/boot" && call.source != "/dev/mmcblk1p1" {
-			t.Errorf("GOSD-BOOT probe mounted %s; gosd.bootdev=mmcblk1 must restrict probing to /dev/mmcblk1p1", call.source)
+			t.Errorf("boot-partition probe mounted %s; gosd.bootdev=mmcblk1 must restrict probing to /dev/mmcblk1p1", call.source)
 		}
 	}
 	if !strings.Contains(console.String(), "boot partition mounted at /boot from /dev/mmcblk1p1") {
@@ -1147,10 +1147,10 @@ func TestRunMountsDataPartitionReadWrite(t *testing.T) {
 }
 
 func TestRunMountsReadOnlyDataWhenPartitionIsMissing(t *testing.T) {
-	// An image built with --data-size=0 (or from before GOSD-DATA existed)
+	// An image built with --data-size=0 (or from before the data partition existed)
 	// has no partition 2: boot must proceed normally and the app must start,
 	// but /data is mounted read-only so a write there fails with EROFS
-	// instead of silently landing in RAM. The GOSD-DATA vfat mount (which
+	// instead of silently landing in RAM. The data partition's vfat mount (which
 	// reports the device node missing) fails; the tmpfs fallback succeeds.
 	mounter := &fakeMounter{fn: func(c mountCall) error {
 		if c.target == "/data" && c.fstype == "vfat" {
@@ -1565,6 +1565,11 @@ func testDepsForFatalPath(mounter Mounter, hostname HostnameSetter, rebooter Reb
 	}
 }
 
+// testDataLabel is the per-app data-partition label these tests' config.json
+// carries (`gosd build --label-prefix`): the boot sequence's job is to pass
+// it through untouched, so nothing about this value is special.
+const testDataLabel = "myapp-data"
+
 // expandTestDeps builds the Deps for the --data-size=expand sequence tests:
 // a config whose dataExpand flag is set (or not), and an ExpandData hook
 // whose invocations are recorded through the returned pointers.
@@ -1576,14 +1581,16 @@ func expandTestDeps(mounter *fakeMounter, clock *fakeClock, stop chan struct{}, 
 			close(stop)
 			return 1, nil
 		}),
-		Reaper:               fakeReaper{},
-		Rebooter:             &fakeRebooter{},
-		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog:          func(string, ...any) {},
-		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataExpand: dataExpand}, nil },
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{DataExpand: dataExpand, DataLabel: testDataLabel}, nil
+		},
 		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		EnsureDataMountpoint: func() error { return nil },
-		ExpandData: func(bootDevice string, filesystem diskfmt.FS, expand bool, log func(format string, args ...any)) error {
+		ExpandData: func(bootDevice string, filesystem diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error {
 			*expandedWith = append(*expandedWith, bootDevice)
 			return expandErr
 		},
@@ -1597,12 +1604,14 @@ func TestRunExpandsDataFromTheBootDeviceBeforeMountingIt(t *testing.T) {
 	stop := make(chan struct{})
 	var expandedWith []string
 	var dataMountsAtExpand int
+	var gotDataLabel string
 
 	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true, nil, &expandedWith)
 	expand := deps.ExpandData
-	deps.ExpandData = func(bootDevice string, filesystem diskfmt.FS, doExpand bool, log func(format string, args ...any)) error {
+	deps.ExpandData = func(bootDevice string, filesystem diskfmt.FS, dataLabel string, doExpand bool, log func(format string, args ...any)) error {
 		dataMountsAtExpand = mounter.callsFor("/data")
-		return expand(bootDevice, filesystem, doExpand, log)
+		gotDataLabel = dataLabel
+		return expand(bootDevice, filesystem, dataLabel, doExpand, log)
 	}
 	opts := testDataOptions()
 	opts.Stop = stop
@@ -1610,10 +1619,13 @@ func TestRunExpandsDataFromTheBootDeviceBeforeMountingIt(t *testing.T) {
 	if err := Run(deps, opts); err != nil {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
-	// The device passed is the one GOSD-BOOT actually mounted from, so only
+	// The device passed is the one the boot mount actually used, so only
 	// the disk the system truly booted from can ever be expanded.
 	if len(expandedWith) != 1 || expandedWith[0] != "/dev/mmcblk0p1" {
 		t.Errorf("ExpandData called with %v, want exactly [/dev/mmcblk0p1]", expandedWith)
+	}
+	if gotDataLabel != testDataLabel {
+		t.Errorf("ExpandData data label = %q, want config.json's %q", gotDataLabel, testDataLabel)
 	}
 	if dataMountsAtExpand != 0 {
 		t.Error("the data partition was mounted before ExpandData had run")
@@ -1706,13 +1718,54 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	if rebooter.syncCalls == 0 {
 		t.Error("no sync before halting")
 	}
-	for _, want := range []string{"/dev/mmcblk0p2", "salvage", "GOSD-DATA"} {
+	// The recovery instructions have to name the exact volume the next boot
+	// will accept — this image's own filesystem and per-app label — since
+	// that is all whoever reads the log has to go on. This is an expand
+	// image, so deleting the partition really does get it recreated.
+	for _, want := range []string{"/dev/mmcblk0p2", "salvage", "FAT32", testDataLabel, "the next boot will"} {
 		if !strings.Contains(recorded, want) {
 			t.Errorf("boot-failure.log content %q is missing %q", recorded, want)
 		}
 	}
 	if mounter.callsFor("/data") != 0 {
 		t.Error("/data was mounted despite the halt")
+	}
+}
+
+// TestRunTellsAFixedSizeImageToReflashRatherThanWaitForARecreatedPartition
+// covers the other image shape that can reach the halt: a fixed-size
+// --data-filesystem=ext4 image ships partition 2 in the image and never
+// creates one at boot, so the recovery advice an expand image gets ("delete
+// it, the next boot recreates it") would strand whoever followed it.
+func TestRunTellsAFixedSizeImageToReflashRatherThanWaitForARecreatedPartition(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+	var recorded string
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, false,
+		fmt.Errorf("%w: /dev/mmcblk0p2 holds nothing (blank space)", dataexpand.ErrDataCorrupt), &expandedWith)
+	deps.ReadConfig = func() (initcfg.Config, error) {
+		return initcfg.Config{DataFilesystem: "ext4", DataLabel: testDataLabel}, nil
+	}
+	deps.Rebooter = &fakeRebooter{}
+	deps.AppStarter = funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		t.Error("the app was started despite a corrupt data partition")
+		close(stop)
+		return 1, nil
+	})
+	deps.WriteBootFailure = func(msg string) error { recorded = msg; return nil }
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); !errors.Is(err, dataexpand.ErrDataCorrupt) {
+		t.Fatalf("Run() = %v, want the corruption error", err)
+	}
+	if !strings.Contains(recorded, "flash this image") {
+		t.Errorf("boot-failure.log content %q doesn't tell a fixed-size image's owner to re-flash", recorded)
+	}
+	if strings.Contains(recorded, "the next boot will") {
+		t.Errorf("boot-failure.log content %q promises a recreated partition this image never creates", recorded)
 	}
 }
 
@@ -1735,14 +1788,16 @@ func TestRunExpandsAFixedSizeEXT4ImageEvenWithoutTheExpandFlag(t *testing.T) {
 			close(stop)
 			return 1, nil
 		}),
-		Reaper:               fakeReaper{},
-		Rebooter:             &fakeRebooter{},
-		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog:          func(string, ...any) {},
-		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataFilesystem: "ext4"}, nil },
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{DataFilesystem: "ext4", DataLabel: testDataLabel}, nil
+		},
 		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		EnsureDataMountpoint: func() error { return nil },
-		ExpandData: func(bootDevice string, filesystem diskfmt.FS, expand bool, log func(format string, args ...any)) error {
+		ExpandData: func(bootDevice string, filesystem diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error {
 			expandedWith = append(expandedWith, bootDevice)
 			gotFilesystem, gotExpand = filesystem, expand
 			return nil

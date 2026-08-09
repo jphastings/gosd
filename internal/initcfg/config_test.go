@@ -1,7 +1,9 @@
 package initcfg
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -100,6 +102,11 @@ func TestParseConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "dataLabel carries the image's per-app data-partition label",
+			data: `{"hostname":"my-device","dataLabel":"myapp-data"}`,
+			want: Config{Hostname: "my-device", DataLabel: "myapp-data"},
+		},
+		{
 			name: "buildTimestamp parses when present",
 			data: `{"hostname":"my-device","buildTimestamp":"2026-07-31T12:00:00Z"}`,
 			want: Config{Hostname: "my-device", BuildTimestamp: "2026-07-31T12:00:00Z"},
@@ -127,6 +134,31 @@ func TestParseConfig(t *testing.T) {
 				t.Fatalf("ParseConfig(%q) = %+v, want %+v", tt.data, got, tt.want)
 			}
 		})
+	}
+}
+
+// dataLabel has no omitempty, unlike every other optional field: gosd build
+// always resolves a label pair, so a config.json missing the key is a wiring
+// bug gosd-init is meant to notice rather than a default to fill in.
+func TestConfigDataLabelIsAlwaysMarshalled(t *testing.T) {
+	data, err := json.Marshal(Config{Hostname: "my-device", DataLabel: "myapp-data"})
+	if err != nil {
+		t.Fatalf("marshalling a config with a data label failed: %v", err)
+	}
+	parsed, err := ParseConfig(data)
+	if err != nil {
+		t.Fatalf("parsing %s back failed: %v", data, err)
+	}
+	if parsed.DataLabel != "myapp-data" {
+		t.Errorf("DataLabel = %q after a marshal/parse round trip, want myapp-data", parsed.DataLabel)
+	}
+
+	empty, err := json.Marshal(Config{})
+	if err != nil {
+		t.Fatalf("marshalling a zero config failed: %v", err)
+	}
+	if !strings.Contains(string(empty), `"dataLabel":""`) {
+		t.Errorf("zero Config marshalled as %s, want it to still carry an (empty) dataLabel key", empty)
 	}
 }
 

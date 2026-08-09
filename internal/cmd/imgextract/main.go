@@ -1,5 +1,5 @@
 // Command imgextract copies every file at the root of a gosd .img's
-// GOSD-BOOT FAT partition out to a destination directory, without root and
+// FAT boot partition out to a destination directory, without root and
 // without mtools. It's a thin CLI wrapper around
 // github.com/jphastings/gosd/internal/qemurun.ExtractBootFiles, which does
 // the actual work (opening the image read-only via go-diskfs and reading

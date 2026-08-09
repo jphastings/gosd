@@ -21,9 +21,15 @@ import (
 
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
+	"github.com/jphastings/gosd/internal/naming"
 )
 
 const bootSizeBytes = 8 * 1024 * 1024 // 8MiB - just enough for gosd.toml plus the two placeholders below.
+
+// fixtureAppName stands in for the app a real `gosd build` would be given,
+// so the fixture's partition labels are derived exactly as that build's
+// would be (naming.LabelPrefix; see `gosd build --label-prefix`).
+const fixtureAppName = "fixture"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -69,7 +75,10 @@ func run(args []string) error {
 	if err := os.Remove(imgPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing previous fixture image %s failed: %w", imgPath, err)
 	}
+	labels := naming.LabelsFor(naming.LabelPrefix(fixtureAppName))
 	report, err := image.Write(imgPath, image.Spec{
+		BootLabel:     labels.Boot,
+		DataLabel:     labels.Data,
 		BootSizeBytes: bootSizeBytes,
 		BootFiles:     bootFiles,
 		ReportRanges:  reportRanges,

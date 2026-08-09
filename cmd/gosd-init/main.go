@@ -54,30 +54,30 @@ const (
 	// binary from gosd-init.
 	tsfunnelBinaryPath = "/bin/gosd-tsfunnel"
 
-	// dataMarkerPath is an empty file created on the GOSD-DATA partition
-	// the first time it's mounted, marking it as initialized by gosd.
+	// dataMarkerPath is an empty file created on the data partition the
+	// first time it's mounted, marking it as initialized by gosd.
 	dataMarkerPath = dataTarget + "/.gosd-data"
 
 	// bootMountTimeout bounds how long gosd-init retries mounting the
-	// GOSD-BOOT partition: the MMC controller may still be probing when
+	// boot partition: the MMC controller may still be probing when
 	// gosd-init reaches this step, and there's no udev to wait on.
 	bootMountTimeout = 10 * time.Second
 
-	// dataMountTimeout bounds retries of the GOSD-DATA mount. It runs
+	// dataMountTimeout bounds retries of the data-partition mount. It runs
 	// after the boot mount has already succeeded (so the card is probed
 	// and a genuinely missing partition is detected instantly, not
 	// retried); the timeout only bounds transient non-ENOENT failures.
 	dataMountTimeout = 10 * time.Second
 )
 
-// bootDevices are the candidate device nodes for the GOSD-BOOT FAT
-// partition, tried in order, with no udev available to discover it.
+// bootDevices are the candidate device nodes for the FAT boot partition,
+// tried in order, with no udev available to discover it.
 // /dev/vda1 is qemu-virt's virtio-blk SD card (see internal/boards/qemuvirt)
 // - listed last since it's never present alongside the real mmcblk devices,
 // checked with the exact same probe logic as those.
 var bootDevices = []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1", "/dev/vda1"}
 
-// dataDevices are the candidate device nodes for the optional GOSD-DATA FAT
+// dataDevices are the candidate device nodes for the optional data
 // partition: partition 2 of the same devices bootDevices covers.
 var dataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
 
@@ -87,8 +87,8 @@ func main() {
 
 	deps := boot.Deps{
 		Mounter: platform.Mounter,
-		// PathExists confirms a freshly-mounted GOSD-BOOT candidate really
-		// is GOSD-BOOT (see boot.MountBootPartition and gosd-pcwl); plain
+		// PathExists confirms a freshly-mounted boot-partition candidate
+		// really is one (see boot.MountBootPartition and gosd-pcwl); plain
 		// os.Stat is enough since gosd-init only ever calls it against an
 		// already-mounted path.
 		PathExists:  pathExists,
@@ -104,20 +104,21 @@ func main() {
 		// (step 1), rather than main reading it up front.
 		ReadCmdline: readCmdline,
 		// ReadGosdToml reads /boot/gosd.toml, which only exists once the
-		// GOSD-BOOT partition is mounted; boot.Run calls this itself,
-		// after that mount (step 5), rather than main reading it up front.
+		// boot partition is mounted; boot.Run calls this itself, after
+		// that mount (step 5), rather than main reading it up front.
 		ReadGosdToml: readGosdToml,
 		// ReadProvisioning reads cloud-init's user-data/network-config,
-		// which — like gosd.toml — only exist once the GOSD-BOOT
-		// partition is mounted (step 5); boot.Run calls this itself,
-		// right alongside ReadGosdToml.
+		// which — like gosd.toml — only exist once the boot partition is
+		// mounted (step 5); boot.Run calls this itself, right alongside
+		// ReadGosdToml.
 		ReadProvisioning:     readProvisioning,
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
 		// ProvisionSnapshot needs both partitions mounted — the snapshot
-		// lives on GOSD-DATA and a restore is written back to GOSD-BOOT —
-		// so boot.Run calls it only once the data mount has been attempted.
+		// lives on the data partition and a restore is written back to
+		// the boot partition — so boot.Run calls it only once the data
+		// mount has been attempted.
 		ProvisionSnapshot: func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result {
 			deps := provsnapshot.NewDeps(
 				filepath.Join(dataTarget, provsnapshot.Dir),
@@ -271,7 +272,8 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 }
 
 // pathExists reports whether path exists, used by boot.MountBootPartition
-// to check for the GOSD-BOOT sentinel file on a freshly-mounted candidate
+// to check for the boot-partition sentinel file on a freshly-mounted
+// candidate
 // (see gosd-pcwl).
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
@@ -279,7 +281,7 @@ func pathExists(path string) bool {
 }
 
 // readGosdToml reads and parses /boot/gosd.toml, the hand-editable fallback
-// config on the GOSD-BOOT partition. The file is entirely optional — a
+// config on the boot partition. The file is entirely optional — a
 // missing file is not logged as a problem at all, since most users will
 // never touch it — but a present-and-unreadable-as-TOML file (a typo from
 // hand-editing) is surfaced as an error for boot.Run to log as a warning;
@@ -298,7 +300,7 @@ func readGosdToml() (gosdtoml.Config, []string, error) {
 }
 
 // readProvisioning reads cloud-init's user-data/network-config (and checks
-// for firstrun.sh) on the GOSD-BOOT partition — see internal/provision.
+// for firstrun.sh) on the boot partition — see internal/provision.
 // Like readGosdToml, this only becomes readable once that partition is
 // mounted; boot.Run calls it right alongside readGosdToml (step 5).
 // provision.Read is itself best-effort (a missing/malformed file is logged
@@ -309,7 +311,7 @@ func readProvisioning(log func(format string, args ...any)) provision.Result {
 }
 
 // ensureDataMountpoint creates /data on the RAM-backed rootfs so the
-// GOSD-DATA partition has somewhere to mount; the initramfs archive doesn't
+// data partition has somewhere to mount; the initramfs archive doesn't
 // contain empty directories.
 func ensureDataMountpoint() error {
 	return os.MkdirAll(dataTarget, 0o755)
@@ -326,14 +328,15 @@ const dataNodeTimeout = 5 * time.Second
 // tmpfs by the time expandData ever runs (mountEarly, boot sequence step 1).
 const dataexpandEXT4Mountpoint = "/run/gosd/dataexpand"
 
-// expandData wires dataexpand's first-boot GOSD-DATA work — creating the
-// partition for images built with --data-size=expand, and/or growing a
+// expandData wires dataexpand's first-boot data-partition work — creating
+// the partition for images built with --data-size=expand, and/or growing a
 // fixed-size ext4 image's golden filesystem to its partition's real size —
 // against the real block-device syscalls, deriving the whole disk and its
-// partition-2 node from the partition the boot mount actually used. fs and
-// expand are boot.Run's resolved config.json values (dataFilesystem,
-// dataExpand), passed straight through to dataexpand.Options.
-func expandData(bootPartition string, fs diskfmt.FS, expand bool, log func(format string, args ...any)) error {
+// partition-2 node from the partition the boot mount actually used. fs,
+// dataLabel and expand are boot.Run's resolved config.json values
+// (dataFilesystem, dataLabel, dataExpand), passed straight through to
+// dataexpand.Options.
+func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error {
 	device, partition2, ok := dataexpand.DataPartitionFor(bootPartition)
 	if !ok {
 		return fmt.Errorf("cannot derive the disk behind boot partition %s", bootPartition)
@@ -343,6 +346,7 @@ func expandData(bootPartition string, fs diskfmt.FS, expand bool, log func(forma
 		PartitionDevice: partition2,
 		NodeTimeout:     dataNodeTimeout,
 		Filesystem:      fs,
+		DataLabel:       dataLabel,
 		Expand:          expand,
 	})
 }
