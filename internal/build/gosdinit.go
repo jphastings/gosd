@@ -116,9 +116,10 @@ func crossCompileInDir(dir, relPkg, outputPath string, arch boards.Arch, source 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf(
-			"building gosd-init from %s failed; try running `go -C %s build %s` directly to reproduce:\n%s",
-			source, dir, relPkg, stderr.String())
+		return explainBuildFailure(
+			fmt.Sprintf("building gosd-init from %s failed", source),
+			fmt.Sprintf("go -C %s build %s", dir, relPkg),
+			stderr.String())
 	}
 	return nil
 }

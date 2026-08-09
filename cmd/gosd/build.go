@@ -263,6 +263,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Last of the guards: everything above is about what the user typed, so
+	// report a flag mistake before an environment one.
+	if err := build.CheckToolchain(); err != nil {
+		return err
+	}
+
 	appName, err := deriveAppName(pkgPath)
 	if err != nil {
 		return err

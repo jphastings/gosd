@@ -324,6 +324,27 @@ say so in the bean rather than silently diverging.
   out of scope — log clearly when encountered.
 - **Supported CLI hosts:** macOS and Linux (amd64/arm64), enforced by CI.
   Windows is untested best-effort; don't break it gratuitously.
+- **The nix flake bundles Go twice, and go.mod's floor is not ours to choose
+  (decided 2026-08-09, bean gosd-jm2v):** `flake.nix` needs Go both to compile
+  gosd (`buildGoModule` sets `GOTOOLCHAIN=local` and a nix sandbox has no user
+  PATH — there is no toolchain fetch to fall back on, so `pkgs.go` must already
+  satisfy go.mod) and at run time, where the wrapper appends it to PATH with
+  `--suffix` so a user's own toolchain still wins. Keep `--suffix`: gosd
+  compiles the *user's* app, so someone who installed a newer Go should get it;
+  the bundle exists so `nix run github:jphastings/gosd -- build ./cmd/myapp`
+  works on a machine with no Go, as README promises. **go.mod's `go` directive
+  is dependency-derived** — `go mod tidy` raises it to the maximum of every
+  dependency's own floor (`tailscale.com` sets today's `1.26.5`), so it cannot
+  be hand-relaxed to a bare major.minor and a `go mod tidy` would undo the
+  attempt. When a dependency bump raises it, **`nix flake update` belongs in
+  the same PR**; if nixos-unstable hasn't shipped that Go patch release yet the
+  `nix build` job stays red until it does — a wait, not a broken change (it
+  cost PR #231 once). gosd never compares Go versions itself: `GOTOOLCHAIN=auto`
+  is Go's default and transparently fetches a newer toolchain, so an up-front
+  check would reject setups that work. `internal/build.CheckToolchain` only
+  asserts a `go` exists; `explainBuildFailure` recognises Go's own floor error
+  and appends remediation, naming no version of its own (the floor that tripped
+  may be the user's app's, not ours).
 
 ## Board work & artifact releases
 

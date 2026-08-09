@@ -42,8 +42,10 @@ func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("building %s for %s/%s failed; try running `go build %s` directly to reproduce:\n%s",
-			pkgPath, targetGOOS, arch.GOARCH, pkgPath, stderr.String())
+		return explainBuildFailure(
+			fmt.Sprintf("building %s for %s/%s failed", pkgPath, targetGOOS, arch.GOARCH),
+			fmt.Sprintf("go build %s", pkgPath),
+			stderr.String())
 	}
 	return nil
 }
@@ -77,8 +79,10 @@ func requireMainPackage(pkgPath string) error {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("could not inspect package %s; try running `go list %s` directly to reproduce:\n%s",
-			pkgPath, pkgPath, stderr.String())
+		return explainBuildFailure(
+			fmt.Sprintf("could not inspect package %s", pkgPath),
+			fmt.Sprintf("go list %s", pkgPath),
+			stderr.String())
 	}
 
 	name := strings.TrimSpace(stdout.String())
