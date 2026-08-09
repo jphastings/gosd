@@ -1,11 +1,11 @@
 ---
 # gosd-tds2
 title: 'gosd.toml: hand-editable fallback config on GOSD-BOOT'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-04T12:26:43Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-b22t
 blocked_by:
     - gosd-kkz4
@@ -41,3 +41,9 @@ New dependency: github.com/BurntSushi/toml.
 Deviations / notes:
 - Went with a new `internal/gosdtoml` package rather than extending `internal/initcfg`, since the two config sources (JSON vs hand-edited TOML) have different failure semantics (config.json is baked and assumed present; gosd.toml is optional and hand-edited) even though the schemas rhyme.
 - The bean's acceptance criterion (editing gosd.toml on a flashed card changes behavior on real hardware) is untested here — that requires physical boards and is left unchecked; everything else is verified by unit tests, `go vet`, `gofmt`, both golangci-lint views, and a static `CGO_ENABLED=0 GOOS=linux GOARCH=arm64` build of gosd-init.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

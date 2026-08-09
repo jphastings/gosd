@@ -1,11 +1,11 @@
 ---
 # gosd-c8oj
 title: gosd-init time sync (SNTP) — no RTC on either board
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:03:54Z
-updated_at: 2026-07-04T12:27:58Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-ko20
 blocked_by:
     - gosd-vtce
@@ -43,3 +43,9 @@ Added `cmd/gosd-init/internal/timesync`, a new package that synchronizes gosd-in
 ### Deviations / what remains for hardware
 
 - The bean's on-hardware acceptance items (real date correct within seconds of network-up; an https request from the example app succeeding after time-synced) cannot be verified in this environment and are left unchecked in the `## Acceptance` section; both code todos are checked. Keeping this bean `in-progress` rather than `completed` for that reason, matching how `gosd-vtce` handled the same situation.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

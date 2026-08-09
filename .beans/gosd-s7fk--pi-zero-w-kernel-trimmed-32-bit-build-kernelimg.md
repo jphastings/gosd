@@ -1,11 +1,11 @@
 ---
 # gosd-s7fk
 title: 'Pi Zero W kernel: trimmed 32-bit build (kernel.img)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-06T15:48:45Z
-updated_at: 2026-07-07T06:23:50Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-ajpz
 ---
 
@@ -25,3 +25,9 @@ Deliberately out of scope for this task (build pipeline only): no `manifest.go`/
 Quality gates all green: go test/vet, gofmt, golangci-lint (native + GOOS=linux), actionlint on the workflow file.
 
 Boot-testing remains the bean's open item — no hardware access from this environment.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

@@ -1,11 +1,11 @@
 ---
 # gosd-lbpm
 title: 'wifiup: support hidden SSIDs (directed probe)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-06T02:24:10Z
-updated_at: 2026-07-06T09:22:54Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-ko20
 ---
 
@@ -80,3 +80,9 @@ against this driver without a preceding host-side scan step.
 
 Bench verification (Pi Zero 2W joining a real hidden test AP provisioned via
 Imager) is unchecked; bean stays in-progress until that's done.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

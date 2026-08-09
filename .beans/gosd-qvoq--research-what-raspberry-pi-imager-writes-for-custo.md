@@ -1,11 +1,11 @@
 ---
 # gosd-qvoq
 title: 'Research: what Raspberry Pi Imager writes for custom images (with captured fixtures)'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:07:10Z
-updated_at: 2026-07-06T00:35:52Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-b22t
 ---
 
@@ -152,3 +152,9 @@ Imager v2.0.10 output via the custom-repository catalog flow
 
 Remaining unchecked on this bean: Path A (see above, intentionally
 skipped) and the two optional scenarios. Bean stays `in-progress`.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

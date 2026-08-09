@@ -1,11 +1,11 @@
 ---
 # gosd-tdcc
 title: Onboard eMMC format-and-mount (`emmc` package)
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-10T06:16:35Z
-updated_at: 2026-07-11T06:24:54Z
+updated_at: 2026-08-08T19:50:12Z
 parent: gosd-jge2
 blocked_by:
     - gosd-899s
@@ -89,3 +89,9 @@ app never wipes its own storage. Discovery excludes the boot device so it can't
 nuke the running system. Backed by `internal/emmcfmt` (format + inspect) from
 the [[gosd-0s0m]] spike, with fake-driven orchestration tests, an
 `examples/emmcstorage` worked example, and COMPATIBILITY/runtime docs.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

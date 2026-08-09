@@ -1,11 +1,11 @@
 ---
 # gosd-6sac
 title: 'Build-time data-size=expand: create GOSD-DATA to fill the card on first boot'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-07-30T20:10:06Z
-updated_at: 2026-07-30T21:14:14Z
+updated_at: 2026-08-08T19:50:12Z
 ---
 
 Ship-small, fill-on-first-boot data partitions: `gosd build --data-size=expand` produces an image with NO data partition (image stays 272MiB, exactly today's `--data-size=0` layout), plus a flag in the baked `/etc/gosd/config.json` telling gosd-init to create and format `GOSD-DATA` spanning the rest of the physical card on first boot.
@@ -51,3 +51,9 @@ Ship-small, fill-on-first-boot data partitions: `gosd build --data-size=expand` 
 
 - **go-diskfs fat32.Create corrupts volumes past ~256GiB** (uint16 sectors-per-FAT truncation) — filed as bean gosd-8kdm; expand caps its partition at 256GiB with a logged notice until that's fixed.
 - **The write-fsync-rename pattern on /data is not durable until ~30s writeback expiry** (vfat `flush` flushes on close, and a rename involves no close) — found by killing qemu shortly after boot; filed as bean gosd-0nk4. Not expand-specific (identical on fixed-size images), and expand's own crash story doesn't depend on it: the MBR write is explicitly fsync'd, and an interrupted format is self-healed by the reformat-on-invalid rule.
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

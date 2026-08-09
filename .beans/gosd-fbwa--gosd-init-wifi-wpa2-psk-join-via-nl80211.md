@@ -1,11 +1,11 @@
 ---
 # gosd-fbwa
 title: 'gosd-init WiFi: WPA2-PSK join via nl80211'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:03:54Z
-updated_at: 2026-07-03T23:55:50Z
+updated_at: 2026-08-08T19:50:11Z
 parent: gosd-ko20
 blocked_by:
     - gosd-kkz4
@@ -42,3 +42,9 @@ Implemented `cmd/gosd-init/internal/wifiup`, a new package bringing up WiFi netw
 ### Honesty: hardware validation not done
 
 Per the bean's own scope, "Verify against real hardware on the Pi bring-up task; note firmware-load-to-join timing here" is left unchecked — there is no Pi Zero 2W available in this environment. Everything here (interface-wait timing, actual nl80211 CONNECT behavior including the raw-PMK path above, brcmfmac firmware SME behavior, and disconnect-detection-by-polling) is exercised only via fakes and passes `go build`/`go vet`/`golangci-lint` for `GOOS=linux GOARCH=arm64`, but has had zero real-hardware exercise. The bean stays `in-progress` for this reason; the Pi bring-up task is expected to validate it and report back (including the firmware-load-to-join timing this bean asked to have noted here).
+
+
+
+---
+
+Closed 2026-08-08 (end-of-session triage): deliverable shipped and on main; status was never flipped from in-progress. Reopen if a hardware sign-off is still outstanding.

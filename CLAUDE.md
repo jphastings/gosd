@@ -191,6 +191,18 @@ say so in the bean rather than silently diverging.
   Developers never *have to* compile a kernel themselves — `gosd build-kernel`
   (epic gosd-47rm) is an opt-in path for compiling in a driver GoSD's stock,
   trimmed kernels cut; see `docs/custom-kernels.md`.
+- **On-disk caches must stay bounded to the current working set (decided
+  2026-08-08, bean gosd-gdro):** nothing gosd caches on a user's machine may
+  grow in proportion to how many times or how many *versions* of gosd are run.
+  The download caches under `os.UserCacheDir()/gosd/` (`artifacts/<version>`,
+  `cacerts`, `ingress`, `kernel-firmware`) auto-prune to the current pins after
+  a successful build — keep the current version's assets (~hundreds of MB is
+  fine), drop superseded ones. The durable `build-kernel`/`build-external`
+  state dir (`defaultBuildRoot`, deliberately NOT under `UserCacheDir` per
+  gosd-l4y9) is bounded separately by keep-last-N because its entries cost
+  20-75 min to rebuild (follow-up gosd-9o73). Don't reintroduce unbounded
+  per-version accumulation, and don't make pruning fail a build (best-effort,
+  only gosd's own cache dirs, never on `--artifacts-dir` runs).
 - **CA roots ship in every image (decided 2026-08-07, bean gosd-kzgq):** the
   pinned Mozilla bundle lands at `/etc/ssl/certs/ca-certificates.crt` in every
   initramfs, so app HTTPS needs no `x509roots/fallback` import. The pin is
