@@ -22,7 +22,7 @@ an oversight:
   `gosd build` and never modified in place. It is always present and always
   known-good, because nothing in the update path ever writes to it.
 - Everything an OTA update changes lives inside the existing single
-  `GOSD-BOOT` FAT32 partition (`internal/image/image.go`'s locked layout:
+  boot FAT32 partition (`internal/image/image.go`'s locked layout:
   one 256MiB partition, no MBR/partition-table change of any kind), as
   ordinary files alongside the kernel/initramfs/board-config the pipeline
   already writes there.
@@ -31,14 +31,28 @@ an oversight:
   it, and this document does not propose one (see Appendix B for the escape
   hatch if that ever changes).
 - Because an update never touches the partition table, the writable
-  `GOSD-DATA` partition (bean `gosd-xelb`) is untouched by app-slot updates:
+  data partition (bean `gosd-xelb`) is untouched by app-slot updates:
   app data survives an over-the-network update. Only a full reflash
   recreates (wipes) it — `docs/runtime.md`'s persistence section documents
   that from the app's point of view. (The one partition-table write that
   exists anywhere in GoSD — `--data-size=expand`'s first-boot creation of
-  `GOSD-DATA`, bean `gosd-6sac` — happens on a device's very first boot and
-  is complete long before any update could run; it doesn't weaken this
-  invariant.)
+  the data partition, bean `gosd-6sac` — happens on a device's very first
+  boot and is complete long before any update could run; it doesn't weaken
+  this invariant.)
+
+**Constraint: an update payload must never change the data label.** The
+data partition's volume label is per-app and baked into `config.json`
+(`dataLabel`, bean `gosd-lo7k`), and `dataexpand` treats a partition whose
+MBR entry is present but whose label doesn't match as corruption: it halts
+the device rather than touch what might be salvageable app data. Reflashing
+can safely change the label because the flash also rewrites the MBR and/or
+partition 2's bytes, so the baked label and the on-card one move together —
+but an update that only replaces files inside the boot partition does
+neither. Shipping a payload with a different `dataLabel` (or a different
+`dataFilesystem`, for the same reason) would therefore turn a healthy,
+established data partition into a halt on the very next boot. Either keep
+those fields pinned across an update, or make relabelling and
+re-establishing the volume an explicit part of the update protocol.
 
 This scope cut is what makes a single, board-agnostic scheme possible: the
 previous recommendation needed per-board mechanisms specifically because the
@@ -72,7 +86,7 @@ Three things can be running as `/app` at any given boot, forming the ladder
    Always present, never updated, the floor everything else can fall back
    to.
 2. **Slot A / Slot B** — two app binaries living as ordinary files in the
-   `GOSD-BOOT` partition. An update always writes to whichever slot is
+   boot partition. An update always writes to whichever slot is
    *not* currently active, mirroring gokrazy's "never write to the running
    thing" discipline (already identified as transferring directly, in the
    original research below).
@@ -82,10 +96,10 @@ state file (`slot.state`, §3). A freshly flashed image has no `app.a`/
 `app.b` files at all — `slot.state` is absent, and gosd-init's fail-safe
 parsing rule (§4) treats that identically to "run FACTORY."
 
-## 3. File layout on GOSD-BOOT
+## 3. File layout on the boot partition
 
 No partition-table change. A new directory inside the existing FAT32
-`GOSD-BOOT` partition:
+boot partition:
 
 ```
 /boot/app/
@@ -119,7 +133,7 @@ re-reads it.
 
 ## 4. Commit protocol
 
-Every write to `GOSD-BOOT` follows the same shape: write to a temp name,
+Every write to the boot partition follows the same shape: write to a temp name,
 `fsync` the data, `rename` over the real name — and then, because the
 medium is FAT, `fsync` the renamed file *and* the directory it lives in, or
 the rename sits in RAM for up to 30s and a power cut undoes it (bean
@@ -247,11 +261,11 @@ board profile):
   const; probation escalation calls the existing `deps.Rebooter`.
 - `cmd/gosd-init/internal/boot/mounts.go`: `MountBootPartition` hardcodes
   `msRdOnly` today with no read-write path at all. The update endpoint
-  needs `GOSD-BOOT` writable for the (short) duration of a push/activate
-  call — proposed as a narrow remount-read-write-then-back-to-read-only
+  needs the boot partition writable for the (short) duration of a
+  push/activate call — proposed as a narrow remount-read-write-then-back-to-read-only
   around that window, preserving the exact discipline the rejected design
   already praised ("only the update flow itself, and only while actively
-  committing, should ever open GOSD-BOOT for writing"), just scoped to
+  committing, should ever open the boot partition for writing"), just scoped to
   `/boot/app/*` instead of a bootloader config file.
 - A new package (proposed `cmd/gosd-init/internal/appslot`) owning
   `SlotState`'s (de)serialization and the fail-safe parse rule, analogous
@@ -265,7 +279,7 @@ still the second sanctioned network listener CLAUDE.md allows alongside
 mDNS, still deliberately narrower than gokrazy's admin surface:
 
 - `GET /update/info` — board ID, current `Target`/`Status`, free bytes on
-  `GOSD-BOOT`, protocol version. No auth required (read-only, no secret
+  the boot partition, protocol version. No auth required (read-only, no secret
   material) — `gosd push` needs this before it's authenticated anything.
 - `PUT /update` — streams a new app binary into the *inactive* slot
   (§4's push phase). Authenticated (§6.3). Returns the server-computed hash
@@ -291,7 +305,7 @@ check failed and the developer re-runs `gosd push`.
 
 ### 6.2 App-size limits
 
-`GOSD-BOOT` is a fixed-size FAT32 partition shared with the kernel,
+The boot partition is a fixed-size FAT32 partition shared with the kernel,
 initramfs, and board boot config — this design does not hardcode a specific
 byte budget (CLAUDE.md: don't bake stale figures into docs), but defines
 the *mechanism*: `GET /update/info` reports current free bytes; `gosd push`
@@ -376,15 +390,17 @@ gosd push <host> [--board <id>]
 **Recommendation:** the app-slot scheme in §§2-7 — a single, board-agnostic
 mechanism, scoped strictly to the app binary, layered entirely inside
 gosd-init's existing `Supervisor`/boot sequence and the existing single
-`GOSD-BOOT` partition. No per-board code, no `internal/image` layout
+boot partition. No per-board code, no `internal/image` layout
 change, no board-profile changes at all.
 
 Proposed v0.4 beans (titles + one-line scope; **not created — for JP to
 review and create**):
 
-1. **`GOSD-BOOT` app-slot store + commit protocol** — new package (proposed
-   `cmd/gosd-init/internal/appslot`) owning `SlotState`'s format, the
-   write-temp/fsync/rename helpers for both the app binary and
+1. **`GOSD-BOOT` app-slot store + commit protocol** (the title bean
+   `gosd-6k2n` was filed under, before labels became per-app — `GOSD-BOOT`
+   there means the boot partition, whatever the app names it) — new package
+   (proposed `cmd/gosd-init/internal/appslot`) owning `SlotState`'s format,
+   the write-temp/fsync/rename helpers for both the app binary and
    `slot.state`, and the fail-safe-toward-factory parse rule (§§3-4).
 2. **Supervisor probation + three-rung ladder** — extend
    `cmd/gosd-init/internal/boot/supervisor.go` and `sequence.go` with
@@ -719,7 +735,7 @@ with every board added. The new recommendation is a single, board-agnostic
 - Explicit scope decision (§0): OTA updates replace only the app; the
   kernel/initramfs/bootloader are reflash-only.
 - The initramfs-baked `/app` becomes the immutable FACTORY image; two new
-  slot files (`app.a`/`app.b`) live inside the existing single `GOSD-BOOT`
+  slot files (`app.a`/`app.b`) live inside the existing single boot
   partition — no partition-table change, unlike the rejected design.
 - A two-file (app binary, then `slot.state`) write-temp/fsync/rename commit
   protocol, with a precise table of what survives power loss at each step

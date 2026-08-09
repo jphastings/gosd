@@ -91,7 +91,7 @@ before starting `/app` — see `mergeUserEnv` in
 
 | Source | Wins per key? | Where it lives |
 |---|---|---|
-| `gosd.toml`'s `[env]` table | Yes | Hand-editable fallback on the `GOSD-BOOT` partition (see "Provisioning" below). |
+| `gosd.toml`'s `[env]` table | Yes | Hand-editable fallback on the boot partition (see "Provisioning" below). |
 | Baked defaults (`gosd build --env KEY=VALUE`, repeatable) | No | Recorded in `config.json`, and also pre-filled into the card's `gosd.toml [env]` section at build time, so whoever holds the card can see the developer's defaults and override any of them without needing to know the rest. |
 
 Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
@@ -128,7 +128,7 @@ one-line warning at boot; an array, inline table, or datetime under
 front avoids relying on that coercion.
 
 **Security note.** Like the WiFi passphrase stored in the same file,
-`gosd.toml [env]` values sit in plaintext on the `GOSD-BOOT` FAT
+`gosd.toml [env]` values sit in plaintext on the boot FAT
 partition — anyone with physical access to the card, or who mounts the
 image, can read them. There's no encryption today; don't put anything
 there you wouldn't want exposed to whoever holds the card.
@@ -169,7 +169,7 @@ The network to join comes from whichever of these sources is present, in
 this precedence order (highest wins):
 
 1. **`gosd.toml`**'s `[wifi]` table — the hand-editable fallback on the
-   `GOSD-BOOT` partition (see "Provisioning" below).
+   boot partition (see "Provisioning" below).
 2. **Cloud-init provisioning** written by Raspberry Pi Imager — also
    below.
 3. **`config.json`**, baked at build time by `gosd build --wifi-ssid` /
@@ -224,7 +224,7 @@ reflash.
 
 Beyond `config.json` baked in at build time and `gosd.toml` hand-edited
 on the card, `gosd-init` also reads whatever Raspberry Pi Imager's
-customization wizard wrote to the `GOSD-BOOT` partition — cloud-init's
+customization wizard wrote to the boot partition — cloud-init's
 `user-data` (hostname) and `network-config` (WiFi access points) — see
 `internal/provision` and `docs/provisioning-formats.md` for the full
 field mapping and precedence rationale. This is the flagship end-user
@@ -295,16 +295,21 @@ filesystem — so:
 - Anything your app writes outside `/data` and `/boot` is writable at
   runtime, but **lives in RAM and is gone on reboot or power loss.** For
   durable writes, use `/data` (below).
-- `/boot` — the `GOSD-BOOT` FAT partition containing the kernel,
-  initramfs, and boot configuration — is mounted **read-only**. Don't
-  expect to write to it from your app.
+- `/boot` — the boot FAT partition containing the kernel, initramfs, and
+  boot configuration — is mounted **read-only**. Don't expect to write to
+  it from your app. Its volume label is per-app: `<prefix>-boot`, where
+  `<prefix>` defaults to the app's own name (truncated to 6 bytes) and can
+  be overridden with `gosd build --label-prefix` — so an app called
+  `hello` shows up as a drive named `hello-boot` when the card is plugged
+  into a computer.
 - Because the rootfs is RAM-resident, be mindful of memory: GoSD targets
   small, memory-constrained devices (see `COMPATIBILITY.md`), and
   anything you write to the rootfs is really consuming RAM.
 
 ### Persistent storage: `/data`
 
-Images are built with a second partition, labelled `GOSD-DATA`, sized by
+Images are built with a second partition, labelled `<prefix>-data` (the
+same per-app prefix as the boot partition, e.g. `hello-data`), sized by
 `gosd build --data-size` and formatted by `gosd build --data-filesystem`
 (`fat32` or `ext4`; default `fat32`). It's opt-in: the default size is `0`
 (no partition at all), so pass a size (e.g. `--data-size=1GiB`) to get one.
@@ -312,41 +317,49 @@ Images are built with a second partition, labelled `GOSD-DATA`, sized by
 there survives reboots and power cycles. There's no environment variable
 to consult — `/data` is always the path; just write to it.
 
+**Don't rename the volumes.** The data label is what the device compares an
+established data partition against on every boot, so relabelling it from a
+computer looks exactly like a corrupted partition: the device halts rather
+than risk destroying app data (see the halt described below). Renaming the
+boot volume is harmless, but tell your users not to rename either — they
+can't tell the two apart from the desktop.
+
 #### Choosing a filesystem: FAT32 or ext4
 
 By default `/data` is **FAT32** — readable and repairable from any
 computer's SD card reader, with the limits described below. `gosd build
---data-filesystem=ext4` opts into a journaled **ext4** `GOSD-DATA`
+--data-filesystem=ext4` opts into a journaled **ext4** data partition
 instead: the journal buys metadata crash-consistency and mount-time
-replay, so a `GOSD-DATA` interrupted mid-write to its own metadata (a
+replay, so a data partition interrupted mid-write to its own metadata (a
 directory entry, an inode) recovers cleanly at the next mount instead of
 needing an fsck. That is **not** the same guarantee as data durability —
 the four-step fsync sequence described under "Making a write durable"
 below remains the app-facing contract for durable *file content* either
 way, journal or not.
 
-The cost: an ext4 `GOSD-DATA` can't be read or repaired from a macOS or
+The cost: an ext4 data partition can't be read or repaired from a macOS or
 Windows host the way a FAT32 one can (it needs Linux-side tooling), and
 it isn't available on every board — the Pi family's stock kernels don't
 build ext4 support in at all, so `gosd build --data-filesystem=ext4`
 refuses to build for them, naming the alternative; see
-`COMPATIBILITY.md`'s ext4 `GOSD-DATA` row for the full board list.
+`COMPATIBILITY.md`'s ext4 data partition row for the full board list.
 
-Like `--boot-size`, the chosen filesystem is part of the app's on-card
-layout ABI — see [the upgrade path design](design/upgrade-path.md) for
+Like `--boot-size` and the label prefix, the chosen filesystem is part of
+the app's on-card layout ABI — see [the upgrade path design](design/upgrade-path.md) for
 the argument in full — so changing it between releases erases and
-re-establishes `GOSD-DATA` on the next upgrade: a release-notes-level
+re-establishes the data partition on the next upgrade: a release-notes-level
 breaking change, not corruption.
 
 `--data-size=expand` is the fill-the-card variant: the image ships with
 no data partition at all (staying 272MiB to download and flash), and the
 device creates one itself, exactly once, on its first boot — an MBR
 entry covering the rest of the card, formatted per `--data-filesystem`
-(FAT32 by default, or ext4), labelled `GOSD-DATA`, and mounted at `/data`
-like any other data partition from then on. Points specific to expand:
+(FAT32 by default, or ext4), labelled with the app's configured data label
+(`<prefix>-data`), and mounted at `/data` like any other data partition
+from then on. Points specific to expand:
 
 - **Only the disk the device actually booted from is ever touched** —
-  the same verified device the `GOSD-BOOT` mount used — and only when
+  the same verified device the boot partition mount used — and only when
   its partition table is exactly the one a GoSD image ships (boot
   partition in place, no partition 2). Anything else is left alone,
   loudly.
@@ -359,14 +372,19 @@ like any other data partition from then on. Points specific to expand:
   no entry, and the next boot simply redoes the whole thing from
   scratch.
 - **An established data partition is never "repaired" away.** If a later
-  boot finds the partition entry in place but the `GOSD-DATA` filesystem
-  gone (a failing card, say), the device writes what happened to
-  `boot-failure.log` at the root of the `GOSD-BOOT` partition — readable
+  boot finds the partition entry in place but the data partition's
+  filesystem gone (a failing card, say), the device writes what happened to
+  `boot-failure.log` at the root of the boot partition — readable
   on any computer the card is plugged into — and **halts**, so whatever
   data survives can still be salvaged. To recover: save what you need
-  from the partition, then either reformat it as `GOSD-DATA` in the same
-  filesystem the image was built with (FAT32 by default, or ext4) or
-  delete partition 2 entirely and let the next boot recreate it, empty.
+  from the partition, then either reformat it with the app's data label in
+  the same filesystem the image was built with (FAT32 by default, or ext4)
+  or delete partition 2 entirely and let the next boot recreate it, empty.
+  That second option is specific to `--data-size=expand`, the only mode
+  where the device creates the partition itself; a fixed-size image ships
+  partition 2 in the image, so there the equivalent is deleting partition 2
+  and flashing the image again. The `boot-failure.log` the device writes
+  says which of the two applies to it.
 - **A card with no meaningful room** (less than ~64MiB beyond the image
   — including `gosd run`'s qemu disk, which is exactly image-sized) gets
   no partition, and `/data` behaves like a `--data-size=0` image:
@@ -384,16 +402,17 @@ like any other data partition from then on. Points specific to expand:
   at all, so the flash never touches the bytes beyond the boot partition.
   On the next first boot, the device looks at what's actually sitting
   there: if it's a filesystem matching what the image was built to expect
-  (FAT32 by default, or ext4 with `--data-filesystem=ext4`) labelled
-  `GOSD-DATA` and carrying a hidden completion marker
-  (`gosd-data-established`, at the partition's root — see the marker note
-  below), it's adopted rather than reformatted, and the MBR entry is
-  simply rewritten to record it. The marker matters because a matching
-  label alone isn't proof of a finished format — see below — so the
-  device only ever adopts a partition it can prove an earlier boot
-  completed; anything else (blank space, a foreign filesystem, or the
-  debris of a first-boot format that never finished) is formatted fresh,
-  exactly as a first boot always was.
+  (FAT32 by default, or ext4 with `--data-filesystem=ext4`) labelled with
+  this image's configured data label (`<prefix>-data`) and carrying a
+  hidden completion marker (`gosd-data-established`, at the partition's
+  root — see the marker note below), it's adopted rather than reformatted,
+  and the MBR entry is simply rewritten to record it. The marker matters
+  because a matching label alone isn't proof of a finished format — see
+  below — so the device only ever adopts a partition it can prove an
+  earlier boot completed; anything else (blank space, a foreign
+  filesystem, a differently-labelled data partition, or the debris of a
+  first-boot format that never finished) is formatted fresh, exactly as a
+  first boot always was.
 - **Changing `--boot-size` between releases breaks the adoption above.**
   The boot volume's size is baked into the image and fixes where the data
   partition starts; a later release that changes it (either direction) —
@@ -402,12 +421,26 @@ like any other data partition from then on. Points specific to expand:
   reflash wipes it cleanly instead of adopting it. That's a
   release-notes-level breaking change for that app, not corruption.
 - **Changing `--data-filesystem` between releases breaks the adoption
-  above too, the same way.** A FAT32 `GOSD-DATA` isn't an ext4 one and
+  above too, the same way.** A FAT32 data partition isn't an ext4 one and
   vice versa, so a release that switches filesystems can't recognize
   what's already on the card as its own `/data` either; the next reflash
   reformats it fresh to the newly requested filesystem instead of
   adopting it — another release-notes-level breaking change, not
   corruption (see [the upgrade path design](design/upgrade-path.md)).
+- **Changing `--label-prefix` — or renaming the app, since the prefix
+  defaults to the app's own name — between releases breaks the adoption
+  above too.** The data label is part of the app's on-card ABI exactly
+  like `--boot-size` and `--data-filesystem`: a reflash-upgrade that finds
+  a data partition labelled with the old prefix treats it as debris and
+  cleanly reformats it, rather than halting — the boot partition is
+  unaffected either way. This is a **clean break with no migration**:
+  cards flashed by a pre-`--label-prefix` release carry `GOSD-DATA`, and
+  the first reflash-upgrade with a rebuilt image reformats that data
+  partition. It also means a cross-app reflash no longer silently
+  inherits the previous app's data the way every app sharing the fixed
+  `GOSD-DATA` label once did — unless the two apps happen to share the
+  same 6-byte prefix, which re-adopts across apps exactly as today's
+  universal label did, just narrower.
 - **A fixed-size `--data-size` partition is still wiped by every
   reflash.** It's formatted and embedded inside the `.img` file itself,
   so flashing any version overwrites the data region directly — there's
@@ -434,7 +467,7 @@ Rules of engagement:
 - **Neither filesystem is power-loss-robust for file *content*.** FAT has
   no journal at all: a power cut mid-write can corrupt the file being
   written (and, less commonly, the filesystem) whether or not the `flush`
-  mount option below is on. An ext4 `GOSD-DATA`'s journal narrows this to
+  mount option below is on. An ext4 data partition's journal narrows this to
   *metadata* only — see "Choosing a filesystem" above — the file content
   you're actually writing gets no more protection from ext4's journal
   than it does from FAT's total absence of one. Never rewrite your only
@@ -455,7 +488,7 @@ Rules of engagement:
   absent meaning "use the baked value" (see the `GOSD_DATA_FLUSH` env var
   above, which is how `emmc`/`disk` — mounting from your app's own
   process — learn the effective setting). `flush` has no ext4 equivalent
-  and no effect on an ext4 `GOSD-DATA` — `gosd build` refuses
+  and no effect on an ext4 data partition — `gosd build` refuses
   `--data-filesystem=ext4` combined with `--data-flush` outright, rather
   than silently ignoring the flag.
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
@@ -477,13 +510,13 @@ Rules of engagement:
   two modes, and the reason to prefer `expand` for anything you expect to
   update. The planned app-slot update mechanism (`docs/design/ab-updates.md`)
   is a separate, narrower promise: it changes only files inside
-  `GOSD-BOOT` and never touches the partition table at all, so once it
-  lands, over-the-network app updates leave `GOSD-DATA` intact regardless
-  of `--data-size` mode.
+  the boot partition and never touches the partition table at all, so once
+  it lands, over-the-network app updates leave the data partition intact
+  regardless of `--data-size` mode.
 
 ### The provisioning snapshot: surviving a reflash
 
-Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included — so
+Reflashing rewrites the whole of the boot partition, `gosd.toml` included — so
 without more than the above, every hand-edited `[env]` value and every
 wizard-provided hostname/WiFi credential would be replaced by the new
 image's baked defaults on every upgrade. On a `--data-size=expand` image,
@@ -613,7 +646,7 @@ asserts the counter still comes back incremented on the next boot.
 
 ### How big the data partition can be
 
-This section is about the **default, FAT32** `GOSD-DATA` partition; an ext4
+This section is about the **default, FAT32** data partition; an ext4
 one (`--data-filesystem=ext4`) works the other way round — see the floor
 described at the end of this section.
 
@@ -644,7 +677,7 @@ formats an SSD or USB drive as **ext4** by default, or **exFAT** on request —
 neither has this ceiling or FAT32's 4GiB-per-file one. `/data` remains the
 place for state; bulk media belongs on the drive holding it.
 
-An ext4 `GOSD-DATA` (`--data-filesystem=ext4`) has a **floor**, not a
+An ext4 data partition (`--data-filesystem=ext4`) has a **floor**, not a
 ceiling: GoSD writes a fixed, checked-in 512MiB golden ext4 image and grows
 it online to the partition's real size on first boot, so `--data-size` must
 be at least that same 512MiB — anything smaller is refused at the flag,
@@ -932,7 +965,7 @@ gosd build . --board radxa-zero-3e --console-baud 115200
   flag).
 - **No reflash needed to try a different rate on an already-flashed
   card.** `extlinux/extlinux.conf` (Rockchip boards) or `cmdline.txt`
-  (Pi boards) on the `GOSD-BOOT` partition is a plain text file —
+  (Pi boards) on the boot partition is a plain text file —
   hand-editing the `console=` argument there has the same effect as
   rebuilding with `--console-baud`.
 
@@ -1253,7 +1286,7 @@ interface, no WiFi/cable needed at all) is planned for later.
   volume is the onboard eMMC where one is fitted
   (`emmc.FormatAndMount` returns the device backing the mount, and
   `emmc.Unmount` releases it so `gadget.MassStorage` can take it
-  exclusively) and otherwise the SD card's `GOSD-DATA` partition
+  exclusively) and otherwise the SD card's data partition
   (build with `--data-size`), which is how the eMMC-less Pi Zeros run
   it. The `disk` package pairs with `gadget.MassStorage` the same way,
   for an app that wants to share an attached SSD or USB drive instead.

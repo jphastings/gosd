@@ -107,7 +107,7 @@ resulting token.
    credentials file" below.)
 
 4. **Paste the token, hostname, and port into `gosd.toml`** on the
-   `GOSD-BOOT` partition (or hand-edit the commented-out example the image
+   boot partition (or hand-edit the commented-out example the image
    already ships, per `docs/provisioning-formats.md`):
 
    ```toml
@@ -152,7 +152,7 @@ refused with an actionable log line rather than silently attempted — see
 
 ### What gets written on the device
 
-Nothing about the tunnel lives on `GOSD-BOOT` except what you typed into
+Nothing about the tunnel lives on the boot partition except what you typed into
 `gosd.toml`. At boot, once the network is up, `gosd-init` decodes the token
 and synthesizes cloudflared's own two config files fresh, in RAM, under
 `/run/gosd/cloudflared/` (mode `0700` directory, `0600` files):
@@ -177,19 +177,19 @@ never persisted outside `/run`'s tmpfs. `cloudflared` runs as
 with `HOME=/run/gosd/cloudflared` so its own `~/.cloudflared` probing
 resolves somewhere writable instead of a nonexistent home directory.
 
-#### No credentials file on `GOSD-BOOT`
+#### No credentials file on the boot partition
 
 A Cloudflare Tunnel is normally authorized by a credentials JSON file
 (`{"AccountTag", "TunnelSecret", "TunnelID"}`) sitting next to
 `config.yml`. GoSD never ships one: the tunnel token you pasted into
 `gosd.toml` **is** that same triple, base64-encoded — `gosd-init` decodes
 it itself at boot and writes the credentials file into RAM, not onto the
-card. There is nothing to distribute, back up, or leak from `GOSD-BOOT`
-beyond the token already sitting in `gosd.toml`.
+card. There is nothing to distribute, back up, or leak from the boot
+partition beyond the token already sitting in `gosd.toml`.
 
 ### Secrets on a FAT partition
 
-The tunnel token sits in `gosd.toml` in plain text on `GOSD-BOOT`, a FAT32
+The tunnel token sits in `gosd.toml` in plain text on the boot partition, a FAT32
 partition readable by anyone with the card in a computer — the same trust
 level the WiFi passphrase already has there today. Treat it accordingly:
 anyone who can read the card can read the token (and, with it, take over
@@ -257,7 +257,7 @@ one `http://localhost:<port>` your app declared.
 
 ### Surviving a reflash
 
-Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included. Like
+Reflashing rewrites the whole of the boot partition, `gosd.toml` included. Like
 the hostname, WiFi network, and `[env]` values, a hand-edited
 `[ingress.cloudflared]` section is protected by the [provisioning
 snapshot](runtime.md#the-provisioning-snapshot-surviving-a-reflash): once
@@ -404,7 +404,7 @@ and has nothing to do with which image you build.
      registered, so a device built today with a key generated today keeps
      working long after that key has expired.
 
-4. **Paste the auth key and port into `gosd.toml`** on the `GOSD-BOOT`
+4. **Paste the auth key and port into `gosd.toml`** on the boot
    partition (or hand-edit the commented-out example the image already
    ships, per `docs/provisioning-formats.md`):
 
@@ -440,7 +440,7 @@ The device is reachable at `https://<hostname>.<tailnet>.ts.net`.
 Unlike Cloudflare Tunnel, whose credentials are stateless from GoSD's point
 of view, Tailscale Funnel's node identity — its private key, its tailnet
 membership, the public hostname it was assigned — lives on disk, at
-`/data/.gosd/tailscale`, on the `GOSD-DATA` partition. Losing that directory
+`/data/.gosd/tailscale`, on the data partition. Losing that directory
 means the device shows up as a *brand new* node the next time it starts,
 with a new identity and a new public URL.
 
@@ -448,7 +448,7 @@ Because of that, `gosd build --ingress tailscale-funnel` **refuses to
 build** without a data partition, with this exact error:
 
 ```
---ingress tailscale-funnel failed: tailscale-funnel stores its tailnet identity on the GOSD-DATA partition; pass --data-size (e.g. --data-size=64MiB or --data-size=expand)
+--ingress tailscale-funnel failed: tailscale-funnel stores its tailnet identity on the data partition; pass --data-size (e.g. --data-size=64MiB or --data-size=expand)
 ```
 
 Any non-zero `--data-size` satisfies this; `--data-size=expand` (the usual
@@ -481,7 +481,7 @@ private key, its tailnet registration, its ACME certificate — inside
 ### Secrets on a FAT partition
 
 Like the WiFi passphrase and Cloudflare Tunnel's token, the auth key sits in
-`gosd.toml` in plain text on `GOSD-BOOT`, a FAT32 partition readable by
+`gosd.toml` in plain text on the boot partition, a FAT32 partition readable by
 anyone with the card in a computer. Treat it accordingly. Unlike those two,
 though, this secret is genuinely disposable: once the device has registered
 (check your tailnet's device list), delete the `authkey` line from
@@ -510,8 +510,8 @@ for no reason.
 
 ### Surviving a reflash
 
-Reflashing rewrites the whole of `GOSD-BOOT`, `gosd.toml` included, but
-**not** `GOSD-DATA` — and Tailscale Funnel's node identity is what makes
+Reflashing rewrites the whole of the boot partition, `gosd.toml` included, but
+**not** the data partition — and Tailscale Funnel's node identity is what makes
 this agent's reflash story strictly better than Cloudflare Tunnel's:
 
 - **The tailnet identity itself never moves.** It lives at

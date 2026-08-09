@@ -352,7 +352,7 @@ jobs:
       # [ingress.tailscale-funnel] section in gosd.toml, tsfunnel's own
       # resolveMode must log its one actionable "baked but not configured"
       # line and nothing else - never start the shim, never loop. --data-size
-      # is required here: tailscale-funnel refuses to build with no GOSD-DATA
+      # is required here: tailscale-funnel refuses to build with no data
       # partition (bean gosd-kzd3), since it has nowhere to persist its
       # tailnet identity. A dummy-authkey supervisor-loop assertion (a real
       # registration attempt against Tailscale's control plane) is
@@ -402,7 +402,7 @@ jobs:
   # Proves --data-size=expand end-to-end on the real boot path: the image
   # ships with no data partition, the "card" (the raw image file, enlarged
   # after the build, exactly as flashing onto a bigger SD card leaves it)
-  # gains a GOSD-DATA partition on first boot, and the second boot finds it
+  # gains a data partition on first boot, and the second boot finds it
   # and leaves it alone. Killing qemu after the first boot doubles as a
   # power-cut: everything the second boot depends on must already be durable.
   # The third boot follows a re-flash of the very same image over the front
@@ -445,8 +445,12 @@ jobs:
       # in provsnapshot's unit tests.
       - name: "First boot: creates, formats and mounts the data partition"
         run: |
+          # "as FAT32 labelled hello-data" is the end-to-end proof that
+          # config.json's dataLabel (bean gosd-lo7k's per-app labels)
+          # reaches a real on-device format, not just the unit-test fakes.
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
             "data partition created, filling the card" \
+            "as FAT32 labelled hello-data" \
             "data partition mounted read-write at /data" \
             "provisioning snapshot saved"
       # boots=2 is the durability assertion (bean gosd-0nk4): the first
@@ -487,7 +491,7 @@ jobs:
             exit 1
           fi
 
-  # The GOSD-DATA counterpart of qemu-disk-ext4, for `gosd build
+  # The data-partition counterpart of qemu-disk-ext4, for `gosd build
   # --data-filesystem=ext4` (bean gosd-95yu). Unlike FAT32, an ext4 data
   # partition ships as internal/diskfmt/ext4golden's fixed 512MiB image and
   # is grown to the partition's real size exactly once on first boot, so
@@ -538,8 +542,11 @@ jobs:
           truncate -s +2G dist/expand.img
       - name: "First boot: creates, formats, grows and mounts the ext4 data partition"
         run: |
+          # "as ext4 labelled hello-data" mirrors qemu-expand-data's label
+          # assertion: the baked per-app label reaches the ext4 route too.
           ./scripts/boot-and-grep.sh dist/expand.img expand-first.log \
             "data partition created, filling the card" \
+            "as ext4 labelled hello-data" \
             "data partition mounted read-write at /data"
       # boots=2 is the durability assertion: the previous boot's counter
       # write was seconds old when qemu was killed, so it only reads back

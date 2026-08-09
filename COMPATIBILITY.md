@@ -69,7 +69,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] |
 | ext4 on attached disks (the default) | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
 | exFAT on attached disks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ext4 GOSD-DATA (`gosd build --data-filesystem=ext4`; FAT32 is the default) | ❌ [^pi-data-ext4] | ❌ [^pi-data-ext4] | ❌ [^pi-data-ext4] | ✅ | ✅ | ✅ | ✅ |
+| ext4 data partition (`gosd build --data-filesystem=ext4`; FAT32 is the default) | ❌ [^pi-data-ext4] | ❌ [^pi-data-ext4] | ❌ [^pi-data-ext4] | ✅ | ✅ | ✅ | ✅ |
 | [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
 | [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
 | [Ingress: Tailscale Funnel](docs/ingress.md) (`--ingress tailscale-funnel`) | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] |
@@ -130,7 +130,7 @@ board · ❌ not supported (see footnote).
     bench pass.
 
 [^pi-data-ext4]: The stock Pi kernels don't build `CONFIG_EXT4_FS` in (same
-    fact as `internal/blockmount`'s `remedyFor`) — GOSD-DATA stays
+    fact as `internal/blockmount`'s `remedyFor`) — the data partition stays
     FAT32-only on these boards; `gosd build --data-filesystem=ext4` refuses
     at build time rather than shipping an image whose data partition can
     never mount (bean `gosd-95yu`).

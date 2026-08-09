@@ -94,10 +94,16 @@ say so in the bean rather than silently diverging.
   builds **all** (public) boards, emitting `<appname>-<board>.img` next to
   each other; `--board` (repeatable) restricts.
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
-  FAT partition labels `GOSD-BOOT` / `GOSD-DATA`; boot-partition config file
-  `gosd.toml`; app build tags `gosd_<board-id>` (underscored, e.g.
-  `gosd_pi_zero_2w`), passed to the app compile only (see
-  `boards.BuildTag` and `docs/board-build-tags.md`).
+  FAT partition labels, **per-app**: `<prefix>-boot` / `<prefix>-data`;
+  boot-partition config file `gosd.toml`; app build tags `gosd_<board-id>`
+  (underscored, e.g. `gosd_pi_zero_2w`), passed to the app compile only (see
+  `boards.BuildTag` and `docs/board-build-tags.md`). **The label prefix**
+  defaults to the sanitized app name truncated to 6 bytes, and is
+  overridable via `gosd build --label-prefix` / `gosd run --label-prefix`
+  (decided 2026-08-09, bean `gosd-lo7k`) — a clean break from the old fixed
+  `GOSD-BOOT`/`GOSD-DATA` with no adoption alias: a card flashed by a
+  pre-`gosd-lo7k` release fails the reflash-upgrade adoption gate on its
+  data partition and is cleanly reformatted, never halted.
 - **Default hostname:** the sanitized basename of the app's main package,
   overridable via `--hostname` and `gosd.toml`.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
@@ -165,13 +171,21 @@ say so in the bean rather than silently diverging.
   `internal/blockmount`'s package doc for the full detail.
 - **Layout ABI (decided 2026-07-31, docs/design/upgrade-path.md):** the boot
   volume size is per-app (`gosd build --boot-size`, default 256MiB) and is
-  that app's on-card ABI — changing it in a later release erases GOSD-DATA
-  on upgrade (cleanly, via the adoption gate) and is a release-notes-level
-  breaking change. Nothing on-device may assume a fixed data-partition
-  offset: derive it from the flashed MBR (partition 1 start + size), the way
-  dataexpand does. Plain Imager reflash is the baseline upgrade path:
-  `--data-size=expand` images keep GOSD-DATA via first-boot re-adoption, and
-  the provisioning snapshot in /data self-heals gosd.toml hand-edits.
+  that app's on-card ABI — changing it in a later release erases the data
+  partition on upgrade (cleanly, via the adoption gate) and is a
+  release-notes-level breaking change. **The data-partition filesystem
+  (`--data-filesystem`) and the boot/data label pair (`--label-prefix`,
+  see the "Naming surfaces" decision above) are on-card ABI the same way**
+  (bean `gosd-95yu`, bean `gosd-lo7k`, both 2026-08-09): changing either
+  between releases also fails the adoption gate and cleanly reformats the
+  data partition on the next reflash-upgrade, never a halt, and the boot
+  partition is unaffected. Nothing on-device may assume a fixed
+  data-partition offset: derive it from the flashed MBR (partition 1 start
+  + size), the way dataexpand does. Plain Imager reflash is the baseline
+  upgrade path: `--data-size=expand` images keep the data partition via
+  first-boot re-adoption (now gated on this image's configured data label,
+  matched case-insensitively), and the provisioning snapshot in /data
+  self-heals gosd.toml hand-edits.
 - **vfat `flush` is opt-in, default off (decided 2026-08-02, bean
   gosd-9m1k):** normal writeback everywhere (`gosd build --data-flush` /
   gosd.toml `data_flush` / env `GOSD_DATA_FLUSH` to opt in). Durability

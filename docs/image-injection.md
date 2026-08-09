@@ -1,7 +1,7 @@
 # Image injection: filling in configuration after the image is built
 
 `gosd build --placeholder <path>=<size>` (repeatable) reserves fixed-size,
-comment-padded placeholder files on the `GOSD-BOOT` partition and writes a
+comment-padded placeholder files on the boot partition and writes a
 `<image>.inject.json` manifest next to each built image recording the
 absolute byte ranges each placeholder's content occupies in the `.img`. A
 downstream tool — typically a browser splicing configuration into an image
@@ -21,7 +21,7 @@ A FAT file's *content* lives only in the data region of the partition; its
 size and location are recorded separately, in a directory entry and the FAT
 tables. Overwriting a placeholder's content ranges with **exactly the same
 number of bytes** changes the file's content without touching any
-filesystem structure. Nothing at boot checksums `GOSD-BOOT`'s contents
+filesystem structure. Nothing at boot checksums the boot partition's contents
 (gosd-init only requires that `gosd.toml` exists and parses), so the patch
 is invisible to everything except whatever reads that specific file — which
 is the point.
@@ -78,7 +78,7 @@ fragments use):
 
 - `offset`/`length` are bytes, absolute within the image file.
 - `ranges` is ordered; a placeholder's content is the concatenation of its
-  ranges in order. A freshly formatted `GOSD-BOOT` allocates contiguously,
+  ranges in order. A freshly formatted boot partition allocates contiguously,
   so one range per placeholder is the norm, but a consumer must handle
   several — fragmentation is legal FAT32, even if unlikely here.
 - The sum of a placeholder's `ranges[].length` always equals its `size`;

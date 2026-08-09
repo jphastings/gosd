@@ -1,7 +1,7 @@
 // Command hello is a minimal example app used to exercise the gosd build
 // pipeline end to end and to validate hardware bring-up. It prints a
 // startup line, then serves an HTTP endpoint reporting hostname, uptime,
-// the request's remote address, and — when the image has a GOSD-DATA
+// the request's remote address, and — when the image has a data
 // partition — a boot counter persisted across reboots.
 //
 // It also demonstrates gosd.toml's [env] app environment variables (see
@@ -69,14 +69,14 @@ func greetingSuffix(greeting string) string {
 	return fmt.Sprintf(" greeting=%q", greeting)
 }
 
-// dataDir is where gosd-init mounts the writable GOSD-DATA partition. When the
+// dataDir is where gosd-init mounts the writable data partition. When the
 // image was built without one (gosd build --data-size=0), gosd-init mounts an
 // empty read-only filesystem here instead, so a write fails with EROFS rather
 // than silently vanishing from the RAM-backed rootfs — see docs/runtime.md.
 const dataDir = "/data"
 
 // bumpBootCounter demonstrates GoSD's persistent storage: it increments a
-// counter file on the GOSD-DATA partition every boot, using the durable-write
+// counter file on the data partition every boot, using the durable-write
 // sequence docs/runtime.md recommends for FAT32's weak crash-safety, so the
 // count survives a power cut immediately after the write. When the image has
 // no data partition, /data is read-only and the write fails with EROFS; hello
