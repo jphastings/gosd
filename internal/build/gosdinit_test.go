@@ -117,12 +117,13 @@ func TestBuildGoBuildArgsOmitsTagsAndLdflagsWhenOptsIsZero(t *testing.T) {
 	}
 }
 
-// TestBuildGoBuildArgsAddsTagsAndLdflagsWhenSet confirms the other half:
-// CrossCompileTsfunnel's opts do reach the argv, in the order `go build`
-// expects (-tags then -ldflags, package path last).
+// TestBuildGoBuildArgsAddsTagsAndLdflagsWhenSet confirms the other half: a
+// non-zero opts reaches the argv, in the order `go build` expects (-tags then
+// -ldflags, package path last). The shim itself no longer sets tags (gosd-h46e
+// dropped its ts_omit_* trim), so this uses a generic tag to test the builder.
 func TestBuildGoBuildArgsAddsTagsAndLdflagsWhenSet(t *testing.T) {
-	got := buildGoBuildArgs("/src", "./cmd/gosd-tsfunnel", "/out/gosd-tsfunnel", crossCompileOpts{tags: "ts_omit_ssh", ldflags: "-s -w"})
-	want := []string{"-C", "/src", "build", "-o", "/out/gosd-tsfunnel", "-tags", "ts_omit_ssh", "-ldflags", "-s -w", "./cmd/gosd-tsfunnel"}
+	got := buildGoBuildArgs("/src", "./cmd/gosd-tsfunnel", "/out/gosd-tsfunnel", crossCompileOpts{tags: "sometag", ldflags: "-s -w"})
+	want := []string{"-C", "/src", "build", "-o", "/out/gosd-tsfunnel", "-tags", "sometag", "-ldflags", "-s -w", "./cmd/gosd-tsfunnel"}
 	if !slices.Equal(got, want) {
 		t.Errorf("buildGoBuildArgs(tags+ldflags) = %v, want %v", got, want)
 	}

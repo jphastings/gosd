@@ -168,13 +168,17 @@ board · ❌ not supported (see footnote).
     (revisit if upstream ever ships a GOARM=6 build). See
     `docs/ingress.md`.
 
-[^tsfunnel-bench]: Code-complete, unit- and QEMU-tested; not yet
-    hardware-verified against a real Tailscale Funnel (epic `gosd-65uy`'s
-    bench bean `gosd-79v8`). Unlike cloudflared, the shim is compiled by
-    gosd itself for every board's architecture (including pi-zero-w's
-    GOARM=6), so there is no upstream-asset gap here — `--data-size` (or
-    `--data-size=expand`) is required so the shim's tailnet identity
-    survives a reboot.
+[^tsfunnel-bench]: Hardware-verified end to end on `nanopi-zero2` — the shim
+    registers on the tailnet and serves the app over a public
+    `https://<host>.<tailnet>.ts.net` Funnel URL (epic `gosd-65uy`'s bench
+    bean `gosd-79v8`); the other boards run the identical, gosd-compiled shim
+    and share the same runtime path (QEMU-tested). This works because the
+    shim ships full tsnet: a build-tag feature trim silently broke tsnet's
+    control-plane registration (bean `gosd-h46e`). Unlike cloudflared, the
+    shim is compiled by gosd itself for every board's architecture (including
+    pi-zero-w's GOARM=6), so there is no upstream-asset gap here —
+    `--data-size` (or `--data-size=expand`) is required so the shim's tailnet
+    identity survives a reboot.
 
 ---
 

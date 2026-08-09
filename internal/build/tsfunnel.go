@@ -30,29 +30,35 @@ const tsfunnelSrcDirName = "gosd-tsfunnel"
 // GOSD-BOOT's budget - measured at ~23% smaller in gosd-4fve's bean.
 const tsfunnelLDFlags = "-s -w"
 
-// tsfunnelOmitTags is gosd-65uy decision 2's build tag set: every
-// ts_omit_<feature> tag from tailscale.com/feature/featuretags.Features
-// EXCEPT the four features the shim actually needs (netstack, serve, acme,
-// bakedroots) - generated programmatically (not hand-transcribed) by
-// filtering featuretags.Features to omittable tags outside that set, the
-// same recipe gosd-4fve's bean recorded (74 tags at tailscale.com v1.102.2).
-// ts_omit_ssh is in this set: compiling Tailscale SSH out entirely is this
-// epic's "no interactive surface" compliance argument (mirroring
-// cloudflared's own decision 7). Re-derive this list (iterate
-// featuretags.Features, keep only IsOmittable() tags outside the four
-// required features, sort, and OmitTag() each) whenever tailscale.com is
-// repinned to a version that adds/renames a feature tag.
-const tsfunnelOmitTags = "ts_omit_ace,ts_omit_advertiseexitnode,ts_omit_advertiseroutes,ts_omit_appconnectors,ts_omit_aws,ts_omit_bird,ts_omit_c2n,ts_omit_cachenetmap,ts_omit_captiveportal,ts_omit_capture,ts_omit_cliconndiag,ts_omit_clientmetrics,ts_omit_clientupdate,ts_omit_cloud,ts_omit_colorable,ts_omit_completion,ts_omit_completion_scripts,ts_omit_conn25,ts_omit_dbus,ts_omit_debug,ts_omit_debugeventbus,ts_omit_debugportmapper,ts_omit_desktop_sessions,ts_omit_dns,ts_omit_doctor,ts_omit_drive,ts_omit_flashappliance,ts_omit_gro,ts_omit_health,ts_omit_hujsonconf,ts_omit_identityfederation,ts_omit_ipnbus,ts_omit_iptables,ts_omit_kube,ts_omit_linkspeed,ts_omit_linuxdnsfight,ts_omit_listenrawdisco,ts_omit_logtail,ts_omit_netlog,ts_omit_networkmanager,ts_omit_oauthkey,ts_omit_osrouter,ts_omit_outboundproxy,ts_omit_peerapiclient,ts_omit_peerapiserver,ts_omit_portlist,ts_omit_portmapper,ts_omit_posture,ts_omit_qrcodes,ts_omit_relayserver,ts_omit_remoteconfig,ts_omit_resolved,ts_omit_routecheck,ts_omit_runtimemetrics,ts_omit_sdnotify,ts_omit_serviceclientprefs,ts_omit_ssh,ts_omit_synology,ts_omit_syslog,ts_omit_syspolicy,ts_omit_systray,ts_omit_taildrop,ts_omit_tailnetlock,ts_omit_tap,ts_omit_tpm,ts_omit_tundevstats,ts_omit_unixsocketidentity,ts_omit_useexitnode,ts_omit_useproxy,ts_omit_usermetrics,ts_omit_useroutes,ts_omit_wakeonlan,ts_omit_webbrowser,ts_omit_webclient"
-
-// tsfunnelOpts is the crossCompileOpts every CrossCompileTsfunnel rung uses:
-// unlike CrossCompileGosdInit's deliberately-empty opts, the shim is always
-// tagged and stripped, regardless of which rung located its source.
-var tsfunnelOpts = crossCompileOpts{tags: tsfunnelOmitTags, ldflags: tsfunnelLDFlags}
+// tsfunnelOpts is the crossCompileOpts every CrossCompileTsfunnel rung uses.
+// The shim is stripped (tsfunnelLDFlags, -ldflags="-s -w") but is NOT
+// feature-trimmed: gosd-65uy decision 2's ts_omit_* tag set is deliberately
+// gone.
+//
+// One of those ~74 tags broke tsnet's control-plane registration. The
+// trimmed shim fell into a keyless interactive login (StartLoginInteractive
+// -> doLogin(regen=true)) that the coordination server answered with 404, so
+// the device could never join the tailnet and Funnel never opened. This was
+// root-caused on real hardware (bean gosd-h46e): on the SAME board, key and
+// network, an un-trimmed tsnet binary registers and serves Funnel end to end,
+// while the trimmed shim 404s within ~30ms; it never reproduced off-bench
+// because every other test built an un-trimmed binary (`go build`), and only
+// `gosd build` applied the trim. Rather than bisect which tag is load-bearing
+// for registration, the shim now ships full tsnet — ~30MB of RAM-resident
+// initramfs, well worth guaranteed registration.
+//
+// The epic's "no interactive surface" property no longer rests on compiling
+// Tailscale SSH out (ts_omit_ssh). It holds because the shim only ever calls
+// ListenFunnel and never enables tsnet's SSH server: the SSH code may be
+// present but is unreachable (never advertised, and the tailnet ACL doesn't
+// grant it).
+var tsfunnelOpts = crossCompileOpts{ldflags: tsfunnelLDFlags}
 
 // CrossCompileTsfunnel locates cmd/gosd-tsfunnel's source (gosd's own tsnet
 // Funnel shim, epic gosd-65uy decision 1: compiled FROM GOSD SOURCE, the
 // main module, never a nested one) and cross-compiles it to outputPath with
-// the epic's ts_omit_* tag set and -ldflags="-s -w" (decision 2). It follows
+// -ldflags="-s -w" (decision 2) and no feature-trim tags (see tsfunnelOpts
+// and gosd-h46e for why the ts_omit_* set was dropped). It follows
 // the exact same 3-rung ladder as CrossCompileGosdInit - dev checkout,
 // module cache, --gosd-init-src override - since gosd-tsfunnel ships
 // alongside gosd-init in every real gosd source tree; see

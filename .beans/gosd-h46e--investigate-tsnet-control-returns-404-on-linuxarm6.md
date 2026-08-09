@@ -1,7 +1,7 @@
 ---
 # gosd-h46e
 title: 'Investigate: tsnet control returns 404 on linux/arm64 board but 200 on macOS (same key/code)'
-status: todo
+status: completed
 type: bug
 priority: high
 created_at: 2026-08-08T11:51:27Z
@@ -53,3 +53,45 @@ The 1.5M CP2102N capture + disk-full killed readers mid-boot and truncated logs;
 keep one reader, keep disk clear, and prefer qemu repro for log fidelity.
 
 Blocks gosd-79v8 (bench sign-off) but NOT gosd-6cf2 (the three real fixes).
+
+## Root cause & fix (2026-08-09, bench nanopi-zero2)
+
+**Root cause: the shim's `ts_omit_*` feature-trim tags.** `gosd build --ingress
+tailscale-funnel` compiled the shim with 74 `ts_omit_*` tags
+(`internal/build/tsfunnel.go`, `tsfunnelOmitTags`, gosd-65uy decision 2). One
+of them broke tsnet's control-plane registration: the trimmed shim fell into a
+keyless interactive login (`StartLoginInteractive` → `doLogin(regen=true,
+hasUrl=false)`) that the coordination server answered with **404**, ~30ms in,
+before it ever sent `RegisterReq`. So the node never joined the tailnet and
+Funnel never opened.
+
+**Why it never reproduced off-bench** (correcting this session's CLAUDE.md
+triage note): it isn't linux/arm64- or environment-specific at all. Every
+off-bench test — darwin, a linux/arm64 container (full AND minimal env), and
+qemu-virt running the real gosd initramfs+init — built an **un-trimmed** binary
+(`go build`), and all registered fine. Only `gosd build` applies the trim, so
+only the real shipped shim hit it.
+
+**How it was isolated, all on the same board/key/network:** a plain `go build`
+tsnet harness registered; the `gosd build` shim 404'd. Ruled out one variable
+at a time on-device — DNS resolves controlplane to real Tailscale anycast IPs
+and `GET /key` = 200; clock NTP-correct before start; `TS_AUTHKEY` present in
+the shim env (`len=62`); setting `srv.AuthKey` explicitly still 404'd; tmpfs
+state dir instead of vfat `/data` still 404'd; re-ran the harness as a control
+→ still registers (not rate-limiting). Clearing the omit tags → the shim
+registered, opened Funnel, and served the app publicly.
+
+**Fix (this PR):** drop the `ts_omit_*` trim entirely — the shim ships full
+tsnet (kept `-ldflags="-s -w"`, the exact config proven on hardware). ~30MB of
+RAM-resident initramfs, deemed well worth guaranteed registration (JP,
+2026-08-09). The "no interactive surface" property no longer rests on
+compiling SSH out; it holds because the shim only calls `ListenFunnel` and
+never enables tsnet's SSH server.
+
+**Proven end to end on nanopi-zero2:** `curl https://funneltest.elk-dinosaur.ts.net/`
+returned the hello app's response through Funnel.
+
+Follow-up (optional, not blocking): if the ~30MB matters later, bisect the tag
+set to find the single load-bearing tag and re-introduce the safe remainder —
+doable in a linux/arm64 container (registration reproduces there), no bench
+needed.

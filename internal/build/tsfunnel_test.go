@@ -111,18 +111,16 @@ func TestCrossCompileTsfunnelRejectsMissingOverrideDir(t *testing.T) {
 	}
 }
 
-// TestTsfunnelOmitTagsExcludesRequiredFeaturesAndIncludesSSH pins the epic's
-// tag-set decision (gosd-65uy decision 2) without paying for a real compile:
-// netstack/serve/acme/bakedroots must be absent (the shim needs them), and
-// ts_omit_ssh must be present (the "no interactive surface" compliance
-// argument).
-func TestTsfunnelOmitTagsExcludesRequiredFeaturesAndIncludesSSH(t *testing.T) {
-	for _, required := range []string{"ts_omit_netstack", "ts_omit_serve", "ts_omit_acme", "ts_omit_bakedroots"} {
-		if strings.Contains(tsfunnelOmitTags, required) {
-			t.Errorf("tsfunnelOmitTags unexpectedly contains %q; this feature is required by the shim", required)
-		}
+// TestTsfunnelShimIsNotFeatureTrimmed pins gosd-h46e's decision: the shim
+// carries no ts_omit_* feature-trim tags. One of that set broke tsnet's
+// control-plane registration on real hardware (a keyless login the
+// coordination server answered with 404), so the shim ships full tsnet. It is
+// still stripped — TestCrossCompileTsfunnelIsStripped covers -ldflags="-s -w".
+func TestTsfunnelShimIsNotFeatureTrimmed(t *testing.T) {
+	if tsfunnelOpts.tags != "" {
+		t.Errorf("tsfunnelOpts.tags = %q, want empty: the shim must not be feature-trimmed (gosd-h46e)", tsfunnelOpts.tags)
 	}
-	if !strings.Contains(tsfunnelOmitTags, "ts_omit_ssh") {
-		t.Error("tsfunnelOmitTags does not contain ts_omit_ssh, want Tailscale SSH compiled out entirely")
+	if tsfunnelOpts.ldflags != tsfunnelLDFlags {
+		t.Errorf("tsfunnelOpts.ldflags = %q, want %q (the shim stays stripped)", tsfunnelOpts.ldflags, tsfunnelLDFlags)
 	}
 }

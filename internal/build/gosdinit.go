@@ -86,7 +86,8 @@ func CrossCompileGosdInit(outputPath, overrideDir string, arch boards.Arch) erro
 // config.json's image identity, see internal/initcfg.ComputeIdentity), so
 // this struct existing at all must never itself perturb gosd-init's argv.
 // CrossCompileTsfunnel (tsfunnel.go) is the one caller that sets these
-// (the epic's ts_omit_* tag set + -ldflags="-s -w", gosd-65uy decision 2).
+// (only ldflags="-s -w", gosd-65uy decision 2; its feature-trim tags were
+// dropped, see tsfunnelOpts and gosd-h46e).
 type crossCompileOpts struct {
 	tags    string
 	ldflags string
