@@ -487,6 +487,104 @@ jobs:
             exit 1
           fi
 
+  # The GOSD-DATA counterpart of qemu-disk-ext4, for `gosd build
+  # --data-filesystem=ext4` (bean gosd-95yu). Unlike FAT32, an ext4 data
+  # partition ships as internal/diskfmt/ext4golden's fixed 512MiB image and
+  # is grown to the partition's real size exactly once on first boot, so
+  # both --data-size shapes need proving on the real boot path:
+  #
+  #   * expand: the partition is created, formatted, grown and established
+  #     on first boot, then re-adopted after a re-flash orphans it — the
+  #     upgrade path an operator actually performs (docs/design/upgrade-path.md).
+  #   * a fixed size: the image already carries the golden filesystem and an
+  #     MBR entry, so first boot's only job is the one-time grow.
+  #
+  # Every boot here ends the way qemu-expand-data's do: boot-and-grep.sh
+  # kills qemu without a clean shutdown, so each "boots=N" that survives is
+  # a power-cut assertion, not just a restart — and for ext4 specifically it
+  # exercises journal replay on the following mount.
+  qemu-data-ext4:
+    name: "qemu ext4 /data: grow, crash-safe adoption, re-flash re-adoption"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache downloaded board artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/gosd/artifacts
+          key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
+      - name: Install qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+      - name: gosd build ./examples/hello --data-filesystem=ext4 --data-size=expand
+        run: |
+          mkdir -p dist
+          go run ./cmd/gosd build ./examples/hello \
+            --board=qemu-virt \
+            --hostname ci-qemu-data-ext4 \
+            --data-filesystem=ext4 \
+            --data-size=expand \
+            -o dist/expand.img
+          # The flasher's pristine copy, for the re-flash step below.
+          cp dist/expand.img dist/expand-flashable.img
+          # Model flashing onto a card bigger than the image. 1GiB of slack
+          # is comfortably past ext4golden's fixed 512MiB, so the grow is a
+          # real grow rather than a no-op.
+          truncate -s +2G dist/expand.img
+      - name: "First boot: creates, formats, grows and mounts the ext4 data partition"
+        run: |
+          ./scripts/boot-and-grep.sh dist/expand.img expand-first.log \
+            "data partition created, filling the card" \
+            "data partition mounted read-write at /data"
+      # boots=2 is the durability assertion: the previous boot's counter
+      # write was seconds old when qemu was killed, so it only reads back
+      # here if hello's write-fsync-rename reached the card — through ext4's
+      # journal this time — instead of waiting for writeback expiry.
+      - name: "Second boot: already established, and last boot's write survived"
+        run: |
+          ./scripts/boot-and-grep.sh dist/expand.img expand-second.log \
+            "data partition already present" \
+            "data partition mounted read-write at /data" \
+            "boots=2"
+      # The case bean gosd-95yu exists to preserve for ext4: Imager writes
+      # the image over the front of the card and stops at its end, so the
+      # MBR loses partition 2's entry while the data region beyond it is
+      # never touched. boots=3 is the proof the app's data came back — a
+      # reformat would have restarted the counter at 1.
+      - name: "Re-flash: the orphaned ext4 data partition is re-adopted, not reformatted"
+        run: |
+          dd if=dist/expand-flashable.img of=dist/expand.img conv=notrunc
+          ./scripts/boot-and-grep.sh dist/expand.img expand-reflash.log \
+            "data partition re-adopted" \
+            "data partition mounted read-write at /data" \
+            "boots=3"
+      # A fixed --data-size ships the golden filesystem and its MBR entry
+      # already written, so first boot has exactly one job the FAT32
+      # equivalent never had: growing 512MiB up to the partition's size.
+      # Two boots prove it happened once and left something durable.
+      - name: gosd build ./examples/hello --data-filesystem=ext4 --data-size=1GiB
+        run: |
+          go run ./cmd/gosd build ./examples/hello \
+            --board=qemu-virt \
+            --hostname ci-qemu-data-ext4-fixed \
+            --data-filesystem=ext4 \
+            --data-size=1GiB \
+            -o dist/fixed.img
+      - name: "First boot: grows the shipped 512MiB filesystem to the partition"
+        run: |
+          ./scripts/boot-and-grep.sh dist/fixed.img fixed-first.log \
+            "data partition mounted read-write at /data"
+      - name: "Second boot: established, no second grow, and the write survived"
+        run: |
+          ./scripts/boot-and-grep.sh dist/fixed.img fixed-second.log \
+            "data partition mounted read-write at /data" \
+            "boots=2"
+
   # Proves ext4 is genuinely disk/'s default (Options{}'s zero value, not an
   # explicit disk.EXT4 token) end to end on the real boot path: a second,
   # blank virtio disk — attached only to qemu for this job, never part of

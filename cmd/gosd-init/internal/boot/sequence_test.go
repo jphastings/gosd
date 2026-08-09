@@ -13,6 +13,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
@@ -1582,7 +1583,7 @@ func expandTestDeps(mounter *fakeMounter, clock *fakeClock, stop chan struct{}, 
 		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataExpand: dataExpand}, nil },
 		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		EnsureDataMountpoint: func() error { return nil },
-		ExpandData: func(bootDevice string, log func(format string, args ...any)) error {
+		ExpandData: func(bootDevice string, filesystem diskfmt.FS, expand bool, log func(format string, args ...any)) error {
 			*expandedWith = append(*expandedWith, bootDevice)
 			return expandErr
 		},
@@ -1599,9 +1600,9 @@ func TestRunExpandsDataFromTheBootDeviceBeforeMountingIt(t *testing.T) {
 
 	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true, nil, &expandedWith)
 	expand := deps.ExpandData
-	deps.ExpandData = func(bootDevice string, log func(format string, args ...any)) error {
+	deps.ExpandData = func(bootDevice string, filesystem diskfmt.FS, doExpand bool, log func(format string, args ...any)) error {
 		dataMountsAtExpand = mounter.callsFor("/data")
-		return expand(bootDevice, log)
+		return expand(bootDevice, filesystem, doExpand, log)
 	}
 	opts := testDataOptions()
 	opts.Stop = stop
@@ -1712,6 +1713,99 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	}
 	if mounter.callsFor("/data") != 0 {
 		t.Error("/data was mounted despite the halt")
+	}
+}
+
+// TestRunExpandsAFixedSizeEXT4ImageEvenWithoutTheExpandFlag covers the
+// second job dataexpand does: a fixed-size --data-filesystem=ext4 image has
+// dataExpand=false (partition 2 already exists), but still needs its
+// golden filesystem grown to the partition's real size on first boot, so
+// ExpandData must still run.
+func TestRunExpandsAFixedSizeEXT4ImageEvenWithoutTheExpandFlag(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+	var gotFilesystem diskfmt.FS
+	var gotExpand bool
+
+	deps := Deps{
+		Mounter:  mounter,
+		Hostname: &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			close(stop)
+			return 1, nil
+		}),
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataFilesystem: "ext4"}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		ExpandData: func(bootDevice string, filesystem diskfmt.FS, expand bool, log func(format string, args ...any)) error {
+			expandedWith = append(expandedWith, bootDevice)
+			gotFilesystem, gotExpand = filesystem, expand
+			return nil
+		},
+		Sleep: func(d time.Duration) { newFakeClock(time.Unix(0, 0)).Sleep(d) },
+		Now:   newFakeClock(time.Unix(0, 0)).Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if len(expandedWith) != 1 {
+		t.Fatalf("ExpandData called %d times, want exactly once (dataFilesystem=ext4 alone must trigger it)", len(expandedWith))
+	}
+	if gotFilesystem != diskfmt.EXT4 {
+		t.Errorf("ExpandData filesystem = %s, want ext4", gotFilesystem)
+	}
+	if gotExpand {
+		t.Error("ExpandData expand = true, want false (this image was not built with --data-size=expand)")
+	}
+}
+
+// TestRunMountsTheDataPartitionAsEXT4WhenConfigured covers config.json's
+// dataFilesystem reaching the actual /data mount call, not just the
+// dataexpand step.
+func TestRunMountsTheDataPartitionAsEXT4WhenConfigured(t *testing.T) {
+	mounter := &fakeMounter{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	deps := Deps{
+		Mounter:  mounter,
+		Hostname: &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			close(stop)
+			return 1, nil
+		}),
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataFilesystem: "ext4"}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		Sleep:                func(d time.Duration) { clock.Sleep(d) },
+		Now:                  clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	calls := mounter.recordedCalls("/data")
+	if len(calls) == 0 || calls[len(calls)-1].fstype != "ext4" {
+		t.Errorf("/data mount = %+v, want fstype ext4", calls)
+	}
+	if !strings.Contains(console.String(), "data partition filesystem: ext4") {
+		t.Errorf("console output missing the resolved data filesystem: %q", console.String())
 	}
 }
 

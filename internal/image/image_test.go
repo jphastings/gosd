@@ -13,6 +13,7 @@ import (
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 )
 
@@ -509,4 +510,221 @@ func TestWriteWrapsGoDiskfsDiskFullError(t *testing.T) {
 	if !errors.Is(err, image.ErrBootPartitionFull) {
 		t.Fatalf("Write() with an oversized payload = %v, want an ErrBootPartitionFull", err)
 	}
+}
+
+// mbrPartitionType returns the MBR type byte the partition table records for
+// partition index, failing the test if the table has no entry for it.
+func mbrPartitionType(t *testing.T, imgPath string, index int) mbr.Type {
+	t.Helper()
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the written image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	table, err := d.GetPartitionTable()
+	if err != nil {
+		t.Fatalf("GetPartitionTable() failed: %v", err)
+	}
+	mbrTable, ok := table.(*mbr.Table)
+	if !ok {
+		t.Fatalf("GetPartitionTable() returned %T, want *mbr.Table", table)
+	}
+	for _, p := range mbrTable.Partitions {
+		if p.Index == index {
+			return p.Type
+		}
+	}
+	t.Fatalf("mbr table has no entry for partition %d", index)
+	return 0
+}
+
+// extractRegion copies length bytes starting at offset out of imgPath into a
+// new temp file and returns its path: diskfmt.Inspect takes a device path,
+// not a byte range within a larger file, so reading back the data
+// partition's own filesystem needs it isolated first.
+func extractRegion(t *testing.T, imgPath string, offset, length int64) string {
+	t.Helper()
+	src, err := os.Open(imgPath)
+	if err != nil {
+		t.Fatalf("opening %s to extract a region: %v", imgPath, err)
+	}
+	defer func() { _ = src.Close() }()
+
+	regionPath := filepath.Join(t.TempDir(), "region.img")
+	dst, err := os.Create(regionPath)
+	if err != nil {
+		t.Fatalf("creating %s: %v", regionPath, err)
+	}
+	if _, err := io.Copy(dst, io.NewSectionReader(src, offset, length)); err != nil {
+		t.Fatalf("copying region [%d, %d) from %s: %v", offset, offset+length, imgPath, err)
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatalf("closing %s: %v", regionPath, err)
+	}
+	return regionPath
+}
+
+// TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition is the
+// acceptance test for bean gosd-95yu's image half: DataFilesystem: EXT4 must
+// mark partition 2 as Linux (0x83), not FAT32 (0x0C), and its bytes must be a
+// real ext4 filesystem labelled GOSD-DATA that diskfmt.Inspect can read back.
+func TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+	dataSizeBytes := diskfmt.MinEXT4Bytes()
+
+	_, err := image.Write(imgPath, image.Spec{
+		DataSizeBytes:  dataSizeBytes,
+		DataFilesystem: diskfmt.EXT4,
+	})
+	if err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the written image failed: %v", err)
+	}
+	part, err := d.GetPartition(2)
+	if closeErr := d.Close(); closeErr != nil {
+		t.Fatalf("closing the reopened image failed: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got := part.GetStart(); got != dataPartitionOffsetBytes {
+		t.Errorf("partition 2 starts at byte %d, want %d (immediately after partition 1)", got, int64(dataPartitionOffsetBytes))
+	}
+	if got := part.GetSize(); got != dataSizeBytes {
+		t.Errorf("partition 2 size = %d bytes, want %d", got, dataSizeBytes)
+	}
+
+	if gotType := mbrPartitionType(t, imgPath, 2); gotType != mbr.Linux {
+		t.Errorf("partition 2 type = %#x, want %#x (Linux/ext4)", byte(gotType), byte(mbr.Linux))
+	}
+
+	regionPath := extractRegion(t, imgPath, dataPartitionOffsetBytes, dataSizeBytes)
+	contents, err := diskfmt.Inspect(regionPath)
+	if err != nil {
+		t.Fatalf("diskfmt.Inspect on the extracted data partition failed: %v", err)
+	}
+	if contents.FS != diskfmt.EXT4 {
+		t.Errorf("Inspect().FS = %v, want ext4", contents.FS)
+	}
+	if contents.Label != "GOSD-DATA" {
+		t.Errorf("Inspect().Label = %q, want GOSD-DATA", contents.Label)
+	}
+}
+
+// TestWriteDefaultDataFilesystemIsStillFAT32 pins the zero value of
+// Spec.DataFilesystem to FAT32 explicitly, so introducing DataFilesystem
+// (bean gosd-95yu) cannot silently flip existing callers' images to ext4.
+func TestWriteDefaultDataFilesystemIsStillFAT32(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+	const dataSizeBytes = 4 * 1024 * 1024
+
+	if _, err := image.Write(imgPath, image.Spec{DataSizeBytes: dataSizeBytes}); err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+
+	if gotType := mbrPartitionType(t, imgPath, 2); gotType != mbr.Fat32LBA {
+		t.Errorf("partition 2 type = %#x with Spec.DataFilesystem unset, want %#x (FAT32)", byte(gotType), byte(mbr.Fat32LBA))
+	}
+}
+
+// TestWriteRejectsEXT4DataSizeBelowTheGoldenMinimum confirms an ext4 data
+// partition too small for the golden image is refused before any image
+// bytes are written, actionably (naming ext4 and the shortfall) rather than
+// failing deep inside diskfmt.WriteEXT4.
+func TestWriteRejectsEXT4DataSizeBelowTheGoldenMinimum(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	_, err := image.Write(imgPath, image.Spec{
+		DataSizeBytes:  diskfmt.MinEXT4Bytes() - 1,
+		DataFilesystem: diskfmt.EXT4,
+	})
+	if err == nil {
+		t.Fatal("Write() with an ext4 data size below the golden minimum succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "ext4") {
+		t.Errorf("error = %q, want it to mention ext4", err)
+	}
+	if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
+		t.Errorf("Write() wrote %s despite refusing the undersized ext4 data partition", imgPath)
+	}
+}
+
+// TestWriteRejectsAnUnsupportedDataFilesystem confirms a Spec.DataFilesystem
+// value other than the zero value, FAT32 or EXT4 (e.g. exFAT, not yet wired
+// up here) is refused by name, before any image bytes are written.
+func TestWriteRejectsAnUnsupportedDataFilesystem(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+
+	_, err := image.Write(imgPath, image.Spec{
+		DataSizeBytes:  4 * 1024 * 1024,
+		DataFilesystem: diskfmt.ExFAT,
+	})
+	if err == nil {
+		t.Fatal("Write() with DataFilesystem: diskfmt.ExFAT succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "DataFilesystem") {
+		t.Errorf("error = %q, want it to name Spec.DataFilesystem", err)
+	}
+	if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
+		t.Errorf("Write() wrote %s despite refusing the unsupported filesystem", imgPath)
+	}
+}
+
+// TestWriteWithEXT4DoesNotApplyTheFAT32SizingTrim guards the ext4 path
+// against inheriting FAT32's go-diskfs sizing workaround
+// (LargestSelfConsistentFAT32Bytes): an ext4 data partition has no such
+// go-diskfs-shaped defect, so a size that would be silently trimmed under
+// FAT32 must come through untrimmed for ext4.
+func TestWriteWithEXT4DoesNotApplyTheFAT32SizingTrim(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "test.img")
+	dataSizeBytes := firstFAT32TrimmedSizeAtOrAbove(t, diskfmt.MinEXT4Bytes())
+
+	_, err := image.Write(imgPath, image.Spec{
+		DataSizeBytes:  dataSizeBytes,
+		DataFilesystem: diskfmt.EXT4,
+	})
+	if err != nil {
+		t.Fatalf("Write() failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the written image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	part, err := d.GetPartition(2)
+	if err != nil {
+		t.Fatalf("GetPartition(2) failed: %v", err)
+	}
+	if got := part.GetSize(); got != dataSizeBytes {
+		t.Errorf("partition 2 size = %d bytes, want the untrimmed %d - the FAT32 sizing trim must not apply to an ext4 data partition", got, dataSizeBytes)
+	}
+}
+
+// firstFAT32TrimmedSizeAtOrAbove searches upward in whole sectors from
+// minBytes for the first size diskfmt.LargestSelfConsistentFAT32Bytes would
+// actually trim - proof material for
+// TestWriteWithEXT4DoesNotApplyTheFAT32SizingTrim, found by direct
+// construction against the real function rather than a hardcoded byte
+// count, since exactly which sizes are defective moves with sectors-per-FAT
+// rounding (that function's own doc explains why). Every FAT32 sizing band
+// go-diskfs lays out is defective at its very top, so a window a few bands
+// wide is always enough to find one.
+func firstFAT32TrimmedSizeAtOrAbove(t *testing.T, minBytes int64) int64 {
+	t.Helper()
+	const sectorSizeBytes = 512
+	const searchWindowBytes = 8 * 1024 * 1024
+	for candidate := minBytes; candidate < minBytes+searchWindowBytes; candidate += sectorSizeBytes {
+		if diskfmt.LargestSelfConsistentFAT32Bytes(candidate) != candidate {
+			return candidate
+		}
+	}
+	t.Fatalf("no FAT32-defective size found within %d bytes above %d; the search window may need widening", searchWindowBytes, minBytes)
+	return 0
 }

@@ -81,6 +81,7 @@ var (
 	withExternal   []string
 	consoleBaud    int
 	dataFlush      bool
+	dataFilesystem string
 	placeholders   []string
 	ingressFlags   []string
 )
@@ -96,6 +97,13 @@ const defaultDataSize = "0"
 // existed. TestDefaultBootSizeMatchesImagePackage pins it against
 // image.DefaultBootPartitionSizeBytes so the two can't silently drift apart.
 const defaultBootSize = "256MiB"
+
+// defaultDataFilesystem is the GOSD-DATA filesystem used when
+// --data-filesystem is not given: FAT32, unchanged from before the flag
+// existed, because it's readable and repairable from any computer's SD card
+// reader - the property an opt-in ext4 partition trades away for crash
+// resilience (see docs/runtime.md).
+const defaultDataFilesystem = "fat32"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -149,6 +157,8 @@ not touch the cache at all.`,
 		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
 	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
 		"mount GOSD-DATA, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with gosd.toml's data_flush key")
+	cmd.Flags().StringVar(&dataFilesystem, "data-filesystem", defaultDataFilesystem,
+		"filesystem for the writable GOSD-DATA partition, fat32 or ext4; default fat32 is readable in any computer's SD card reader, while ext4 is journaled and survives rapid power-off but cannot be read by macOS or Windows hosts and is unavailable on the Pi family (see COMPATIBILITY.md's ext4 GOSD-DATA row); changing it between releases is an on-disk layout change like --boot-size, so an upgrading device's existing GOSD-DATA is erased and re-established (see docs/design/upgrade-path.md)")
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on GOSD-BOOT at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
@@ -196,7 +206,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dataSizeBytes, dataExpand, err := parseDataSize(dataSize)
+	dataFS, err := parseDataFilesystem(dataFilesystem)
+	if err != nil {
+		return err
+	}
+
+	if err := validateDataFlushExt4Conflict(dataFS, dataFlush); err != nil {
+		return err
+	}
+
+	dataSizeBytes, dataExpand, err := parseDataSize(dataSize, dataFS)
 	if err != nil {
 		return err
 	}
@@ -221,6 +240,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := validateUsbGadget(selected, usbGadget); err != nil {
+		return err
+	}
+
+	if err := validateDataFilesystemSupport(selected, dataFS); err != nil {
 		return err
 	}
 
@@ -340,6 +363,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			DataSizeBytes:          dataSizeBytes,
 			DataExpand:             dataExpand,
 			DataFlush:              dataFlush,
+			DataFilesystem:         dataFS,
 			BootSizeBytes:          bootSizeBytes,
 			ExtraFirmware:          extraFirmware,
 			ExtraExecutables:       extraExecutables,
@@ -440,10 +464,24 @@ const dataSizeLimitDocsURL = "https://github.com/jphastings/gosd/blob/main/docs/
 // bytes, or the keyword "expand" (ship no data partition in the image and
 // have gosd-init create one filling the rest of the card on first boot). A
 // bare number is bytes; 0 (with or without a unit) disables the data
-// partition. A size past the largest FAT32 volume GoSD can write is refused
-// here, before any image bytes exist, rather than after a long build produces
-// a silently corrupt partition.
-func parseDataSize(s string) (bytes int64, expand bool, err error) {
+// partition, except for ext4 (see below), which needs a partition to exist
+// at all.
+//
+// fs decides which bound applies, since FAT32 and ext4 fail in opposite
+// directions: a FAT32 partition past diskfmt.MaxFAT32Bytes() is refused here
+// before any image bytes exist, rather than after a long build produces a
+// silently corrupt partition (see diskfmt.FAT32SizeLimitReason) - that
+// ceiling is a defect of GoSD's own FAT32 formatter, so it does not apply to
+// ext4 at all. ext4 instead has a floor: GoSD writes a fixed
+// diskfmt.MinEXT4Bytes() golden image and grows it to the partition's real
+// size on first boot, so a smaller partition has nowhere to grow into (see
+// diskfmt.EXT4SizeLimitReason), and 0 (no partition) is refused outright,
+// since --data-filesystem=ext4 with no partition to format is certainly a
+// mistake. "expand" is valid for either filesystem and is resolved before
+// either bound is checked, since it carries no --data-size number to compare
+// against a ceiling or floor - a --data-size=expand ext4 image genuinely
+// fills the whole card, floor included.
+func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error) {
 	trimmed := strings.TrimSpace(s)
 	if strings.EqualFold(trimmed, "expand") {
 		return 0, true, nil
@@ -453,11 +491,99 @@ func parseDataSize(s string) (bytes int64, expand bool, err error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("%w, 'expand' to fill the card on first boot, or 0 to disable the data partition", err)
 	}
+
+	if fs == diskfmt.EXT4 {
+		if size == 0 {
+			return 0, false, fmt.Errorf("--data-filesystem=ext4 needs a writable GOSD-DATA partition to format, but --data-size=0 (the default) means none is created; pass --data-size (e.g. --data-size=1GiB) or --data-size=expand, or drop --data-filesystem=ext4 to build without a data partition")
+		}
+		if minBytes := diskfmt.MinEXT4Bytes(); size < minBytes {
+			return 0, false, fmt.Errorf("--data-size %q is smaller than the %s minimum GoSD's ext4 formatter needs, because %s; use --data-size=%s or larger (--data-size=%d for the exact minimum), or --data-size=expand which always clears it, or build with --data-filesystem=fat32 instead",
+				s, humanizeBinaryBytes(minBytes), diskfmt.EXT4SizeLimitReason, humanizeBinaryBytes(minBytes), minBytes)
+		}
+		return size, false, nil
+	}
+
 	if size > diskfmt.MaxFAT32Bytes() {
 		return 0, false, fmt.Errorf("--data-size %q is larger than GoSD can format: the largest GOSD-DATA partition it will create is %s (%d bytes), because %s; use --data-size=256GiB or less (--data-size=%d for the exact maximum), or --data-size=expand to fill the card up to 256GiB on first boot; if the app needs more storage than that, attach a disk and format it exFAT with the disk package, which has no such ceiling - see %s",
 			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason, diskfmt.MaxFAT32Bytes(), dataSizeLimitDocsURL)
 	}
 	return size, false, nil
+}
+
+// dataFilesystemNames lists every valid --data-filesystem value, in the
+// order shown in an unknown-value error - the same style
+// ingressAgentNames() uses for --ingress.
+var dataFilesystemNames = []string{"fat32", "ext4"}
+
+// parseDataFilesystem validates --data-filesystem's raw value against
+// dataFilesystemNames, case-insensitively, and resolves it to the
+// diskfmt.FS token the rest of the build threads through
+// (pipeline.Options.DataFilesystem, image.Spec.DataFilesystem,
+// initcfg.Config.DataFilesystem) - mirroring parseIngressFlags' unknown-value
+// error shape.
+func parseDataFilesystem(s string) (diskfmt.FS, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "fat32":
+		return diskfmt.FAT32, nil
+	case "ext4":
+		return diskfmt.EXT4, nil
+	default:
+		return "", fmt.Errorf("--data-filesystem %q is invalid; valid values are: %s", s, strings.Join(dataFilesystemNames, ", "))
+	}
+}
+
+// validateDataFlushExt4Conflict refuses combining --data-filesystem=ext4
+// with --data-flush: "flush" is a vfat "flush" mount option
+// (initcfg.Config.DataFlush), meaningless for ext4, whose durability comes
+// from the fsync/rename sequence in docs/runtime.md either way - the same
+// story the flag's own --data-flush help text tells for FAT32. A no-op
+// unless both are set.
+func validateDataFlushExt4Conflict(fs diskfmt.FS, dataFlush bool) error {
+	if fs != diskfmt.EXT4 || !dataFlush {
+		return nil
+	}
+	return fmt.Errorf("--data-filesystem=ext4 can't be combined with --data-flush: \"flush\" is a vfat-only mount option and has no effect on an ext4 GOSD-DATA - durability already comes from the fsync sequence documented in docs/runtime.md regardless of filesystem; drop --data-flush, or drop --data-filesystem=ext4 to use FAT32 (which --data-flush does affect)")
+}
+
+// validateDataFilesystemSupport fails fast when --data-filesystem=ext4 is
+// selected and any board in selected has no ext4-capable stock kernel (see
+// boards.Board.EXT4Support) - without this check, gosd build
+// --data-filesystem=ext4 for such a board would either fail deep inside
+// image.Write or, worse, ship an image whose GOSD-DATA the kernel can never
+// mount. Mirrors validateUsbGadget's shape exactly, including naming
+// --board as the fix: remember a bare `gosd build` with no --board builds
+// every public board, so an ext4 refusal must point at restricting the
+// build, not just "this doesn't work". A no-op when fs is FAT32 or every
+// selected board supports ext4.
+func validateDataFilesystemSupport(selected []boards.Board, fs diskfmt.FS) error {
+	if fs != diskfmt.EXT4 {
+		return nil
+	}
+
+	var incapable, capable []string
+	for _, b := range selected {
+		support := b.EXT4Support()
+		if support.Supported {
+			capable = append(capable, b.Name())
+			continue
+		}
+		incapable = append(incapable, fmt.Sprintf("%s (%s)", b.Name(), support.Reason))
+	}
+	if len(incapable) == 0 {
+		return nil
+	}
+
+	msg := fmt.Sprintf(
+		"--data-filesystem=ext4 failed: no ext4 support in the pinned kernel for %s; see COMPATIBILITY.md's ext4 GOSD-DATA row",
+		strings.Join(incapable, "; "),
+	)
+	if len(capable) > 0 {
+		msg += fmt.Sprintf("; other selected boards do support ext4 (%s) — try restricting the build with --board=%s, or drop --data-filesystem=ext4 to use FAT32 (the default) across every board",
+			strings.Join(capable, ", "), capable[0])
+	} else {
+		msg += "; drop --data-filesystem=ext4 to use FAT32 (the default) instead"
+	}
+	return errors.New(msg)
 }
 
 // minBootSizeBytes is the smallest --boot-size GoSD will accept: not because

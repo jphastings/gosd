@@ -14,6 +14,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/build"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
@@ -110,7 +111,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dataSizeBytes, dataExpand, err := parseDataSize(runDataSize)
+	// gosd run has no --data-filesystem flag of its own (it's a fast
+	// inner-loop qemu-virt smoke test, not a shipping image), so its data
+	// partition stays FAT32-only, same as before --data-filesystem existed.
+	dataSizeBytes, dataExpand, err := parseDataSize(runDataSize, diskfmt.FAT32)
 	if err != nil {
 		return err
 	}

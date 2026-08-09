@@ -42,6 +42,17 @@ already did — flash the SD card with Raspberry Pi Imager per
    derived from the flashed MBR (§2). Side benefit: per-app sizing is
    also what makes app-slot OTA (`gosd-vxal`) workable for large apps —
    two slots of a Betamin-sized payload never fit in a fixed 256MiB.
+5. **The data partition's filesystem is per-app, exactly like its size**
+   (JP, 2026-08-09, bean `gosd-95yu`). `gosd build --data-filesystem`
+   chooses `fat32` (default, universally readable) or `ext4` (journaled,
+   gated per-board — see `COMPATIBILITY.md`'s ext4 `GOSD-DATA` row), and
+   like `--boot-size` in decision 4, that choice becomes part of the
+   app's on-card layout ABI: a FAT32 `GOSD-DATA` is not an ext4 one, so a
+   later release that switches filesystems can't simply adopt what's
+   already on the card. §2's adoption gate treats a filesystem mismatch
+   the same way it already treats a boot-size-driven offset mismatch — a
+   clean reformat to the new choice on the next upgrade, never
+   corruption, and a release-notes-level breaking change for that app.
 
 ## 1. The four routes, against the constraint
 

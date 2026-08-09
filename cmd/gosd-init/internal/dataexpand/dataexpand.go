@@ -1,31 +1,47 @@
-// Package dataexpand creates the GOSD-DATA partition on first boot for
-// images built with --data-size=expand. Such an image ships with no
-// partition 2 at all; this package grows the card into one by telling the
-// running kernel about the partition, formatting it FAT32, and only then
-// writing its MBR entry — all before the normal data-partition mount runs.
+// Package dataexpand does two related jobs on the GOSD-DATA partition,
+// gated on config.json's baked dataFilesystem/dataExpand choices (see
+// initcfg.Config) and always run before the normal data-partition mount:
 //
-// Where that partition starts is read from the flashed MBR — the sector
-// after partition 1 — never assumed: the boot volume's size is chosen per
-// app at build time, so only the table on this card knows the layout it was
-// flashed with.
+//   - For an image built with --data-size=expand (no partition 2 at all),
+//     it creates one on first boot by telling the running kernel about the
+//     partition, formatting it (FAT32, or ext4 since bean gosd-95yu), and
+//     only then writing its MBR entry.
+//   - For a fixed-size --data-filesystem=ext4 image (partition 2 already
+//     exists, pre-formatted at diskfmt's checked-in ~512MiB golden size),
+//     it grows that filesystem to fill the partition's real size, exactly
+//     once, on the card's actual first boot. FAT32 needs no equivalent
+//     step — a fixed-size image's FAT32 partition is already the right
+//     size at build time.
+//
+// Where an expand partition starts is read from the flashed MBR — the
+// sector after partition 1 — never assumed: the boot volume's size is
+// chosen per app at build time, so only the table on this card knows the
+// layout it was flashed with.
 //
 // The MBR entry is the commit record of a completed first boot, written
-// only over a filesystem proven finished by EstablishedMarker. Three states
-// therefore cover every boot: no entry means first-boot work is (re)done
-// from scratch — power loss anywhere mid-creation lands back here, as does
-// reflashing the card (which rewrites the MBR without a partition 2 while
-// leaving the data region's bytes untouched), so what already occupies the
-// partition is inspected and a marked GOSD-DATA filesystem adopted rather
-// than reformatted; an entry over a mountable GOSD-DATA filesystem means
-// everything already happened, and nothing is touched; an entry over
-// something a read *successfully* shows to be anything else means an
-// established partition — possibly carrying app data — has been corrupted,
-// reported as ErrDataCorrupt so the caller can halt the device rather than
-// let anything destroy what might be recoverable. Every other failure,
-// including one that stops the read itself from happening at all, is
-// ordinary and non-fatal: the caller logs it and falls back to the
-// read-only /data placeholder for this boot, and the whole check retries
-// next boot.
+// only over a filesystem proven finished — FAT32's EstablishedMarker,
+// written directly to the raw partition device (see CreateMarker), or
+// ext4's own marker (blockmount.EXT4EstablishedMarker), which can only be
+// written and checked through a live kernel mount (see EstablishEXT4 and
+// EXT4Established) since growing an ext4 filesystem needs one regardless.
+// Three states therefore cover every boot: no entry means first-boot work
+// is (re)done from scratch — power loss anywhere mid-creation lands back
+// here, as does reflashing the card (which rewrites the MBR without a
+// partition 2 while leaving the data region's bytes untouched), so what
+// already occupies the partition is inspected and a marked GOSD-DATA
+// filesystem adopted rather than reformatted; an entry over a mountable,
+// matching GOSD-DATA filesystem means everything already happened — except
+// that, for ext4 alone, "everything" additionally requires the
+// establishment marker to be present, since a fixed-size ext4 image ships
+// its MBR entry from the very first boot, before that filesystem has
+// necessarily been grown (see verifyEstablished); an entry over something a
+// read *successfully* shows to be anything else means an established
+// partition — possibly carrying app data — has been corrupted, reported as
+// ErrDataCorrupt so the caller can halt the device rather than let anything
+// destroy what might be recoverable. Every other failure, including one
+// that stops the read itself from happening at all, is ordinary and
+// non-fatal: the caller logs it and falls back to the read-only /data
+// placeholder for this boot, and the whole check retries next boot.
 package dataexpand
 
 import (
@@ -60,6 +76,11 @@ const (
 	// fatPartitionType is MBR type 0x0C (FAT32, LBA addressing), the same
 	// type internal/image writes for both of its partitions.
 	fatPartitionType = 0x0C
+
+	// ext4PartitionType is MBR type 0x83 (Linux native filesystem), the
+	// conventional MBR type for ext4 — there is no ext4-specific MBR type
+	// byte, so this is what fdisk/parted/internal/image all use.
+	ext4PartitionType = 0x83
 
 	// Label is the volume label the created filesystem carries, identical
 	// to the GOSD-DATA partition a fixed --data-size build ships.
@@ -98,11 +119,16 @@ const (
 	// partition — exactly like a --data-size=0 image.
 	minPartitionBytes = 64 * 1024 * 1024
 
-	// maxPartitionBytes caps the created partition at 256GiB: go-diskfs's
+	// maxPartitionBytes caps a created FAT32 partition at 256GiB: go-diskfs's
 	// FAT32 formatter computes its sectors-per-FAT count through a uint16,
 	// which silently truncates — corrupting the filesystem — for volumes
 	// past roughly this size. 256GiB is exactly within the safe range.
-	// Lifting the cap is tracked in bean gosd-8kdm.
+	// Lifting the cap is tracked in bean gosd-8kdm. It does not apply to
+	// ext4: diskfmt.FormatEXT4 never goes through go-diskfs at all (it
+	// streams a fixed-size golden image and leaves sizing to
+	// blockmount.GrowEXT4's EXT4_IOC_RESIZE_FS ioctl, which has no
+	// equivalent width limit), so an ext4 data partition gets the whole
+	// card regardless of size — see partitionSectors.
 	maxPartitionBytes = 256 * 1024 * 1024 * 1024
 
 	// alignBytes aligns the partition's size down to 4MiB, a comfortable
@@ -142,6 +168,50 @@ type Deps struct {
 	// MarkerExists reports whether that marker is there. An error means the
 	// filesystem's root directory could not be read at all.
 	MarkerExists func(partitionDevice string) (bool, error)
+
+	// The four fields below are ext4-only: Run never calls them when
+	// Options.Filesystem is diskfmt.FAT32, so a Deps value that leaves
+	// them nil (any caller that never asks for ext4) is exactly as valid
+	// as it always was.
+
+	// FormatEXT4 writes an ext4 filesystem labelled label onto the
+	// partition node (diskfmt's checked-in ~512MiB golden image, streamed
+	// onto the device — never mkfs.ext4).
+	FormatEXT4 func(partitionDevice, label string) error
+	// EstablishEXT4 mounts the partition's ext4 filesystem at a scratch
+	// mountpoint, grows it to fill the partition (EXT4_IOC_RESIZE_FS),
+	// writes and fsyncs blockmount.EXT4EstablishedMarker, then unmounts —
+	// on every return path, including an error one. Unlike FAT32's
+	// CreateMarker, this needs a live kernel mount: growing an
+	// already-formatted filesystem and writing into it both require one,
+	// so there is no raw-device equivalent to reach for instead (see
+	// NewDeps's doc for why that mount needs a mountpoint
+	// of its own). Called at most once per boot, either right after
+	// FormatEXT4+SyncDevice on the creation path, or directly against an
+	// already-formatted fixed-size image's first boot (see
+	// verifyEstablished) — never against an already-established volume,
+	// since growing is only ever attempted until the marker says it
+	// doesn't need to be again.
+	EstablishEXT4 func(partitionDevice string) error
+	// EXT4Established reports whether the partition's ext4 filesystem
+	// already carries blockmount.EXT4EstablishedMarker, by mounting it
+	// briefly at a scratch mountpoint and unmounting again. A mount
+	// failure is reported as an error, never silently folded into a false
+	// result — survivorPresent and verifyEstablished, its two callers,
+	// deliberately interpret that error differently (see their doc
+	// comments): one treats an unmountable volume as debris to reformat,
+	// the other refuses to treat a transient failure as proof of anything.
+	EXT4Established func(partitionDevice string) (bool, error)
+	// FilesystemSupported reports whether the running kernel can mount fs
+	// (reads /proc/filesystems, mirroring blockmount.Mountable). Checked
+	// once, before Run does anything else with an ext4 image, so a board
+	// whose kernel lacks CONFIG_EXT4_FS is refused outright rather than
+	// formatting a partition no boot could ever mount — see Run's ext4
+	// preflight. gosd build already refuses to pair --data-filesystem=ext4
+	// with such a board, so this should be unreachable in practice; it
+	// exists as the on-device honest failure for the case where it isn't.
+	FilesystemSupported func(fs diskfmt.FS) (bool, error)
+
 	// SyncDevice flushes a device node's dirty pages to the medium, making
 	// a just-written format durable before the MBR entry commits to it.
 	SyncDevice func(device string) error
@@ -164,6 +234,24 @@ type Options struct {
 	// NodeTimeout bounds how long Run waits for PartitionDevice to appear
 	// after telling the kernel about the partition.
 	NodeTimeout time.Duration
+
+	// Filesystem is what gosd build baked this image's data partition as
+	// (config.json's dataFilesystem — see initcfg.Config.DataFilesystem):
+	// diskfmt.FAT32 or diskfmt.EXT4. It decides which establishment path
+	// Run takes on every branch — FAT32's go-diskfs/raw-partition marker
+	// dance, or ext4's mount-grow-mark sequence — and is compared against
+	// what a survivor's Inspect actually reports before it is ever
+	// adopted, so a card whose partition holds a different filesystem
+	// than the image was built for is never silently treated as a match.
+	Filesystem diskfmt.FS
+
+	// Expand marks an image built with --data-size=expand (config.json's
+	// dataExpand): true means partition 2 may not exist yet and Run may
+	// need to create it from scratch; false means a fixed-size image
+	// shipped partition 2 already, and the only first-boot work left
+	// (ext4 only) is growing its golden filesystem to the partition's
+	// real size — see verifyEstablished.
+	Expand bool
 }
 
 // Run performs one boot's worth of expansion work, deciding everything from
@@ -180,8 +268,32 @@ func Run(deps Deps, opts Options) error {
 		return fmt.Errorf("%s does not carry the expected GoSD partition table, leaving it untouched: %w", opts.Device, err)
 	}
 
+	// Checked before anything else touches an ext4 image: gosd build
+	// already refuses to pair --data-filesystem=ext4 with a board whose
+	// kernel can't mount it, so this should be unreachable — but it is the
+	// on-device honest failure for the case where it isn't, and formatting
+	// (or even just mounting to check a marker) against a kernel that can
+	// never read the result back would otherwise wedge the device silently.
+	if opts.Filesystem == diskfmt.EXT4 {
+		supported, err := deps.FilesystemSupported(diskfmt.EXT4)
+		if err != nil {
+			return fmt.Errorf("checking %s's kernel for ext4 support: %w", opts.Device, err)
+		}
+		if !supported {
+			return fmt.Errorf("this board's kernel has no ext4 support, but this image was built with --data-filesystem=ext4 (see COMPATIBILITY.md for which boards support ext4, and docs/custom-kernels.md to rebuild the board's kernel with CONFIG_EXT4_FS)")
+		}
+	}
+
 	if partType, _, _ := readEntry(mbr, dataPartitionNumber); partType != 0 {
 		return verifyEstablished(deps, opts)
+	}
+	if !opts.Expand {
+		// A fixed-size image always ships partition 2's entry already —
+		// this is just the defensive fallback for one that somehow
+		// doesn't, and there is nothing this package can do about it
+		// (creating a partition from nothing is only ever an expand-image
+		// job; see the package comment).
+		return nil
 	}
 
 	deviceBytes, err := deps.DeviceSizeBytes(opts.Device)
@@ -189,7 +301,7 @@ func Run(deps Deps, opts Options) error {
 		return fmt.Errorf("finding %s's size: %w", opts.Device, err)
 	}
 	startLBA := dataStartLBA(mbr)
-	sizeSectors, reason, note := partitionSectors(deviceBytes, startLBA)
+	sizeSectors, reason, note := partitionSectors(deviceBytes, startLBA, opts.Filesystem)
 	if sizeSectors == 0 {
 		deps.Log("not creating a data partition: %s", reason)
 		return nil
@@ -212,6 +324,17 @@ func Run(deps Deps, opts Options) error {
 	// read that fails outright is retried, then treated as ordinary — see
 	// verifyEstablished's doc comment).
 	//
+	// ext4 follows the identical shape with a mount in the middle in place
+	// of FAT32's raw-device CreateMarker: FormatEXT4 writes the golden
+	// image (buffered, not yet durable), SyncDevice flushes it, EstablishEXT4
+	// mounts what that sync just proved durable, grows it, writes and
+	// fsyncs the marker, and unmounts again, and a second SyncDevice flushes
+	// the device node once more before the MBR entry — the on-disk commit
+	// record — is allowed to reference any of it. The two SyncDevice calls
+	// bracketing EstablishEXT4 mirror FAT32's format/marker pair exactly:
+	// nothing before the first is trusted until flushed, and nothing after
+	// the mount-based establishment is trusted until flushed again either.
+	//
 	// Adoption reuses this boot's geometry for a filesystem an earlier boot
 	// sized: same derivation, same device, so the same offset and length.
 	if err := deps.AddKernelPartition(opts.Device, dataPartitionNumber,
@@ -221,27 +344,43 @@ func Run(deps Deps, opts Options) error {
 	if err := waitForNode(deps, opts.PartitionDevice, opts.NodeTimeout); err != nil {
 		return err
 	}
-	adopt, err := survivorPresent(deps, opts.PartitionDevice)
+	adopt, err := survivorPresent(deps, opts)
 	if err != nil {
 		return err
 	}
 	if !adopt {
-		deps.Log("formatting %s as %s (%s) — one-time first-boot setup", opts.PartitionDevice, Label, sizeString(sizeSectors*sectorSize))
-		if err := deps.FormatFAT32(opts.PartitionDevice, Label); err != nil {
-			return err
-		}
-		if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
-			return fmt.Errorf("flushing the new filesystem to %s: %w", opts.PartitionDevice, err)
-		}
-		if err := deps.CreateMarker(opts.PartitionDevice); err != nil {
-			return fmt.Errorf("recording the completed format on %s: %w", opts.PartitionDevice, err)
-		}
-		if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
-			return fmt.Errorf("flushing the completed-format marker to %s: %w", opts.PartitionDevice, err)
+		if opts.Filesystem == diskfmt.EXT4 {
+			deps.Log("formatting %s as ext4 (%s) — one-time first-boot setup", opts.PartitionDevice, sizeString(sizeSectors*sectorSize))
+			if err := deps.FormatEXT4(opts.PartitionDevice, Label); err != nil {
+				return err
+			}
+			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("flushing the new filesystem to %s: %w", opts.PartitionDevice, err)
+			}
+			if err := deps.EstablishEXT4(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("growing and marking the new ext4 filesystem on %s: %w", opts.PartitionDevice, err)
+			}
+			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("flushing the established ext4 filesystem on %s: %w", opts.PartitionDevice, err)
+			}
+		} else {
+			deps.Log("formatting %s as %s (%s) — one-time first-boot setup", opts.PartitionDevice, Label, sizeString(sizeSectors*sectorSize))
+			if err := deps.FormatFAT32(opts.PartitionDevice, Label); err != nil {
+				return err
+			}
+			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("flushing the new filesystem to %s: %w", opts.PartitionDevice, err)
+			}
+			if err := deps.CreateMarker(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("recording the completed format on %s: %w", opts.PartitionDevice, err)
+			}
+			if err := deps.SyncDevice(opts.PartitionDevice); err != nil {
+				return fmt.Errorf("flushing the completed-format marker to %s: %w", opts.PartitionDevice, err)
+			}
 		}
 	}
 
-	writeDataEntry(mbr, uint32(startLBA), uint32(sizeSectors))
+	writeDataEntry(mbr, uint32(startLBA), uint32(sizeSectors), partitionType(opts.Filesystem))
 	if err := deps.WriteMBR(opts.Device, mbr); err != nil {
 		return fmt.Errorf("writing the new partition table to %s: %w", opts.Device, err)
 	}
@@ -257,20 +396,29 @@ func Run(deps Deps, opts Options) error {
 // filesystem worth keeping — the state a plain reflash leaves behind, since
 // writing an image rewrites the MBR (dropping partition 2's entry) without
 // touching the bytes beyond the boot partition. Adoption needs the derived
-// offset, FAT32, the exact label (the gate blockmount applies to every other
-// mount decision) AND EstablishedMarker, which is the only proof the format
-// that wrote that label ever finished. Anything else — blank space, a
-// foreign volume, the unrecognisable middle of a filesystem whose start a
-// differently sized boot volume overwrote, the debris of an interrupted
-// format — is formatted fresh, as it always was.
+// offset, opts.Filesystem, the exact label (the gate blockmount applies to
+// every other mount decision) AND a completion marker — FAT32's
+// EstablishedMarker or ext4's EXT4EstablishedMarker, whichever
+// opts.Filesystem calls for — which is the only proof the format that wrote
+// that label ever finished. Anything else — blank space, a foreign volume,
+// a *different* filesystem than the image was built for, the unrecognisable
+// middle of a filesystem whose start a differently sized boot volume
+// overwrote, the debris of an interrupted format — is formatted fresh, as
+// it always was.
 //
 // A partition that fails to identify at all is not "anything else": nothing
 // may be formatted over contents that could not be seen, so this boot gives
 // up (leaving /data read-only) and the next one tries again. A partition
-// that identifies as GOSD-DATA but whose root directory then fails to read
-// IS: that combination is a hallmark of a half-written filesystem, and
-// treating it as unadoptable is what keeps an interrupted format
-// self-healing rather than wedging the device forever.
+// that identifies as GOSD-DATA but whose completion marker then fails to
+// read (FAT32's root directory, or an ext4 mount attempt) IS: that
+// combination is a hallmark of a half-written filesystem, and treating it as
+// unadoptable is what keeps an interrupted format self-healing rather than
+// wedging the device forever. This is also the reasoning for reading an
+// unmountable ext4 volume as debris here specifically — see
+// Deps.EXT4Established's doc for why verifyEstablished's identical-looking
+// check reads the same kind of failure completely differently: this path's
+// partition has no MBR entry yet, so nothing found here could be an
+// established volume being protected from a false negative.
 //
 // This is the same "could not see it, so don't touch it" philosophy
 // verifyEstablished applies to a read failure on the already-established
@@ -279,13 +427,27 @@ func Run(deps Deps, opts Options) error {
 // *successful* read of the wrong contents means — debris to reformat here,
 // versus ErrDataCorrupt there — because only this path's partition has yet
 // to earn an MBR entry.
-func survivorPresent(deps Deps, partitionDevice string) (bool, error) {
+func survivorPresent(deps Deps, opts Options) (bool, error) {
+	partitionDevice := opts.PartitionDevice
 	contents, err := deps.Inspect(partitionDevice)
 	if err != nil {
 		return false, fmt.Errorf("reading %s to check whether it already holds %s data: %w", partitionDevice, Label, err)
 	}
-	if contents.FS != diskfmt.FAT32 || contents.Label != Label {
+	if contents.FS != opts.Filesystem || contents.Label != Label {
 		return false, nil
+	}
+
+	if opts.Filesystem == diskfmt.EXT4 {
+		established, err := deps.EXT4Established(partitionDevice)
+		if err != nil {
+			deps.Log("%s looks like %s but its ext4 filesystem could not be mounted to check for a format-completion marker (%v); treating it as the debris of an interrupted format", partitionDevice, Label, err)
+			return false, nil
+		}
+		if !established {
+			deps.Log("%s looks like %s but carries no format-completion marker; treating it as the debris of an interrupted format", partitionDevice, Label)
+			return false, nil
+		}
+		return true, nil
 	}
 
 	marked, err := deps.MarkerExists(partitionDevice)
@@ -312,8 +474,8 @@ func dataStartLBA(mbr []byte) int64 {
 
 // verifyEstablished handles a boot where the MBR already lists partition 2.
 // The entry is only ever written over a filesystem this package has proven
-// finished — formatted, flushed and marked here, or adopted only once
-// EstablishedMarker showed an earlier boot's format finished (see Run) — and
+// finished — formatted, flushed and marked here, or adopted only once a
+// completion marker showed an earlier boot's format finished (see Run) — and
 // flashing an image rewrites the MBR without an entry, so an entry means an
 // established partition that may hold app data. Either it still carries its
 // GOSD-DATA filesystem (the every-later-boot happy path: nothing to do), or
@@ -334,9 +496,21 @@ func dataStartLBA(mbr []byte) int64 {
 // boot can fix on its own: a read that succeeded and definitively shows a
 // non-GOSD-DATA volume where the table says an established one belongs.
 //
-// The marker deliberately plays no part in this check: /data belongs to the
-// app from here on, and an app that tidies away a file it did not expect
-// must not thereby turn its own working partition into a corruption halt.
+// The FAT32 marker deliberately plays no part in the FS/label check above:
+// /data belongs to the app from here on, and an app that tidies away a file
+// it did not expect must not thereby turn its own working partition into a
+// corruption halt. ext4 is the one exception, and only because of *when*
+// its MBR entry is written: a fixed-size --data-filesystem=ext4 image ships
+// partition 2 pre-formatted (diskfmt's checked-in golden image) with its MBR
+// entry already present from the very first boot, before that filesystem has
+// necessarily been grown to the partition's real size — unlike every other
+// case this function handles, where the entry itself is proof growth (if
+// any was needed) already happened. So once the FS/label match, an ext4
+// partition additionally needs Deps.EXT4Established checked: established
+// means the every-later-boot happy path applies as normal; not established
+// means this is that fixed-size image's actual first boot (or the marker
+// was separately lost — see the return below), and the only work left is
+// growing it.
 func verifyEstablished(deps Deps, opts Options) error {
 	if !nodeAppears(deps, opts.PartitionDevice, opts.NodeTimeout) {
 		return fmt.Errorf("the partition table lists the data partition, but its device node %s did not appear within %s; leaving /data read-only this boot", opts.PartitionDevice, opts.NodeTimeout)
@@ -345,11 +519,47 @@ func verifyEstablished(deps Deps, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("reading %s failed repeatedly: %w; leaving /data read-only this boot", opts.PartitionDevice, err)
 	}
-	if contents.FS == diskfmt.FAT32 && contents.Label == Label {
+	if contents.FS != opts.Filesystem || contents.Label != Label {
+		return fmt.Errorf("%w: %s holds %s where a %s filesystem labelled %s should be", ErrDataCorrupt, opts.PartitionDevice, describeContents(contents), opts.Filesystem, Label)
+	}
+	if opts.Filesystem != diskfmt.EXT4 {
 		deps.Log("data partition already present on %s", opts.PartitionDevice)
 		return nil
 	}
-	return fmt.Errorf("%w: %s holds %s where a FAT32 filesystem labelled %s should be", ErrDataCorrupt, opts.PartitionDevice, describeContents(contents), Label)
+
+	established, err := deps.EXT4Established(opts.PartitionDevice)
+	if err != nil {
+		// Unlike survivorPresent's identically-shaped check (see its doc),
+		// a mount failure here must never be read as "not established":
+		// this partition already has an MBR entry, so it may hold real app
+		// data, and a transient mount hiccup must not make Run think a
+		// grow is safe to attempt against a filesystem this boot never
+		// actually proved anything about. Reported plainly instead, the
+		// same as the pollInspect failure above: /data falls back
+		// read-only this boot, and the whole check retries next boot.
+		return fmt.Errorf("checking whether %s's ext4 filesystem was already established: %w; leaving /data read-only this boot", opts.PartitionDevice, err)
+	}
+	if established {
+		deps.Log("data partition already present on %s", opts.PartitionDevice)
+		return nil
+	}
+
+	// Not yet established: either this fixed-size image's actual first
+	// boot, or a marker separately lost some other way (e.g. an app
+	// deleting a file it didn't recognise). Either way this path must
+	// never format or erase anything, and it doesn't need to decide
+	// between "harmless to redo" and "might destroy real data" the way
+	// blockmount's runEXT4 does with its RootHasOtherContent second
+	// opinion: growing (EXT4_IOC_RESIZE_FS) only ever extends a filesystem
+	// to fill its partition and is a no-op once it already matches that
+	// size, so re-running it against an already-grown volume costs
+	// nothing and touches no existing data either way.
+	deps.Log("growing %s's ext4 filesystem to fill the partition — one-time first-boot setup", opts.PartitionDevice)
+	if err := deps.EstablishEXT4(opts.PartitionDevice); err != nil {
+		return fmt.Errorf("growing %s's ext4 filesystem to its partition size: %w; leaving /data read-only this boot", opts.PartitionDevice, err)
+	}
+	deps.Log("data partition grown to fill %s", opts.PartitionDevice)
+	return nil
 }
 
 // describeContents names what Inspect found, for the corruption report a
@@ -369,17 +579,19 @@ func describeContents(c diskfmt.Contents) string {
 
 // partitionSectors decides the size, in sectors, of the partition to create
 // on a device of deviceBytes: the space from startLBA to the end of the
-// device, aligned down to alignBytes and capped at maxPartitionBytes. A zero
-// return means "create nothing", with reason saying why; note, when
-// non-empty, is worth logging even though creation proceeds.
-func partitionSectors(deviceBytes, startLBA int64) (sectors int64, reason, note string) {
+// device, aligned down to alignBytes and, for FAT32 only, capped at
+// maxPartitionBytes (see that constant's doc — the cap is a go-diskfs FAT32
+// formatter limit that does not apply to ext4). A zero return means "create
+// nothing", with reason saying why; note, when non-empty, is worth logging
+// even though creation proceeds.
+func partitionSectors(deviceBytes, startLBA int64, fs diskfmt.FS) (sectors int64, reason, note string) {
 	free := deviceBytes/sectorSize - startLBA
 	free -= free % (alignBytes / sectorSize)
 	if free*sectorSize < minPartitionBytes {
 		return 0, fmt.Sprintf("the card (%s) leaves less than %s beyond the image; treating it like --data-size=0",
 			sizeString(deviceBytes), sizeString(minPartitionBytes)), ""
 	}
-	if free*sectorSize > maxPartitionBytes {
+	if fs != diskfmt.EXT4 && free*sectorSize > maxPartitionBytes {
 		unused := free*sectorSize - maxPartitionBytes
 		return maxPartitionBytes / sectorSize, "",
 			fmt.Sprintf("capping the data partition at %s (FAT32 formatter limit); %s of the card stays unused",
@@ -422,15 +634,28 @@ func readEntry(mbr []byte, n int) (partType byte, startLBA, sizeLBA uint32) {
 
 // writeDataEntry fills MBR partition entry 2 in place: not bootable, CHS
 // fields set to the 0xFE/0xFF/0xFF "use LBA" marker every modern tool
-// writes, type 0x0C, and the given LBA geometry.
-func writeDataEntry(mbr []byte, startLBA, sizeLBA uint32) {
+// writes, the given MBR partition type (see partitionType), and the given
+// LBA geometry.
+func writeDataEntry(mbr []byte, startLBA, sizeLBA uint32, partType byte) {
 	entry := mbr[partitionEntriesOffset+(dataPartitionNumber-1)*partitionEntrySize:]
 	entry[0] = 0x00                                 // not bootable
 	entry[1], entry[2], entry[3] = 0xFE, 0xFF, 0xFF // CHS start: beyond CHS, use LBA
-	entry[4] = fatPartitionType
+	entry[4] = partType
 	entry[5], entry[6], entry[7] = 0xFE, 0xFF, 0xFF // CHS end: same
 	binary.LittleEndian.PutUint32(entry[8:12], startLBA)
 	binary.LittleEndian.PutUint32(entry[12:16], sizeLBA)
+}
+
+// partitionType maps the data partition's filesystem to the MBR type byte
+// writeDataEntry commits: 0x83 for ext4, 0x0C (FAT32-LBA) for anything else
+// — mirroring internal/image's own choice of type per filesystem for a
+// fixed-size build's partition 2, so an expand image's created partition
+// looks the same on-disk as a fixed-size one built with the same filesystem.
+func partitionType(fs diskfmt.FS) byte {
+	if fs == diskfmt.EXT4 {
+		return ext4PartitionType
+	}
+	return fatPartitionType
 }
 
 // pollInterval is the spacing between attempts for every retry loop in this

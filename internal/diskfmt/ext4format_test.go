@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/diskfmt/ext4golden"
@@ -149,6 +151,92 @@ func (f *failingWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		return 0, errors.New("simulated write failure (disk full)")
 	}
 	return f.w.WriteAt(p, off)
+}
+
+// offsetWriterAt shifts every WriteAt by base bytes, standing in for the
+// kind of adapter a caller embedding an ext4 filesystem inside a larger file
+// (internal/image's data partition) uses to confine WriteEXT4 to its own
+// byte range.
+type offsetWriterAt struct {
+	w    io.WriterAt
+	base int64
+}
+
+func (o offsetWriterAt) WriteAt(p []byte, off int64) (int, error) {
+	return o.w.WriteAt(p, o.base+off)
+}
+
+// TestWriteEXT4AtANonZeroOffsetInsideALargerFile is the acceptance test for
+// WriteEXT4's whole reason to exist over FormatEXT4: the golden image must
+// land correctly, and be readable back through Inspect, when it is not at
+// the start of the backing file at all - proving WriteEXT4 never assumes
+// its own offset.
+func TestWriteEXT4AtANonZeroOffsetInsideALargerFile(t *testing.T) {
+	const gapBytes = 3 * 1024 * 1024 // arbitrary, unaligned to any ext4 structure
+	path := backingFile(t, gapBytes+ext4golden.RawBytes)
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("opening backing file: %v", err)
+	}
+	shifted := offsetWriterAt{w: f, base: gapBytes}
+	if err := WriteEXT4(shifted, ext4golden.RawBytes, "GOSD-DATA"); err != nil {
+		t.Fatalf("WriteEXT4: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing backing file: %v", err)
+	}
+
+	// Bytes before the offset must be untouched - WriteEXT4 must not have
+	// assumed it owns byte 0 of the backing file.
+	gap := make([]byte, gapBytes)
+	f, err = os.Open(path)
+	if err != nil {
+		t.Fatalf("reopening backing file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.ReadAt(gap, 0); err != nil {
+		t.Fatalf("reading the gap before the ext4 region: %v", err)
+	}
+	for i, b := range gap {
+		if b != 0 {
+			t.Fatalf("byte %d of the gap before the ext4 region is 0x%02X, want untouched zero", i, b)
+		}
+	}
+
+	region := extractRegionForTest(t, path, gapBytes, ext4golden.RawBytes)
+	got, err := Inspect(region)
+	if err != nil {
+		t.Fatalf("Inspect on the extracted ext4 region: %v", err)
+	}
+	if got.FS != EXT4 || got.Label != "GOSD-DATA" {
+		t.Errorf("Inspect = %+v, want {FS:ext4 Label:GOSD-DATA}", got)
+	}
+}
+
+// extractRegionForTest copies length bytes starting at offset out of path
+// into a new temp file and returns its path: Inspect takes a device path,
+// not a byte range within a larger file.
+func extractRegionForTest(t *testing.T, path string, offset, length int64) string {
+	t.Helper()
+	src, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("opening %s to extract a region: %v", path, err)
+	}
+	defer func() { _ = src.Close() }()
+
+	regionPath := filepath.Join(t.TempDir(), "region.img")
+	dst, err := os.Create(regionPath)
+	if err != nil {
+		t.Fatalf("creating %s: %v", regionPath, err)
+	}
+	if _, err := io.Copy(dst, io.NewSectionReader(src, offset, length)); err != nil {
+		t.Fatalf("copying region [%d, %d) from %s: %v", offset, offset+length, path, err)
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatalf("closing %s: %v", regionPath, err)
+	}
+	return regionPath
 }
 
 func TestWriteEXT4FailsHonestlyWhenTheUnderlyingWriteFails(t *testing.T) {

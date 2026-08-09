@@ -68,6 +68,39 @@ type Config struct {
 	// TestBuildIdentityUnaffectedByDataFlush (cmd/gosd/build_integration_test.go).
 	DataFlush bool `json:"dataFlush,omitempty"`
 
+	// DataFilesystem records gosd build --data-filesystem: which
+	// filesystem GOSD-DATA is formatted as (fat32, the universal default
+	// every host can read and repair, or ext4, journaled and
+	// crash-resilient but unreadable from a macOS or Windows host and
+	// unsupported on the Pi family - see COMPATIBILITY.md's ext4
+	// GOSD-DATA row). gosd-init maps this string to a diskfmt.FS and
+	// mounts /data with it, whether the partition ships in the image or
+	// (DataExpand) is created and formatted on first boot. Optional:
+	// absent - including every config.json baked before this field
+	// existed - means fat32.
+	//
+	// Unlike DataFlush, this is not a mere mount tweak: it changes
+	// GOSD-DATA's on-card layout, the same on-disk-ABI category
+	// --boot-size is in (see docs/design/upgrade-path.md) - an app that
+	// changes it between releases loses its existing GOSD-DATA on the
+	// next upgrade, reformatted to the newly requested filesystem, rather
+	// than adopted. Despite that, it is still deliberately excluded from
+	// ComputeIdentity's hashed payload, for the same structural reason
+	// DataExpand and DataFlush are: config.json is excluded from that
+	// payload in its entirety (see ComputeIdentity's docstring), and this
+	// field never appears anywhere else in the payload the way
+	// Hostname/Wifi/Env do via gosd.toml. That's consistent with
+	// Identity's actual job - telling boot *payload* builds apart for
+	// upgrade-skew/self-update checks - rather than a full-disk layout
+	// fingerprint: DataSizeBytes and BootSizeBytes, which change on-card
+	// layout at least as much as this field does, aren't even baked into
+	// config.json at all, let alone hashed. The layout-ABI story for a
+	// partition-affecting flag like this one belongs to
+	// docs/design/upgrade-path.md, not to Identity. Pinned by
+	// TestBuildIdentityUnaffectedByDataFilesystem
+	// (cmd/gosd/build_integration_test.go).
+	DataFilesystem string `json:"dataFilesystem,omitempty"`
+
 	// IngressCloudflared marks an image built with `gosd build --ingress
 	// cloudflared`: a cloudflared binary is baked into the initramfs at
 	// /bin/cloudflared (see internal/cloudflaredpin and

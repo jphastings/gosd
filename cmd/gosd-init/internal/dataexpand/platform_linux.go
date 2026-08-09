@@ -11,12 +11,23 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/jphastings/gosd/internal/blockmount"
 	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
-// NewDeps returns Deps wired to the real block-device syscalls and diskfmt,
-// logging through log.
-func NewDeps(log func(format string, args ...any)) Deps {
+// NewDeps returns Deps wired to the real block-device syscalls, diskfmt and
+// blockmount, logging through log.
+//
+// ext4Mountpoint is where EstablishEXT4 and EXT4Established mount the data
+// partition briefly. FAT32 needs no equivalent: go-diskfs reads and writes
+// its raw-device marker with nothing mounted at all, but growing an ext4
+// filesystem (EXT4_IOC_RESIZE_FS) and writing a file into it both require a
+// live kernel mount, so this package needs a mountpoint of its own — one
+// that isn't /data itself, since establishment has to complete before
+// /data's own mount is ever attempted. /run is already a tmpfs by the time
+// Run does anything (mountEarly, boot sequence step 1), so a path under it
+// needs no cleanup: it evaporates on reboot. Unused for FAT32 images.
+func NewDeps(log func(format string, args ...any), ext4Mountpoint string) Deps {
 	return Deps{
 		ReadMBR:            readMBR,
 		WriteMBR:           writeMBR,
@@ -30,7 +41,15 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		MarkerExists: func(partitionDevice string) (bool, error) {
 			return diskfmt.RootFileExists(partitionDevice, EstablishedMarker)
 		},
-		SyncDevice: syncDevice,
+		FormatEXT4: diskfmt.FormatEXT4,
+		EstablishEXT4: func(partitionDevice string) error {
+			return establishEXT4(partitionDevice, ext4Mountpoint)
+		},
+		EXT4Established: func(partitionDevice string) (bool, error) {
+			return ext4Established(partitionDevice, ext4Mountpoint)
+		},
+		FilesystemSupported: blockmount.Mountable,
+		SyncDevice:          syncDevice,
 		PathExists: func(path string) bool {
 			_, err := os.Stat(path)
 			return err == nil
@@ -39,6 +58,42 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		Now:   time.Now,
 		Log:   log,
 	}
+}
+
+// establishEXT4 mounts partitionDevice's ext4 filesystem at mountpoint,
+// grows it to fill the partition, writes and fsyncs the establishment
+// marker, then unmounts — on every return path, including an error one, so
+// a failed grow or marker write never leaves the partition mounted
+// underneath whatever runs next this boot.
+func establishEXT4(partitionDevice, mountpoint string) (err error) {
+	if err := blockmount.Mount(partitionDevice, mountpoint, diskfmt.EXT4); err != nil {
+		return fmt.Errorf("mounting %s at %s to establish its ext4 filesystem: %w", partitionDevice, mountpoint, err)
+	}
+	defer func() {
+		if uerr := blockmount.Unmount(mountpoint); uerr != nil && err == nil {
+			err = fmt.Errorf("unmounting %s after establishing its ext4 filesystem: %w", mountpoint, uerr)
+		}
+	}()
+	if err := blockmount.GrowEXT4(partitionDevice, mountpoint); err != nil {
+		return fmt.Errorf("growing %s's ext4 filesystem to its partition size: %w", partitionDevice, err)
+	}
+	if err := blockmount.EstablishEXT4Marker(mountpoint); err != nil {
+		return fmt.Errorf("recording the completed establishment of %s's ext4 filesystem: %w", partitionDevice, err)
+	}
+	return nil
+}
+
+// ext4Established mounts partitionDevice's ext4 filesystem at mountpoint
+// just long enough to check for blockmount.EXT4EstablishedMarker, then
+// unmounts. A mount failure is reported as an error rather than folded into
+// a false "not established" result — see Deps.EXT4Established's doc for why
+// that distinction matters to its two callers.
+func ext4Established(partitionDevice, mountpoint string) (bool, error) {
+	if err := blockmount.Mount(partitionDevice, mountpoint, diskfmt.EXT4); err != nil {
+		return false, fmt.Errorf("mounting %s at %s to check whether its ext4 filesystem was established: %w", partitionDevice, mountpoint, err)
+	}
+	defer func() { _ = blockmount.Unmount(mountpoint) }()
+	return blockmount.EXT4MarkerEstablished(mountpoint)
 }
 
 func readMBR(device string) ([]byte, error) {

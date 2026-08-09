@@ -21,8 +21,9 @@ does is the whole system.
   starts**, asynchronously. Never assume connectivity or a correct clock
   at process start — retry instead of treating an early failure as fatal.
 - **The root filesystem is RAM-backed and gone on reboot.** Of the image
-  itself, only `/data` (opt-in, FAT32, a fixed path) survives power loss —
-  plus whatever you store via the `emmc`/`disk` packages. Built with
+  itself, only `/data` (opt-in, FAT32 by default or ext4, a fixed path)
+  survives power loss — plus whatever you store via the `emmc`/`disk`
+  packages. Built with
   `--data-size=expand`, `/data` — plus a hand-edited hostname, WiFi, or
   `[env]` value — also survives a *reflash* to a newer version; a
   fixed-size `--data-size` does not (see "Persistent storage: `/data`").
@@ -303,19 +304,46 @@ filesystem — so:
 
 ### Persistent storage: `/data`
 
-Images are built with a second FAT32 partition, labelled `GOSD-DATA`,
-sized by `gosd build --data-size`. It's opt-in: the default is `0` (no
-partition at all), so pass a size (e.g. `--data-size=1GiB`) to get one.
+Images are built with a second partition, labelled `GOSD-DATA`, sized by
+`gosd build --data-size` and formatted by `gosd build --data-filesystem`
+(`fat32` or `ext4`; default `fat32`). It's opt-in: the default size is `0`
+(no partition at all), so pass a size (e.g. `--data-size=1GiB`) to get one.
 `gosd-init` mounts it read-write at the fixed path `/data`. Data written
 there survives reboots and power cycles. There's no environment variable
 to consult — `/data` is always the path; just write to it.
 
+#### Choosing a filesystem: FAT32 or ext4
+
+By default `/data` is **FAT32** — readable and repairable from any
+computer's SD card reader, with the limits described below. `gosd build
+--data-filesystem=ext4` opts into a journaled **ext4** `GOSD-DATA`
+instead: the journal buys metadata crash-consistency and mount-time
+replay, so a `GOSD-DATA` interrupted mid-write to its own metadata (a
+directory entry, an inode) recovers cleanly at the next mount instead of
+needing an fsck. That is **not** the same guarantee as data durability —
+the four-step fsync sequence described under "Making a write durable"
+below remains the app-facing contract for durable *file content* either
+way, journal or not.
+
+The cost: an ext4 `GOSD-DATA` can't be read or repaired from a macOS or
+Windows host the way a FAT32 one can (it needs Linux-side tooling), and
+it isn't available on every board — the Pi family's stock kernels don't
+build ext4 support in at all, so `gosd build --data-filesystem=ext4`
+refuses to build for them, naming the alternative; see
+`COMPATIBILITY.md`'s ext4 `GOSD-DATA` row for the full board list.
+
+Like `--boot-size`, the chosen filesystem is part of the app's on-card
+layout ABI — see [the upgrade path design](design/upgrade-path.md) for
+the argument in full — so changing it between releases erases and
+re-establishes `GOSD-DATA` on the next upgrade: a release-notes-level
+breaking change, not corruption.
+
 `--data-size=expand` is the fill-the-card variant: the image ships with
 no data partition at all (staying 272MiB to download and flash), and the
 device creates one itself, exactly once, on its first boot — an MBR
-entry covering the rest of the card, formatted FAT32, labelled
-`GOSD-DATA`, and mounted at `/data` like any other data partition from
-then on. Points specific to expand:
+entry covering the rest of the card, formatted per `--data-filesystem`
+(FAT32 by default, or ext4), labelled `GOSD-DATA`, and mounted at `/data`
+like any other data partition from then on. Points specific to expand:
 
 - **Only the disk the device actually booted from is ever touched** —
   the same verified device the `GOSD-BOOT` mount used — and only when
@@ -336,32 +364,36 @@ then on. Points specific to expand:
   `boot-failure.log` at the root of the `GOSD-BOOT` partition — readable
   on any computer the card is plugged into — and **halts**, so whatever
   data survives can still be salvaged. To recover: save what you need
-  from the partition, then either reformat it as FAT32 labelled
-  `GOSD-DATA` or delete partition 2 entirely and let the next boot
-  recreate it, empty.
+  from the partition, then either reformat it as `GOSD-DATA` in the same
+  filesystem the image was built with (FAT32 by default, or ext4) or
+  delete partition 2 entirely and let the next boot recreate it, empty.
 - **A card with no meaningful room** (less than ~64MiB beyond the image
   — including `gosd run`'s qemu disk, which is exactly image-sized) gets
   no partition, and `/data` behaves like a `--data-size=0` image:
   read-only, writes fail with `EROFS`.
-- **The partition is capped at 256GiB** for now (a FAT32-formatter
+- **A FAT32 partition is capped at 256GiB** for now (a FAT32-formatter
   limitation — see [How big the data partition can
   be](#how-big-the-data-partition-can-be)); a bigger card's remainder stays
-  unused, with a log line saying so.
+  unused, with a log line saying so. An ext4 partition
+  (`--data-filesystem=ext4`) has no such ceiling and always fills the
+  whole remaining card.
 - **A reflash re-adopts the existing partition, contents intact — this is
   why `--data-size=expand` is the recommended mode for updatable
   deployments.** Flashing an image rewrites the whole card's MBR, which
   drops partition 2's entry, but an `expand` image ships no data partition
   at all, so the flash never touches the bytes beyond the boot partition.
   On the next first boot, the device looks at what's actually sitting
-  there: if it's a FAT32 filesystem labelled `GOSD-DATA` carrying a
-  hidden completion marker (`gosd-data-established`, at the partition's
-  root — see the marker note below), it's adopted rather than
-  reformatted, and the MBR entry is simply rewritten to record it. The
-  marker matters because a matching label alone isn't proof of a
-  finished format — see below — so the device only ever adopts a
-  partition it can prove an earlier boot completed; anything else (blank
-  space, a foreign filesystem, or the debris of a first-boot format that
-  never finished) is formatted fresh, exactly as a first boot always was.
+  there: if it's a filesystem matching what the image was built to expect
+  (FAT32 by default, or ext4 with `--data-filesystem=ext4`) labelled
+  `GOSD-DATA` and carrying a hidden completion marker
+  (`gosd-data-established`, at the partition's root — see the marker note
+  below), it's adopted rather than reformatted, and the MBR entry is
+  simply rewritten to record it. The marker matters because a matching
+  label alone isn't proof of a finished format — see below — so the
+  device only ever adopts a partition it can prove an earlier boot
+  completed; anything else (blank space, a foreign filesystem, or the
+  debris of a first-boot format that never finished) is formatted fresh,
+  exactly as a first boot always was.
 - **Changing `--boot-size` between releases breaks the adoption above.**
   The boot volume's size is baked into the image and fixes where the data
   partition starts; a later release that changes it (either direction) —
@@ -369,6 +401,13 @@ then on. Points specific to expand:
   can't recognize what's on the card as its own `/data`, and the next
   reflash wipes it cleanly instead of adopting it. That's a
   release-notes-level breaking change for that app, not corruption.
+- **Changing `--data-filesystem` between releases breaks the adoption
+  above too, the same way.** A FAT32 `GOSD-DATA` isn't an ext4 one and
+  vice versa, so a release that switches filesystems can't recognize
+  what's already on the card as its own `/data` either; the next reflash
+  reformats it fresh to the newly requested filesystem instead of
+  adopting it — another release-notes-level breaking change, not
+  corruption (see [the upgrade path design](design/upgrade-path.md)).
 - **A fixed-size `--data-size` partition is still wiped by every
   reflash.** It's formatted and embedded inside the `.img` file itself,
   so flashing any version overwrites the data region directly — there's
@@ -386,29 +425,39 @@ Rules of engagement:
   I had persistence" into a loud error at the write, not silent data
   loss. A well-behaved app treats an `EROFS` write to `/data` as "no
   persistence available this boot" rather than a fatal error.
-- **It's FAT32, with FAT32's limits.** No unix permissions, no
+- **By default it's FAT32, with FAT32's limits.** No unix permissions, no
   ownership, no symlinks or hard links, 4GiB max file size, coarse (2s)
-  mtime granularity. Don't design around any of those existing.
-- **It is not power-loss-robust.** FAT has no journal, and a power cut
-  mid-write can corrupt the file being written (and, less commonly, the
-  filesystem) whether or not the `flush` mount option below is on. Never
-  rewrite your only copy of something in place — write durable state the
-  boring, robust way, described in full under "Making a write durable"
-  below.
-- **The `flush` mount option is opt-in, and off by default.** `gosd build
-  --data-flush` (default `false`) bakes in whether `/data` — and any
-  `emmc`/`disk` vfat mount your app makes — uses vfat's `flush` option,
-  which pushes a file's data and metadata to the card promptly on
-  `close(2)`. The default leaves it off: normal Linux writeback (~30s
-  `dirty_expire_centisecs`) is fast, and `flush` was never enough for
-  durability on its own anyway — a `rename` involves no `close`, so it
-  doesn't touch the gap "Making a write durable" below closes. Turning it
-  on trades write throughput for prompter (but still not durable by
-  itself) writeback; a hand-edited `gosd.toml`'s top-level `data_flush =
-  true`/`false` overrides the baked default per device, absent meaning
-  "use the baked value" (see the `GOSD_DATA_FLUSH` env var above, which is
-  how `emmc`/`disk` — mounting from your app's own process — learn the
-  effective setting).
+  mtime granularity. Don't design around any of those existing — or build
+  with `--data-filesystem=ext4` for full unix semantics and no 4GiB
+  ceiling, at the readability/compatibility cost described above under
+  "Choosing a filesystem".
+- **Neither filesystem is power-loss-robust for file *content*.** FAT has
+  no journal at all: a power cut mid-write can corrupt the file being
+  written (and, less commonly, the filesystem) whether or not the `flush`
+  mount option below is on. An ext4 `GOSD-DATA`'s journal narrows this to
+  *metadata* only — see "Choosing a filesystem" above — the file content
+  you're actually writing gets no more protection from ext4's journal
+  than it does from FAT's total absence of one. Never rewrite your only
+  copy of something in place — write durable state the boring, robust
+  way, described in full under "Making a write durable" below, regardless
+  of filesystem.
+- **The `flush` mount option is opt-in, off by default, and vfat-only.**
+  `gosd build --data-flush` (default `false`) bakes in whether a FAT32
+  `/data` — and any `emmc`/`disk` vfat mount your app makes — uses vfat's
+  `flush` option, which pushes a file's data and metadata to the card
+  promptly on `close(2)`. The default leaves it off: normal Linux
+  writeback (~30s `dirty_expire_centisecs`) is fast, and `flush` was
+  never enough for durability on its own anyway — a `rename` involves no
+  `close`, so it doesn't touch the gap "Making a write durable" below
+  closes. Turning it on trades write throughput for prompter (but still
+  not durable by itself) writeback; a hand-edited `gosd.toml`'s top-level
+  `data_flush = true`/`false` overrides the baked default per device,
+  absent meaning "use the baked value" (see the `GOSD_DATA_FLUSH` env var
+  above, which is how `emmc`/`disk` — mounting from your app's own
+  process — learn the effective setting). `flush` has no ext4 equivalent
+  and no effect on an ext4 `GOSD-DATA` — `gosd build` refuses
+  `--data-filesystem=ext4` combined with `--data-flush` outright, rather
+  than silently ignoring the flag.
 - **`/data/.gosd-data`** is an empty marker file `gosd-init` creates the
   first time the partition mounts; leave it alone, and don't be
   surprised by it when listing `/data`. An `expand` image's partition
@@ -564,7 +613,11 @@ asserts the counter still comes back incremented on the next boot.
 
 ### How big the data partition can be
 
-**256.06 GiB (274,940,836,864 bytes) is the ceiling**, and `gosd build`
+This section is about the **default, FAT32** `GOSD-DATA` partition; an ext4
+one (`--data-filesystem=ext4`) works the other way round — see the floor
+described at the end of this section.
+
+**256.06 GiB (274,940,836,864 bytes) is the FAT32 ceiling**, and `gosd build`
 enforces it: `--data-size=400GiB` is refused at the flag, before anything is
 compiled or written, naming the maximum. `--data-size=expand` caps itself at a
 round 256GiB on a larger card and logs how much of the card it left unused.
@@ -590,6 +643,16 @@ rather than a bigger `/data`: the [`disk` package](#attached-disk-storage-disk-p
 formats an SSD or USB drive as **ext4** by default, or **exFAT** on request —
 neither has this ceiling or FAT32's 4GiB-per-file one. `/data` remains the
 place for state; bulk media belongs on the drive holding it.
+
+An ext4 `GOSD-DATA` (`--data-filesystem=ext4`) has a **floor**, not a
+ceiling: GoSD writes a fixed, checked-in 512MiB golden ext4 image and grows
+it online to the partition's real size on first boot, so `--data-size` must
+be at least that same 512MiB — anything smaller is refused at the flag,
+before anything is compiled, naming the minimum. `--data-size=expand`
+always clears it, since even the smallest card GoSD targets leaves far more
+than 512MiB free beyond the boot partition. There's no ext4-side ceiling
+equivalent to FAT32's 256GiB one — it grows via the kernel's own online
+resize, not GoSD's pure-Go FAT32 writer.
 
 ## Onboard eMMC storage (Rockchip boards)
 

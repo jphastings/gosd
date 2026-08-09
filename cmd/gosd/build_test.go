@@ -256,7 +256,7 @@ func TestParseDataSize(t *testing.T) {
 		{" 8 MiB ", 8 * 1024 * 1024},
 	}
 	for _, c := range cases {
-		got, expand, err := parseDataSize(c.in)
+		got, expand, err := parseDataSize(c.in, diskfmt.FAT32)
 		if err != nil {
 			t.Errorf("parseDataSize(%q) error: %v", c.in, err)
 			continue
@@ -269,7 +269,7 @@ func TestParseDataSize(t *testing.T) {
 
 func TestParseDataSizeExpandKeyword(t *testing.T) {
 	for _, in := range []string{"expand", "Expand", "EXPAND", " expand "} {
-		bytes, expand, err := parseDataSize(in)
+		bytes, expand, err := parseDataSize(in, diskfmt.FAT32)
 		if err != nil {
 			t.Errorf("parseDataSize(%q) error: %v", in, err)
 			continue
@@ -282,7 +282,7 @@ func TestParseDataSizeExpandKeyword(t *testing.T) {
 
 func TestParseDataSizeRejectsInvalidValues(t *testing.T) {
 	for _, in := range []string{"", "-1", "-1GiB", "1GB", "lots", "1.5GiB", "expanded"} {
-		if _, _, err := parseDataSize(in); err == nil {
+		if _, _, err := parseDataSize(in, diskfmt.FAT32); err == nil {
 			t.Errorf("parseDataSize(%q) succeeded, want an error", in)
 		}
 	}
@@ -306,7 +306,7 @@ func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
 		{"a 400GiB partition", "400GiB", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := parseDataSize(tc.in)
+			got, _, err := parseDataSize(tc.in, diskfmt.FAT32)
 			if (err != nil) != tc.refused {
 				t.Fatalf("parseDataSize(%q) = (%d, %v), want refused = %v", tc.in, got, err, tc.refused)
 			}
@@ -321,6 +321,179 @@ func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParseDataSizeEXT4RequiresANonZeroSize confirms --data-filesystem=ext4
+// refuses --data-size=0 (the default): there is no partition for it to
+// format at all.
+func TestParseDataSizeEXT4RequiresANonZeroSize(t *testing.T) {
+	_, _, err := parseDataSize("0", diskfmt.EXT4)
+	if err == nil {
+		t.Fatal("parseDataSize(\"0\", ext4) succeeded, want a refusal")
+	}
+	for _, want := range []string{"--data-filesystem=ext4", "--data-size"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum confirms a --data-size
+// smaller than diskfmt.MinEXT4Bytes() is refused for ext4, naming the
+// minimum and the remedy - bean gosd-95yu's floor, mirroring
+// TestParseDataSizeRefusesMoreThanFAT32CanHold's ceiling check for FAT32.
+func TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum(t *testing.T) {
+	minBytes := diskfmt.MinEXT4Bytes()
+
+	for _, tc := range []struct {
+		name    string
+		in      string
+		refused bool
+	}{
+		{"one byte below the minimum", strconv.FormatInt(minBytes-1, 10), true},
+		{"the exact minimum", strconv.FormatInt(minBytes, 10), false},
+		{"comfortably above the minimum", "1GiB", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := parseDataSize(tc.in, diskfmt.EXT4)
+			if (err != nil) != tc.refused {
+				t.Fatalf("parseDataSize(%q, ext4) = %v, want refused = %v", tc.in, err, tc.refused)
+			}
+			if err == nil {
+				return
+			}
+			for _, want := range []string{strconv.FormatInt(minBytes, 10), diskfmt.EXT4SizeLimitReason, "--data-filesystem=fat32"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestParseDataSizeEXT4AcceptsExpandWithNoFloorCheck confirms
+// --data-size=expand is valid for ext4 with no minimum-size refusal: it
+// carries no --data-size number to compare against diskfmt.MinEXT4Bytes(),
+// and gosd-init always fills the whole remaining card, which comfortably
+// clears the golden image's floor.
+func TestParseDataSizeEXT4AcceptsExpandWithNoFloorCheck(t *testing.T) {
+	bytes, expand, err := parseDataSize("expand", diskfmt.EXT4)
+	if err != nil {
+		t.Fatalf("parseDataSize(\"expand\", ext4) = %v, want nil", err)
+	}
+	if !expand || bytes != 0 {
+		t.Errorf("parseDataSize(\"expand\", ext4) = (%d, expand=%v), want (0, expand=true)", bytes, expand)
+	}
+}
+
+// TestParseDataSizeEXT4HasNoFAT32Ceiling confirms the 256GiB FAT32-formatter
+// ceiling (TestParseDataSizeRefusesMoreThanFAT32CanHold) does not apply to
+// ext4, which grows via EXT4_IOC_RESIZE_FS rather than GoSD's own pure-Go
+// FAT32 writer.
+func TestParseDataSizeEXT4HasNoFAT32Ceiling(t *testing.T) {
+	overFAT32Ceiling := strconv.FormatInt(diskfmt.MaxFAT32Bytes()+512, 10)
+	if _, _, err := parseDataSize(overFAT32Ceiling, diskfmt.EXT4); err != nil {
+		t.Errorf("parseDataSize(%q, ext4) = %v, want nil: the FAT32 ceiling must not apply to ext4", overFAT32Ceiling, err)
+	}
+}
+
+func TestParseDataFilesystemAcceptsKnownValues(t *testing.T) {
+	for in, want := range map[string]diskfmt.FS{
+		"fat32":  diskfmt.FAT32,
+		"FAT32":  diskfmt.FAT32,
+		"ext4":   diskfmt.EXT4,
+		"EXT4":   diskfmt.EXT4,
+		" ext4 ": diskfmt.EXT4,
+	} {
+		got, err := parseDataFilesystem(in)
+		if err != nil {
+			t.Errorf("parseDataFilesystem(%q) error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseDataFilesystem(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestParseDataFilesystemRejectsUnknownValue(t *testing.T) {
+	_, err := parseDataFilesystem("exfat")
+	if err == nil {
+		t.Fatal("parseDataFilesystem(\"exfat\") succeeded, want an error")
+	}
+	for _, want := range []string{"--data-filesystem", "fat32", "ext4"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestValidateDataFlushExt4ConflictSkippedWithoutBoth(t *testing.T) {
+	if err := validateDataFlushExt4Conflict(diskfmt.FAT32, true); err != nil {
+		t.Errorf("validateDataFlushExt4Conflict(fat32, flush=true) = %v, want nil: only ext4+flush conflicts", err)
+	}
+	if err := validateDataFlushExt4Conflict(diskfmt.EXT4, false); err != nil {
+		t.Errorf("validateDataFlushExt4Conflict(ext4, flush=false) = %v, want nil: --data-flush wasn't passed", err)
+	}
+}
+
+func TestValidateDataFlushExt4ConflictRejectsBoth(t *testing.T) {
+	err := validateDataFlushExt4Conflict(diskfmt.EXT4, true)
+	if err == nil {
+		t.Fatal("validateDataFlushExt4Conflict(ext4, flush=true) succeeded, want an error")
+	}
+	for _, want := range []string{"--data-filesystem=ext4", "--data-flush"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestValidateDataFilesystemSupportSkippedForFAT32(t *testing.T) {
+	incapable := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+	if err := validateDataFilesystemSupport(incapable, diskfmt.FAT32); err != nil {
+		t.Errorf("validateDataFilesystemSupport(pi-zero-2w, fat32) = %v, want nil: fat32 is always supported", err)
+	}
+}
+
+func TestValidateDataFilesystemSupportRejectsIncapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+
+	err := validateDataFilesystemSupport(selected, diskfmt.EXT4)
+	if err == nil {
+		t.Fatal("validateDataFilesystemSupport([pi-zero-2w], ext4) succeeded, want an error")
+	}
+	for _, want := range []string{"pi-zero-2w", "COMPATIBILITY.md", "--data-filesystem=ext4"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestValidateDataFilesystemSupportAcceptsCapableBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "radxa-zero-3e")}
+	if err := validateDataFilesystemSupport(selected, diskfmt.EXT4); err != nil {
+		t.Errorf("validateDataFilesystemSupport([radxa-zero-3e], ext4) = %v, want nil: radxa-zero-3e supports ext4", err)
+	}
+}
+
+func TestValidateDataFilesystemSupportMixedBoardsNamesOnlyTheIncapableOneAndSuggestsBoard(t *testing.T) {
+	selected := []boards.Board{mustFindBoard(t, "radxa-zero-3e"), mustFindBoard(t, "pi-zero-2w")}
+
+	err := validateDataFilesystemSupport(selected, diskfmt.EXT4)
+	if err == nil {
+		t.Fatal("validateDataFilesystemSupport([radxa-zero-3e, pi-zero-2w], ext4) succeeded, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "pi-zero-2w") {
+		t.Errorf("error = %q, want it to name the incapable board pi-zero-2w", msg)
+	}
+	if !strings.Contains(msg, "--board") {
+		t.Errorf("error = %q, want it to suggest restricting with --board since radxa-zero-3e does support ext4", msg)
+	}
+	if !strings.Contains(msg, "radxa-zero-3e") {
+		t.Errorf("error = %q, want it to name the capable board radxa-zero-3e as the suggested restriction", msg)
 	}
 }
 

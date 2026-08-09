@@ -22,6 +22,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
+	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -319,19 +320,30 @@ func ensureDataMountpoint() error {
 // immediately, but there's no udev to synchronize on.
 const dataNodeTimeout = 5 * time.Second
 
-// expandData wires dataexpand's first-boot GOSD-DATA creation (images built
-// with --data-size=expand) against the real block-device syscalls, deriving
-// the whole disk and its partition-2 node from the partition the boot mount
-// actually used.
-func expandData(bootPartition string, log func(format string, args ...any)) error {
+// dataexpandEXT4Mountpoint is where dataexpand mounts the data partition
+// briefly while establishing or checking an ext4 filesystem (see
+// dataexpand.NewDeps's doc) — unused for a FAT32 image. /run is already a
+// tmpfs by the time expandData ever runs (mountEarly, boot sequence step 1).
+const dataexpandEXT4Mountpoint = "/run/gosd/dataexpand"
+
+// expandData wires dataexpand's first-boot GOSD-DATA work — creating the
+// partition for images built with --data-size=expand, and/or growing a
+// fixed-size ext4 image's golden filesystem to its partition's real size —
+// against the real block-device syscalls, deriving the whole disk and its
+// partition-2 node from the partition the boot mount actually used. fs and
+// expand are boot.Run's resolved config.json values (dataFilesystem,
+// dataExpand), passed straight through to dataexpand.Options.
+func expandData(bootPartition string, fs diskfmt.FS, expand bool, log func(format string, args ...any)) error {
 	device, partition2, ok := dataexpand.DataPartitionFor(bootPartition)
 	if !ok {
 		return fmt.Errorf("cannot derive the disk behind boot partition %s", bootPartition)
 	}
-	return dataexpand.Run(dataexpand.NewDeps(log), dataexpand.Options{
+	return dataexpand.Run(dataexpand.NewDeps(log, dataexpandEXT4Mountpoint), dataexpand.Options{
 		Device:          device,
 		PartitionDevice: partition2,
 		NodeTimeout:     dataNodeTimeout,
+		Filesystem:      fs,
+		Expand:          expand,
 	})
 }
 

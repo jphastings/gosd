@@ -24,6 +24,9 @@ func (fakeBoard) UsbGadgetSupport() boards.GadgetSupport {
 func (fakeBoard) ConsoleBaudSupport() boards.ConsoleBaudSupport {
 	return boards.ConsoleBaudSupport{Supported: true}
 }
+func (fakeBoard) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{Supported: true}
+}
 
 func TestRegisterMakesABoardFindable(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-findable"})

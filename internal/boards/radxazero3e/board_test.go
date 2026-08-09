@@ -293,3 +293,9 @@ func TestUsbGadgetSupportIsSupported(t *testing.T) {
 		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (dwc3 negotiates host/peripheral role automatically)", got)
 	}
 }
+
+func TestEXT4SupportIsSupported(t *testing.T) {
+	if got := radxazero3e.New().EXT4Support(); !got.Supported {
+		t.Errorf("EXT4Support() = %+v, want Supported: true (stock kernel builds CONFIG_EXT4_FS=y)", got)
+	}
+}

@@ -134,6 +134,23 @@ type GadgetSupport struct {
 	Reason string
 }
 
+// EXT4Support reports whether this board's stock kernel can mount ext4 —
+// specifically, whether it builds CONFIG_EXT4_FS at all. `gosd build
+// --data-filesystem=ext4` checks, board by board, before assembling any
+// image (see COMPATIBILITY.md's ext4 GOSD-DATA row and bean gosd-95yu). Like
+// GadgetSupport, this is a static fact about the pinned kernel, not a
+// build-time choice.
+type EXT4Support struct {
+	// Supported is false when the board's pinned kernel doesn't build
+	// CONFIG_EXT4_FS in.
+	Supported bool
+	// Reason explains why when Supported is false — it's folded verbatim
+	// into gosd build's --data-filesystem=ext4 refusal, so it should name
+	// the missing kernel option and the available remedies. Unused (and
+	// may be empty) when Supported is true.
+	Reason string
+}
+
 // Arch is the Go cross-compile target a board's binaries (the user's app and
 // gosd-init) need: GOOS is always "linux" (internal/build hard-codes it), so
 // only GOARCH and, for architectures that need it (arm), GOARM vary per
@@ -219,6 +236,13 @@ type Board interface {
 	// honor a --console-baud override. See ConsoleBaudSupport's doc
 	// comment for how gosd build --console-baud uses this.
 	ConsoleBaudSupport() ConsoleBaudSupport
+
+	// EXT4Support reports whether this board's stock kernel can mount
+	// ext4. gosd build --data-filesystem=ext4 consults this for every
+	// selected board before compiling or assembling anything, and
+	// refuses to build for any board that returns Supported: false,
+	// rather than producing an image whose /data can never mount.
+	EXT4Support() EXT4Support
 }
 
 // BuildTag returns the Go build tag gosd passes to the app compile (and only

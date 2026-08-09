@@ -15,8 +15,9 @@ import (
 var errUnsupportedPlatform = errors.New("gosd-init: not supported outside Linux")
 
 // NewDeps returns stub implementations that fail clearly if ever invoked;
-// gosd-init itself is only ever built and run for Linux.
-func NewDeps(log func(format string, args ...any)) Deps {
+// gosd-init itself is only ever built and run for Linux. ext4Mountpoint is
+// accepted for signature parity with the linux build but otherwise unused.
+func NewDeps(log func(format string, args ...any), _ string) Deps {
 	return Deps{
 		ReadMBR:         func(string) ([]byte, error) { return nil, errUnsupportedPlatform },
 		WriteMBR:        func(string, []byte) error { return errUnsupportedPlatform },
@@ -24,14 +25,18 @@ func NewDeps(log func(format string, args ...any)) Deps {
 		AddKernelPartition: func(string, int, int64, int64) error {
 			return errUnsupportedPlatform
 		},
-		Inspect:      func(string) (diskfmt.Contents, error) { return diskfmt.Contents{}, errUnsupportedPlatform },
-		FormatFAT32:  func(string, string) error { return errUnsupportedPlatform },
-		CreateMarker: func(string) error { return errUnsupportedPlatform },
-		MarkerExists: func(string) (bool, error) { return false, errUnsupportedPlatform },
-		SyncDevice:   func(string) error { return errUnsupportedPlatform },
-		PathExists:   func(string) bool { return false },
-		Sleep:        time.Sleep,
-		Now:          time.Now,
-		Log:          log,
+		Inspect:             func(string) (diskfmt.Contents, error) { return diskfmt.Contents{}, errUnsupportedPlatform },
+		FormatFAT32:         func(string, string) error { return errUnsupportedPlatform },
+		CreateMarker:        func(string) error { return errUnsupportedPlatform },
+		MarkerExists:        func(string) (bool, error) { return false, errUnsupportedPlatform },
+		FormatEXT4:          func(string, string) error { return errUnsupportedPlatform },
+		EstablishEXT4:       func(string) error { return errUnsupportedPlatform },
+		EXT4Established:     func(string) (bool, error) { return false, errUnsupportedPlatform },
+		FilesystemSupported: func(diskfmt.FS) (bool, error) { return false, errUnsupportedPlatform },
+		SyncDevice:          func(string) error { return errUnsupportedPlatform },
+		PathExists:          func(string) bool { return false },
+		Sleep:               time.Sleep,
+		Now:                 time.Now,
+		Log:                 log,
 	}
 }

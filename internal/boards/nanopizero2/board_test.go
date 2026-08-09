@@ -268,3 +268,9 @@ func TestUsbGadgetSupportIsUnsupported(t *testing.T) {
 		t.Errorf("UsbGadgetSupport().Reason = %q, want it to reference the tracking bean gosd-vcae", got.Reason)
 	}
 }
+
+func TestEXT4SupportIsSupported(t *testing.T) {
+	if got := nanopizero2.New().EXT4Support(); !got.Supported {
+		t.Errorf("EXT4Support() = %+v, want Supported: true (stock kernel builds CONFIG_EXT4_FS=y)", got)
+	}
+}
