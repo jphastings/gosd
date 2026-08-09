@@ -1,7 +1,7 @@
 ---
 # gosd-79v8
 title: Bench-verify tailscale-funnel end-to-end on hardware (real tailnet)
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-07T15:10:20Z
@@ -40,3 +40,17 @@ cloudflared's gosd-igk0.
 [ ] Cold boot with no network parks quietly; ACME/cert acquisition recovers
     after SNTP on a no-RTC Pi (clock-floor interaction)
 [ ] Flip COMPATIBILITY.md "not yet hardware-verified" footnotes
+
+## Signed off (2026-08-09, bench nanopi-zero2)
+
+End-to-end verified on real hardware against the `elk-dinosaur` tailnet: the
+device registered a node and served the app over its public Funnel URL —
+`curl https://funneltest.elk-dinosaur.ts.net/` returned the hello app's
+response.
+
+This was blocked by gosd-h46e (tsnet.Up 404 on the board). Root cause turned
+out to be the shim's `ts_omit_*` build-tag feature trim, not the environment;
+fixed by shipping full tsnet (see gosd-h46e and its PR, which carries this
+sign-off). Tailnet prerequisites confirmed needed and set on the day: Funnel
+enabled + the `funnel` nodeAttr granted to the device's tag + HTTPS certs +
+MagicDNS.
