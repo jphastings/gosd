@@ -5,7 +5,7 @@ status: todo
 type: bug
 priority: normal
 created_at: 2026-08-10T10:14:46Z
-updated_at: 2026-08-10T11:20:59Z
+updated_at: 2026-08-10T11:57:55Z
 ---
 
 The bench Pi Zero 2W boots and runs perfectly but emits ZERO bytes on the serial console (2026-08-09/10). This blocked, and then rerouted, a whole evening of ext4 bench work — recording it so the ruled-out ground isn't re-walked.
@@ -58,3 +58,23 @@ Remaining candidates, in the order worth testing:
 3. **Contact at the Pi header** — solder joint or seating on that particular board; less likely now that three boards have behaved identically, unless the wires were the constant.
 
 Useful follow-up if 1 and 2 both fail: reverse the test direction. The adapter's TX is now proven good, so wire it to the Pi's RX (GPIO15, pin 10) and have an app read /dev/ttyS0 and record what arrives into a FAT32 /data. If the Pi receives, that wire and both pin contacts are good in that direction and suspicion narrows hard onto the Pi's TX pin itself.
+
+
+
+# CORRECTION (2026-08-10): this is NOT a hardware fault. Everything above diagnosing it as one is WRONG.
+
+JP's original instinct was right and my conclusion was wrong. With the link re-seated as adapter RXD -> Pi pin 8 and adapter TXD -> Pi pin 10, the wiring is now PROVEN good in both directions — and the console is still silent.
+
+**Proof the link works.** The host sent 430 newline-terminated probes and received all 430 back. Critically it sent `GOSD-PROBE-0001\n` and got back `GOSD-PROBE-0001\r\n` — the CR was ADDED, which is a Linux tty line discipline echoing with ONLCR, not an adapter loopback (that would return bytes verbatim). Independently, the Pi's own app logged 3712 bytes of probes arriving on /dev/ttyS0. So: host -> Pi works (pin 10 wire), and Pi -> host works (pin 8 wire), and the Pi's UART transmits at a correct 115200 (the echo decoded perfectly, so the baud is right).
+
+**And yet the console emits nothing.** With that same known-good wiring:
+- `console=serial0,115200`, `quiet` removed: zero bytes.
+- `console=ttyS0,115200 ignore_loglevel` plus `uart_2ndstage=1`: zero bytes. The board demonstrably booted (its app wrote diag.txt at uptime 7s), /proc/cmdline confirms the kernel received exactly those arguments, and /proc/consoles reports `ttyS0  -W- (EC  p a)` — enabled, preferred, printk, panic-safe.
+
+**So the finding is: the tty write path reaches the wire, and the console printk path does not, on the same UART, in the same boot.** Kernel printk goes through uart_console_write -> serial8250_console_putchar (a polled path that spins on the LSR via wait_for_xmitr); the echo goes through n_tty -> the driver's normal IRQ/FIFO transmit. The former produces nothing while the latter is perfect.
+
+**Invalidated by this correction:** the stock-Raspberry-Pi-OS control recorded above was run BEFORE the re-seat, so its silence proves nothing and does NOT exonerate our kernel — that experiment must be re-run on the known-good wiring before any conclusion is drawn from it. The same applies to every earlier board-swap null.
+
+**Leading lead for whoever picks this up.** Our kernels report `base_baud = 50000000` for the mini-UART (both the Zero 2W at 0x3f215040 and this BCM2835 board at 0x20215040). A conventional working Pi reports `base_baud = 31250000`. base_baud is core_freq/8, so ours implies a 400MHz core where the documented `enable_uart=1` behaviour is to pin core_freq at 250MHz. That discrepancy does NOT explain the baud (the echo decodes correctly at 115200, so the divisor and the real clock agree), but it is a real difference from a stock Pi and is the first thing worth chasing — particularly whether the polled console path mis-waits on a clock/LSR assumption the IRQ path doesn't make.
+
+Next concrete steps: (1) re-run the stock-Raspberry-Pi-OS control on the good wiring — if RPi OS prints and ours doesn't, it is squarely our kernel config; (2) have an app write directly to /dev/ttyS0 to confirm userspace writes arrive while printk does not; (3) compare our fragment's 8250 options against a stock Pi kernel.config, focusing on the console/polled path rather than port registration.
