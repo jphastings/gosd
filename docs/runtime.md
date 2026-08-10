@@ -990,10 +990,12 @@ gosd build . --board radxa-zero-3e --console-baud 115200
   later, an update listener. If you need to inspect a running device, that
   has to happen through your own app (an HTTP endpoint, for instance, as
   `examples/hello` does) or the serial console.
-- Each selected board's own Go build tag (`gosd_<board-id>`, e.g.
-  `gosd_pi_zero_2w`) is passed to your app's compile — gosd-init is
-  never tagged. See [`docs/board-build-tags.md`](board-build-tags.md)
-  for how to gate board-specific source with it.
+- Two Go build tags are passed to your app's compile — `gosd`, set for
+  every image gosd builds, and the selected board's own
+  (`gosd_<board-id>`, e.g. `gosd_pi_zero_2w`). gosd-init is never
+  tagged. See [how to gate app source with them](board-build-tags.md) —
+  `//go:build gosd` for device-only source, `//go:build !gosd` for the
+  desktop/CI fallback.
 
 ## Bundling a companion binary (`--with-external`)
 

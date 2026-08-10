@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/boards"
@@ -49,7 +51,7 @@ var arm64gosd = boards.Arch{GOARCH: "arm64"}
 // TestCompileForBoardsCompilesAppOncePerBoardOnSharedArch is the keystone
 // test for gosd-1937: two boards sharing one arch (pi-zero-2w and
 // radxa-zero-3e, both arm64) must each get their OWN app compile pass -
-// tagged with their own boards.BuildTag - even though they share a single
+// tagged with their own boards.BuildTags - even though they share a single
 // gosd-init compile pass (the pre-existing per-arch dedupe, unaffected by
 // per-board app tagging).
 func TestCompileForBoardsCompilesAppOncePerBoardOnSharedArch(t *testing.T) {
@@ -66,7 +68,7 @@ func TestCompileForBoardsCompilesAppOncePerBoardOnSharedArch(t *testing.T) {
 	}
 	gotTags := map[string]bool{c.appCalls[0].tags: true, c.appCalls[1].tags: true}
 	for _, b := range selected {
-		want := boards.BuildTag(b)
+		want := boards.BuildTags(b)
 		if !gotTags[want] {
 			t.Errorf("compileApp tags = %v, want them to include %q (for board %q)", gotTags, want, b.Name())
 		}
@@ -206,6 +208,26 @@ func TestCompileForBoardsSurfacesTsfunnelCompileFailure(t *testing.T) {
 	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", true, compileApp, compileInit, compileTsfunnel)
 	if err == nil {
 		t.Fatal("compileForBoards succeeded despite a failing compileTsfunnel, want an error")
+	}
+}
+
+// TestCompileForBoardsTagsEveryAppCompileWithTheBareGosdTag is gosd-cm4b's
+// counterpart to the per-board assertion above: whichever board is being
+// built for, the app compile also carries the plain `gosd` tag, so an app
+// can gate source on being compiled into an image at all without having to
+// enumerate every board id.
+func TestCompileForBoardsTagsEveryAppCompileWithTheBareGosdTag(t *testing.T) {
+	c := &countingCompiler{}
+	selected := []boards.Board{pizero2w.New(), radxazero3e.New(), pizerow.New()}
+
+	if _, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel); err != nil {
+		t.Fatalf("compileForBoards: %v", err)
+	}
+
+	for i, call := range c.appCalls {
+		if !slices.Contains(strings.Split(call.tags, ","), "gosd") {
+			t.Errorf("compileApp call %d (board %q) tags = %q, want the bare \"gosd\" tag among them", i, selected[i].Name(), call.tags)
+		}
 	}
 }
 

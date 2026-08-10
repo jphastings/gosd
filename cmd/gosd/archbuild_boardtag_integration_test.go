@@ -10,15 +10,17 @@ import (
 	diskfs "github.com/diskfs/go-diskfs"
 )
 
-// TestBuildAppliesPerBoardBuildTags is the full end-to-end acceptance test
-// for gosd-1937: a real `gosd build` for two boards sharing an arch
-// (pi-zero-2w and nanopi-zero2, both arm64) against testdata/boardtagfixture
-// (a fallback main.go plus a gosd_pi_zero_2w- and a gosd_nanopi_zero2-gated
-// variant, see that package) must compile each board's own tagged variant
-// into /app - not the fallback, and not the other board's variant - while
-// still sharing exactly one gosd-init compile pass (byte-identical /init
-// across both images), preserving the per-arch dedupe gosd-2j6z established.
-func TestBuildAppliesPerBoardBuildTags(t *testing.T) {
+// TestBuildAppliesGosdBuildTags is the full end-to-end acceptance test for
+// gosd-1937 and gosd-cm4b: a real `gosd build` for two boards sharing an
+// arch (pi-zero-2w and nanopi-zero2, both arm64) against
+// testdata/boardtagfixture (a fallback main.go plus a gosd_pi_zero_2w- and
+// a gosd_nanopi_zero2-gated variant, and a gosd/!gosd pair, see that
+// package) must compile each board's own tagged variant into /app - not the
+// fallback, and not the other board's variant - and must set the bare
+// `gosd` tag for both, while still sharing exactly one gosd-init compile
+// pass (byte-identical /init across both images), preserving the per-arch
+// dedupe gosd-2j6z established.
+func TestBuildAppliesGosdBuildTags(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
@@ -56,6 +58,12 @@ func TestBuildAppliesPerBoardBuildTags(t *testing.T) {
 		}
 		if bytes.Contains(tc.app, []byte("boardtagfixture-marker:default")) {
 			t.Errorf("%s's /app contains the fallback marker; the board tag should have excluded main.go's default build", tc.board)
+		}
+		if !bytes.Contains(tc.app, []byte("boardtagfixture-marker:gosd-tag-set")) {
+			t.Errorf("%s's /app does not contain the gosd-tag-set marker; the bare `gosd` tag was not passed to the app compile", tc.board)
+		}
+		if bytes.Contains(tc.app, []byte("boardtagfixture-marker:gosd-tag-unset")) {
+			t.Errorf("%s's /app contains the gosd-tag-unset marker; `//go:build !gosd` must be excluded from a gosd build", tc.board)
 		}
 	}
 	if bytes.Contains(piApp, []byte("boardtagfixture-marker:nanopi-zero2")) {

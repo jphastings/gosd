@@ -245,14 +245,19 @@ type Board interface {
 	EXT4Support() EXT4Support
 }
 
-// BuildTag returns the Go build tag gosd passes to the app compile (and only
-// the app compile - gosd-init is never tagged) so a developer can gate
-// board-specific source with `//go:build gosd_<id>`. The `gosd_` prefix
-// keeps the result a valid build-tag identifier even for ids starting with a
+// BuildTags returns the comma-separated Go build tags gosd passes to the app
+// compile (and only the app compile - gosd-init is never tagged). There are
+// always two: the bare `gosd`, which a developer can gate on to distinguish
+// source compiled into an image from the same source under a plain `go
+// build`/`go test`; and a per-board `gosd_<id>` for board-specific source.
+// The bare tag's negation is what makes it worth having - `//go:build !gosd`
+// is a fallback that keeps working as boards are added, where enumerating
+// every board tag negatively silently rots. The `gosd_` prefix keeps the
+// per-board tag a valid build-tag identifier even for ids starting with a
 // digit; the id's hyphens (illegal in a build tag) are replaced with
-// underscores, e.g. "pi-zero-2w" becomes "gosd_pi_zero_2w".
-func BuildTag(b Board) string {
-	return "gosd_" + strings.ReplaceAll(b.Name(), "-", "_")
+// underscores, e.g. "pi-zero-2w" yields "gosd,gosd_pi_zero_2w".
+func BuildTags(b Board) string {
+	return "gosd,gosd_" + strings.ReplaceAll(b.Name(), "-", "_")
 }
 
 var registry = map[string]Board{}
