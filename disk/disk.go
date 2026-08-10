@@ -122,8 +122,8 @@ const (
 	// buy — metadata consistency and mount-time replay, not data
 	// durability), at the cost of not being natively readable from macOS or
 	// Windows and needing CONFIG_EXT4_FS in the board's kernel — see
-	// COMPATIBILITY.md for which boards have it (the Pi family does not, as
-	// of this writing). Asking for it on a board that lacks it fails with
+	// COMPATIBILITY.md for which boards have it, which today is every board
+	// GoSD ships. Asking for it on a board that lacks it fails with
 	// ErrUnsupportedFS before the disk is touched. Formatting writes GoSD's
 	// checked-in golden ext4 image (see internal/diskfmt), then grows it to
 	// the disk's actual size exactly once, at establishment.

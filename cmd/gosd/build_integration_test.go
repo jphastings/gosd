@@ -1333,31 +1333,6 @@ func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 	}
 }
 
-// TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard confirms
-// --data-filesystem=ext4 refuses to build for a Pi board (whose stock kernel
-// has no CONFIG_EXT4_FS - see internal/boards/pizero2w.EXT4Support) rather
-// than shipping an image whose data partition the kernel can never mount.
-func TestBuildDataFilesystemEXT4FailsActionablyForIncapableBoard(t *testing.T) {
-	cmd := newRootCmd()
-	cmd.SetArgs([]string{
-		"build", "../../examples/hello",
-		"--board", "pi-zero-2w",
-		"--artifacts-dir", "testdata/fake-artifacts",
-		"--data-filesystem", "ext4",
-		"--data-size", "1GiB",
-		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
-	})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("gosd build --board=pi-zero-2w --data-filesystem=ext4 succeeded, want an error")
-	}
-	for _, want := range []string{"pi-zero-2w", "COMPATIBILITY.md"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
-}
-
 // TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
 // behavior for --catalog when every selected board is internal-only: no
 // os_list.json is written, and the build itself still succeeds (this is not
@@ -2219,8 +2194,10 @@ func buildConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.
 }
 
 // buildQemuVirtConfigJSON mirrors buildConfigJSON but builds for qemu-virt
-// instead of pi-zero-2w - needed for flags like --data-filesystem=ext4 that
-// only some boards support (see internal/boards.Board.EXT4Support).
+// instead of pi-zero-2w. Originally required because pi-zero-2w's stock
+// kernel didn't support ext4; now every board GoSD ships does (bean
+// gosd-ssth), so the choice of qemu-virt here is incidental - kept as-is to
+// avoid churn, not because pi-zero-2w would fail --data-filesystem=ext4.
 func buildQemuVirtConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.Config {
 	t.Helper()
 
@@ -2390,8 +2367,8 @@ func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
 // payload (no gosd.toml presence, unlike Hostname/Wifi/Env) - so two builds
 // differing only by --data-filesystem must still produce the same identity.
 // Built for qemu-virt rather than pi-zero-2w (the other identity tests'
-// board): pi-zero-2w's stock kernel doesn't support ext4 (see
-// internal/boards.Board.EXT4Support).
+// board) purely via buildQemuVirtConfigJSON - see that helper's doc comment
+// for why the choice of board here is now incidental rather than required.
 func TestBuildIdentityUnaffectedByDataFilesystem(t *testing.T) {
 	dir := t.TempDir()
 	withoutExt4 := buildQemuVirtConfigJSON(t, filepath.Join(dir, "fat32.img"))

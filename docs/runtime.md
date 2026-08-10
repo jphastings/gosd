@@ -338,11 +338,12 @@ below remains the app-facing contract for durable *file content* either
 way, journal or not.
 
 The cost: an ext4 data partition can't be read or repaired from a macOS or
-Windows host the way a FAT32 one can (it needs Linux-side tooling), and
-it isn't available on every board — the Pi family's stock kernels don't
-build ext4 support in at all, so `gosd build --data-filesystem=ext4`
-refuses to build for them, naming the alternative; see
-`COMPATIBILITY.md`'s ext4 data partition row for the full board list.
+Windows host the way a FAT32 one can (it needs Linux-side tooling). It
+also depends on the board's stock kernel building ext4 support in:
+`gosd build --data-filesystem=ext4` refuses, naming the alternative, for
+any selected board whose kernel doesn't — no board GoSD currently ships
+falls into that group; see `COMPATIBILITY.md`'s ext4 data partition row
+for the per-board detail.
 
 Like `--boot-size` and the label prefix, the chosen filesystem is part of
 the app's on-card layout ABI — see [the upgrade path design](design/upgrade-path.md) for
@@ -846,8 +847,8 @@ journal changes what a crash can corrupt, not whether your own
 unfsynced write survives one.
 
 `CONFIG_EXT4_FS` is required in the board's kernel — `COMPATIBILITY.md`'s
-"ext4 on attached disks" row says which boards have it (the Pi family
-does not, as of this writing). Where it's missing, `disk` reports
+"ext4 on attached disks" row says which boards have it, which today is
+every board GoSD ships. Where it's missing, `disk` reports
 `ErrUnsupportedFS` *before writing anything* — it reads
 `/proc/filesystems` first — including when ext4 is only the silent
 zero-value default:

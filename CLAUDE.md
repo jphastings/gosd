@@ -181,9 +181,19 @@ say so in the bean rather than silently diverging.
   app-facing contract for both filesystems. The choice is baked into
   config.json only (no gosd.toml key, no `GOSD_*` override) and is part of
   the app's on-card ABI, like `--boot-size`. Refused at build time for any
-  selected board whose pinned kernel lacks `CONFIG_EXT4_FS` — the whole Pi
-  family — which matters because a bare `gosd build` builds every public
-  board; see `boards.EXT4Support`. `--data-flush` is refused alongside it
+  selected board whose pinned kernel lacks `CONFIG_EXT4_FS` — which matters
+  because a bare `gosd build` builds every public board; see
+  `boards.EXT4Support`. That refusal originally covered the whole Pi
+  family, on the strength of the committed `build/boards/*/kernel.config`
+  snapshots looking like they lacked the option; those snapshots were stale
+  — the Pi kernels have in fact built `CONFIG_EXT4_FS=y` since artifacts
+  v0.10.0 (bean `gosd-19kw`), confirmed against the released artifacts and
+  bench-booted end-to-end on pi-zero-2w (bean `gosd-7bwv`) — so
+  pi-zero-2w/pi-zero-w/pi-3b's `EXT4Support` now reports `Supported: true`
+  (bean `gosd-ssth`) and **no board GoSD currently ships is refused**; the
+  mechanism and `boards.EXT4Support` stay in place for any future board
+  whose stock kernel doesn't build the option in. `--data-flush` is refused
+  alongside it
   (`flush` is a vfat-only mount option), and `dataexpand`'s 256GiB
   `maxPartitionBytes` is FAT32-only, so ext4 `expand` fills the whole card.
   **Consequence worth knowing before touching either package:** because

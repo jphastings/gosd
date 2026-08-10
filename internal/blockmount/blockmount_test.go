@@ -815,9 +815,11 @@ func TestRunEXT4LabelCapIsSixteenBytes(t *testing.T) {
 }
 
 // TestRunEXT4PreflightNamesBoardReality confirms the kernel-preflight error
-// for ext4 specifically names the Pi-family gap and the boards that do have
-// it, and points at COMPATIBILITY.md, rather than the generic FAT32
-// suggestion.
+// for ext4 names the missing kernel option and points the caller at
+// COMPATIBILITY.md and a concrete fix, rather than the generic FAT32
+// suggestion. It doesn't assert on specific board names: no board GoSD
+// currently ships lacks CONFIG_EXT4_FS, so this case is only reachable by a
+// custom kernel or a future board, and the remedy text says as much.
 func TestRunEXT4PreflightNamesBoardReality(t *testing.T) {
 	f := &fakeDeps{contents: diskfmt.Contents{Blank: true}, unmountable: diskfmt.EXT4}
 
@@ -825,7 +827,7 @@ func TestRunEXT4PreflightNamesBoardReality(t *testing.T) {
 	if !errors.Is(err, ErrUnsupportedFS) {
 		t.Fatalf("Run error = %v, want ErrUnsupportedFS", err)
 	}
-	for _, want := range []string{"Pi-family", "CONFIG_EXT4_FS", "Rockchip", "Cubie A5E", "COMPATIBILITY.md"} {
+	for _, want := range []string{"CONFIG_EXT4_FS", "COMPATIBILITY.md", "custom-kernels.md", "FAT32"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Run error = %q, want it to mention %q", err, want)
 		}

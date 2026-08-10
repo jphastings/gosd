@@ -270,12 +270,8 @@ func TestUsbGadgetSupportIsUnsupportedWithReason(t *testing.T) {
 	}
 }
 
-func TestEXT4SupportIsUnsupportedWithReason(t *testing.T) {
-	got := pi3b.New().EXT4Support()
-	if got.Supported {
-		t.Fatalf("EXT4Support() = %+v, want Supported: false (the stock kernel has no CONFIG_EXT4_FS)", got)
-	}
-	if !strings.Contains(got.Reason, "CONFIG_EXT4_FS") {
-		t.Errorf("EXT4Support().Reason = %q, want it to name the missing kernel option", got.Reason)
+func TestEXT4SupportIsSupported(t *testing.T) {
+	if got := pi3b.New().EXT4Support(); !got.Supported {
+		t.Errorf("EXT4Support() = %+v, want Supported: true (stock kernel builds CONFIG_EXT4_FS=y since artifacts v0.10.0)", got)
 	}
 }
