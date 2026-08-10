@@ -20,16 +20,16 @@ this stub. Last folded into: v0.2.0 (2026-08-09).
   `kernel.config` snapshots. Nothing about the kernels changed, so an image
   built with this release simply stops being refused. FAT32 remains the
   default on every board.
-  - **Verified on hardware, to different depths per board.** Pi Zero 2W was
-    bench-booted end to end — first-boot format, grow and mount, re-adoption
-    of its data across a reflash, and a hard power cut taken five seconds
-    after an fsync'd write, with the counter surviving (bean `gosd-7bwv`).
-    Pi Zero W — the fleet's only 32-bit board, and so the first anywhere to
-    run GoSD's ext4 path on armv6 — was then bench-booted too: the golden
-    grew to 14.6GiB and mounted, and the boot counter survived an abrupt
-    power cut and came back adopted rather than reformatted (bean
-    `gosd-58p6`). Pi 3B shares the Zero 2W's arm64 kernel pin and rides that
-    same released-kernel evidence without a bench pass of its own yet.
+  - **All three Pi boards verified on real hardware.** Each was bench-booted
+    from an ext4 `--data-size=expand` image and taken through format, grow to
+    the full card, mount, an abrupt power cut seconds after an fsync'd write,
+    and re-adoption on the next boot with the boot counter intact — Pi Zero 2W
+    (bean `gosd-7bwv`), Pi Zero W and Pi 3B (bean `gosd-58p6`). Pi Zero W is
+    the fleet's only 32-bit board, so that was the first time GoSD's ext4 path
+    has run on armv6 anywhere.
+  - Incidentally proven along the way: an ext4 `/data` formatted and grown by
+    the 32-bit Zero W was adopted and mounted intact by the 64-bit Pi 3B, its
+    contents and boot counter carried across unchanged.
   - Choosing ext4 still costs you host readability: an ext4 `/data` cannot be
     read or repaired from a macOS or Windows machine, which is why FAT32 is
     still the default, and the filesystem choice remains part of the app's
