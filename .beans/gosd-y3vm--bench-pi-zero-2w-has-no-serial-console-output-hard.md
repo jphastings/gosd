@@ -5,7 +5,7 @@ status: todo
 type: bug
 priority: normal
 created_at: 2026-08-10T10:14:46Z
-updated_at: 2026-08-10T10:15:30Z
+updated_at: 2026-08-10T11:05:26Z
 ---
 
 The bench Pi Zero 2W boots and runs perfectly but emits ZERO bytes on the serial console (2026-08-09/10). This blocked, and then rerouted, a whole evening of ext4 bench work — recording it so the ruled-out ground isn't re-walked.
@@ -25,3 +25,21 @@ The bench Pi Zero 2W boots and runs perfectly but emits ZERO bytes on the serial
 **Untested hypothesis worth 30 seconds first:** cheap USB-serial boards are inconsistent about whose perspective the silkscreen takes — a pin labelled RXD sometimes means "connect to the device's RXD". Swapping which adapter wire sits on pin 8 costs nothing and would explain everything.
 
 Not urgent: the ext4 work it blocked was completed by other channels (MBR inspection + HTTP over WiFi), and gosd-init has no interactive serial surface, so serial is a diagnostic convenience rather than a product feature. But the next board bring-up will want it back.
+
+
+
+## Kernel build EXONERATED by a stock-OS control (2026-08-10)
+
+JP's hypothesis was that the console problem lay in how we build the kernel. Tested directly and it does not: **stock Raspberry Pi OS Lite is equally silent on this rig.**
+
+Downloaded the official raspios_lite_armhf image, flashed it unmodified except for appending `enable_uart=1` and `uart_2ndstage=1` to its config.txt (its cmdline.txt already ships `console=serial0,115200`), booted, and watched for 3.5 minutes: zero bytes. It shares nothing with GoSD — not our kernel, initramfs, config.txt generation, boot-file selection or gosd-init.
+
+**Proof it actually booted** (no console to watch, so inferred from the card): the image's rootfs partition is ~2GB as flashed; after the boot `diskutil list` showed partition 2 at **15.4GB**, i.e. Raspberry Pi OS ran its first-boot filesystem expansion to fill the 15.9GB card. Only the running OS does that.
+
+Board coverage now, all silent on the same rig: TWO different Pi Zero 2Ws (distinct MACs B8:27:EB:EF:22:24 and B8:27:EB:77:51:55) and one BCM2835 board, under GoSD's 64-bit kernel, GoSD's 32-bit armv6 kernel, and stock Raspberry Pi OS. Two SoCs, two architectures, three kernels, one adapter — the only invariant left is the physical link.
+
+Incidental but worth recording: the third board reports `bcm2708.boardrev=0x9000c1`, which is model 0x0C = **Pi Zero W**, not the Zero 1.3 it was thought to be (a 1.3 is 0x900093). Its `/proc/cmdline` also carries NO firmware-injected `8250.nr_uarts=` — independently reconfirming bean gosd-md4w's finding that BCM2835 firmware doesn't inject it, and therefore that pi-zero-w's explicit CONFIG_SERIAL_8250_RUNTIME_UARTS=1 is load-bearing (ttyS0 did register). That is the exact opposite of the Zero 2W, where the firmware does inject — the split gosd-ehkt documented.
+
+Two leads chased and dismissed: `base_baud = 0` on the PL011 looks alarming but is normal on Pi (it appears in ordinary Pi 4 dmesg output); and a core_freq/baud mismatch would produce GARBAGE, not silence — zero bytes means no edges on the wire at all, which no baud error can cause.
+
+Next step unchanged and now the only step: the loopback test.
