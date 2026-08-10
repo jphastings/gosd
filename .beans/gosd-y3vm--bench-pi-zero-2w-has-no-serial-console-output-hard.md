@@ -1,11 +1,11 @@
 ---
 # gosd-y3vm
 title: Bench Pi Zero 2W has no serial console output — hardware fault
-status: todo
+status: scrapped
 type: bug
 priority: normal
 created_at: 2026-08-10T10:14:46Z
-updated_at: 2026-08-10T11:57:55Z
+updated_at: 2026-08-10T12:29:20Z
 ---
 
 The bench Pi Zero 2W boots and runs perfectly but emits ZERO bytes on the serial console (2026-08-09/10). This blocked, and then rerouted, a whole evening of ext4 bench work — recording it so the ruled-out ground isn't re-walked.
@@ -78,3 +78,25 @@ JP's original instinct was right and my conclusion was wrong. With the link re-s
 **Leading lead for whoever picks this up.** Our kernels report `base_baud = 50000000` for the mini-UART (both the Zero 2W at 0x3f215040 and this BCM2835 board at 0x20215040). A conventional working Pi reports `base_baud = 31250000`. base_baud is core_freq/8, so ours implies a 400MHz core where the documented `enable_uart=1` behaviour is to pin core_freq at 250MHz. That discrepancy does NOT explain the baud (the echo decodes correctly at 115200, so the divisor and the real clock agree), but it is a real difference from a stock Pi and is the first thing worth chasing — particularly whether the polled console path mis-waits on a clock/LSR assumption the IRQ path doesn't make.
 
 Next concrete steps: (1) re-run the stock-Raspberry-Pi-OS control on the good wiring — if RPi OS prints and ours doesn't, it is squarely our kernel config; (2) have an app write directly to /dev/ttyS0 to confirm userspace writes arrive while printk does not; (3) compare our fragment's 8250 options against a stock Pi kernel.config, focusing on the console/polled path rather than port registration.
+
+
+
+# RESOLVED — NOT A BUG. The console always worked; the CAPTURE TOOL was broken.
+
+Everything above is wrong, including the earlier correction. There is no serial fault on any board, in GoSD's kernel, or in the wiring.
+
+`tio` 3.9, run backgrounded non-interactively as `sleep 999999 | tio -b 115200 -t -L --log-file X /dev/cu.usbserial-0001 > Y`, prints its banner, reports `Connected`, sets the port to 115200 — and then delivers NOT ONE received byte to stdout or to its --log-file. Every 'silence' measurement in this bean came from that. It is indistinguishable from a dead link without a second reader to compare against.
+
+The tell, missed for a day: every capture done with tio read exactly 162 bytes (its own banner) and every capture done with a hand-written Python reader worked perfectly — the loopback test PASSED, and the probe test round-tripped 430/430. Two instruments disagreed and the broken one was believed.
+
+**Proof the console works.** With a raw-termios Python listener (`os.open(O_RDWR|O_NOCTTY|O_NONBLOCK)`, `tcsetattr` CS8|CREAD|CLOCAL at B115200, poll `os.read`):
+- Stock Raspberry Pi OS: 21228 bytes of boot log, including `OF: fdt: Machine model: Raspberry Pi Zero W Rev 1.1` and a `raspberrypi login:` prompt that accepted and rejected typed input.
+- **GoSD's own armv6 image: a full clean console** — `[gosd] image identity: fd2b6990b157`, `[gosd] boot partition mounted at /boot from /dev/mmcblk0p1`, `[gosd] data partition filesystem: FAT32`, `[gosd] data partition mounted read-write at /data`, `[gosd] provisioning snapshot saved`, `[gosd] started /app (pid 106)`.
+
+**What this invalidates:** the 'hardware fault' diagnosis; the 'software/kernel fault' correction; the stock-Raspberry-Pi-OS control (its silence was tio, not the OS); the conclusion drawn from two Zero 2W board swaps; and the suspicion that a printk path differed from a tty path (the tty echo arrived only because it was read by Python, while the printk was read by tio).
+
+**What survives:** bean gosd-ehkt's finding is untouched — it rests on /proc/cmdline, /proc/consoles and a /dev/gpiomem register read, never on serial capture. Its conclusion that CONFIG_SERIAL_8250_RUNTIME_UARTS=0 is harmless on pi-zero-2w still stands, and this session independently reconfirmed the BCM2835 half (no firmware-injected nr_uarts on the Zero W).
+
+**Lesson worth keeping** (also recorded in the macos-serial-bringup-gotchas memory): never trust silence from an unproven capture path. Prove the reader first — send a probe and watch it echo, or capture a known-chatty boot — before concluding anything from an absence of bytes. Two separate 'obvious' capture recipes failed silently in this session in two different ways (`stty`+`cat` reverting the port to 9600, and tio swallowing everything).
+
+Closing as scrapped: there is nothing to fix.
