@@ -706,6 +706,56 @@ func TestRunEXT4MountFailureOnAdoptionAttemptReformatsWhenDestructive(t *testing
 	}
 }
 
+// TestRunEXT4MountFailureSatisfiesBothErrUnmountableAndErrRefusedFormat pins
+// the actual point of ErrUnmountable: a mount-failure refusal against a
+// volume whose label and filesystem both match what was asked for is a
+// narrower case of ErrRefusedFormat, not a replacement for it — both
+// sentinels must match the same error.
+func TestRunEXT4MountFailureSatisfiesBothErrUnmountableAndErrRefusedFormat(t *testing.T) {
+	f := &fakeDeps{
+		contents:  diskfmt.Contents{FS: diskfmt.EXT4, Label: "APPDATA"},
+		mountErrs: []error{errors.New("mount: wrong fs type, bad option, bad superblock")},
+	}
+
+	_, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false)
+	if !errors.Is(err, ErrUnmountable) {
+		t.Errorf("Run error = %v, want ErrUnmountable", err)
+	}
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Errorf("Run error = %v, want ErrRefusedFormat", err)
+	}
+}
+
+// TestRunRefusesForeignContentDoesNotSatisfyErrUnmountable and
+// TestRunEXT4MismatchNonDestructiveDoesNotSatisfyErrUnmountable are the
+// other half of that contract: a volume under a different label, or the same
+// label under a different filesystem, is foreign content, not an unhealthy
+// own-volume, so neither refusal may match the narrower sentinel — this is
+// what makes the two consent questions separable.
+func TestRunRefusesForeignContentDoesNotSatisfyErrUnmountable(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "OTHERAPP"}}
+
+	_, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", false)
+	if errors.Is(err, ErrUnmountable) {
+		t.Errorf("Run error = %v, want it NOT to satisfy ErrUnmountable — this is someone else's content", err)
+	}
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Errorf("Run error = %v, want ErrRefusedFormat", err)
+	}
+}
+
+func TestRunEXT4MismatchNonDestructiveDoesNotSatisfyErrUnmountable(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}}
+
+	_, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false)
+	if errors.Is(err, ErrUnmountable) {
+		t.Errorf("Run error = %v, want it NOT to satisfy ErrUnmountable — the filesystem doesn't match what was asked for", err)
+	}
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Errorf("Run error = %v, want ErrRefusedFormat", err)
+	}
+}
+
 // TestRunEXT4GrowFailureSurfacesActionableErrorAndSkipsMarker confirms a
 // failed grow does not proceed to write the marker: EstablishMarker's whole
 // meaning is "everything before this point reached the medium", so writing
