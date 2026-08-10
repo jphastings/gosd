@@ -71,9 +71,9 @@ type Config struct {
 	// DataFilesystem records gosd build --data-filesystem: which
 	// filesystem the data partition is formatted as (fat32, the universal
 	// default every host can read and repair, or ext4, journaled and
-	// crash-resilient but unreadable from a macOS or Windows host and
-	// unsupported on the Pi family - see COMPATIBILITY.md's ext4 data
-	// partition row). gosd-init maps this string to a diskfmt.FS and
+	// crash-resilient but unreadable from a macOS or Windows host - see
+	// COMPATIBILITY.md's ext4 data partition row). gosd-init maps this
+	// string to a diskfmt.FS and
 	// mounts /data with it, whether the partition ships in the image or
 	// (DataExpand) is created and formatted on first boot. Optional:
 	// absent - including every config.json baked before this field

@@ -429,12 +429,13 @@ func remedyFor(fs diskfmt.FS) string {
 	case diskfmt.FAT32:
 		return "rebuild the board's kernel with it (see docs/custom-kernels.md)"
 	case diskfmt.EXT4:
-		// Named explicitly rather than left to "see COMPATIBILITY.md" alone:
-		// the Pi-family stock kernels have never built CONFIG_EXT4_FS in,
-		// while the Rockchip fleet (Radxa Zero 3E, NanoPi Zero2, ROCK 4SE)
-		// and the Cubie A5E all inherit it from their arm64 defconfig — a
-		// fact worth stating up front rather than sending a caller hunting.
-		return "the Pi-family stock kernels don't build CONFIG_EXT4_FS in; the Rockchip fleet (Radxa Zero 3E, NanoPi Zero2, ROCK 4SE) and the Cubie A5E do — see COMPATIBILITY.md, rebuild the board's kernel with it (see docs/custom-kernels.md), or use FAT32 or exFAT instead"
+		// Deliberately doesn't enumerate boards: every board GoSD currently
+		// ships builds CONFIG_EXT4_FS into its stock kernel (see
+		// COMPATIBILITY.md's ext4 rows), so reaching this case means a
+		// custom kernel dropped the option, or a future board's stock
+		// kernel never had it — naming today's boards here would just go
+		// stale the next time one changes either way.
+		return "this board's kernel has no CONFIG_EXT4_FS; see COMPATIBILITY.md for which boards support ext4, rebuild the board's kernel with it (see docs/custom-kernels.md), or use FAT32 or exFAT instead"
 	default:
 		return fmt.Sprintf("rebuild the board's kernel with it (see docs/custom-kernels.md), or use %s instead", diskfmt.FAT32)
 	}

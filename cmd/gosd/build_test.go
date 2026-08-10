@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,32 @@ import (
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
 )
+
+// fakeIncapableEXT4Board is a minimal boards.Board whose EXT4Support
+// refuses, used to exercise validateDataFilesystemSupport's rejection path.
+// No real board GoSD ships lacks ext4 any more (bean gosd-ssth), and the
+// CLI has no flag to inject a fake board, so this guard - which still
+// matters for any future board whose kernel doesn't build CONFIG_EXT4_FS -
+// can only be exercised at this unit level.
+type fakeIncapableEXT4Board struct{}
+
+func (fakeIncapableEXT4Board) Name() string                    { return "fake-incapable-board" }
+func (fakeIncapableEXT4Board) Arch() boards.Arch               { return boards.Arch{GOARCH: "arm64"} }
+func (fakeIncapableEXT4Board) Artifacts() []boards.ArtifactRef { return nil }
+func (fakeIncapableEXT4Board) BootFiles(boards.BuildConfig, boards.Artifacts) (map[string]io.Reader, error) {
+	return nil, nil
+}
+func (fakeIncapableEXT4Board) RawWrites(boards.Artifacts) []image.RawWrite         { return nil }
+func (fakeIncapableEXT4Board) FirmwareFiles(boards.Artifacts) map[string]io.Reader { return nil }
+func (fakeIncapableEXT4Board) UsbGadgetSupport() boards.GadgetSupport {
+	return boards.GadgetSupport{Supported: true}
+}
+func (fakeIncapableEXT4Board) ConsoleBaudSupport() boards.ConsoleBaudSupport {
+	return boards.ConsoleBaudSupport{Supported: true}
+}
+func (fakeIncapableEXT4Board) EXT4Support() boards.EXT4Support {
+	return boards.EXT4Support{Supported: false, Reason: "fake board has no CONFIG_EXT4_FS"}
+}
 
 func TestResolveBoardsDefaultsToAll(t *testing.T) {
 	got, err := resolveBoards(nil)
@@ -451,20 +478,20 @@ func TestValidateDataFlushExt4ConflictRejectsBoth(t *testing.T) {
 }
 
 func TestValidateDataFilesystemSupportSkippedForFAT32(t *testing.T) {
-	incapable := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+	incapable := []boards.Board{fakeIncapableEXT4Board{}}
 	if err := validateDataFilesystemSupport(incapable, diskfmt.FAT32); err != nil {
-		t.Errorf("validateDataFilesystemSupport(pi-zero-2w, fat32) = %v, want nil: fat32 is always supported", err)
+		t.Errorf("validateDataFilesystemSupport(incapable board, fat32) = %v, want nil: fat32 is always supported", err)
 	}
 }
 
 func TestValidateDataFilesystemSupportRejectsIncapableBoard(t *testing.T) {
-	selected := []boards.Board{mustFindBoard(t, "pi-zero-2w")}
+	selected := []boards.Board{fakeIncapableEXT4Board{}}
 
 	err := validateDataFilesystemSupport(selected, diskfmt.EXT4)
 	if err == nil {
-		t.Fatal("validateDataFilesystemSupport([pi-zero-2w], ext4) succeeded, want an error")
+		t.Fatal("validateDataFilesystemSupport([incapable board], ext4) succeeded, want an error")
 	}
-	for _, want := range []string{"pi-zero-2w", "COMPATIBILITY.md", "--data-filesystem=ext4"} {
+	for _, want := range []string{"fake-incapable-board", "COMPATIBILITY.md", "--data-filesystem=ext4"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
 		}
@@ -479,15 +506,15 @@ func TestValidateDataFilesystemSupportAcceptsCapableBoard(t *testing.T) {
 }
 
 func TestValidateDataFilesystemSupportMixedBoardsNamesOnlyTheIncapableOneAndSuggestsBoard(t *testing.T) {
-	selected := []boards.Board{mustFindBoard(t, "radxa-zero-3e"), mustFindBoard(t, "pi-zero-2w")}
+	selected := []boards.Board{mustFindBoard(t, "radxa-zero-3e"), fakeIncapableEXT4Board{}}
 
 	err := validateDataFilesystemSupport(selected, diskfmt.EXT4)
 	if err == nil {
-		t.Fatal("validateDataFilesystemSupport([radxa-zero-3e, pi-zero-2w], ext4) succeeded, want an error")
+		t.Fatal("validateDataFilesystemSupport([radxa-zero-3e, incapable board], ext4) succeeded, want an error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "pi-zero-2w") {
-		t.Errorf("error = %q, want it to name the incapable board pi-zero-2w", msg)
+	if !strings.Contains(msg, "fake-incapable-board") {
+		t.Errorf("error = %q, want it to name the incapable board", msg)
 	}
 	if !strings.Contains(msg, "--board") {
 		t.Errorf("error = %q, want it to suggest restricting with --board since radxa-zero-3e does support ext4", msg)
