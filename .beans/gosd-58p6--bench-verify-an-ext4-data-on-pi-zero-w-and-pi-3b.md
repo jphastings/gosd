@@ -1,11 +1,11 @@
 ---
 # gosd-58p6
 title: Bench-verify an ext4 /data on pi-zero-w and pi-3b
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-10T10:14:46Z
-updated_at: 2026-08-10T10:15:03Z
+updated_at: 2026-08-10T13:01:05Z
 ---
 
 PR #248 (bean gosd-ssth) enabled `gosd build --data-filesystem=ext4` for all three Pi boards, but only **pi-zero-2w** was actually bench-booted (bean gosd-7bwv). The other two ride released-kernel evidence alone: their v0.10.0 kernel.configs carry CONFIG_EXT4_FS=y and their kernel binaries contain the driver including ext4_resize_fs. COMPATIBILITY.md's [^pi-data-ext4] footnote and the UNRELEASED.md release note both record this split honestly, so this bean closes the gap rather than a known defect.
@@ -15,3 +15,54 @@ PR #248 (bean gosd-ssth) enabled `gosd build --data-filesystem=ext4` for all thr
 pi-3b is much lower risk: same arm64 kernel pin as the Zero 2W, so this is really a spot-check.
 
 Method that worked on the Zero 2W and needs no serial console (the bench Pi's is dead, bean gosd-y3vm) and no ext4 support on the host: flash an ext4 --data-size=expand image containing only partition 1, boot, then read the card's MBR with `diskutil list`. dataexpand's expand path writes the MBR LAST, only after format -> sync -> mount -> grow -> marker -> sync all succeed, so a full-size partition 2 appearing is proof the whole chain ran. For the durability half, provision WiFi and curl the app's boots=N across an `sdwire power off` — full recipe in gosd-7bwv.
+
+
+
+## pi-zero-w VERIFIED on hardware (2026-08-10) — the 32-bit question is answered
+
+Done on the bench Pi Zero W (boardrev 0x9000c1) with a working serial console, so this was watched live rather than inferred from the partition table. Image: examples/hello, --data-filesystem=ext4 --data-size=expand, pi-zero-w (GOARCH=arm GOARM=6).
+
+First boot:
+    [gosd] data partition filesystem: ext4
+    [gosd] formatting /dev/mmcblk1p2 as ext4 labelled hello-data (14.6GiB) — one-time first-boot setup
+    [gosd] data partition created, filling the card
+    [gosd] data partition mounted read-write at /data
+    gosd hello, host=pi-ext4w board=pi-zero-w boots=1
+
+So on armv6: the golden was written, EXT4_IOC_RESIZE_FS grew it from 512MiB to 14.6GiB, and it mounted read-write. That exercises exactly the 32-bit hazards this bean was filed for — blockmount.blockDeviceSizeBytes's uint64 BLKGETSIZE64 read (bean gosd-fjio) and the generic _IOC ioctl encoding — on the only 32-bit board in the fleet.
+
+Then an abrupt mains cut (sdwire power off, no clean shutdown) with the counter write seconds old, and on the next boot:
+    [gosd] data partition already present on /dev/mmcblk1p2
+    [gosd] data partition mounted read-write at /data
+    gosd hello, host=pi-ext4w board=pi-zero-w boots=2
+
+boots=2 proves the fsync'd write reached the card through ext4's journal and replayed cleanly on mount, and 'already present' proves adoption rather than reformat.
+
+REMAINING: pi-3b only. It shares the Zero 2W's arm64 kernel pin and is the lowest-risk of the three, but it has still never run an ext4 /data on hardware. Keeping this bean open for that alone.
+
+
+
+## pi-3b VERIFIED (2026-08-10) — all three Pi boards now bench-proven; closing
+
+Run on the bench Pi 3B with a working serial console, so every step was watched live.
+
+FIRST, an unplanned but valuable result. The card still carried the Pi Zero W's ext4 /data from the armv6 run, and the 3B image used the same app (hence the same `hello-data` label), so the 3B ADOPTED it:
+    [gosd] data partition re-adopted, its contents intact
+    [gosd] data partition mounted read-write at /data
+    gosd hello, host=pi-ext4-3b board=pi-3b boots=3
+The counter continued 2 -> 3. **An ext4 /data formatted and grown by a 32-bit armv6 board was adopted and mounted intact by a 64-bit arm64 board**, which is what the on-disk format promises but had never been demonstrated here.
+
+Because that adopted rather than formatted, the format path was then forced with a distinct label (`--label-prefix pi3b`), which also exercised the label-mismatch gate — the old `hello-data` volume was correctly NOT adopted and was cleanly reformatted:
+    [gosd] formatting /dev/mmcblk0p2 as ext4 labelled pi3b-data (14.6GiB) — one-time first-boot setup
+    [gosd] data partition created, filling the card
+    [gosd] data partition mounted read-write at /data
+    gosd hello, host=pi3b-fresh board=pi-3b boots=1
+
+Then an abrupt mains cut (sdwire power off, no clean shutdown) with the counter write seconds old:
+    [gosd] data partition already present on /dev/mmcblk0p2
+    [gosd] data partition mounted read-write at /data
+    gosd hello, host=pi3b-fresh board=pi-3b boots=2
+
+So on pi-3b: format, grow to 14.6GiB, mount, crash-durability through the journal, and adoption — all proven.
+
+**Every Pi board is now bench-verified for an ext4 /data**: pi-zero-2w (bean gosd-7bwv), pi-zero-w (above, the fleet's only armv6), and pi-3b (here). Nothing in COMPATIBILITY.md or the release notes now claims more than has been demonstrated. Closing.
