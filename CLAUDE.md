@@ -186,16 +186,10 @@ say so in the bean rather than silently diverging.
   the app's on-card ABI, like `--boot-size`. Refused at build time for any
   selected board whose pinned kernel lacks `CONFIG_EXT4_FS` — which matters
   because a bare `gosd build` builds every public board; see
-  `boards.EXT4Support`. That refusal originally covered the whole Pi
-  family, on the strength of the committed `build/boards/*/kernel.config`
-  snapshots looking like they lacked the option; those snapshots were stale
-  — the Pi kernels have in fact built `CONFIG_EXT4_FS=y` since artifacts
-  v0.10.0 (bean `gosd-19kw`), confirmed against the released artifacts and
-  bench-booted end-to-end on pi-zero-2w (bean `gosd-7bwv`) — so
-  pi-zero-2w/pi-zero-w/pi-3b's `EXT4Support` now reports `Supported: true`
-  (bean `gosd-ssth`) and **no board GoSD currently ships is refused**; the
-  mechanism and `boards.EXT4Support` stay in place for any future board
-  whose stock kernel doesn't build the option in. `--data-flush` is refused
+  `boards.EXT4Support`. **No board GoSD currently ships is refused** — bean
+  `gosd-ssth` corrected an earlier, snapshot-derived belief that the Pi
+  family had no ext4 — but the mechanism stays for any future board whose
+  stock kernel doesn't build the option in. `--data-flush` is refused
   alongside it
   (`flush` is a vfat-only mount option), and `dataexpand`'s 256GiB
   `maxPartitionBytes` is FAT32-only, so ext4 `expand` fills the whole card.
@@ -365,6 +359,18 @@ say so in the bean rather than silently diverging.
   Go `KernelSpec` per board), not shell scripts — `gosd build-kernel`
   (`internal/kernelbuild`) reads it directly. Change a board's kernel build
   there, not by hand-editing a retired `build.sh`/`docker-build.sh`.
+- **`build/boards/*/kernel.config` is a stale snapshot, never the source of
+  truth about what a kernel can do.** It is only rewritten by an actual
+  `gosd build-kernel` run, so it lags the board's `kernel.fragment` — which
+  is the assertion — by however many releases. Check a capability claim
+  against the fragment, or better against the published artifact
+  (`gh release download artifacts/vX.Y.Z -p '<board>.tar.zst'` carries the
+  real `kernel.config`, and `strings` on the kernel proves the driver was
+  compiled in; gunzip a 32-bit zImage's payload first or `strings` reads as
+  a false negative). Bean `gosd-95yu` read "the Pi family has no ext4" off
+  these snapshots months after the fragments gained it, and that one wrong
+  fact reached a build-time refusal, a user-facing runtime error and a
+  published release note before `gosd-ssth` undid it.
 - **Building a board's kernel needs the board *registered*, not just a
   `kernelspec` entry.** `gosd build-kernel --board <id>` resolves `<id>`
   through `internal/boards` (registered in `cmd/gosd/build.go`) *before*
@@ -434,8 +440,13 @@ say so in the bean rather than silently diverging.
   Zero" before any configfs gadget could — gosd-spjt), and ship values that
   silently assume Pi-firmware cmdline injection
   (`SERIAL_8250_RUNTIME_UARTS=0` left the Zero W with no console at all —
-  gosd-md4w). When adding a Pi board or touching its fragment, grep the
-  recorded kernel.config for surprises and disable explicitly.
+  gosd-md4w). When adding a Pi board or touching its fragment, grep for
+  surprises and disable explicitly — but grep the *released* kernel.config,
+  not the committed snapshot (see above), and confirm against the running
+  board before "fixing" one: the firmware rewrites the cmdline, so the very
+  same `SERIAL_8250_RUNTIME_UARTS=0` that cost the Zero W its console is
+  harmless on the Zero 2W, whose firmware injects `8250.nr_uarts=1`
+  (gosd-ehkt). `/proc/cmdline` on the booted board settles it.
 - **Know a Pi DTB's lineage before trusting driver bindings:** the pinned
   rpi tree builds both mainline-style DTBs (`bcm2835-*`) and downstream-style
   ones (`bcm2710-*`) with different compatibles and conventions. The
