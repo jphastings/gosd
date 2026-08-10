@@ -651,19 +651,46 @@ func TestRunEXT4CrashDebrisReformatsEvenWithoutDestructive(t *testing.T) {
 	}
 }
 
-// TestRunEXT4MountFailureOnAdoptionAttemptReformats covers debris severe
-// enough that even mounting it fails outright — treated the same as a
-// successful mount with no marker (see runEXT4's doc): a genuinely
-// established volume always mounts, so a failure here is itself evidence of
-// debris, discovered one step earlier than the marker check. Unmount must
-// not be attempted against a mount that never succeeded.
-func TestRunEXT4MountFailureOnAdoptionAttemptReformats(t *testing.T) {
+// TestRunEXT4MountFailureOnAdoptionAttemptRefusesWithoutDestructive covers
+// debris severe enough that even mounting it fails outright: unlike the
+// no-marker checks above, there is no root directory left to read at all, so
+// GoSD cannot tell an unmountable-but-real volume from debris and refuses
+// rather than guessing (bean gosd-psj0 — an earlier version of this function
+// reformatted unconditionally here, which this test used to assert).
+func TestRunEXT4MountFailureOnAdoptionAttemptRefusesWithoutDestructive(t *testing.T) {
 	f := &fakeDeps{
 		contents:  diskfmt.Contents{FS: diskfmt.EXT4, Label: "APPDATA"},
 		mountErrs: []error{errors.New("mount: wrong fs type, bad option, bad superblock")},
 	}
 
-	if _, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false); err != nil {
+	_, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false)
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Fatalf("Run error = %v, want ErrRefusedFormat", err)
+	}
+	if !strings.Contains(err.Error(), "destructive=true") {
+		t.Errorf("Run error = %q, want it to name the flag to fix it", err)
+	}
+
+	want := []string{"inspect", "mount"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("call order = %v, want %v — no format when refusing", f.calls, want)
+	}
+	if f.formatted || f.didUnmount {
+		t.Errorf("touched the device (formatted=%v unmounted=%v) despite refusing", f.formatted, f.didUnmount)
+	}
+}
+
+// TestRunEXT4MountFailureOnAdoptionAttemptReformatsWhenDestructive is the
+// other half: destructive=true authorises reformatting an unmountable
+// matching-label volume, exactly as for any other content GoSD cannot read.
+// Unmount must not be attempted against a mount that never succeeded.
+func TestRunEXT4MountFailureOnAdoptionAttemptReformatsWhenDestructive(t *testing.T) {
+	f := &fakeDeps{
+		contents:  diskfmt.Contents{FS: diskfmt.EXT4, Label: "APPDATA"},
+		mountErrs: []error{errors.New("mount: wrong fs type, bad option, bad superblock")},
+	}
+
+	if _, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", true); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -673,6 +700,9 @@ func TestRunEXT4MountFailureOnAdoptionAttemptReformats(t *testing.T) {
 	}
 	if f.didUnmount {
 		t.Error("unmounted a device that was never successfully mounted")
+	}
+	if !f.formatted {
+		t.Error("did not reformat despite destructive=true")
 	}
 }
 

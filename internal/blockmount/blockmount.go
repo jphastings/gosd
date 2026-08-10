@@ -308,9 +308,14 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 // ("formatting"/"reformatting"), exactly as Run computed them — but for
 // ext4, format=false is only a tentative "this looks adoptable", confirmed
 // or overturned below by the marker check. destructive is threaded through
-// unchanged from Run: it governs the RootHasOtherContent fallback below the
-// same way it governs every other "something is already here" decision in
-// this package.
+// unchanged from Run: it governs the RootHasOtherContent fallback, and the
+// mount-failure fallback right after it, the same way it governs every other
+// "something is already here" decision in this package: when what is
+// already on the device cannot be read well enough to tell debris from real
+// data, GoSD refuses rather than guesses. Only a provably-empty device (Blank
+// content, which never reaches this function with format=false — see Run's
+// switch) or provably-never-handed-to-an-app debris (the no-marker,
+// empty-root case below) is ever touched without destructive=true.
 func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, format bool, action string, destructive bool) (string, error) {
 	if !format {
 		// The label and filesystem both already match — mount it and look
@@ -357,21 +362,20 @@ func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, 
 			if err := s.Deps.Unmount(mountpoint); err != nil {
 				return "", fmt.Errorf("unmounting the unestablished %s at %s (to reformat it) failed: %w", s.Noun, mountpoint, err)
 			}
+		} else if !destructive {
+			// Unlike the checks above, a mount failure leaves nothing
+			// readable at all — there is no root directory to apply the
+			// RootHasOtherContent second opinion to, and nothing was
+			// mounted, so there is nothing to unmount either. The label and
+			// filesystem still match what was asked for, which is exactly
+			// what a volume holding real data that has become unmountable
+			// through corruption or an unrelated hardware fault would also
+			// look like from here — indistinguishable from debris without
+			// being able to read it. Refuse rather than guess.
+			return "", fmt.Errorf("the %s at %s already carries a %s volume labelled %q, but it could not be mounted (%v); it may hold real data that cannot be read to check, so %w it without permission — pass destructive=true to reformat it anyway", s.Noun, device, fs, label, mountErr, ErrRefusedFormat)
+		} else {
+			action = "reformatting"
 		}
-		// A mount failure here is treated the same way as a clean mount
-		// with no marker and an empty root: a genuinely established ext4
-		// volume — matched label, matched filesystem, proven finished —
-		// always mounts, so a failure at this point is itself evidence of
-		// debris, just discovered one step earlier (before the root
-		// directory could even be read) than the checks above. There is no
-		// way to apply the RootHasOtherContent second opinion here — an
-		// unmountable filesystem's root directory cannot be read at all —
-		// so this remains an unconditional reformat (action stays
-		// "formatting", its value on entry to this block, unless the check
-		// above already promoted it to "reformatting"); see the bean's
-		// adversarial-review notes for why that residual gap (real,
-		// established data that has separately become unmountable through
-		// some unrelated corruption) is accepted rather than fixed here.
 	}
 
 	// See Run's identical re-check for why this happens again immediately
