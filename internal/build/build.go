@@ -21,8 +21,9 @@ const targetGOOS = "linux"
 // CrossCompile builds the Go main package at pkgPath into a static binary
 // for arch at outputPath, by shelling out to the host Go toolchain. tags, if
 // non-empty, is passed to `go build` as `-tags <tags>` - gosd uses this to
-// pass a board's boards.BuildTag so a developer's app can gate board-
-// specific source with `//go:build gosd_<id>`; an empty tags builds with no
+// pass boards.BuildTags so a developer's app can gate source on being
+// compiled by gosd at all (`//go:build gosd`) and on the board it's being
+// compiled for (`//go:build gosd_<id>`); an empty tags builds with no
 // extra build tags at all. It fails with an actionable error if pkgPath is
 // not a main package, or if the build itself fails; in the latter case the
 // compiler's stderr is included verbatim.

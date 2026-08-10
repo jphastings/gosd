@@ -22,8 +22,9 @@ type archBinaries struct {
 
 // compileForBoards cross-compiles, for every board in selected: the app at
 // pkgPath once per board (each pass tagged with that board's
-// boards.BuildTag, so `//go:build gosd_<id>`-gated app source compiles for
-// the right board - see gosd-1937), gosd-init once per distinct arch among
+// boards.BuildTags, so `//go:build gosd`- and `//go:build gosd_<id>`-gated
+// app source compiles for the right board - see gosd-1937 and gosd-cm4b),
+// gosd-init once per distinct arch among
 // selected (keyed by boards.Arch.Key(), unchanged and untagged - see
 // gosd-2j6z), and - only when needsTsfunnel is true (--ingress
 // tailscale-funnel was selected, bean gosd-kzd3) - the gosd-tsfunnel shim,
@@ -54,7 +55,7 @@ func compileForBoards(
 
 	for _, b := range selected {
 		appBinary := filepath.Join(tempDir, "app-"+b.Name())
-		if err := compileApp(pkgPath, appBinary, boards.BuildTag(b), b.Arch()); err != nil {
+		if err := compileApp(pkgPath, appBinary, boards.BuildTags(b), b.Arch()); err != nil {
 			return nil, fmt.Errorf("cross-compiling %s for %s failed: %w", pkgPath, b.Name(), err)
 		}
 

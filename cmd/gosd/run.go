@@ -157,7 +157,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}()
 
 	appBinary := filepath.Join(workDir, appName)
-	if err := build.CrossCompile(pkgPath, appBinary, boards.BuildTag(b), b.Arch()); err != nil {
+	if err := build.CrossCompile(pkgPath, appBinary, boards.BuildTags(b), b.Arch()); err != nil {
 		return fmt.Errorf("cross-compiling %s failed: %w", pkgPath, err)
 	}
 

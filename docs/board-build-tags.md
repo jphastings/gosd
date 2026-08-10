@@ -1,14 +1,40 @@
-# Per-board build tags: gating app source per board
+# Build tags: gating app source on gosd, and per board
 
-`gosd build` compiles your app once per selected board, passing a real Go
-build tag identifying that board. Keep board-specific source (different pin
-numbers, an optional peripheral, a board-only feature) in your own app and
-the right file is selected automatically — no gosd-specific SDK or import
+`gosd build` compiles your app once per selected board, passing two real Go
+build tags: `gosd`, the same for every build gosd performs, and one
+identifying the board. Keep source that only makes sense on a device (or only
+on one board — different pin numbers, an optional peripheral) in your own app
+and the right file is selected automatically — no gosd-specific SDK or import
 required.
 
-## The tag
+## The `gosd` tag
 
-For board id `<id>`, the tag is `gosd_<id>` with hyphens replaced by
+Every app compile `gosd build` and `gosd run` perform sets the bare `gosd`
+tag. It means "this source is being compiled into an image", so an app can
+behave differently on a device without maintaining a separate main package:
+
+```go
+//go:build gosd
+
+package main
+
+// Real hardware: /data is a mounted partition, GPIO exists, exit means reboot.
+```
+
+```go
+//go:build !gosd
+
+package main
+
+// Desktop/CI: a temp dir, fake peripherals, exit means exit.
+```
+
+Nothing but gosd ever sets it, so plain `go build ./...`, `go test ./...`,
+your editor and CI all see the `!gosd` side.
+
+## The per-board tag
+
+For board id `<id>`, the second tag is `gosd_<id>` with hyphens replaced by
 underscores:
 
 | Board ID | Build tag |
@@ -31,37 +57,46 @@ package main
 // pi-zero-2w-specific code here.
 ```
 
-`gosd build` passes this tag to the app compile only — never to gosd-init,
-and never as a filename convention gosd itself interprets (see below).
+Both tags go to the app compile only — never to gosd-init, and neither is a
+filename convention gosd itself interprets (see below).
 
 ## The fallback pattern
 
-`gosd build` is the only thing that ever passes a `gosd_*` tag, so plain `go
-build ./...` and `go test ./...` — CI, your editor, anyone building your app
-without gosd — see none of them set. A file gated to one board is invisible
-in that build, so any symbol it defines needs a fallback, or a plain build
-fails outright.
+A file gated to one board is invisible in a plain build, so any symbol it
+defines needs a fallback, or `go build ./...` fails outright.
 
-Two ways to provide one:
+Three ways to provide one:
 
-1. **A default file with a negated constraint**, covering the case where no
-   board-specific tag is set:
+1. **Negate the `gosd` tag.** One constraint covers every board at once, and
+   keeps working as boards are added:
 
    ```go
-   //go:build !gosd_pi_zero_2w && !gosd_nanopi_zero2
+   //go:build !gosd
 
    package main
 
    // Default/fallback implementation.
    ```
 
-2. **The board-gated files are the sole definers of the symbol**, and
-   something else (a different, always-compiled file) only ever calls it
-   through an interface or function variable set from an `init()` in each
-   variant — so there's nothing left for a plain build to fail to resolve.
+2. **A default file with negated board constraints**, when the fallback is
+   only for *some* boards and other boards should still share it:
+
+   ```go
+   //go:build !gosd_pi_zero_2w && !gosd_nanopi_zero2
+
+   package main
+   ```
+
+   This one needs editing whenever you add a board to the set — prefer
+   `!gosd` where it does the job.
+
+3. **The gated files are the sole definers of the symbol**, and something
+   else (a different, always-compiled file) only ever calls it through an
+   interface or function variable set from an `init()` in each variant — so
+   there's nothing left for a plain build to fail to resolve.
 
 Either way, the goal is the same: a plain `go build ./...` must stay clean
-with no board tag set.
+with no gosd tag set.
 
 ## The `_<board>.go` filename suffix is cosmetic only
 
@@ -70,5 +105,5 @@ filename-based build constraints only recognize known `GOOS`/`GOARCH`
 suffixes (`_linux.go`, `_arm64.go`, ...), and a board id like `pi-zero-2w` is
 neither — so a file named that way compiles into **every** build. Use a
 `_<board>.go`-style suffix for readability if you like, but it's just a
-naming convention: the `//go:build gosd_<id>` line is what actually gates
-the file, and it must always be present explicitly.
+naming convention: the `//go:build` line is what actually gates the file, and
+it must always be present explicitly.

@@ -95,9 +95,12 @@ say so in the bean rather than silently diverging.
   each other; `--board` (repeatable) restricts.
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
   FAT partition labels, **per-app**: `<prefix>-boot` / `<prefix>-data`;
-  boot-partition config file `gosd.toml`; app build tags `gosd_<board-id>`
-  (underscored, e.g. `gosd_pi_zero_2w`), passed to the app compile only (see
-  `boards.BuildTag` and `docs/board-build-tags.md`). **The label prefix**
+  boot-partition config file `gosd.toml`; app build tags — the bare `gosd`
+  (set for every image gosd builds, so an app can gate device-only source
+  with `//go:build gosd` and fall back with `//go:build !gosd`, bean
+  `gosd-cm4b`) plus `gosd_<board-id>` (underscored, e.g.
+  `gosd_pi_zero_2w`), both passed to the app compile only (see
+  `boards.BuildTags` and `docs/board-build-tags.md`). **The label prefix**
   defaults to the sanitized app name truncated to 6 bytes, and is
   overridable via `gosd build --label-prefix` / `gosd run --label-prefix`
   (decided 2026-08-09, bean `gosd-lo7k`) — a clean break from the old fixed

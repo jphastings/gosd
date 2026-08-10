@@ -72,10 +72,10 @@ the people you send them to never need a terminal.
    > CA bundle at the standard system path, so it just works — see
    > [`docs/runtime.md`](docs/runtime.md#https-calls-and-the-ca-bundle).
 
-   Need different source per board (different pins, an optional
-   peripheral)? `gosd build` passes each selected board's own Go build tag
-   to your app's compile — see
-   [`docs/board-build-tags.md`](docs/board-build-tags.md).
+   Need different source on a device, or per board (different pins, an
+   optional peripheral)? `gosd build` passes your app's compile a `gosd`
+   build tag plus each selected board's own — see
+   [gating app source with build tags](docs/board-build-tags.md).
 
 3. Build an image for your board:
 
