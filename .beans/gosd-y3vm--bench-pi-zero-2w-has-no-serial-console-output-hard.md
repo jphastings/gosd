@@ -5,7 +5,7 @@ status: todo
 type: bug
 priority: normal
 created_at: 2026-08-10T10:14:46Z
-updated_at: 2026-08-10T11:05:26Z
+updated_at: 2026-08-10T11:20:59Z
 ---
 
 The bench Pi Zero 2W boots and runs perfectly but emits ZERO bytes on the serial console (2026-08-09/10). This blocked, and then rerouted, a whole evening of ext4 bench work — recording it so the ruled-out ground isn't re-walked.
@@ -43,3 +43,18 @@ Incidental but worth recording: the third board reports `bcm2708.boardrev=0x9000
 Two leads chased and dismissed: `base_baud = 0` on the PL011 looks alarming but is normal on Pi (it appears in ordinary Pi 4 dmesg output); and a core_freq/baud mismatch would produce GARBAGE, not silence — zero bytes means no edges on the wire at all, which no baud error can cause.
 
 Next step unchanged and now the only step: the loopback test.
+
+
+
+## Loopback PASSED (2026-08-10) — adapter cleared, and what that does NOT rule out
+
+With the adapter's TXD jumpered to its own RXD, the probe round-tripped all 20 bytes: `PASS - adapter echoed 20 bytes: b'GOSD-LOOPBACK-PROBE\n'`. So the CP2102N, its macOS driver, the USB path and the host-side capture method are all healthy. Combined with the stock-Raspberry-Pi-OS control above, both ends are now positively proven working and the fault is strictly the link between the Pi's pin 8 and the adapter's RX input.
+
+**Important logical caveat: a loopback CANNOT detect a silkscreen inversion.** Jumpering the pin labelled TXD to the pin labelled RXD closes the loop whether or not those labels are correct — if the labels were swapped, the jumper still joins the real TX to the real RX and still passes. So the hypothesis that the adapter's "RXD" pin is actually its output remains fully alive, and would produce exactly the silence seen: the adapter's output wired to the Pi's output, two drivers fighting, nothing decoded at either end.
+
+Remaining candidates, in the order worth testing:
+1. **Adapter silkscreen inversion** — move the wire that currently sits on Pi pin 8 to the OTHER adapter pin. 30 seconds, and the loopback did not exclude it.
+2. **A broken or intermittent jumper wire** — invisible, extremely common, and the one component that moves between boards (which is why the adapter working on other boards doesn't clear the wires). Swap the wires outright even if they look fine.
+3. **Contact at the Pi header** — solder joint or seating on that particular board; less likely now that three boards have behaved identically, unless the wires were the constant.
+
+Useful follow-up if 1 and 2 both fail: reverse the test direction. The adapter's TX is now proven good, so wire it to the Pi's RX (GPIO15, pin 10) and have an app read /dev/ttyS0 and record what arrives into a FAT32 /data. If the Pi receives, that wire and both pin contacts are good in that direction and suspicion narrows hard onto the Pi's TX pin itself.
