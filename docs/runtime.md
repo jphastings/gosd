@@ -375,7 +375,7 @@ from then on. Points specific to expand:
 - **An established data partition is never "repaired" away.** If a later
   boot finds the partition entry in place but the data partition's
   filesystem gone (a failing card, say), the device writes what happened to
-  `boot-failure.log` at the root of the boot partition — readable
+  `LAST_FATAL_ERROR.md` at the root of the boot partition — readable
   on any computer the card is plugged into — and **halts**, so whatever
   data survives can still be salvaged. To recover: save what you need
   from the partition, then either reformat it with the app's data label in
@@ -384,8 +384,8 @@ from then on. Points specific to expand:
   That second option is specific to `--data-size=expand`, the only mode
   where the device creates the partition itself; a fixed-size image ships
   partition 2 in the image, so there the equivalent is deleting partition 2
-  and flashing the image again. The `boot-failure.log` the device writes
-  says which of the two applies to it.
+  and flashing the image again. The report the device writes says which of
+  the two applies to it — see [the crash report guide](crash-reports.md).
 - **A card with no meaningful room** (less than ~64MiB beyond the image
   — including `gosd run`'s qemu disk, which is exactly image-sized) gets
   no partition, and `/data` behaves like a `--data-size=0` image:

@@ -10,10 +10,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
+	"github.com/jphastings/gosd/internal/faultreport"
 )
 
 // NewPlatform wires up the real, Linux-syscall-backed implementations of
@@ -27,8 +29,11 @@ func NewPlatform() *Platform {
 		Rebooter:              linuxRebooter{},
 		OpenConsole:           openConsole,
 		IgnoreShutdownSignals: ignoreShutdownSignals,
-		WriteBootFailure:      writeBootFailure,
+		WriteFatalReport:      writeFatalReport,
+		RemoveBootFiles:       removeBootFiles,
 		WriteBootFile:         writeBootFile,
+		DeviceModel:           deviceModel,
+		Uptime:                uptime,
 	}
 }
 
@@ -66,23 +71,29 @@ func (linuxRebooter) Halt() {
 	_ = unix.Reboot(int(int32(cmd)))
 }
 
-// writeBootFailure records msg as boot-failure.log at the root of the
+// writeFatalReport records body as LAST_FATAL_ERROR.md at the root of the
 // (normally read-only) boot partition mounted at target: remount
 // read-write, overwrite the file, sync it, and remount read-only again.
-// Overwriting is deliberate — the file always describes the latest run's
-// fatal issue, which is the one whoever collects the device needs. The
-// restoring remount is best-effort: every caller halts the machine next.
-func writeBootFailure(target, msg string) error {
+// Overwriting is deliberate — the file always describes the latest fatal
+// issue, which is the one whoever collects the device needs. The restoring
+// remount is best-effort: every caller halts or reboots the machine next.
+//
+// Unlike every other on-disk commit in this codebase there is no
+// write → sync → marker → sync record here, and that is deliberate: nothing
+// ever adopts this file as state. It is read by a human, who can see for
+// themselves that it stops mid-sentence — whereas a marker would need a
+// second write in the very window the whole design is trying to keep short.
+func writeFatalReport(target, body string) error {
 	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_NOSUID, ""); err != nil {
 		return fmt.Errorf("remounting %s read-write: %w", target, err)
 	}
 	defer func() { _ = unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, "") }()
 
-	f, err := os.OpenFile(filepath.Join(target, "boot-failure.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(filepath.Join(target, faultreport.FileName), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(msg); err != nil {
+	if _, err := f.WriteString(body); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -91,6 +102,81 @@ func writeBootFailure(target, msg string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// removeBootFiles deletes names from the root of the boot partition mounted
+// at target, briefly remounting it read-write. Unlike writeFatalReport this
+// runs on a device that carries on booting — it's how a recovered device
+// stops looking broken — so, like writeBootFile, failing to restore the
+// read-only mount is reported rather than swallowed: leaving the boot
+// partition writable under a live app is exactly the exposure the read-only
+// mount exists to prevent.
+//
+// A name that isn't there is not an error: the caller already checked, and
+// racing itself is not worth failing a cleanup over.
+func removeBootFiles(target string, names []string) error {
+	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_NOSUID, ""); err != nil {
+		return fmt.Errorf("remounting %s read-write: %w", target, err)
+	}
+
+	var removeErr error
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(target, name)); err != nil && !os.IsNotExist(err) && removeErr == nil {
+			removeErr = fmt.Errorf("deleting %s: %w", name, err)
+		}
+	}
+	syncFS(target)
+
+	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, ""); err != nil {
+		if removeErr != nil {
+			return fmt.Errorf("%w (and remounting %s read-only afterwards also failed: %v)", removeErr, target, err)
+		}
+		return fmt.Errorf("remounting %s read-only after deleting %v: %w", target, names, err)
+	}
+	return removeErr
+}
+
+// syncFS flushes the boot partition before the read-only remount, so a
+// deletion reaches the card rather than merely being promised. The kernel
+// syncs a filesystem on its way to read-only anyway; this doesn't lean on
+// that, and it's best-effort — there is nothing useful to do about a
+// mountpoint that won't open.
+func syncFS(target string) {
+	dir, err := os.Open(target)
+	if err != nil {
+		return
+	}
+	_ = unix.Syncfs(int(dir.Fd()))
+	_ = dir.Close()
+}
+
+// deviceModelPath is the hardware's own self-description, written by the
+// firmware from the DTB. /proc/device-tree/model is the same file by another
+// name; this one is used because gosd-init mounts /sys itself.
+const deviceModelPath = "/sys/firmware/devicetree/base/model"
+
+// deviceModel returns the board's device-tree model string, or "" when
+// there's no device tree (a kernel built without CONFIG_OF, an
+// x86 host) or it can't be read. Never an error: a crash report with an
+// unknown device name is worth far more than no crash report.
+func deviceModel() string {
+	data, err := os.ReadFile(deviceModelPath)
+	if err != nil {
+		return ""
+	}
+	return parseDeviceModel(data)
+}
+
+// uptime reports how long the machine has been up, from /proc/uptime — the
+// kernel's own monotonic count, which is why the report can state it as fact
+// while refusing to state the wall clock. Reports false when /proc isn't
+// mounted or the file doesn't parse.
+func uptime() (time.Duration, bool) {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0, false
+	}
+	return parseUptime(string(data))
 }
 
 // writeBootFile durably writes name at the root of the read-only boot

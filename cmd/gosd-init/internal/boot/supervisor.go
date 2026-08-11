@@ -15,11 +15,22 @@ type Supervisor struct {
 	Sleep func(time.Duration)
 	// Now returns the current time, used to measure how long /app ran.
 	Now func() time.Time
+	// After is the stable-run timer (see OnStableRun), injected so tests
+	// don't wait out StableAfter in real time. Defaults to time.After.
+	After func(time.Duration) <-chan time.Time
 	// Backoff computes the delay before each restart attempt.
 	Backoff *Backoff
 	// StableAfter is how long /app must run before its next exit resets
 	// Backoff back to its base delay.
 	StableAfter time.Duration
+	// OnStableRun, if non-nil, is called once /app has been running
+	// continuously for StableAfter — from a timer, while it is still up,
+	// not when it eventually exits. That distinction is the whole point:
+	// the healthy case is an app that never exits at all, and it is
+	// exactly the device that must stop looking broken (see
+	// fatalReporter.markStableRun). It runs on its own goroutine, so it
+	// must be safe to call concurrently with the app exiting.
+	OnStableRun func()
 	// Log records what the supervisor is doing.
 	Log func(format string, args ...any)
 }
@@ -64,7 +75,9 @@ func (s *Supervisor) runOnce() {
 	}
 	s.Log("started /app (pid %d)", pid)
 
+	exited := s.watchForStableRun()
 	status, err := s.Wait(pid)
+	close(exited)
 	ran := s.Now().Sub(startedAt)
 	if err != nil {
 		s.Log("supervising /app (pid %d) failed: %v", pid, err)
@@ -75,4 +88,26 @@ func (s *Supervisor) runOnce() {
 	if ran >= s.StableAfter {
 		s.Backoff.Reset()
 	}
+}
+
+// watchForStableRun starts the timer behind OnStableRun and returns the
+// channel the caller closes when /app exits, whichever happens first.
+func (s *Supervisor) watchForStableRun() chan struct{} {
+	exited := make(chan struct{})
+	if s.OnStableRun == nil {
+		return exited
+	}
+
+	after := s.After
+	if after == nil {
+		after = time.After
+	}
+	go func() {
+		select {
+		case <-exited:
+		case <-after(s.StableAfter):
+			s.OnStableRun()
+		}
+	}()
+	return exited
 }

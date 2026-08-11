@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
@@ -57,6 +59,11 @@ const (
 	// dataMarkerPath is an empty file created on the data partition the
 	// first time it's mounted, marking it as initialized by gosd.
 	dataMarkerPath = dataTarget + "/.gosd-data"
+
+	// bootCountPath is the durable boot counter a crash report's "boot:"
+	// header comes from — see countBoot for why it lives on the data
+	// partition rather than the boot one.
+	bootCountPath = dataTarget + "/.gosd-boot-count"
 
 	// bootMountTimeout bounds how long gosd-init retries mounting the
 	// boot partition: the MMC controller may still be probing when
@@ -130,11 +137,24 @@ func main() {
 		WriteHosts: func(hostname string) error {
 			return hostsfile.Write(hostsfile.Path, hostname)
 		},
-		WriteBootFailure: func(msg string) error {
-			return platform.WriteBootFailure(bootTarget, msg)
+		FaultReport: boot.FaultReportDeps{
+			Write: func(body string) error {
+				return platform.WriteFatalReport(bootTarget, body)
+			},
+			Exists: func(name string) bool {
+				return pathExists(filepath.Join(bootTarget, name))
+			},
+			Remove: func(names []string) error {
+				return platform.RemoveBootFiles(bootTarget, names)
+			},
+			DeviceModel: platform.DeviceModel,
+			Uptime:      platform.Uptime,
+			ClockSynced: clockSynced,
+			CountBoot:   countBoot,
 		},
 		Sleep: time.Sleep,
 		Now:   time.Now,
+		After: time.After,
 		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS
@@ -349,6 +369,47 @@ func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bo
 		DataLabel:       dataLabel,
 		Expand:          expand,
 	})
+}
+
+// clockSynced reports whether time has been set from a time server this
+// boot, which is what decides whether a crash report may print a timestamp
+// at all: no board in the fleet has a working RTC, so before the first sync
+// the clock reads ~1970 (see faultreport.Context.ClockSynced). A failed
+// check reads as unsynced — the report says "unknown" rather than risking a
+// confidently wrong date.
+func clockSynced() bool {
+	synced, err := timeSyncedMarkerExists()
+	return err == nil && synced
+}
+
+// countBoot records this boot in the durable counter on the data partition
+// and returns its number, so a crash report can answer "did this device die
+// instantly or after four days?" even when the clock can't.
+//
+// The counter lives on /data rather than the boot partition deliberately:
+// counting on the boot partition would mean remounting it read-write on
+// every single boot, and that remount is the one window in which a power cut
+// can damage the boot FAT — the very thing the crash report's write-rate
+// rule exists to keep rare. A read-only or absent /data (see
+// boot.MountDataReadOnlyFallback) therefore reports no count at all, which
+// the report renders as "unknown".
+//
+// The write is provsnapshot.WriteFileDurably's write-to-temp-then-rename, so
+// a power cut leaves either the old count or the new one, never a truncated
+// file. A file that doesn't parse is treated as no counter at all and
+// replaced, rather than wedging every future boot on one bad byte.
+func countBoot() (int, bool) {
+	count := 1
+	if data, err := os.ReadFile(bootCountPath); err == nil {
+		if previous, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && previous > 0 {
+			count = previous + 1
+		}
+	}
+
+	if err := provsnapshot.WriteFileDurably(bootCountPath, []byte(strconv.Itoa(count)+"\n")); err != nil {
+		return 0, false
+	}
+	return count, true
 }
 
 // ensureDataMarker creates the .gosd-data marker file on the mounted data

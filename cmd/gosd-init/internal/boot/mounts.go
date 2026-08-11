@@ -76,7 +76,7 @@ const bootSentinelFile = "gosd.toml"
 // option — deliberately out of gosd-9m1k's data-flush scope, and unaffected
 // by --data-flush/gosd.toml's data_flush either way: it's read-only, so
 // close(2)-triggered writeback is moot, and its own write traffic (the
-// provisioning-snapshot restore, boot-failure.log) is already bracketed
+// provisioning-snapshot restore, LAST_FATAL_ERROR.md) is already bracketed
 // with its own syncs where it matters.
 //
 // A candidate that mounts as valid FAT is not accepted on that basis alone:
