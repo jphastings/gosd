@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T15:15:58Z
+updated_at: 2026-08-11T15:18:03Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -171,3 +171,75 @@ read. Since a registered secret is a deliberate declaration, the wiring
 PR's job is to make a too-short one visible where the developer actually
 looks: see the `RegisterSecretString` todo below requiring its own
 docstring to state this limitation.
+
+
+## Summary of Changes (PR #260)
+
+Landed the wiring PR #256 deliberately deferred: [jphastings/gosd#260](https://github.com/jphastings/gosd/pull/260).
+
+- **Env sweep**: `sequence.go`'s `envRedactionRules` turns `mergeUserEnv`'s
+  output (the app's own env, GOSD_* already excluded) into
+  `redact.Rule{Needle: value, Replacement: "{$KEY}"}` pairs, handed to the
+  `fatalReporter` via a new `setSecrets` method — a setter rather than a
+  constructor argument, because the reporter is built (right after the boot
+  partition mounts) well before the app env is assembled from
+  gosd.toml/cloud-init/config.json. Mirrors `setBootCount`'s existing
+  pattern for the identical reason.
+- **`/run` registration channel, reader side**: new package
+  `internal/secretreg` defines the wire format (`/run/gosd/secrets.json`,
+  JSON array of `{secret, replacement}`, mode 0600, write-`.tmp`-then-rename)
+  and implements `Parse`, which gosd-init calls fresh on every report
+  (`FaultReportDeps.RegisteredSecrets`) so a registration made moments
+  before a crash still counts. An empty/oversized/unparseable file is
+  dropped wholesale (gosd-6cf2 self-heal lesson); a file that parses but
+  names more than `MaxRegistrations` (64) entries is truncated to the first
+  64 rather than dropped outright (see the adversarial-pass note below for
+  why that changed from my first pass).
+- Both feed `faultreport.Context.Secrets`, which `Render` (gosd-pun9)
+  already applies to the whole rendered body.
+- Todos checked off: the minimum-needle-length mechanism is now actually
+  exercised in production (the skip-logging line in `report.go`'s `record`
+  was previously dead code, since nothing populated `Context.Secrets`);
+  "redact the whole rendered body" and "wire into the renderer" are both
+  satisfied by `gosd-pun9`'s already-shipped `Render` plus this PR's
+  population of `Context.Secrets`; and the negative-claim tests exist,
+  including one that goes through the real `Run()` production path
+  (`TestRunRedactsARegisteredSecretFromTheDataCorruptionReport`), not just
+  the reporter in isolation.
+- The "RegisterSecretString" todo section is deliberately left unchecked:
+  this PR is reader-side only, per its own scoping. **Clarifying the
+  cross-bean discrepancy this surfaced:** `gosd-aa1p`'s own body currently
+  says `RegisterSecretString` is "specified and implemented in gosd-m6py" —
+  that is no longer accurate. This PR only defines the registration file's
+  format and implements gosd-init's read of it; the `RegisterSecretString`
+  Go function itself (the writer, living in the future public `fault`
+  package) remains `gosd-aa1p`'s job.
+
+### Adversarial pass
+
+- Checked the empty-needle case: a registered/env secret of `""` cannot
+  make `strings.ReplaceAll` insert a replacement between every byte,
+  because `redact.MinNeedleLength` (8) rejects any needle that short before
+  `Redact` calls `ReplaceAll`, uniformly across both sources.
+- The registration file's size bound is enforced twice (a `Stat`-based
+  pre-check in `platform_linux.go`, and independently inside
+  `secretreg.Parse` itself), so a TOCTOU race between the two can't let an
+  oversized file slip through unchecked.
+- Reconsidered and changed the over-quota behavior from "drop the whole
+  registration file" to "truncate to the first `MaxRegistrations` entries":
+  the former turned a resource bound into a total redaction outage for a
+  file that was otherwise fully trustworthy data, which is a worse outcome
+  than losing only the excess entries. The empty/oversized/malformed cases
+  still drop wholesale, since those genuinely can't be safely subsetted.
+- One documented, low-risk gap: `haltForDataCorruption` is the only
+  `report.record()` call site that runs before `setSecrets` (it fires
+  before `mergeUserEnv`, inside `Run()`). Its `Detail` is
+  `dataexpand.ErrDataCorrupt`'s own filesystem-state error, never
+  app-controlled text, so no app secret can appear there regardless. Every
+  future `report.record()` caller (`gosd-s9uq`'s crash tail, still blocked
+  on this bean) runs from within/after app supervision — after
+  `mergeUserEnv` — so the gap doesn't extend to them.
+- Verified over-redaction doesn't wreck readability: ordinary short config
+  (`DEBUG=1`, `PORT=80`) survives untouched in the same report where a
+  genuinely long secret gets redacted
+  (`TestFatalReporterLeavesOrdinaryShortValuesReadable`).
