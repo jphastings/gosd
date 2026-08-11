@@ -25,6 +25,8 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/faultdrop"
+	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -147,10 +149,16 @@ func main() {
 			Remove: func(names []string) error {
 				return platform.RemoveBootFiles(bootTarget, names)
 			},
-			DeviceModel:       platform.DeviceModel,
-			Uptime:            platform.Uptime,
-			ClockSynced:       clockSynced,
-			CountBoot:         countBoot,
+			DeviceModel: platform.DeviceModel,
+			Uptime:      platform.Uptime,
+			ClockSynced: clockSynced,
+			CountBoot:   countBoot,
+			// AppFault consumes the drop file the public fault package
+			// leaves in /run, so a fault the app declared for itself
+			// reaches the card exactly once — see internal/faultdrop.
+			// Plain file operations, not platform ones: /run is an
+			// ordinary tmpfs by the time any app has run.
+			AppFault:          func() (faultreport.Report, bool) { return faultdrop.Take(faultdrop.Path) },
 			RegisteredSecrets: platform.RegisteredSecrets,
 		},
 		Sleep: time.Sleep,

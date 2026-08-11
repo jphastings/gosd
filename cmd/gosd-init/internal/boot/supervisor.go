@@ -35,11 +35,15 @@ type Supervisor struct {
 	// must be safe to call concurrently with the app exiting.
 	OnStableRun func()
 	// OnExit, if non-nil, is called after every /app exit that Wait
-	// reported without an error, with how it died and how long it ran.
-	// Supervisor itself stays policy-free about what that means — it
-	// always restarts /app regardless — so sequence.go is what decides
-	// whether a given exit counts as a crash worth recording (gosd-s9uq).
-	OnExit func(status ExitStatus, ran time.Duration)
+	// reported without an error, with how it died and how long it ran,
+	// and decides whether supervision goes on: returning true ends it for
+	// good, on the supervisor's own goroutine, before any backoff.
+	// Supervisor itself stays policy-free about what an exit means —
+	// sequence.go is what decides whether one counts as a crash worth
+	// recording (gosd-s9uq), and whether it was a fault the app declared
+	// for itself, which halts the device rather than restarting it into a
+	// failure the app has already said no restart can fix (gosd-aa1p).
+	OnExit func(status ExitStatus, ran time.Duration) (stop bool)
 	// Log records what the supervisor is doing.
 	Log func(format string, args ...any)
 }
@@ -53,7 +57,9 @@ func (s *Supervisor) Run(stop <-chan struct{}) {
 			return
 		}
 
-		s.runOnce()
+		if s.runOnce() {
+			return
+		}
 
 		if stopped(stop) {
 			return
@@ -73,14 +79,15 @@ func stopped(stop <-chan struct{}) bool {
 }
 
 // runOnce starts /app, waits for it to exit, and resets the backoff if it
-// ran long enough to be considered stable.
-func (s *Supervisor) runOnce() {
+// ran long enough to be considered stable. It reports whether supervision
+// should end rather than restart, which only OnExit ever asks for.
+func (s *Supervisor) runOnce() bool {
 	startedAt := s.Now()
 
 	pid, err := s.Start()
 	if err != nil {
 		s.Log("starting /app failed: %v", err)
-		return
+		return false
 	}
 	s.Log("started /app (pid %d)", pid)
 
@@ -88,18 +95,21 @@ func (s *Supervisor) runOnce() {
 	status, err := s.Wait(pid)
 	close(exited)
 	ran := s.Now().Sub(startedAt)
+	stop := false
 	if err != nil {
 		s.Log("supervising /app (pid %d) failed: %v", pid, err)
 	} else {
 		s.Log("/app (pid %d) exited with status %d after %s", pid, status.ExitCode, ran)
 		if s.OnExit != nil {
-			s.OnExit(status, ran)
+			stop = s.OnExit(status, ran)
 		}
 	}
 
 	if ran >= s.StableAfter {
 		s.Backoff.Reset()
 	}
+
+	return stop
 }
 
 // watchForStableRun starts the timer behind OnStableRun and returns the

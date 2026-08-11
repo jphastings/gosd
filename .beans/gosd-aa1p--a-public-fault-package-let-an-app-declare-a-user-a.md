@@ -1,11 +1,11 @@
 ---
 # gosd-aa1p
 title: 'A public fault package: let an app declare a user-actionable fatal error'
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:29Z
-updated_at: 2026-08-11T10:25:25Z
+updated_at: 2026-08-11T22:56:29Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -64,36 +64,44 @@ func RegisterSecretString(secret, replacement string)
 
 ## Todos
 
-- [ ] Settle the package name. `fault` reads well at the call site
+- [x] Settle the package name. `fault` reads well at the call site
       (`fault.Fatal(...)`) and doesn't collide with stdlib `log`; alternatives
       considered: `crashreport`, `diag`, `report`
-- [ ] `Fatal` is the whole reporting API — no non-exiting `Record(r)`: a
+- [x] `Fatal` is the whole reporting API — no non-exiting `Record(r)`: a
       "fatal error" the app survives is a contradiction, and with halt
       semantics locked there is nothing for it to return to
-- [ ] `RegisterSecretString(secret, replacement string)` is exported from
-      this package but specified and implemented in gosd-m6py, which blocks
-      this bean. Keep the two in one package so an app has a single import
-- [ ] Handoff format and path: `/run/gosd/fault.json`, write `.tmp` → rename.
+- [x] `RegisterSecretString(secret, replacement string)` is exported AND
+      implemented here. (Corrected 2026-08-11: this line used to say gosd-m6py
+      implemented it. PR #260 built only the READER — `internal/secretreg`'s
+      file format and `Parse` — so the writer, the quota policy and the
+      write-through-on-call behaviour are this bean's work. gosd-m6py gained
+      `secretreg.Entry`/`Encode` here so both ends share one definition of
+      the file's shape.) Kept in one package so an app has a single import
+- [x] Handoff format and path: `/run/gosd/fault.json`, write `.tmp` → rename.
       gosd-init reads and unlinks it in `Supervisor.runOnce` after the app
       exits. An unparseable or empty drop file is dropped, not trusted (the
       self-heal lesson from gosd-6cf2)
-- [ ] Precedence when both a drop file and a crash tail exist for the same
+- [x] Precedence when both a drop file and a crash tail exist for the same
       exit: the app's own explicit report wins the human sections; the tail
       still supplies "Technical detail" (a `fault.Fatal` call and a panic in
       another goroutine can genuinely coincide)
-- [ ] Off-device degradation: on macOS, or under `go test`, or anywhere
+- [x] Off-device degradation: on macOS, or under `go test`, or anywhere
       `/run/gosd` isn't there, `Fatal` renders the identical Markdown to
       stderr and exits — so a developer sees exactly what their user will,
       without flashing a card. This is the package's main development-time
       value and should be tested as behaviour, not an afterthought
-- [ ] `platform_linux.go` / `platform_other.go` split per the convention, if
-      it ends up needing any syscall at all
-- [ ] The shared formatter lives in an internal package that both this and
+- [x] `platform_linux.go` / `platform_other.go` split per the convention, if
+      it ends up needing any syscall at all — it needed none (MkdirAll,
+      WriteFile, Rename are portable), so the split is on the `gosd` BUILD
+      TAG instead (`device_gosd.go` / `device_other.go`), which is the
+      accurate axis: /run is writable on any Linux machine running as root,
+      and a probe would make a CI container look exactly like a board
+- [x] The shared formatter lives in an internal package that both this and
       gosd-init import, so there is exactly one renderer (see gosd-pun9)
-- [ ] Exported-API docstrings, a docs/ page, and an example. Consider whether
+- [x] Exported-API docstrings, a docs/ page, and an example. Consider whether
       `examples/hello` should raise one deliberately behind a flag so the
       flow is demonstrable end to end
-- [ ] Add to CLAUDE.md's "Public API surface" bullet in the same PR
+- [x] Add to CLAUDE.md's "Public API surface" bullet in the same PR
 
 ## LOCKED: fault.Fatal halts the device (JP, 2026-08-11)
 

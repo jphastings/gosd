@@ -111,9 +111,17 @@ say so in the bean rather than silently diverging.
   overridable via `--hostname` and `gosd.toml`.
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
   library), `emmc/` (onboard-eMMC format/mount), `disk/` (the same for any
-  attached mass storage — NVMe, USB drive, card reader) and `sound/` (ALSA PCM
+  attached mass storage — NVMe, USB drive, card reader), `sound/` (ALSA PCM
   playback: `Open`/`OpenWith`, a `Device` to `Play` frames to; needs a
-  `gosd build-kernel` kernel, see `docs/sound.md`). Everything else lives
+  `gosd build-kernel` kernel, see `docs/sound.md`) and `fault/`
+  (`Fatal(Report)` — records a user-actionable fatal error for gosd-init to
+  write to `LAST_FATAL_ERROR.md` on the card and HALTS the device, never
+  returns; plus `RegisterSecretString`, which writes through to
+  `internal/secretreg`'s /run file on the call, not at crash time, so a
+  panic the app never sees coming is still redacted — bean `gosd-aa1p`,
+  epic `gosd-47z3`, see `docs/crash-reports.md`. Off a device — no `gosd`
+  build tag — `Fatal` renders the identical Markdown to stderr and exits,
+  which is a headline feature, not a fallback). Everything else lives
   under `internal/`; `emmc` and `disk` share `internal/blockmount` (the
   format/mount orchestration, label rules and candidate selection) and
   `internal/diskfmt` (pure-Go inspect/format — FAT32 via go-diskfs, exFAT
