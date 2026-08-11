@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T10:24:30Z
+updated_at: 2026-08-11T10:44:17Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -49,9 +49,9 @@ possible secrets.
 
 ## Todos
 
-- [ ] An internal redactor package: takes a set of (needle, replacement)
+- [x] An internal redactor package: takes a set of (needle, replacement)
       pairs and a body, returns the redacted body. Pure, table-testable
-- [ ] **Longest needle first.** Otherwise a secret that contains another
+- [x] **Longest needle first.** Otherwise a secret that contains another
       secret as a substring leaves a mangled fragment of the longer one
 - [ ] **A minimum needle length**, below which a value is skipped and the
       skip is logged (key only, never the value). An app with `DEBUG=1` or
