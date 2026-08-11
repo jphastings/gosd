@@ -38,6 +38,10 @@ const (
 	// this name must match.
 	initramfsName = "initramfs.cpio.zst"
 
+	// displayName is this board's human-readable name (see
+	// boards.Board.DisplayName), matching COMPATIBILITY.md's prose.
+	displayName = "Raspberry Pi Zero 2W"
+
 	// defaultConsoleBaud is this board's own console rate, used whenever
 	// BuildConfig.ConsoleBaud is unset (0) - see bean gosd-eu2x's
 	// research. --console-baud overrides it; see bean gosd-zp9s.
@@ -51,6 +55,9 @@ func New() boards.Board { return board{} }
 
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
+
+// DisplayName implements boards.Board.
+func (board) DisplayName() string { return displayName }
 
 // Arch implements boards.Board: the Pi Zero 2W's BCM2837 is 64-bit capable,
 // so it runs the same arm64 kernel/userspace as the Radxa Zero 3E (unlike

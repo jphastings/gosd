@@ -75,6 +75,10 @@ const (
 	// different UART and a much slower default than the Rockchip boards'
 	// ttyS2 @ 1500000. --console-baud overrides it; see bean gosd-zp9s.
 	defaultConsoleBaud = 115200
+
+	// displayName is this board's human-readable name (see
+	// boards.Board.DisplayName), matching COMPATIBILITY.md's prose.
+	displayName = "Radxa Cubie A5E"
 )
 
 type board struct{}
@@ -84,6 +88,9 @@ func New() boards.Board { return board{} }
 
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
+
+// DisplayName implements boards.Board.
+func (board) DisplayName() string { return displayName }
 
 // Arch implements boards.Board: the A527 is arm64.
 func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }

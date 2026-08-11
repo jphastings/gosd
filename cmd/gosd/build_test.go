@@ -27,6 +27,7 @@ import (
 type fakeIncapableEXT4Board struct{}
 
 func (fakeIncapableEXT4Board) Name() string                    { return "fake-incapable-board" }
+func (fakeIncapableEXT4Board) DisplayName() string             { return "Fake Incapable Board" }
 func (fakeIncapableEXT4Board) Arch() boards.Arch               { return boards.Arch{GOARCH: "arm64"} }
 func (fakeIncapableEXT4Board) Artifacts() []boards.ArtifactRef { return nil }
 func (fakeIncapableEXT4Board) BootFiles(boards.BuildConfig, boards.Artifacts) (map[string]io.Reader, error) {
@@ -67,6 +68,23 @@ func TestResolveBoardsFiltersAndDeduplicates(t *testing.T) {
 func TestResolveBoardsRejectsUnknownBoard(t *testing.T) {
 	if _, err := resolveBoards([]string{"not-a-board"}); err == nil {
 		t.Fatal("resolveBoards([not-a-board]) succeeded, want an error")
+	}
+}
+
+// TestEveryRegisteredBoardHasADisplayName is bean gosd-my8e's board-
+// registration guard: every board this binary registers (init(), in
+// build.go) - public boards via boards.All() plus qemu-virt, the one
+// internal-only board (boards.All() excludes it by design) - must return a
+// non-empty DisplayName, since it's the only source LAST_FATAL_ERROR.md's
+// device: line will have for a human-readable board name.
+func TestEveryRegisteredBoardHasADisplayName(t *testing.T) {
+	toCheck := append([]boards.Board{}, boards.All()...)
+	toCheck = append(toCheck, mustFindBoard(t, "qemu-virt"))
+
+	for _, b := range toCheck {
+		if b.DisplayName() == "" {
+			t.Errorf("%s.DisplayName() is empty; every registered board needs a human-readable name", b.Name())
+		}
 	}
 }
 
@@ -453,6 +471,51 @@ func TestParseDataFilesystemRejectsUnknownValue(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
 		}
+	}
+}
+
+func TestParseSupportURLAcceptsEmpty(t *testing.T) {
+	got, err := parseSupportURL("")
+	if err != nil {
+		t.Fatalf("parseSupportURL(\"\") = %v, want nil: --support-url is optional", err)
+	}
+	if got != "" {
+		t.Errorf("parseSupportURL(\"\") = %q, want empty", got)
+	}
+}
+
+func TestParseSupportURLAcceptsAbsoluteHTTPSURL(t *testing.T) {
+	got, err := parseSupportURL(" https://example.com/support ")
+	if err != nil {
+		t.Fatalf("parseSupportURL: %v", err)
+	}
+	if got != "https://example.com/support" {
+		t.Errorf("parseSupportURL = %q, want the trimmed URL", got)
+	}
+}
+
+func TestParseSupportURLAcceptsPlainHTTP(t *testing.T) {
+	if _, err := parseSupportURL("http://example.com"); err != nil {
+		t.Errorf("parseSupportURL(http://example.com) = %v, want nil: plain http is allowed too", err)
+	}
+}
+
+func TestParseSupportURLRejectsInvalidValues(t *testing.T) {
+	for name, bad := range map[string]string{
+		"no scheme":          "example.com/support",
+		"non-http(s) scheme": "ftp://example.com/support",
+		"no host":            "https://",
+		"not a URL at all":   "not a url",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseSupportURL(bad)
+			if err == nil {
+				t.Fatalf("parseSupportURL(%q) succeeded, want an error", bad)
+			}
+			if !strings.Contains(err.Error(), "--support-url") {
+				t.Errorf("error = %q, want it to mention --support-url", err.Error())
+			}
+		})
 	}
 }
 

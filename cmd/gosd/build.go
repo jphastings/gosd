@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,6 +86,8 @@ var (
 	labelPrefix    string
 	placeholders   []string
 	ingressFlags   []string
+	supportURL     string
+	appVersion     string
 )
 
 // defaultDataSize is the data partition's size when --data-size is
@@ -167,6 +170,10 @@ not touch the cache at all.`,
 		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
+	cmd.Flags().StringVar(&supportURL, "support-url", "",
+		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
+	cmd.Flags().StringVar(&appVersion, "app-version", "",
+		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
 
 	return cmd
 }
@@ -230,6 +237,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	placeholderSpecs, err := parsePlaceholderFlags(placeholders)
+	if err != nil {
+		return err
+	}
+
+	resolvedSupportURL, err := parseSupportURL(supportURL)
 	if err != nil {
 		return err
 	}
@@ -389,6 +401,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			Placeholders:           placeholderSpecs,
 			IngressCloudflared:     ingressSelected.Cloudflared,
 			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
+			AppName:                appName,
+			AppVersion:             appVersion,
+			SupportURL:             resolvedSupportURL,
 		}
 		report, err := pipeline.Assemble(ctx, opts)
 		if err != nil {
@@ -685,6 +700,25 @@ func parsePlaceholderFlags(flags []string) ([]inject.Placeholder, error) {
 		placeholders = append(placeholders, p)
 	}
 	return placeholders, nil
+}
+
+// parseSupportURL validates --support-url: when given, it must be an
+// absolute http(s) URL (a scheme and a host), because a broken link in a
+// crash report is worse than no link at all - a device's owner who follows
+// it has no recourse. Empty is valid: the flag is optional, and omitting it
+// just means LAST_FATAL_ERROR.md's fallback fix text has no link to offer
+// (see bean gosd-my8e).
+func parseSupportURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("--support-url %q is invalid; it must be an absolute http:// or https:// URL with a host, e.g. https://example.com/support", raw)
+	}
+	return trimmed, nil
 }
 
 // humanizeBinaryBytes renders a byte count the way a developer thinks about

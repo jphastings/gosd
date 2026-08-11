@@ -195,6 +195,14 @@ type Board interface {
 	// flag and in output filenames (e.g. "pi-zero-2w").
 	Name() string
 
+	// DisplayName is the human-readable name shown to a device's owner, who
+	// never sees a --board flag value - e.g. "Raspberry Pi Zero 2W" rather
+	// than "pi-zero-2w" (bean gosd-my8e, for LAST_FATAL_ERROR.md's crash-
+	// report frontmatter - see epic gosd-47z3). Every registered board,
+	// including internal-only ones such as qemu-virt, must return a
+	// non-empty value; a board-registration test asserts this.
+	DisplayName() string
+
 	// Arch is the GOARCH/GOARM this board's binaries must be
 	// cross-compiled for (GOOS is always linux). Two boards that return
 	// the same Arch share one compile pass (see cmd/gosd's build

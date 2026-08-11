@@ -48,6 +48,11 @@ const (
 	// this name must match.
 	initramfsName = "initramfs.cpio.zst"
 
+	// displayName is this board's human-readable name (see
+	// boards.Board.DisplayName), matching COMPATIBILITY.md's prose - one
+	// name for the family this image covers (3B and 3B+ alike).
+	displayName = "Raspberry Pi 3B"
+
 	// defaultConsoleBaud is this board's own console rate, used whenever
 	// BuildConfig.ConsoleBaud is unset (0) - the Pi-standard 115200 on
 	// the mini-UART (serial0; BT holds the PL011). --console-baud
@@ -62,6 +67,9 @@ func New() boards.Board { return board{} }
 
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
+
+// DisplayName implements boards.Board.
+func (board) DisplayName() string { return displayName }
 
 // Arch implements boards.Board: the Pi 3B's BCM2837 is the same 64-bit SoC
 // family as the Pi Zero 2W, so it runs the same arm64 kernel/userspace.

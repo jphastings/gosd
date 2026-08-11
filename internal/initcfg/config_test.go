@@ -116,6 +116,16 @@ func TestParseConfig(t *testing.T) {
 			data: `{"hostname":"my-device"}`,
 			want: Config{Hostname: "my-device"},
 		},
+		{
+			name: "appName/appVersion/supportURL parse when present",
+			data: `{"hostname":"my-device","appName":"myapp","appVersion":"1.4.2","supportURL":"https://example.com/support"}`,
+			want: Config{Hostname: "my-device", AppName: "myapp", AppVersion: "1.4.2", SupportURL: "https://example.com/support"},
+		},
+		{
+			name: "config predating appName/appVersion/supportURL parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -169,6 +169,51 @@ type Config struct {
 	// rather than as a mismatch (see ShortIdentity).
 	Identity string `json:"identity,omitempty"`
 
+	// AppName is the app's name, baked in by gosd build: the sanitized
+	// basename of the main package's directory - the same source
+	// --hostname's unset default uses (see cmd/gosd's deriveAppName),
+	// resolved once at build time so it can't drift if --hostname,
+	// gosd.toml, or cloud-init later changes the device's actual hostname.
+	// It exists for LAST_FATAL_ERROR.md's "image:" line (bean gosd-my8e,
+	// epic gosd-47z3), not for gosd-init's own runtime behavior, which
+	// still uses Hostname throughout. Optional: empty for every config.json
+	// baked before this field existed; a reader must treat that as
+	// "unknown," never silently fall back to Hostname (a user-renamed
+	// device would then report the wrong app name).
+	//
+	// Developer-set, like AppVersion and SupportURL below: config.json only,
+	// no gosd.toml key, no GOSD_* override (see docs/gosd.toml.md). Also
+	// like them, it's deliberately excluded from ComputeIdentity's hashed
+	// payload (config.json is excluded from that payload in its entirety -
+	// see ComputeIdentity's docstring) and plays no part in the data-
+	// partition adoption gate (docs/design/upgrade-path.md): it's report
+	// metadata alone, not on-card ABI.
+	AppName string `json:"appName,omitempty"`
+
+	// AppVersion is gosd build --app-version's free-form value - whatever
+	// the developer passes (e.g. "1.4.2"), never interpreted or validated by
+	// gosd. It's baked in for LAST_FATAL_ERROR.md's "image:" line; when
+	// unset (the flag's default), the report falls back to the image's
+	// content-derived Identity alone (see ShortIdentity). Optional: empty
+	// for every config.json baked before this field existed, and whenever
+	// the flag is omitted.
+	//
+	// LOCKED (JP, 2026-08-11): deliberately not derived from
+	// debug.ReadBuildInfo's VCS state. gosd compiles the user's app on their
+	// own machine, where that state may be dirty or absent, and a wrong
+	// version in a crash report is worse than no version at all - see bean
+	// gosd-my8e.
+	AppVersion string `json:"appVersion,omitempty"`
+
+	// SupportURL is gosd build --support-url's value: an absolute http(s)
+	// URL validated at build time (see cmd/gosd's parseSupportURL) - a
+	// broken link in a crash report is worse than no link. Baked in so
+	// LAST_FATAL_ERROR.md can point a device's owner somewhere when it has
+	// no specific fix to suggest. Optional: empty - including every
+	// config.json baked before this field existed - means the report's
+	// fallback fix text has no link to offer.
+	SupportURL string `json:"supportURL,omitempty"`
+
 	// BuildTimestamp is when gosd build assembled this image (UTC,
 	// RFC3339Nano), baked in by the CLI. It's gosd-init's timesync
 	// package's clock floor (see BuildTime and gosd-0esw): even on a

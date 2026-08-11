@@ -187,6 +187,24 @@ type Options struct {
 	// image.DefaultBootPartitionSizeBytes (256MiB).
 	BootSizeBytes int64
 
+	// AppName is the app's name, baked straight into config.json's AppName
+	// field (initcfg.Config.AppName) - report metadata (bean gosd-my8e), not
+	// used anywhere else in the pipeline (Config.Hostname, not this, drives
+	// the device's actual network name).
+	AppName string
+
+	// AppVersion is `gosd build --app-version`'s value, baked straight into
+	// config.json's AppVersion field (initcfg.Config.AppVersion). Report
+	// metadata only (bean gosd-my8e); empty means the flag was omitted.
+	AppVersion string
+
+	// SupportURL is `gosd build --support-url`'s value, already validated as
+	// an absolute http(s) URL by cmd/gosd's parseSupportURL, baked straight
+	// into config.json's SupportURL field (initcfg.Config.SupportURL).
+	// Report metadata only (bean gosd-my8e); empty means the flag was
+	// omitted.
+	SupportURL string
+
 	// Placeholders are `gosd build --placeholder <path>=<size>` entries:
 	// rendered deterministically (see inject.Render), they land at the
 	// FAT root of the boot partition alongside gosd.toml, are covered by
@@ -389,6 +407,9 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		DataLabel:              opts.Labels.Data,
 		IngressCloudflared:     opts.IngressCloudflared,
 		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
+		AppName:                opts.AppName,
+		AppVersion:             opts.AppVersion,
+		SupportURL:             opts.SupportURL,
 		Identity:               identity,
 		// Wall-clock, taken here rather than threaded in via Options: it
 		// must vary build-to-build (that's the whole point, as

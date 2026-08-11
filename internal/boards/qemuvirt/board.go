@@ -44,6 +44,12 @@ const (
 	// the FAT boot partition; the qemu runner's -initrd argument must
 	// name this same file.
 	initramfsName = "initramfs.cpio.zst"
+
+	// displayName is this board's human-readable name (see
+	// boards.Board.DisplayName). qemu-virt never reaches a real device
+	// owner (it's internal-only, see the package doc comment), but every
+	// registered board must still return a non-empty name.
+	displayName = "QEMU virt"
 )
 
 type board struct{}
@@ -53,6 +59,9 @@ func New() boards.Board { return board{} }
 
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
+
+// DisplayName implements boards.Board.
+func (board) DisplayName() string { return displayName }
 
 // Arch implements boards.Board: qemu-virt only ever runs under
 // qemu-system-aarch64, so it's always arm64.

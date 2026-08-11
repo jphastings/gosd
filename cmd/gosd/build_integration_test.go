@@ -2415,6 +2415,106 @@ func TestBuildIdentityUnaffectedByLabelPrefix(t *testing.T) {
 	}
 }
 
+// TestBuildBakesReportMetadataIntoConfigJSON is the acceptance test for bean
+// gosd-my8e: the app name (derived, not a flag), --app-version, and
+// --support-url all reach config.json under their own fields, so a future
+// LAST_FATAL_ERROR.md renderer has a data source for its image: line and its
+// "visit <support_url>" fallback text.
+func TestBuildBakesReportMetadataIntoConfigJSON(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cfg := buildConfigJSON(t, imgPath, "--app-version", "1.4.2", "--support-url", "https://example.com/support")
+
+	if cfg.AppName != "hello" {
+		t.Errorf("config.json's appName = %q, want %q (examples/hello's sanitized basename)", cfg.AppName, "hello")
+	}
+	if cfg.AppVersion != "1.4.2" {
+		t.Errorf("config.json's appVersion = %q, want %q", cfg.AppVersion, "1.4.2")
+	}
+	if cfg.SupportURL != "https://example.com/support" {
+		t.Errorf("config.json's supportURL = %q, want %q", cfg.SupportURL, "https://example.com/support")
+	}
+}
+
+// TestBuildReportMetadataAppVersionAndSupportURLAreOptional confirms
+// --app-version and --support-url can both be omitted: the app name is
+// still baked in (it's derived, not a flag - gosd build always resolves
+// one), but AppVersion and SupportURL stay empty rather than getting a
+// fabricated value.
+func TestBuildReportMetadataAppVersionAndSupportURLAreOptional(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cfg := buildConfigJSON(t, imgPath)
+
+	if cfg.AppName != "hello" {
+		t.Errorf("config.json's appName = %q, want %q even with no --app-version/--support-url", cfg.AppName, "hello")
+	}
+	if cfg.AppVersion != "" {
+		t.Errorf("config.json's appVersion = %q, want empty when --app-version was not passed", cfg.AppVersion)
+	}
+	if cfg.SupportURL != "" {
+		t.Errorf("config.json's supportURL = %q, want empty when --support-url was not passed", cfg.SupportURL)
+	}
+}
+
+// TestBuildRefusesAnInvalidSupportURL confirms --support-url is validated
+// before any image is written: a value that isn't an absolute http(s) URL
+// must fail the build with an actionable error naming the flag, not silently
+// bake in a link a device's owner could never follow.
+func TestBuildRefusesAnInvalidSupportURL(t *testing.T) {
+	for name, badURL := range map[string]string{
+		"no scheme":          "example.com/support",
+		"non-http(s) scheme": "ftp://example.com/support",
+		"no host":            "https://",
+	} {
+		t.Run(name, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+			cmd := newRootCmd()
+			cmd.SetArgs([]string{
+				"build", "../../examples/hello",
+				"--board", "pi-zero-2w",
+				"--artifacts-dir", "testdata/fake-artifacts",
+				"--support-url", badURL,
+				"-o", imgPath,
+			})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("gosd build --support-url=%q succeeded, want a refusal", badURL)
+			}
+			if !strings.Contains(err.Error(), "--support-url") {
+				t.Errorf("refusal %q does not mention --support-url", err)
+			}
+			if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
+				t.Errorf("gosd build wrote %s despite refusing --support-url=%q; the refusal must come first", imgPath, badURL)
+			}
+		})
+	}
+}
+
+// TestBuildIdentityUnaffectedByReportMetadata is TestBuildIdentityUnaffected
+// ByLabelPrefix's counterpart for --app-version/--support-url: both reach
+// config.json alone, config.json is excluded from ComputeIdentity's hashed
+// payload in its entirety, and neither flag has any footprint elsewhere in
+// that payload (no gosd.toml presence, unlike Hostname/Wifi/Env) - so two
+// builds differing only by these flags must still produce the same
+// identity. This is also the concrete proof behind the bean's "not on-card
+// ABI" requirement: docs/design/upgrade-path.md's adoption gate never even
+// sees config.json's report-metadata fields, let alone keys off them.
+func TestBuildIdentityUnaffectedByReportMetadata(t *testing.T) {
+	dir := t.TempDir()
+	withoutMetadata := buildConfigJSON(t, filepath.Join(dir, "no-metadata.img"))
+	withMetadata := buildConfigJSON(t, filepath.Join(dir, "metadata.img"), "--app-version", "1.4.2", "--support-url", "https://example.com/support")
+
+	if withMetadata.AppVersion != "1.4.2" || withMetadata.SupportURL != "https://example.com/support" {
+		t.Fatalf("config.json didn't carry the report metadata: %+v", withMetadata)
+	}
+	if withoutMetadata.Identity == "" {
+		t.Fatal("the build with no report metadata has an empty identity")
+	}
+	if withoutMetadata.Identity != withMetadata.Identity {
+		t.Errorf("identity differed across builds that only differed by --app-version/--support-url: %q vs %q", withoutMetadata.Identity, withMetadata.Identity)
+	}
+}
+
 // TestBuildTimestampVariesButIdentityDoesNotAcrossRebuilds is gosd-0esw's
 // reproducibility proof: config.json's buildTimestamp (timesync's clock
 // floor - see internal/initcfg.Config.BuildTime) necessarily differs on

@@ -60,6 +60,10 @@ const (
 	// 1500000n8 (see bean gosd-gbsz's research). --console-baud overrides
 	// it; see bean gosd-zp9s.
 	defaultConsoleBaud = 1500000
+
+	// displayName is this board's human-readable name (see
+	// boards.Board.DisplayName), matching COMPATIBILITY.md's prose.
+	displayName = "Radxa Zero 3E"
 )
 
 type board struct{}
@@ -69,6 +73,9 @@ func New() boards.Board { return board{} }
 
 // Name implements boards.Board.
 func (board) Name() string { return boardName }
+
+// DisplayName implements boards.Board.
+func (board) DisplayName() string { return displayName }
 
 // Arch implements boards.Board: the RK3566 is arm64-only.
 func (board) Arch() boards.Arch { return boards.Arch{GOARCH: "arm64"} }
