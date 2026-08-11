@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/internal/faultreport"
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 func testReporter(f *fakeFaultReport) *fatalReporter {
@@ -117,6 +118,105 @@ func TestFatalReporterGathersTheHeaderAtTheMomentOfTheFailure(t *testing.T) {
 	}
 }
 
+func TestFatalReporterRedactsSecretsSetAfterConstruction(t *testing.T) {
+	// setSecrets exists precisely because the reporter is constructed
+	// before the app env is assembled (see sequence.go's ordering
+	// comment); this proves a rule handed over that way actually reaches
+	// the rendered report.
+	f := &fakeFaultReport{}
+	report := testReporter(f)
+	report.setSecrets([]redact.Rule{{Needle: "sk_live_super_secret_key", Replacement: "{$STRIPE_KEY}"}})
+
+	report.record(faultreport.Report{Code: "GOSD-APP-CRASH", Detail: "panic: auth failed with key sk_live_super_secret_key"})
+
+	written := f.written()
+	if strings.Contains(written, "sk_live_super_secret_key") {
+		t.Errorf("rendered report still contains the secret value:\n%s", written)
+	}
+	if !strings.Contains(written, "{$STRIPE_KEY}") {
+		t.Errorf("rendered report is missing the redaction placeholder:\n%s", written)
+	}
+}
+
+func TestFatalReporterReadsRegisteredSecretsFreshAtEachRecord(t *testing.T) {
+	// A registration made moments before a crash must still redact: proven
+	// here by registering only between two record() calls, across two
+	// stable-run cycles, and checking the first is unredacted while the
+	// second is.
+	f := &fakeFaultReport{}
+	report := testReporter(f)
+
+	report.record(faultreport.Report{Code: "GOSD-APP-CRASH", Detail: "token=abcdef0123456789 rejected"})
+	if !strings.Contains(f.written(), "abcdef0123456789") {
+		t.Fatalf("first report was redacted before anything was registered:\n%s", f.written())
+	}
+
+	report.markStableRun()
+	f.setRegisteredSecrets([]redact.Rule{{Needle: "abcdef0123456789", Replacement: "{secret: session-token}"}})
+	report.record(faultreport.Report{Code: "GOSD-APP-CRASH", Detail: "token=abcdef0123456789 rejected"})
+
+	written := f.written()
+	if strings.Contains(written, "abcdef0123456789") {
+		t.Errorf("second report still contains the registered secret:\n%s", written)
+	}
+	if !strings.Contains(written, "{secret: session-token}") {
+		t.Errorf("second report is missing the registered-secret placeholder:\n%s", written)
+	}
+}
+
+func TestFatalReporterCombinesEnvAndRegisteredSecrets(t *testing.T) {
+	// The two mechanisms are independent seams (setSecrets for the static
+	// env scan, RegisteredSecrets for the dynamic /run channel) that both
+	// have to land in the same rendered report.
+	f := &fakeFaultReport{}
+	f.setRegisteredSecrets([]redact.Rule{{Needle: "registered-secret-value", Replacement: "{secret: api-token}"}})
+	report := testReporter(f)
+	report.setSecrets([]redact.Rule{{Needle: "env-var-secret-value", Replacement: "{$API_KEY}"}})
+
+	report.record(faultreport.Report{
+		Code:   "GOSD-APP-CRASH",
+		Detail: "env-var-secret-value and registered-secret-value both appeared",
+	})
+
+	written := f.written()
+	for _, secret := range []string{"env-var-secret-value", "registered-secret-value"} {
+		if strings.Contains(written, secret) {
+			t.Errorf("rendered report still contains %q:\n%s", secret, written)
+		}
+	}
+	for _, placeholder := range []string{"{$API_KEY}", "{secret: api-token}"} {
+		if !strings.Contains(written, placeholder) {
+			t.Errorf("rendered report is missing %q:\n%s", placeholder, written)
+		}
+	}
+}
+
+func TestFatalReporterLeavesOrdinaryShortValuesReadable(t *testing.T) {
+	// Over-redaction is the failure mode that matters more than a missed
+	// match (see redact.MinNeedleLength's doc): an app with everyday
+	// config like DEBUG=1 or PORT=80 must still get a legible report, not
+	// one where every "1" and "80" has been blanked out.
+	f := &fakeFaultReport{}
+	report := testReporter(f)
+	report.setSecrets(envRedactionRules([]string{"DEBUG=1", "PORT=80", "STRIPE_KEY=sk_live_51H_reallysecret"}))
+
+	report.record(faultreport.Report{
+		Code:   "GOSD-APP-CRASH",
+		Detail: "panic at line 180: debug=1, key sk_live_51H_reallysecret rejected",
+	})
+
+	written := f.written()
+	if !strings.Contains(written, "line 180") || !strings.Contains(written, "debug=1") {
+		t.Errorf("short values were swept out of an unrelated context, wrecking readability:\n%s", written)
+	}
+	if strings.Contains(written, "sk_live_51H_reallysecret") {
+		t.Errorf("the genuinely long secret survived into the report:\n%s", written)
+	}
+	if !strings.Contains(written, "{$STRIPE_KEY}") {
+		t.Errorf("the long secret's placeholder is missing:\n%s", written)
+	}
+}
+
 func TestNewFatalReporterIsNilWithNowhereToWrite(t *testing.T) {
 	// The nil reporter is the pre-boot-mount state, and every method on it
 	// has to be a no-op rather than a panic in PID 1.
@@ -126,6 +226,7 @@ func TestNewFatalReporterIsNilWithNowhereToWrite(t *testing.T) {
 	}
 
 	report.setBootCount(1)
+	report.setSecrets([]redact.Rule{{Needle: "irrelevant", Replacement: "{$X}"}})
 	report.markStableRun()
 	if report.record(faultreport.Report{Code: "X"}) {
 		t.Error("a nil reporter claimed to have recorded a report")

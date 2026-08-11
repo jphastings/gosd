@@ -3,6 +3,8 @@ package boot
 import (
 	"io"
 	"time"
+
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 // Platform bundles the real implementations of every syscall-touching
@@ -48,4 +50,9 @@ type Platform struct {
 	// Uptime reports how long the machine has been up, and whether that
 	// could be determined at all.
 	Uptime func() (time.Duration, bool)
+
+	// RegisteredSecrets reads the /run registration file
+	// fault.RegisterSecretString writes (see internal/secretreg), or nil
+	// when there's nothing registered or nothing readable.
+	RegisteredSecrets func() []redact.Rule
 }

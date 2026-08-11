@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 // Deps bundles every side-effecting dependency the boot sequence needs.
@@ -436,12 +437,21 @@ func Run(deps Deps, opts Options) error {
 		log("wifi from config.json")
 	}
 
+	// userEnv is the app's own env — never gosd-init's reserved GOSD_*
+	// namespace, which mergeUserEnv already drops — and is what a crash
+	// report redacts by value (see envRedactionRules): report was
+	// constructed long before this point, back when the boot partition
+	// mount succeeded, so its secrets are handed over now through
+	// setSecrets rather than at construction.
+	userEnv := mergeUserEnv(cfg.Env, gosdToml.Env, log)
+	report.setSecrets(envRedactionRules(userEnv))
+
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
 		"GOSD_HOSTNAME=" + cfg.Hostname,
 		"GOSD_DATA_FLUSH=" + dataFlushEnvValue(dataFlush),
 	}
-	env = append(env, mergeUserEnv(cfg.Env, gosdToml.Env, log)...)
+	env = append(env, userEnv...)
 
 	guard := PanicGuard{Rebooter: deps.Rebooter, Sleep: deps.Sleep, Log: log}
 	if deps.StartNetworking != nil {
@@ -622,6 +632,29 @@ func mergeUserEnv(baked, card map[string]string, log func(format string, args ..
 	}
 
 	return env
+}
+
+// envRedactionRules turns the app's own env — mergeUserEnv's output, which
+// has already dropped gosd-init's reserved GOSD_* namespace — into the
+// rules a crash report redacts its body with: each KEY=VALUE pair becomes a
+// rule replacing every occurrence of VALUE with {$KEY}. Callers MUST pass
+// mergeUserEnv's return value here, never the full env slice Run sends the
+// app (which is this plus GOSD_BOARD/GOSD_HOSTNAME/GOSD_DATA_FLUSH
+// prepended) — per gosd-m6py's locked decision, GOSD_DATA_FLUSH is "0" or
+// "1", and redacting it would replace every digit in the technical detail.
+// A value too short to redact safely (redact.MinNeedleLength) is not
+// filtered here; redact.Redact applies that floor uniformly and reports the
+// skip, so there is exactly one place that decision is made.
+func envRedactionRules(env []string) []redact.Rule {
+	rules := make([]redact.Rule, 0, len(env))
+	for _, kv := range env {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		rules = append(rules, redact.Rule{Needle: value, Replacement: "{$" + key + "}"})
+	}
+	return rules
 }
 
 // describeEnvSources formats the "app env: ..." summary line, e.g.

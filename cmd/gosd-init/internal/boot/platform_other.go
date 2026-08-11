@@ -11,6 +11,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 var errUnsupportedPlatform = errors.New("gosd-init: not supported outside Linux")
@@ -32,6 +34,7 @@ func NewPlatform() *Platform {
 		WriteBootFile:         func(string, string, []byte) error { return errUnsupportedPlatform },
 		DeviceModel:           func() string { return "" },
 		Uptime:                func() (time.Duration, bool) { return 0, false },
+		RegisteredSecrets:     func() []redact.Rule { return nil },
 	}
 }
 

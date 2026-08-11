@@ -3,13 +3,17 @@
 **Status: partly built.** The report format, the renderer every producer
 shares, and the writing of `LAST_FATAL_ERROR.md` are shipped: gosd-init
 records its own fatal errors this way, and deletes the file once your app has
-proven it recovered. What is not built yet is everything your *app* touches —
-the `fault` package described below is **not importable**, and gosd-init does
-not yet keep your app's console output, so a panic in your code still only
-reaches the serial console. Two smaller gaps: nothing yet supplies the
-renderer with secrets to redact, and the `device:` line's device-tree read has
-not yet been confirmed on real hardware (it falls back to the board name baked
-into the image whenever it can't be read). Tracked by bean `gosd-47z3`.
+proven it recovered. Redaction is wired in too: every value in your app's own
+environment is scrubbed automatically, and gosd-init already reads a
+registration file from `/run` fresh at the moment of each report, ready for
+`RegisterSecretString` once it ships. What is not built yet is everything
+else your *app* touches — the `fault` package described below, including
+`RegisterSecretString` itself, is **not importable**, and gosd-init does not
+yet keep your app's console output, so a panic in your code still only
+reaches the serial console. One smaller gap: the `device:` line's
+device-tree read has not yet been confirmed on real hardware (it falls back
+to the board name baked into the image whenever it can't be read). Tracked by
+bean `gosd-47z3`.
 
 ## Why this exists
 
@@ -152,18 +156,25 @@ exactly what your user will see without flashing anything.
 
 ## Secrets
 
-_Partly built: the renderer scrubs what it's given, but nothing yet collects
-your environment or your registrations to give it. See the status note at the
-top._
-
 A report invites its reader to forward the whole file to you, so the renderer
-scrubs it first. Every value in your app's environment is replaced with
-`{$ITS_NAME}`, and anything you register explicitly becomes
-`{secret: your-label}`:
+scrubs it first. Every value in your app's own environment — anything baked
+into `config.json` or set through [gosd.toml's `[env]` table](gosd.toml.md) —
+is replaced with `{$ITS_NAME}` automatically, no code changes required.
+gosd-init's own reserved `GOSD_*` variables are never swept this way:
+`GOSD_DATA_FLUSH` is `0` or `1`, and redacting it would blank every digit in
+the technical detail.
+
+Anything you register explicitly becomes `{secret: your-label}`:
 
 ```go
 fault.RegisterSecretString(token, "session-token")
 ```
+
+_`RegisterSecretString` itself is not built yet — see the status note at the
+top — but the channel it will write to already is: gosd-init reads a
+registration file from `/run` fresh at the moment of every report, so a
+secret registered moments before a crash will still redact once that call
+ships._
 
 Two limits worth knowing. Very short values are left alone deliberately — a
 `DEBUG=1` would otherwise blank every `1` in a stack trace — so a short

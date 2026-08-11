@@ -4,6 +4,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 // fakeMounter lets tests script Mount/Unmount outcomes and inspect what was
@@ -196,6 +198,10 @@ type fakeFaultReport struct {
 	clockSynced bool
 	deviceModel string
 	bootCount   int
+	// registeredSecrets is read fresh on every RegisteredSecrets() call,
+	// so a test can change it between two record() calls to prove a
+	// registration made "moments before a crash" is picked up.
+	registeredSecrets []redact.Rule
 }
 
 func (f *fakeFaultReport) deps() FaultReportDeps {
@@ -231,7 +237,20 @@ func (f *fakeFaultReport) deps() FaultReportDeps {
 			}
 			return f.bootCount, true
 		},
+		RegisteredSecrets: func() []redact.Rule {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.registeredSecrets
+		},
 	}
+}
+
+// setRegisteredSecrets updates what RegisteredSecrets() returns from here
+// on, letting a test change it between two record() calls.
+func (f *fakeFaultReport) setRegisteredSecrets(rules []redact.Rule) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registeredSecrets = rules
 }
 
 // markPresent updates what the card carries. Callers must hold f.mu.

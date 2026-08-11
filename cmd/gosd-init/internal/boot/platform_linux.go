@@ -16,6 +16,8 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/faultreport"
+	"github.com/jphastings/gosd/internal/redact"
+	"github.com/jphastings/gosd/internal/secretreg"
 )
 
 // NewPlatform wires up the real, Linux-syscall-backed implementations of
@@ -34,6 +36,7 @@ func NewPlatform() *Platform {
 		WriteBootFile:         writeBootFile,
 		DeviceModel:           deviceModel,
 		Uptime:                uptime,
+		RegisteredSecrets:     registeredSecrets,
 	}
 }
 
@@ -177,6 +180,26 @@ func uptime() (time.Duration, bool) {
 		return 0, false
 	}
 	return parseUptime(string(data))
+}
+
+// registeredSecrets reads secretreg.Path fresh, at report time, so a
+// fault.RegisterSecretString call moments before a panic still redacts.
+// Stat first rather than reading straight through: a file bigger than
+// secretreg.MaxTotalBytes is never trusted (see secretreg.Parse), so there
+// is no reason to read it into memory at all. Any failure — missing file
+// (the common case: nothing has ever registered), oversized, unreadable —
+// yields no rules, never an error; see secretreg's doc for why an
+// untrustworthy file is dropped rather than partially believed.
+func registeredSecrets() []redact.Rule {
+	info, err := os.Stat(secretreg.Path)
+	if err != nil || info.Size() > secretreg.MaxTotalBytes {
+		return nil
+	}
+	data, err := os.ReadFile(secretreg.Path)
+	if err != nil {
+		return nil
+	}
+	return secretreg.Parse(data)
 }
 
 // writeBootFile durably writes name at the root of the read-only boot
