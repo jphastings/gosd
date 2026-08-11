@@ -35,6 +35,13 @@ uncomment and edit.
 | `[ingress.*]` | Public internet tunnel (Cloudflare / Tailscale) | `gosd build --ingress` | [`docs/ingress.md`](ingress.md) |
 | `data_flush` | Force prompt vfat writeback | `gosd build --data-flush` | [`docs/runtime.md`](runtime.md) |
 
+Not every baked-in value gets a `gosd.toml` section, or is overridable at all:
+`--support-url`, `--app-version`, and the baked app name are developer-set
+report metadata (used in `LAST_FATAL_ERROR.md` crash reports, bean `gosd-my8e`),
+baked into `config.json` only. There is no `gosd.toml` key and no `GOSD_*`
+environment override for any of them — a user can't change or remove them by
+editing the card.
+
 ## Documenting your app's settings — `[env]`
 
 Your app reads its configuration from environment variables. The `[env]` table

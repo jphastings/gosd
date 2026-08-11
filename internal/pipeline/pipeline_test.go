@@ -46,6 +46,7 @@ type fakeBoard struct {
 }
 
 func (b *fakeBoard) Name() string                    { return b.name }
+func (b *fakeBoard) DisplayName() string             { return "Fake Board (" + b.name + ")" }
 func (b *fakeBoard) Arch() boards.Arch               { return boards.Arch{GOARCH: "arm64"} }
 func (b *fakeBoard) Artifacts() []boards.ArtifactRef { return nil }
 
