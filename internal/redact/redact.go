@@ -32,6 +32,11 @@ import (
 // This cuts both ways: a genuinely short secret is not redacted below this
 // floor. Result.Skipped exists so a caller can log that a value was left
 // alone, without logging the value itself.
+//
+// The floor is unconditional across callers: a secret deliberately
+// registered through fault.RegisterSecretString is skipped too if it's
+// shorter than this. That's intended, not an oversight — a caller that
+// needs to know uses Result.Skipped.
 const MinNeedleLength = 8
 
 // Rule pairs a secret to find with the text that replaces it.
