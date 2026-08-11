@@ -10,6 +10,7 @@ package boot
 import (
 	"errors"
 	"io"
+	"time"
 )
 
 var errUnsupportedPlatform = errors.New("gosd-init: not supported outside Linux")
@@ -26,8 +27,11 @@ func NewPlatform() *Platform {
 		Rebooter:              unsupportedPlatform{},
 		OpenConsole:           func() (io.WriteCloser, error) { return nil, errUnsupportedPlatform },
 		IgnoreShutdownSignals: func() {},
-		WriteBootFailure:      func(string, string) error { return errUnsupportedPlatform },
+		WriteFatalReport:      func(string, string) error { return errUnsupportedPlatform },
+		RemoveBootFiles:       func(string, []string) error { return errUnsupportedPlatform },
 		WriteBootFile:         func(string, string, []byte) error { return errUnsupportedPlatform },
+		DeviceModel:           func() string { return "" },
+		Uptime:                func() (time.Duration, bool) { return 0, false },
 	}
 }
 

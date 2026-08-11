@@ -14,6 +14,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
@@ -1084,6 +1085,144 @@ func TestRunFatalPathOnBootPartitionMountTimeout(t *testing.T) {
 	assertFatalPathTriggered(t, rebooter, sleeps)
 }
 
+func TestRunCannotRecordAFatalBeforeTheBootPartitionIsMounted(t *testing.T) {
+	// The two failures gosd-init can raise before the boot mount succeeds
+	// have nowhere to write a report — the partition they'd be written to
+	// is the one that isn't there. The console must say so rather than the
+	// device silently leaving no trace at all.
+	mounter := &fakeMounter{fn: func(c mountCall) error {
+		if c.target == "/boot" {
+			return errBoom
+		}
+		return nil
+	}}
+	clock := newFakeClock(time.Unix(0, 0))
+	console := &bytes.Buffer{}
+	reports := &fakeFaultReport{}
+	var sleeps []time.Duration
+
+	deps := testDepsForFatalPath(mounter, &fakeHostname{}, &fakeRebooter{}, clock, &sleeps)
+	deps.OpenConsole = func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil }
+	deps.FaultReport = reports.deps()
+
+	if err := Run(deps, testOptions()); err == nil {
+		t.Fatal("Run() = nil, want an error about mounting the boot partition")
+	}
+	if got := reports.writeCount(); got != 0 {
+		t.Errorf("wrote %d reports to a boot partition that never mounted", got)
+	}
+	if !strings.Contains(console.String(), "LAST_FATAL_ERROR.md can't be written") {
+		t.Errorf("console output doesn't explain why there's no crash report: %q", console.String())
+	}
+}
+
+func TestRunCountsTheBootOnlyOnceTheDataPartitionIsMounted(t *testing.T) {
+	// The counter is durable state, so it lives on /data and can't be
+	// touched before that mount — see countBoot in cmd/gosd-init.
+	mounter := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{bootCount: 37}
+	dataMountsAtCount := -1
+	counted := 0
+
+	faultDeps := reports.deps()
+	countBoot := faultDeps.CountBoot
+	faultDeps.CountBoot = func() (int, bool) {
+		dataMountsAtCount = mounter.callsFor("/data")
+		counted++
+		return countBoot()
+	}
+
+	deps := Deps{
+		Mounter:  mounter,
+		Hostname: &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			close(stop)
+			return 1, nil
+		}),
+		Reaper:               fakeReaper{},
+		Rebooter:             &fakeRebooter{},
+		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:          func(string, ...any) {},
+		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		EnsureDataMountpoint: func() error { return nil },
+		FaultReport:          faultDeps,
+		Sleep:                func(d time.Duration) { clock.Sleep(d) },
+		Now:                  clock.Now,
+	}
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if counted != 1 {
+		t.Errorf("counted the boot %d times, want exactly once", counted)
+	}
+	if dataMountsAtCount == 0 {
+		t.Error("the boot was counted before /data was mounted, so the count had nowhere durable to go")
+	}
+}
+
+func TestRunDeletesAStaleReportOnceTheAppHasRunStably(t *testing.T) {
+	// A device that crashed, rebooted and has been running happily since
+	// must not still look broken to whoever pulls the card — and the delete
+	// has to happen while the app is still up, since an app that works
+	// never exits at all.
+	mounter := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	stable := make(chan time.Time, 1)
+	deleted := make(chan struct{})
+	reports := &fakeFaultReport{present: map[string]bool{faultreport.FileName: true}}
+
+	faultDeps := reports.deps()
+	remove := faultDeps.Remove
+	faultDeps.Remove = func(names []string) error {
+		err := remove(names)
+		close(deleted)
+		return err
+	}
+
+	deps := Deps{
+		Mounter:  mounter,
+		Hostname: &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			stable <- time.Unix(0, 0)
+			return 1, nil
+		}),
+		Reaper: funcReaper(func(int) (int, error) {
+			select {
+			case <-deleted:
+			case <-time.After(2 * time.Second):
+			}
+			close(stop)
+			return 0, nil
+		}),
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: faultDeps,
+		Sleep:       func(d time.Duration) { clock.Sleep(d) },
+		Now:         clock.Now,
+		After:       func(time.Duration) <-chan time.Time { return stable },
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	removals := reports.removals()
+	if len(removals) != 1 || len(removals[0]) != 1 || removals[0][0] != faultreport.FileName {
+		t.Errorf("deleted %v from the boot partition, want exactly [%s]", removals, faultreport.FileName)
+	}
+}
+
 // testDataOptions returns Options with the data partition configured, for
 // tests exercising the /data mount.
 func testDataOptions() Options {
@@ -1684,14 +1823,14 @@ func TestRunContinuesToTheDataFallbackWhenExpansionFails(t *testing.T) {
 func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	// An established expand partition whose filesystem is gone may still
 	// hold recoverable app data: the device must record what happened to
-	// boot-failure.log and halt — not reboot-loop, not reformat, and above
-	// all not start the app against a read-only fallback as if nothing were
-	// wrong.
+	// LAST_FATAL_ERROR.md and halt — not reboot-loop, not reformat, and
+	// above all not start the app against a read-only fallback as if
+	// nothing were wrong.
 	mounter := &fakeMounter{}
 	rebooter := &fakeRebooter{}
 	stop := make(chan struct{})
 	var expandedWith []string
-	var recorded string
+	reports := &fakeFaultReport{}
 
 	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true,
 		fmt.Errorf("%w: /dev/mmcblk0p2 holds nothing (blank space)", dataexpand.ErrDataCorrupt), &expandedWith)
@@ -1701,7 +1840,7 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 		close(stop)
 		return 1, nil
 	})
-	deps.WriteBootFailure = func(msg string) error { recorded = msg; return nil }
+	deps.FaultReport = reports.deps()
 	opts := testDataOptions()
 	opts.Stop = stop
 
@@ -1720,12 +1859,17 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	}
 	// The recovery instructions have to name the exact volume the next boot
 	// will accept — this image's own filesystem and per-app label — since
-	// that is all whoever reads the log has to go on. This is an expand
+	// that is all whoever reads the report has to go on. This is an expand
 	// image, so deleting the partition really does get it recreated.
-	for _, want := range []string{"/dev/mmcblk0p2", "salvage", "FAT32", testDataLabel, "the next boot will"} {
+	recorded := reports.written()
+	for _, want := range []string{"GOSD-DATA-CORRUPT", "/dev/mmcblk0p2", "save anything you need", "FAT32", testDataLabel, "the next boot will recreate it"} {
 		if !strings.Contains(recorded, want) {
-			t.Errorf("boot-failure.log content %q is missing %q", recorded, want)
+			t.Errorf("LAST_FATAL_ERROR.md content %q is missing %q", recorded, want)
 		}
+	}
+	// The counter lives on /data, which is exactly what's broken here.
+	if !strings.Contains(recorded, "boot: unknown") {
+		t.Errorf("LAST_FATAL_ERROR.md content %q claims a boot number it can't know", recorded)
 	}
 	if mounter.callsFor("/data") != 0 {
 		t.Error("/data was mounted despite the halt")
@@ -1741,7 +1885,7 @@ func TestRunTellsAFixedSizeImageToReflashRatherThanWaitForARecreatedPartition(t 
 	mounter := &fakeMounter{}
 	stop := make(chan struct{})
 	var expandedWith []string
-	var recorded string
+	reports := &fakeFaultReport{}
 
 	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, false,
 		fmt.Errorf("%w: /dev/mmcblk0p2 holds nothing (blank space)", dataexpand.ErrDataCorrupt), &expandedWith)
@@ -1754,18 +1898,19 @@ func TestRunTellsAFixedSizeImageToReflashRatherThanWaitForARecreatedPartition(t 
 		close(stop)
 		return 1, nil
 	})
-	deps.WriteBootFailure = func(msg string) error { recorded = msg; return nil }
+	deps.FaultReport = reports.deps()
 	opts := testDataOptions()
 	opts.Stop = stop
 
 	if err := Run(deps, opts); !errors.Is(err, dataexpand.ErrDataCorrupt) {
 		t.Fatalf("Run() = %v, want the corruption error", err)
 	}
+	recorded := reports.written()
 	if !strings.Contains(recorded, "flash this image") {
-		t.Errorf("boot-failure.log content %q doesn't tell a fixed-size image's owner to re-flash", recorded)
+		t.Errorf("LAST_FATAL_ERROR.md content %q doesn't tell a fixed-size image's owner to re-flash", recorded)
 	}
-	if strings.Contains(recorded, "the next boot will") {
-		t.Errorf("boot-failure.log content %q promises a recreated partition this image never creates", recorded)
+	if strings.Contains(recorded, "the next boot will recreate it") {
+		t.Errorf("LAST_FATAL_ERROR.md content %q promises a recreated partition this image never creates", recorded)
 	}
 }
 

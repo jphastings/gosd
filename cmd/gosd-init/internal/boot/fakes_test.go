@@ -155,6 +155,12 @@ type fakeReaper struct{}
 
 func (fakeReaper) Wait(pid int) (int, error) { return 0, nil }
 
+// funcReaper adapts a plain function to the Reaper interface, for tests that
+// need the app to stay "running" until something else has happened.
+type funcReaper func(pid int) (int, error)
+
+func (f funcReaper) Wait(pid int) (int, error) { return f(pid) }
+
 // funcAppStarter adapts a plain function to the AppStarter interface, for
 // tests that need custom start behavior (like stopping supervision after N
 // restarts) beyond what fakeAppStarter offers.
@@ -169,3 +175,93 @@ func (f funcAppStarter) Start(path string, env []string, stdout, stderr io.Write
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+// fakeFaultReport stands in for the boot partition a crash report is written
+// to: it records what was written and deleted, and pretends the files it has
+// been given are present at the partition's root.
+type fakeFaultReport struct {
+	mu sync.Mutex
+	// present is what the card already carries, by file name.
+	present map[string]bool
+	// writes holds every rendered report, in order.
+	writes []string
+	// removed holds every set of names deletion was asked for, in order —
+	// including, crucially, the fact that it wasn't asked at all.
+	removed [][]string
+	// writeErr, if set, fails every write.
+	writeErr error
+
+	uptime      time.Duration
+	uptimeKnown bool
+	clockSynced bool
+	deviceModel string
+	bootCount   int
+}
+
+func (f *fakeFaultReport) deps() FaultReportDeps {
+	return FaultReportDeps{
+		Write: func(body string) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.writeErr != nil {
+				return f.writeErr
+			}
+			f.writes = append(f.writes, body)
+			f.markPresent(true, "LAST_FATAL_ERROR.md")
+			return nil
+		},
+		Exists: func(name string) bool {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.present[name]
+		},
+		Remove: func(names []string) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.removed = append(f.removed, names)
+			f.markPresent(false, names...)
+			return nil
+		},
+		DeviceModel: func() string { return f.deviceModel },
+		Uptime:      func() (time.Duration, bool) { return f.uptime, f.uptimeKnown },
+		ClockSynced: func() bool { return f.clockSynced },
+		CountBoot: func() (int, bool) {
+			if f.bootCount == 0 {
+				return 0, false
+			}
+			return f.bootCount, true
+		},
+	}
+}
+
+// markPresent updates what the card carries. Callers must hold f.mu.
+func (f *fakeFaultReport) markPresent(present bool, names ...string) {
+	if f.present == nil {
+		f.present = map[string]bool{}
+	}
+	for _, name := range names {
+		f.present[name] = present
+	}
+}
+
+// written returns the most recent report, or "" if nothing was written.
+func (f *fakeFaultReport) written() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.writes) == 0 {
+		return ""
+	}
+	return f.writes[len(f.writes)-1]
+}
+
+func (f *fakeFaultReport) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.writes)
+}
+
+func (f *fakeFaultReport) removals() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]string(nil), f.removed...)
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
@@ -113,7 +114,7 @@ type Deps struct {
 	// logged and boot proceeds to the read-only /data fallback;
 	// dataexpand.ErrDataCorrupt — an established partition whose
 	// filesystem is gone, app data possibly at stake — instead records the
-	// failure via WriteBootFailure and halts the device.
+	// failure via FaultReport and halts the device.
 	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error
 
 	// ProvisionSnapshot, if non-nil, is called once the data partition is
@@ -141,16 +142,22 @@ type Deps struct {
 	// applyHostname's own SetHostname failures.
 	WriteHosts func(hostname string) error
 
-	// WriteBootFailure records a fatal, human-actionable failure as
-	// boot-failure.log at the root of the boot partition (briefly
-	// remounting it read-write), so whoever collects an unattended device
-	// can read the latest run's fatal issue by plugging the card into any
-	// computer. The file is overwritten each time. Nil-checked; adopting
-	// this across every fatal path is bean gosd-pun9.
-	WriteBootFailure func(msg string) error
+	// FaultReport is how a fatal failure reaches LAST_FATAL_ERROR.md at
+	// the root of the boot partition, so whoever collects an unattended
+	// device can read the latest fatal issue by plugging the card into any
+	// computer. Every field is nil-checked — see FaultReportDeps — and a
+	// zero value means gosd-init narrates failures to the serial console
+	// and nowhere else.
+	FaultReport FaultReportDeps
 
 	Sleep func(time.Duration)
 	Now   func() time.Time
+
+	// After is the supervisor's stable-run timer (see
+	// Supervisor.OnStableRun): it exists so tests can decide when an app
+	// has been running long enough to count as recovered. Defaults to
+	// time.After.
+	After func(time.Duration) <-chan time.Time
 
 	// StartNetworking, if non-nil, is called in its own goroutine
 	// immediately before /app supervision begins, and is passed the
@@ -201,7 +208,7 @@ func Run(deps Deps, opts Options) error {
 	log := deps.FallbackLog
 
 	if err := mountEarly(deps.Mounter); err != nil {
-		return fatal(deps, log, "mounting early filesystems", err)
+		return fatal(deps, log, nil, fatalEarlyMounts, err)
 	}
 
 	var console io.Writer = os.Stderr
@@ -222,6 +229,13 @@ func Run(deps Deps, opts Options) error {
 	if cfg.Identity != "" {
 		log("image identity: %s", cfg.ShortIdentity())
 	}
+	// The board id config.json was baked with, captured before the
+	// gosd.board= cmdline override below can replace it. cmdline.txt is a
+	// hand-editable file on the FAT partition, and that override doesn't
+	// touch the baked boardDisplayName, so a crash report can only pair the
+	// two when they still agree — see initcfg.Config.BoardDisplayName and
+	// faultreport.Context.BoardDisplayNameFor.
+	bakedBoard := cfg.Board
 	// The baked defaults, captured before cloud-init or gosd.toml override
 	// anything: what this image would provision the device with on its own,
 	// and so the yardstick the provisioning snapshot measures an operator's
@@ -264,9 +278,22 @@ func Run(deps Deps, opts Options) error {
 	}
 	bootDevice, err := MountBootPartition(deps.Mounter, opts.BootTarget, bootDevices, opts.BootTimeout, pathExists, deps.Sleep, deps.Now)
 	if err != nil {
-		return fatal(deps, log, "mounting boot partition", err)
+		return fatal(deps, log, nil, fatalBootMount, err)
 	}
 	log("boot partition mounted at %s from %s", opts.BootTarget, bootDevice)
+
+	// From here on a fatal can be recorded on the card itself: there is
+	// somewhere to write it. Everything above this line can only ever reach
+	// the serial console — see fatal.
+	report := newFatalReporter(deps, log, faultreport.Context{
+		AppName:             cfg.AppName,
+		AppVersion:          cfg.AppVersion,
+		ShortIdentity:       cfg.ShortIdentity(),
+		SupportURL:          cfg.SupportURL,
+		BoardID:             cfg.Board,
+		BoardDisplayName:    cfg.BoardDisplayName,
+		BoardDisplayNameFor: bakedBoard,
+	})
 
 	// gosd.toml and cloud-init provisioning both live on the just-mounted
 	// boot partition, so neither can be read before now. Precedence
@@ -342,12 +369,23 @@ func Run(deps Deps, opts Options) error {
 	// cmd/gosd-init/internal/dataexpand's package comment.
 	if deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4) {
 		if err := deps.ExpandData(bootDevice, dataFilesystem, cfg.DataLabel, cfg.DataExpand, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
-			return haltForDataCorruption(deps, log, cfg.DataLabel, dataFilesystem, cfg.DataExpand, err)
+			return haltForDataCorruption(deps, log, report, cfg.DataLabel, dataFilesystem, cfg.DataExpand, err)
 		} else if err != nil {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
 	}
 	mountData(deps, opts, dataFilesystem, dataFlush, log)
+
+	// The boot counter is durable state, so it lives on the data partition
+	// and can only be reached now — which is why the data-corruption halt
+	// above reports an unknown boot number rather than a stale one. A
+	// read-only or absent /data reports unknown too, in preference to a
+	// count that silently never advances.
+	if deps.FaultReport.CountBoot != nil {
+		if count, ok := deps.FaultReport.CountBoot(); ok {
+			report.setBootCount(count)
+		}
+	}
 
 	// Provisioning has settled, and /data — where the snapshot lives — is
 	// as mounted as it's going to get, so this is the first and last moment
@@ -418,9 +456,18 @@ func Run(deps Deps, opts Options) error {
 		Wait:        deps.Reaper.Wait,
 		Sleep:       deps.Sleep,
 		Now:         deps.Now,
+		After:       deps.After,
 		Backoff:     NewBackoff(DefaultBackoffBase, DefaultBackoffCap),
 		StableAfter: StableRunThreshold,
 		Log:         log,
+	}
+	if report != nil {
+		// A device that came back must not still look broken, and the
+		// next failure after a stable run deserves a report of its own:
+		// both are the reporter's job (see fatalReporter). Guarded like
+		// every other goroutine gosd-init starts — a panic in PID 1 is a
+		// dead appliance (gosd-fkkr).
+		sup.OnStableRun = func() { guard.Guard("the crash-report cleanup", report.markStableRun) }
 	}
 	guard.Guard("app supervision", func() { sup.Run(opts.Stop) })
 	return nil
@@ -592,10 +639,70 @@ func describeEnvSources(fromGosdToml, fromBaked []string) string {
 	return strings.Join(parts, "; ")
 }
 
+// fatalClass is one kind of gosd-init fatal: its stable error code, the
+// prose a device's owner reads, and whether the device halts or reboots.
+//
+// The codes are namespaced GOSD-* to distinguish them from an app's own, and
+// are part of the contract a support page mirrors, so they are stable —
+// see docs/crash-reports.md, which lists them.
+type fatalClass struct {
+	// code is the report's error_code, stable and greppable.
+	code string
+	// action names what failed, in the gerund form the returned error and
+	// the console line both use ("mounting the boot partition"). Empty
+	// leaves the cause to speak for itself, for a class whose own error
+	// already reads as a complete statement.
+	action string
+	// doing is what the device was doing for its user at the time, in the
+	// terms its owner thinks in.
+	doing string
+	// problem is a human explanation of what went wrong.
+	problem string
+	// fix is a concrete instruction, or "" to send the reader to the
+	// image's support URL instead.
+	fix string
+	// halt stops the device instead of rebooting it. Reserved for states
+	// no retry can improve: a reboot loop there just grinds the card and
+	// buries the report under its own repetition. Anything that might
+	// succeed on a second attempt reboots, which is the default.
+	halt bool
+}
+
+// The fatal classes gosd-init raises itself. Neither of the two below can
+// ever be recorded on the card — they are the failures that happen before,
+// or in the course of, mounting the very partition a report is written to —
+// so the serial console is their only route, and docs/crash-reports.md says
+// so. They still carry prose because the class table is the one place a
+// reader should have to look to know what a given code means.
+var (
+	// fatalEarlyMounts: /proc, /sys, /dev and /run are the ground
+	// everything else stands on. Rebooting is worth a try — the failure
+	// may be a device that hadn't finished probing — and there is nothing
+	// else left to attempt.
+	fatalEarlyMounts = fatalClass{
+		code:    "GOSD-EARLY-MOUNT",
+		action:  "mounting early filesystems",
+		doing:   "starting up",
+		problem: "This device couldn't set up the basic system directories it needs before it can run anything at all.",
+	}
+
+	// fatalBootMount: the card the device booted from can't be re-read, or
+	// what was found isn't a GoSD boot partition. Rebooting is right
+	// because a slow SD controller is a real cause and the mount is
+	// already retried before this fires.
+	fatalBootMount = fatalClass{
+		code:    "GOSD-BOOT-MOUNT",
+		action:  "mounting boot partition",
+		doing:   "starting up",
+		problem: "This device couldn't read the SD card it started from.",
+		fix:     "Turn the device off, re-seat the card, and turn it back on. If that doesn't help, write the image to the card again — or to a different card, since this one may be failing.",
+	}
+)
+
 // haltForDataCorruption is the unattended-device version of a refusal: the
 // established data partition no longer holds the filesystem a completed
 // first boot left, and anything that "fixed" it would destroy whatever the
-// app had stored. The failure is recorded to boot-failure.log on the boot
+// app had stored. The failure is recorded to LAST_FATAL_ERROR.md on the boot
 // partition — readable on any computer the card is plugged into — and the
 // device halts rather than rebooting, because no retry can improve a
 // corrupt filesystem and a reboot loop would only mask it. dataLabel and fs
@@ -608,37 +715,64 @@ func describeEnvSources(fromGosdToml, fromBaked []string) string {
 // partition 2 leaves it gone until the card is flashed again). Like fatal,
 // it returns the wrapped error for callers and tests; in production the
 // machine has halted before that matters.
-func haltForDataCorruption(deps Deps, log func(format string, args ...any), dataLabel string, fs diskfmt.FS, dataExpand bool, cause error) error {
-	log("fatal: %v; halting (details in boot-failure.log on the boot partition)", cause)
-	if deps.WriteBootFailure != nil {
-		orStartOver := "delete partition 2 and flash this image to the card\nagain, which restores that partition empty"
-		if dataExpand {
-			orStartOver = "delete partition 2 entirely — the next boot will\nrecreate it, empty"
-		}
-		msg := fmt.Sprintf(`gosd-init could not start the app because %v.
-
-The device was halted to protect whatever data is still on that partition.
-To recover: plug the card into a computer, salvage what you need from
-partition 2, then either reformat it as %s labelled %s or
-%s.
-`, cause, fs, dataLabel, orStartOver)
-		if err := deps.WriteBootFailure(msg); err != nil {
-			log("recording the failure to boot-failure.log also failed: %v", err)
-		}
+func haltForDataCorruption(deps Deps, log func(format string, args ...any), report *fatalReporter, dataLabel string, fs diskfmt.FS, dataExpand bool, cause error) error {
+	orStartOver := "delete partition 2 and flash this image to the card again, which restores that partition empty"
+	if dataExpand {
+		orStartOver = "delete partition 2 entirely — the next boot will recreate it, empty"
 	}
-	deps.Rebooter.Sync()
-	deps.Rebooter.Halt()
-	return fmt.Errorf("data partition corrupt: %w", cause)
+
+	// No action: dataexpand's own error already reads as a whole sentence
+	// ("the data partition is corrupt: /dev/mmcblk0p2 holds nothing ..."),
+	// and wrapping it in another gerund would only say it twice.
+	return fatal(deps, log, report, fatalClass{
+		code:    "GOSD-DATA-CORRUPT",
+		doing:   "starting up",
+		problem: "The part of the card this device keeps its data on no longer holds a filesystem it recognises. It was stopped rather than started, so that whatever is still there can be salvaged.",
+		fix: fmt.Sprintf("Plug the card into a computer and save anything you need from partition 2. Then either reformat that partition as %s, labelled %s, or %s.",
+			fs, dataLabel, orStartOver),
+		halt: true,
+	}, cause)
 }
 
-// fatal implements step 8 of the boot sequence: log, sync, sleep 5s, then
-// reboot. It returns the wrapped error so callers (and tests) can observe
-// what happened; in production the machine reboots before that return ever
-// matters.
-func fatal(deps Deps, log func(format string, args ...any), action string, err error) error {
-	wrapped := fmt.Errorf("%s failed: %w", action, err)
-	log("fatal: %v; rebooting in 5s", wrapped)
+// fatal implements step 8 of the boot sequence: log, record what happened
+// where the device's owner can find it, sync, and then either halt or (the
+// default) sleep 5s and reboot. It returns the wrapped error so callers (and
+// tests) can observe what happened; in production the machine is on its way
+// down before that return ever matters.
+//
+// report is nil for any failure raised before the boot partition is mounted,
+// which is the whole of the sequence up to and including the mount itself:
+// there is nowhere to write a report, so those failures reach the serial
+// console and nowhere else.
+func fatal(deps Deps, log func(format string, args ...any), report *fatalReporter, class fatalClass, err error) error {
+	wrapped := err
+	if class.action != "" {
+		wrapped = fmt.Errorf("%s failed: %w", class.action, err)
+	}
+
+	if class.halt {
+		log("fatal: %v; halting", wrapped)
+	} else {
+		log("fatal: %v; rebooting in 5s", wrapped)
+	}
+
+	if report == nil {
+		log("%s can't be written before the boot partition is mounted, so this is only on the serial console", faultreport.FileName)
+	} else {
+		report.record(faultreport.Report{
+			Code:    class.code,
+			Doing:   class.doing,
+			Problem: class.problem,
+			Fix:     class.fix,
+			Detail:  wrapped.Error(),
+		})
+	}
+
 	deps.Rebooter.Sync()
+	if class.halt {
+		deps.Rebooter.Halt()
+		return wrapped
+	}
 	deps.Sleep(5 * time.Second)
 	deps.Rebooter.Reboot()
 	return wrapped
@@ -661,7 +795,7 @@ func validHostname(name string) bool {
 // (step 8, reboot); but a wrong hostname is cosmetic, while a reboot loop
 // is not — see gosd-jeaw, where a hand-edited gosd.toml hostname long
 // enough to make sethostname(2) return EINVAL turned into a permanent
-// reboot loop with no boot-failure.log written. step names which source is
+// reboot loop with nothing recorded on the card. step names which source is
 // being (re-)applied — "" for the initial config.json apply at step 4,
 // "gosd.toml"/"cloud-init" for the re-apply once the boot partition is
 // mounted — and is folded into both the success and failure log lines.

@@ -1,11 +1,15 @@
 # Crash reports: telling your users what went wrong
 
-**Status: partly built.** The `--support-url` and `--app-version` build flags
-are shipped, as are the internal pieces that redact secrets and retain the
-app's console output. The `fault` package, the report renderer, and the
-writing of `LAST_FATAL_ERROR.md` itself are not built yet — this document
-describes the contract they will implement, so that the API below is not yet
-importable. Tracked by bean `gosd-47z3`.
+**Status: partly built.** The report format, the renderer every producer
+shares, and the writing of `LAST_FATAL_ERROR.md` are shipped: gosd-init
+records its own fatal errors this way, and deletes the file once your app has
+proven it recovered. What is not built yet is everything your *app* touches —
+the `fault` package described below is **not importable**, and gosd-init does
+not yet keep your app's console output, so a panic in your code still only
+reaches the serial console. Two smaller gaps: nothing yet supplies the
+renderer with secrets to redact, and the `device:` line's device-tree read has
+not yet been confirmed on real hardware (it falls back to the board name baked
+into the image whenever it can't be read). Tracked by bean `gosd-47z3`.
 
 ## Why this exists
 
@@ -59,18 +63,61 @@ up is exactly the kind a report exists for. `uptime` and `boot` are true
 regardless, and are what actually answer "did it die instantly or after four
 days?".
 
+`boot` is counted on the data partition rather than the boot one, because
+counting on the boot partition would mean a write to it on every single boot —
+see "How often it writes" below. An image with no writable `/data` reports
+`boot: unknown` instead.
+
+## What gosd-init reports for itself
+
+These are gosd-init's own failures. The codes are stable, so a support page
+can list them:
+
+| Code | What happened | What the device does |
+| --- | --- | --- |
+| `GOSD-DATA-CORRUPT` | The data partition is established but no longer holds a filesystem the device recognises | **Halts**, so whatever is still there can be salvaged |
+| `GOSD-BOOT-MOUNT` | The device couldn't read the SD card it booted from | Reboots after 5s |
+| `GOSD-EARLY-MOUNT` | The in-memory filesystems everything else needs couldn't be set up | Reboots after 5s |
+
+Halting is reserved for a state no retry can improve; anything that might
+succeed on a second attempt reboots instead, since a device that fixes itself
+is better than one waiting for a visit.
+
+**Two of those three can never reach the card.** `GOSD-EARLY-MOUNT` and
+`GOSD-BOOT-MOUNT` both happen before the boot partition is mounted — and the
+boot partition is where the report would go — so they exist only on the serial
+console, and the console line says as much. Everything after that mount is
+recordable.
+
 ## What you get for free
 
-Every GoSD app gets a report when it crashes, with no code changes at all.
-gosd-init keeps the tail of your app's console output and writes it into the
-report's technical section when the app dies unexpectedly — including panics,
-segfaults and OOM kills, which your code never gets a chance to report for
-itself.
+_Not built yet — see the status note at the top._ Every GoSD app will get a
+report when it crashes, with no code changes at all: gosd-init keeps the tail
+of your app's console output and writes it into the report's technical section
+when the app dies unexpectedly — including panics, segfaults and OOM kills,
+which your code never gets a chance to report for itself.
 
 The supervisor still restarts your app with backoff after one of these,
 because a crash nobody classified might well be transient.
 
+## How often it writes
+
+Writing the report means briefly remounting the boot partition read-write,
+which is the one moment in a GoSD device's life when a power cut can damage
+it. So the writes are deliberately rare, and two rules keep them that way:
+
+- **One report per stable run.** The first failure is written; further
+  failures in the same crash loop only reach the console. Once your app has
+  run for 30 seconds, the next failure is written again.
+- **A recovered device stops looking broken.** Once your app has run that
+  long, any report left on the card is deleted — but the device checks
+  whether there's a file to delete before remounting anything, so a device
+  that has never crashed never remounts at all.
+
 ## When to raise one yourself
+
+_Not built yet — the `fault` package described here is not importable. See the
+status note at the top._
 
 Use `fault.Fatal` for a condition **no restart can improve** and a human can
 act on. An invalid API key, a config naming a sensor this build doesn't
@@ -104,6 +151,10 @@ Markdown to stderr rather than looking for a boot partition, so you can see
 exactly what your user will see without flashing anything.
 
 ## Secrets
+
+_Partly built: the renderer scrubs what it's given, but nothing yet collects
+your environment or your registrations to give it. See the status note at the
+top._
 
 A report invites its reader to forward the whole file to you, so the renderer
 scrubs it first. Every value in your app's environment is replaced with
