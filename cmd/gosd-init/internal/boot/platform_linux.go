@@ -280,6 +280,10 @@ func (r *reaper) drain() {
 		if err != nil || pid <= 0 {
 			return
 		}
-		r.deliver(pid, ws.ExitStatus())
+		r.deliver(pid, ExitStatus{
+			ExitCode: ws.ExitStatus(),
+			Signaled: ws.Signaled(),
+			Signal:   ws.Signal(),
+		})
 	}
 }

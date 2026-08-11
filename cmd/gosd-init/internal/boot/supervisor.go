@@ -9,8 +9,11 @@ import "time"
 type Supervisor struct {
 	// Start launches /app and returns its pid.
 	Start func() (pid int, err error)
-	// Wait blocks until pid has exited, returning its exit status.
-	Wait func(pid int) (status int, err error)
+	// Wait blocks until pid has exited, returning everything the reaper
+	// knows about how it died — not just an exit code, since a signal
+	// death needs its own human-readable narration in a crash report (see
+	// ExitStatus and OnExit below).
+	Wait func(pid int) (ExitStatus, error)
 	// Sleep pauses for the given duration between restart attempts.
 	Sleep func(time.Duration)
 	// Now returns the current time, used to measure how long /app ran.
@@ -31,6 +34,12 @@ type Supervisor struct {
 	// fatalReporter.markStableRun). It runs on its own goroutine, so it
 	// must be safe to call concurrently with the app exiting.
 	OnStableRun func()
+	// OnExit, if non-nil, is called after every /app exit that Wait
+	// reported without an error, with how it died and how long it ran.
+	// Supervisor itself stays policy-free about what that means — it
+	// always restarts /app regardless — so sequence.go is what decides
+	// whether a given exit counts as a crash worth recording (gosd-s9uq).
+	OnExit func(status ExitStatus, ran time.Duration)
 	// Log records what the supervisor is doing.
 	Log func(format string, args ...any)
 }
@@ -82,7 +91,10 @@ func (s *Supervisor) runOnce() {
 	if err != nil {
 		s.Log("supervising /app (pid %d) failed: %v", pid, err)
 	} else {
-		s.Log("/app (pid %d) exited with status %d after %s", pid, status, ran)
+		s.Log("/app (pid %d) exited with status %d after %s", pid, status.ExitCode, ran)
+		if s.OnExit != nil {
+			s.OnExit(status, ran)
+		}
 	}
 
 	if ran >= s.StableAfter {

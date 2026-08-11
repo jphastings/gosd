@@ -39,6 +39,58 @@ func TestFatalReporterWritesOneReportPerStableRunCycle(t *testing.T) {
 	}
 }
 
+// TestFatalReporterBoundsTotalWritesPerBoot pins the gosd-s9uq re-arming
+// bound: an app that reliably crashes just after StableRunThreshold cycles
+// markStableRun (re-arm + cleanup) and record (write) forever, which armed
+// alone doesn't cap. Simulating 50 such cycles must still leave the total
+// write count at maxReportsPerBoot, not 50.
+func TestFatalReporterBoundsTotalWritesPerBoot(t *testing.T) {
+	f := &fakeFaultReport{}
+	report := testReporter(f)
+
+	for range 50 {
+		report.markStableRun()
+		report.record(faultreport.Report{Code: "GOSD-APP-CRASH"})
+	}
+
+	if got := f.writeCount(); got != maxReportsPerBoot {
+		t.Errorf("wrote %d reports across 50 crash/recover cycles, want exactly the cap (%d)", got, maxReportsPerBoot)
+	}
+}
+
+// TestFatalReporterCleansUpOnceAfterTheCapIsHit proves the cap's promise
+// that a device which genuinely recovers after its last recorded crash
+// still ends up looking recovered: cleanup isn't gated by the cap, only new
+// writes are, so the final stale report is still deleted exactly once.
+func TestFatalReporterCleansUpOnceAfterTheCapIsHit(t *testing.T) {
+	f := &fakeFaultReport{}
+	report := testReporter(f)
+
+	for range maxReportsPerBoot {
+		report.markStableRun()
+		report.record(faultreport.Report{Code: "GOSD-APP-CRASH"})
+	}
+	if got := f.writeCount(); got != maxReportsPerBoot {
+		t.Fatalf("wrote %d reports reaching the cap, want %d", got, maxReportsPerBoot)
+	}
+
+	// The app now recovers for good: no more crashes, just repeated stable
+	// runs (the OnStableRun timer fires on every tick regardless of whether
+	// the app ever crashes again).
+	removalsBefore := len(f.removals())
+	for range 20 {
+		report.markStableRun()
+	}
+
+	removals := f.removals()
+	if len(removals) != removalsBefore+1 {
+		t.Fatalf("cleanup ran %d times after the cap, want exactly 1 (then nothing left to delete)", len(removals)-removalsBefore)
+	}
+	if got := f.writeCount(); got != maxReportsPerBoot {
+		t.Errorf("wrote %d reports after the cap, want it to stay at %d", got, maxReportsPerBoot)
+	}
+}
+
 func TestFatalReporterLeavesAHealthyCardAlone(t *testing.T) {
 	// The staleness rule fires on every stable run, which on a working
 	// device is every run. It must cost nothing: no report on the card

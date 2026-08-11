@@ -152,16 +152,16 @@ func (r *fakeRebooter) Halt() {
 	r.mu.Unlock()
 }
 
-// fakeReaper always reports an immediate, successful exit.
+// fakeReaper always reports an immediate, clean exit (status 0, unsignaled).
 type fakeReaper struct{}
 
-func (fakeReaper) Wait(pid int) (int, error) { return 0, nil }
+func (fakeReaper) Wait(pid int) (ExitStatus, error) { return ExitStatus{}, nil }
 
 // funcReaper adapts a plain function to the Reaper interface, for tests that
 // need the app to stay "running" until something else has happened.
-type funcReaper func(pid int) (int, error)
+type funcReaper func(pid int) (ExitStatus, error)
 
-func (f funcReaper) Wait(pid int) (int, error) { return f(pid) }
+func (f funcReaper) Wait(pid int) (ExitStatus, error) { return f(pid) }
 
 // funcAppStarter adapts a plain function to the AppStarter interface, for
 // tests that need custom start behavior (like stopping supervision after N

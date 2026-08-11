@@ -6,14 +6,16 @@ records its own fatal errors this way, and deletes the file once your app has
 proven it recovered. Redaction is wired in too: every value in your app's own
 environment is scrubbed automatically, and gosd-init already reads a
 registration file from `/run` fresh at the moment of each report, ready for
-`RegisterSecretString` once it ships. What is not built yet is everything
-else your *app* touches — the `fault` package described below, including
-`RegisterSecretString` itself, is **not importable**, and gosd-init does not
-yet keep your app's console output, so a panic in your code still only
-reaches the serial console. One smaller gap: the `device:` line's
-device-tree read has not yet been confirmed on real hardware (it falls back
-to the board name baked into the image whenever it can't be read). Tracked by
-bean `gosd-47z3`.
+`RegisterSecretString` once it ships. **New:** gosd-init now also keeps the
+tail of your app's own console output and writes a report when it crashes —
+see "What you get for free" below — with no code changes required. What is
+still not built is everything your *app* has to say for itself: the `fault`
+package described below, including `RegisterSecretString` itself, is **not
+importable**, so a condition your own code understands ("your API key is
+wrong") can't yet declare its own report — only an unclassified crash can.
+One smaller gap: the `device:` line's device-tree read has not yet been
+confirmed on real hardware (it falls back to the board name baked into the
+image whenever it can't be read). Tracked by bean `gosd-47z3`.
 
 ## Why this exists
 
@@ -95,20 +97,35 @@ recordable.
 
 ## What you get for free
 
-_Not built yet — see the status note at the top._ Every GoSD app will get a
-report when it crashes, with no code changes at all: gosd-init keeps the tail
-of your app's console output and writes it into the report's technical section
-when the app dies unexpectedly — including panics, segfaults and OOM kills,
-which your code never gets a chance to report for itself.
+Every GoSD app gets a report when it crashes, with no code changes at all:
+gosd-init keeps the tail of your app's own console output and writes it into
+the report's technical section when the app dies unexpectedly — including
+panics, segfaults and OOM kills, which your code never gets a chance to
+report for itself.
 
-The supervisor still restarts your app with backoff after one of these,
-because a crash nobody classified might well be transient.
+| Code | What happened | What the device does |
+| --- | --- | --- |
+| `GOSD-APP-CRASH` | Your app exited with a non-zero status, or was killed by a signal | Restarts with backoff, exactly as it would for any other exit |
+
+A signal death is named in terms you don't need a manual to read — an OOM
+kill reads as "it ran out of memory", not "signal 9". An unrecovered Go
+panic doesn't actually show up as a signal at all: the Go runtime reports one
+by exiting with status 2, so that's the case a bare non-zero exit code
+covers.
+
+There's no app-supplied context on this path, so the report is honest about
+it rather than guessing: it says your app "stopped unexpectedly while
+running," not what it was doing when it did.
+
+A deliberate `exit 0` is never treated as a crash and never gets a report,
+even though the supervisor restarts an app that exits 0 exactly the same way
+it restarts a crash — an app that decided to stop on its own isn't broken.
 
 ## How often it writes
 
 Writing the report means briefly remounting the boot partition read-write,
 which is the one moment in a GoSD device's life when a power cut can damage
-it. So the writes are deliberately rare, and two rules keep them that way:
+it. So the writes are deliberately rare, and three rules keep them that way:
 
 - **One report per stable run.** The first failure is written; further
   failures in the same crash loop only reach the console. Once your app has
@@ -117,6 +134,16 @@ it. So the writes are deliberately rare, and two rules keep them that way:
   long, any report left on the card is deleted — but the device checks
   whether there's a file to delete before remounting anything, so a device
   that has never crashed never remounts at all.
+- **A boot writes at most 10 reports, ever.** The first two rules alone only
+  bound the *rate* of an app that keeps crash-looping, not its total cost
+  over a device that stays up indefinitely: an app that reliably dies just
+  after the 30-second mark would otherwise cost a delete-then-write pair of
+  remounts every cycle, forever. Once a boot hits that ceiling, the device
+  stops refreshing the card for any further crash until it next reboots —
+  the last report written just stays there — but it still cleans up after
+  itself once: if your app then genuinely recovers, the stale report is
+  still deleted the next time it proves stable, so it doesn't keep looking
+  broken either.
 
 ## When to raise one yourself
 

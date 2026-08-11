@@ -52,7 +52,7 @@ func (unsupportedPlatform) Start(string, []string, io.Writer, io.Writer) (int, e
 	return 0, errUnsupportedPlatform
 }
 
-func (unsupportedPlatform) Wait(int) (int, error) { return 0, errUnsupportedPlatform }
+func (unsupportedPlatform) Wait(int) (ExitStatus, error) { return ExitStatus{}, errUnsupportedPlatform }
 
 func (unsupportedPlatform) Sync() {}
 

@@ -12,7 +12,10 @@
 // hosts (required for `go test ./...` to pass on macOS).
 package boot
 
-import "io"
+import (
+	"io"
+	"syscall"
+)
 
 // Mounter mounts and unmounts a single filesystem, mirroring the Linux
 // mount(2)/umount(2) syscall signatures so the real implementation is a thin
@@ -38,12 +41,35 @@ type AppStarter interface {
 	Start(path string, env []string, stdout, stderr io.Writer) (pid int, err error)
 }
 
+// ExitStatus is everything the reaper can tell us about how a reaped child
+// died. unix.WaitStatus.ExitStatus() alone can't tell a signal death apart
+// from "hasn't exited" — both read -1 — which is fine for a consumer that
+// only ever logs a bare exit code (cloudflared, tsfunnel), but not for
+// /app's own supervision: a crash report has to name a signal death in
+// human terms ("ran out of memory", not "signal 9" — gosd-s9uq), which needs
+// the fuller picture.
+type ExitStatus struct {
+	// ExitCode is the process's exit(2) code when it exited normally, or -1
+	// when it was killed by a signal instead — exactly what
+	// unix.WaitStatus.ExitStatus() returns, so a caller that only wants
+	// what Reaper.Wait has always reported sees no change in this field
+	// (see cmd/gosd-init/main.go's exitCodeOnly).
+	ExitCode int
+	// Signaled reports whether the child was killed by a signal rather than
+	// exiting (via exit(2), a return from main, or an uncaught Go panic,
+	// which itself exits via exit(2)) on its own.
+	Signaled bool
+	// Signal is the signal that killed the child. Only meaningful when
+	// Signaled is true.
+	Signal syscall.Signal
+}
+
 // Reaper reaps every child reparented to PID 1 (via SIGCHLD + wait4), and
 // reports the exit status of specifically-awaited pids back to their
 // callers. Pids nobody is waiting for (grandchildren orphaned to PID 1) are
 // reaped and discarded internally.
 type Reaper interface {
-	Wait(pid int) (status int, err error)
+	Wait(pid int) (ExitStatus, error)
 }
 
 // Rebooter performs the fatal-error shutdown paths: flush disks, then

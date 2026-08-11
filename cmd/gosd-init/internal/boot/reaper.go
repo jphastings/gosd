@@ -16,34 +16,31 @@ const maxStashedResults = 64
 // parked on: /app can exit before the supervisor gets as far as calling Wait
 // on the pid Start just returned, and a status discarded in that window
 // leaves Wait blocked forever with the app never restarted (bean gosd-1t0q).
+//
+// Wait itself never returns an error (see Wait's doc): once wait4 has
+// confirmed a pid is reaped, the only way deliver is ever called, getting
+// its ExitStatus cannot fail. Wait still returns one to satisfy the general
+// Reaper interface fakes use in tests, but the real implementation always
+// returns nil for it.
 type reaper struct {
 	mu      sync.Mutex
-	waiters map[int]chan waitResult
-	results map[int]waitResult
+	waiters map[int]chan ExitStatus
+	results map[int]ExitStatus
 	// stashed holds the pids in results, oldest first, so the stash can be
 	// pruned in reaping order.
 	stashed []int
 }
 
-// waitResult carries only an exit status, not an error: once wait4 has
-// confirmed a pid is reaped (the only way deliver is ever called), getting
-// its exit status cannot itself fail. Wait still returns an error to satisfy
-// the general Reaper interface fakes use in tests, but the real
-// implementation always returns nil for it.
-type waitResult struct {
-	status int
-}
-
 func newReaper() *reaper {
 	return &reaper{
-		waiters: make(map[int]chan waitResult),
-		results: make(map[int]waitResult),
+		waiters: make(map[int]chan ExitStatus),
+		results: make(map[int]ExitStatus),
 	}
 }
 
 // deliver hands pid's exit status to a parked Wait, or stashes it for a Wait
 // that hasn't happened yet.
-func (r *reaper) deliver(pid, status int) {
+func (r *reaper) deliver(pid int, status ExitStatus) {
 	r.mu.Lock()
 	ch, waiting := r.waiters[pid]
 	if waiting {
@@ -54,7 +51,7 @@ func (r *reaper) deliver(pid, status int) {
 	r.mu.Unlock()
 
 	if waiting {
-		ch <- waitResult{status: status}
+		ch <- status
 	}
 }
 
@@ -69,11 +66,11 @@ func (r *reaper) deliver(pid, status int) {
 // be reaped inside that pid's own Start-to-Wait window — the argument holds
 // per pid, not on the total number of children gosd-init happens to be
 // supervising at once. Callers hold r.mu.
-func (r *reaper) stash(pid, status int) {
+func (r *reaper) stash(pid int, status ExitStatus) {
 	if _, known := r.results[pid]; !known {
 		r.stashed = append(r.stashed, pid)
 	}
-	r.results[pid] = waitResult{status: status}
+	r.results[pid] = status
 
 	if len(r.stashed) > maxStashedResults {
 		delete(r.results, r.stashed[0])
@@ -83,10 +80,10 @@ func (r *reaper) stash(pid, status int) {
 
 // claim takes pid's stashed status, if one arrived already. Callers hold
 // r.mu.
-func (r *reaper) claim(pid int) (waitResult, bool) {
+func (r *reaper) claim(pid int) (ExitStatus, bool) {
 	res, ok := r.results[pid]
 	if !ok {
-		return waitResult{}, false
+		return ExitStatus{}, false
 	}
 	delete(r.results, pid)
 	for i, stashed := range r.stashed {
@@ -98,17 +95,18 @@ func (r *reaper) claim(pid int) (waitResult, bool) {
 	return res, true
 }
 
-// Wait blocks until pid has been reaped and returns its exit status.
-func (r *reaper) Wait(pid int) (int, error) {
+// Wait blocks until pid has been reaped and returns everything the reaper
+// knows about how it died.
+func (r *reaper) Wait(pid int) (ExitStatus, error) {
 	r.mu.Lock()
 	if res, ok := r.claim(pid); ok {
 		r.mu.Unlock()
-		return res.status, nil
+		return res, nil
 	}
-	ch := make(chan waitResult, 1)
+	ch := make(chan ExitStatus, 1)
 	r.waiters[pid] = ch
 	r.mu.Unlock()
 
 	res := <-ch
-	return res.status, nil
+	return res, nil
 }

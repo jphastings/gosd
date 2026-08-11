@@ -29,3 +29,14 @@ this stub. Last folded into: v0.3.0 (2026-08-10).
   once your app has run for thirty seconds, so a device that recovered doesn't
   keep looking broken. Reports for your *app's* own crashes are still to come;
   see [the crash report guide](../crash-reports.md).
+- **Your app now gets a crash report too, with no code changes.** gosd-init
+  keeps the tail of your app's own console output and, if it exits
+  unexpectedly — a panic, a segfault, an OOM kill, any non-zero or
+  signal-terminated exit — writes it into `LAST_FATAL_ERROR.md` as
+  `GOSD-APP-CRASH`. Serial console output is completely unaffected: your app's
+  stdout/stderr still reach it byte-for-byte, exactly as before. A signal death
+  is named in plain terms ("it ran out of memory", not "signal 9"); an exit 0
+  is never treated as a crash, since an app that deliberately stops isn't
+  broken. A single boot writes at most 10 of these reports, however long an
+  app keeps crash-looping — see [the crash report guide](../crash-reports.md)
+  for the reasoning.

@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"syscall"
 	"testing"
 	"time"
 )
@@ -8,10 +9,10 @@ import (
 // waitFor calls r.Wait(pid) off the test goroutine so a lost status fails the
 // test instead of hanging it forever — which is exactly what the bug being
 // pinned here did to gosd-init's supervise loop.
-func waitFor(t *testing.T, r *reaper, pid int) int {
+func waitFor(t *testing.T, r *reaper, pid int) ExitStatus {
 	t.Helper()
 
-	got := make(chan int, 1)
+	got := make(chan ExitStatus, 1)
 	go func() {
 		status, err := r.Wait(pid)
 		if err != nil {
@@ -25,7 +26,7 @@ func waitFor(t *testing.T, r *reaper, pid int) int {
 		return status
 	case <-time.After(2 * time.Second):
 		t.Fatalf("Wait(%d) blocked; its exit status was lost", pid)
-		return 0
+		return ExitStatus{}
 	}
 }
 
@@ -35,10 +36,10 @@ func TestWaitClaimsStatusReapedBeforeWaitWasCalled(t *testing.T) {
 	// /app exited within microseconds of exec (bad env, wrong-arch binary,
 	// immediate os.Exit): the SIGCHLD drain reaps it before the supervisor
 	// gets as far as calling Wait on the pid Start returned.
-	r.deliver(4242, 3)
+	r.deliver(4242, ExitStatus{ExitCode: 3})
 
-	if status := waitFor(t, r, 4242); status != 3 {
-		t.Errorf("Wait returned status %d, want 3", status)
+	if status := waitFor(t, r, 4242); status.ExitCode != 3 {
+		t.Errorf("Wait returned status %+v, want ExitCode 3", status)
 	}
 }
 
@@ -47,11 +48,25 @@ func TestWaitReceivesStatusReapedWhileWaiting(t *testing.T) {
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		r.deliver(4242, 7)
+		r.deliver(4242, ExitStatus{ExitCode: 7})
 	}()
 
-	if status := waitFor(t, r, 4242); status != 7 {
-		t.Errorf("Wait returned status %d, want 7", status)
+	if status := waitFor(t, r, 4242); status.ExitCode != 7 {
+		t.Errorf("Wait returned status %+v, want ExitCode 7", status)
+	}
+}
+
+// TestWaitPreservesSignalDetail pins the whole reason ExitStatus exists
+// (gosd-s9uq): a signal death has to survive the reaper round-trip intact,
+// not just collapse to ExitStatus()'s -1.
+func TestWaitPreservesSignalDetail(t *testing.T) {
+	r := newReaper()
+
+	r.deliver(4242, ExitStatus{ExitCode: -1, Signaled: true, Signal: syscall.SIGSEGV})
+
+	status := waitFor(t, r, 4242)
+	if !status.Signaled || status.Signal != syscall.SIGSEGV {
+		t.Errorf("Wait returned status %+v, want Signaled with SIGSEGV", status)
 	}
 }
 
@@ -66,8 +81,8 @@ func TestWaitReceivesStatusReapedWhileWaiting(t *testing.T) {
 func TestConcurrentWaitersOnDistinctPidsBothResolve(t *testing.T) {
 	r := newReaper()
 
-	appDone := make(chan int, 1)
-	cloudflaredDone := make(chan int, 1)
+	appDone := make(chan ExitStatus, 1)
+	cloudflaredDone := make(chan ExitStatus, 1)
 
 	go func() {
 		status, err := r.Wait(4242)
@@ -88,13 +103,13 @@ func TestConcurrentWaitersOnDistinctPidsBothResolve(t *testing.T) {
 	// pid is reaped.
 	time.Sleep(10 * time.Millisecond)
 
-	r.deliver(9999, 2)
-	r.deliver(4242, 1)
+	r.deliver(9999, ExitStatus{ExitCode: 2})
+	r.deliver(4242, ExitStatus{ExitCode: 1})
 
 	select {
 	case status := <-appDone:
-		if status != 1 {
-			t.Errorf("Wait(4242) returned status %d, want 1", status)
+		if status.ExitCode != 1 {
+			t.Errorf("Wait(4242) returned status %+v, want ExitCode 1", status)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait(4242) blocked; its exit status was lost")
@@ -102,8 +117,8 @@ func TestConcurrentWaitersOnDistinctPidsBothResolve(t *testing.T) {
 
 	select {
 	case status := <-cloudflaredDone:
-		if status != 2 {
-			t.Errorf("Wait(9999) returned status %d, want 2", status)
+		if status.ExitCode != 2 {
+			t.Errorf("Wait(9999) returned status %+v, want ExitCode 2", status)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait(9999) blocked; its exit status was lost")
@@ -117,13 +132,13 @@ func TestStashSurvivesGrandchildReapsBeforeWait(t *testing.T) {
 	// an eviction that mattered would need a whole stash's worth of
 	// orphaned grandchildren to be reaped inside that one child's own
 	// window. A realistic burst leaves the app's status claimable.
-	r.deliver(4242, 5)
+	r.deliver(4242, ExitStatus{ExitCode: 5})
 	for pid := 5000; pid < 5000+maxStashedResults-1; pid++ {
-		r.deliver(pid, 0)
+		r.deliver(pid, ExitStatus{})
 	}
 
-	if status := waitFor(t, r, 4242); status != 5 {
-		t.Errorf("Wait returned status %d, want 5", status)
+	if status := waitFor(t, r, 4242); status.ExitCode != 5 {
+		t.Errorf("Wait returned status %+v, want ExitCode 5", status)
 	}
 }
 
@@ -133,7 +148,7 @@ func TestUnclaimedStatusesDoNotAccumulate(t *testing.T) {
 	// PID 1 lives for the life of the device, reaping grandchildren nobody
 	// ever waits for; remembering them all would leak.
 	for pid := 5000; pid < 5000+10*maxStashedResults; pid++ {
-		r.deliver(pid, 0)
+		r.deliver(pid, ExitStatus{})
 	}
 
 	r.mu.Lock()
