@@ -1,11 +1,11 @@
 ---
 # gosd-s9uq
 title: Capture the app's console tail and write it on a crash
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T14:41:09Z
+updated_at: 2026-08-11T22:51:02Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -51,18 +51,24 @@ On a non-clean app exit, format the ring buffer's contents as the report's
       `cmd/gosd-init/internal/consoletail` (PR #257) — pure buffer only, no
       wiring into sequence.go/supervisor.go yet; see the note below
 - [ ] Tee to console unchanged; verify on the bench that serial output is
-      identical to today
-- [ ] Distinguish a crash from a clean exit. `Supervisor.runOnce` already
+      identical to today. Wired (`sequence.go`'s `appOutput := io.MultiWriter(console, tail)`)
+      and proven by an automated test asserting the app's stdout/stderr reach
+      the fake console verbatim (`TestRunTeesAppOutputToConsoleUnchanged`) —
+      MultiWriter passes each writer the identical byte slice, so ordering
+      console before tail can't alter what the console receives. Left
+      unchecked: nobody has plugged a serial cable into a real board running
+      this yet, matching gosd-pun9's own outstanding bench todos
+- [x] Distinguish a crash from a clean exit. `Supervisor.runOnce` already
       has exit status and run duration. Locked: a non-zero exit status is a
       crash; exit 0 is not, even though the supervisor restarts it either
       way (an app that exits 0 on purpose is not broken)
-- [ ] Signal deaths — SIGSEGV, SIGKILL from the OOM killer — must be named
+- [x] Signal deaths — SIGSEGV, SIGKILL from the OOM killer — must be named
       in human terms in "The problem" ("ran out of memory", not "signal 9").
       Check what `unix.WaitStatus` gives the reaper: `ExitStatus()` alone
       loses the signal, so `Supervisor.Wait`'s contract may need widening
-- [ ] Honour the epic's write-rate rule: one report per stable-run cycle,
+- [x] Honour the epic's write-rate rule: one report per stable-run cycle,
       not one per restart
-- [ ] **Bound the re-arming, or this bean reintroduces the boot-FAT thrash
+- [x] **Bound the re-arming, or this bean reintroduces the boot-FAT thrash
       the write-rate rule exists to prevent.** Found by gosd-pun9's
       adversarial pass: an app that dies just AFTER `StableRunThreshold`
       costs two remounts per cycle — delete the stale report on the stable
@@ -74,10 +80,21 @@ On a non-clean app exit, format the ring buffer's contents as the report's
       recovered device stops looking broken") cannot both hold unbounded, so
       pick a bound — a cap per boot, a minimum interval between writes, or
       backoff on the re-arm — and record the reasoning. This is a
-      crash-safety argument, not a tuning knob
-- [ ] The "what it was doing" line has no app-supplied context on this path;
-      fall back to "stopped unexpectedly while running"
-- [ ] Fakes-driven tests that pass on macOS, per the gosd-init convention
+      crash-safety argument, not a tuning knob. **Chosen: a hard cap of 10
+      report writes per boot** (`maxReportsPerBoot`, `report.go`), gating
+      only new writes and not cleanup, so total remounts this boot are bounded
+      at 2*cap+1 however long a crash loop runs, and a device that genuinely
+      recovers after its last recorded crash still gets its stale report
+      cleaned up exactly once. See `report.go`'s doc comment for the full
+      argument and `report_test.go`'s
+      TestFatalReporterBoundsTotalWritesPerBoot /
+      TestFatalReporterCleansUpOnceAfterTheCapIsHit for the proof.
+- [x] The "what it was doing" line has no app-supplied context on this path;
+      fall back to "stopped unexpectedly while running" (`Doing: "running"`,
+      composed by the renderer's fixed "Your device stopped while running."
+      sentence; the "unexpectedly" framing lives in Problem instead — see
+      `appcrash.go`)
+- [x] Fakes-driven tests that pass on macOS, per the gosd-init convention
 
 ## RESOLVED: secrets are redacted, not left to app discipline (JP, 2026-08-11)
 
@@ -106,3 +123,140 @@ fallback narration line, and fakes-driven tests for all of that). The split
 parallelises the work; the wiring is still blocked on gosd-pun9 and gosd-m6py
 as noted above, so it lands in a second PR once those land. This bean's status
 stays `todo` — it is not complete.
+
+## Summary of Changes
+
+Landed the wiring PR: [jphastings/gosd#261](https://github.com/jphastings/gosd/pull/261).
+(#257 was the pure `consoletail` buffer; this is the second PR the bean's
+own note said would follow, now that gosd-pun9 and gosd-m6py have both
+merged.)
+
+**Tee.** `sequence.go` now builds one `consoletail.Buffer` per boot and tees
+`/app`'s stdout/stderr through `io.MultiWriter(console, tail)`, console
+listed first so ordering can't change what reaches it (MultiWriter hands
+each writer the identical slice regardless of position, and `Buffer.Write`
+never errors or blocks per its own doc). Proven with
+`TestRunTeesAppOutputToConsoleUnchanged`.
+
+**Crash vs. clean exit, and signal detail.** `Supervisor.Wait`'s contract
+widened from a bare `(status int, err error)` to `(ExitStatus, error)`
+(`interfaces.go`), where `ExitStatus{ExitCode, Signaled, Signal}` carries
+everything `unix.WaitStatus` knows — `ExitStatus()` alone returns -1 for
+both a signal death and "hasn't exited," which loses exactly the
+information a human-readable crash report needs. The *reaper* (shared with
+cloudflared and tsfunnel supervision) now stores and returns the full
+`ExitStatus`; `cmd/gosd-init/main.go` wires cloudflared/tsfunnel through a
+new `exitCodeOnly` adapter that discards the new fields, so their own
+logging is provably unchanged (`ExitCode` is exactly what `ExitStatus()`
+already returned). `Supervisor` itself stays policy-free — a new `OnExit`
+callback fires after every exit with the full `ExitStatus`; `isCrash` in the
+new `appcrash.go` is what decides a crash (signaled, or non-zero exit code —
+exit 0 is never a crash, even though the supervisor restarts either way).
+Signal deaths are named in human terms (`crashProblem`/`signalDescription`):
+SIGKILL reads as "ran out of memory" (the realistic cause with no shell to
+send a manual kill -9), SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL each get their
+own plain-English line, anything else falls back to the signal's own name
+and number. An unrecovered Go panic never reaches this table at all — the Go
+runtime exits via `exit(2)`, not a signal, so it's covered by the bare
+non-zero-exit-code branch.
+
+**The re-arming bound.** `report.go`'s `fatalReporter` gains a third rule
+alongside the two the epic already locked (one write per stable-run cycle;
+delete on recovery): `maxReportsPerBoot` (10) caps how many reports
+`record()` ever actually writes in one boot, regardless of how many
+crash/recover cycles occur. It gates only new writes, not `markStableRun`'s
+cleanup — cleanup stays keyed on `Exists()`, unconditional on the cap — so a
+device that genuinely recovers after its last recorded crash still gets that
+stale report deleted exactly once, and total fault-reporter remounts this
+boot are bounded at `2*maxReportsPerBoot+1` however long the crash loop
+runs: a hard ceiling on the total, not merely a lower rate that still
+accumulates without bound over a long enough uptime. See `report.go`'s doc
+comment for the full argument;
+`TestFatalReporterBoundsTotalWritesPerBoot`/
+`TestFatalReporterCleansUpOnceAfterTheCapIsHit` pin it.
+
+**Redaction.** Not reimplemented — confirmed instead. `newAppCrashReport`
+returns a plain `faultreport.Report` fed into the exact same
+`fatalReporter.record` → `faultreport.Render` path every other fatal class
+already uses, so the app's own env-value scrub and `/run` secret
+registrations apply by construction.
+`TestRunRedactsAnEnvSecretFromAnAppCrashReport` proves it end-to-end for
+this path specifically.
+
+**Docs.** `docs/crash-reports.md`'s status banner and "What you get for
+free" section now describe the shipped behaviour (including the new
+`GOSD-APP-CRASH` row and the three-rule write-rate list); `docs/runtime.md`
+gets a one-line cross-reference from "Logging"; `docs/releases/UNRELEASED.md`
+gets a release-notes callout.
+
+### The re-arming bound, argued explicitly
+
+Two locked rules — "one report per stable-run cycle" and "a recovered device
+stops looking broken" — together only bound the *rate* of remounts during an
+indefinite crash loop, not the *total* over an indefinitely long uptime (an
+app crash, unlike every existing gosd-init fatal, never reboots or halts, so
+nothing stops the loop on its own). `maxReportsPerBoot` closes that gap with
+a hard ceiling scoped to one boot: at most 10 writes, ever, however long or
+fast the loop runs, and the counter naturally resets on the next real
+reboot. It only gates writes, not cleanup, specifically so hitting the cap
+doesn't trade "remounts too often" for "looks permanently broken after a
+real recovery" — the one trailing cleanup after the cap is what keeps that
+promise. This is layered *underneath* the existing per-cycle `armed` gate,
+not instead of it: `armed` still stops a same-cycle crash loop from writing
+more than once per stable-run window; `maxReportsPerBoot` is what stops an
+indefinitely long *sequence* of such windows from accumulating without
+bound.
+
+### Adversarial pass
+
+- **Simulated the exact worst case the bean names**: an app that reliably
+  dies right after `StableRunThreshold`, cycling `markStableRun()` then
+  `record()` back to back, 50 times in `TestFatalReporterBoundsTotalWritesPerBoot`.
+  Confirms the write count sticks at exactly `maxReportsPerBoot` rather than
+  growing with the cycle count.
+- **Checked the cap doesn't strand a real recovery**: after the cap is hit,
+  20 further stable-run cycles with no more crashes still delete the last
+  stale report exactly once and never remount again
+  (`TestFatalReporterCleansUpOnceAfterTheCapIsHit`) — the device does end up
+  looking recovered, it just can't be told about a crash that happens after
+  its budget for this boot is spent.
+- **Checked the reaper widening doesn't silently change cloudflared/tsfunnel
+  behaviour**: `exitCodeOnly` extracts exactly the same `ExitCode` value
+  `ExitStatus()` always produced, verified by reading through both packages'
+  own `Wait` usage (logging only) — neither ever needed signal detail, so
+  `main.go`'s adapter is the only file outside `boot` this bean touches for
+  the widening.
+- **Checked ordering in the tee can't leak or alter console bytes**:
+  `io.MultiWriter` calls each writer with the identical slice in listed
+  order and only stops early on that writer's own error; `consoletail.Buffer.Write`
+  is documented to never error or block, so listing it after `console`
+  can't change what console receives even under a pathological write.
+- **Checked Go's own panic path is covered without a signal at all**: an
+  unrecovered panic exits via `runtime.exit(2)`, not a signal — confirmed
+  `crashProblem`'s non-signaled branch (bare exit code) is what actually
+  fires for that case, not the signal table, so a plain Go panic isn't
+  silently dropped through an untested gap between the two branches.
+- **Confirmed the nil-reporter and nil-report paths stay safe**: `OnExit`
+  calls `report.record(...)` unconditionally (no `report != nil` guard in
+  `sequence.go`), relying on `fatalReporter`'s existing nil-receiver
+  no-op contract — covered by the pre-existing
+  `TestNewFatalReporterIsNilWithNowhereToWrite`, re-verified after this
+  change (`go test` above).
+- **One thing deliberately left for a human call**: `maxReportsPerBoot`'s
+  value (10) is a judgement call, not derived from a formula — documented as
+  such in `report.go` and in the bean, so JP can adjust it in review if 10
+  reports' worth of history is more or less than useful in practice.
+
+### What is NOT done, and why
+
+- **Bench verification that serial output is byte-for-byte identical on
+  real hardware** is still outstanding — nobody has plugged a cable into a
+  board running this build. The relevant todo stays unchecked; the
+  automated proof (`TestRunTeesAppOutputToConsoleUnchanged`) is the
+  strongest claim this PR can honestly make without one.
+- **The lane-warning seam for gosd-aa1p**: `newAppCrashReport`'s `Detail` is
+  the tail and nothing else; it does not attempt to guess at or merge a
+  future `/run/gosd/fault.json` drop file. That's deliberately left for
+  gosd-aa1p to layer on top of `Supervisor.OnExit`/`report.record`, per the
+  epic's own locked precedence ("the app's own explicit report wins the
+  human sections; the tail still supplies Technical detail").

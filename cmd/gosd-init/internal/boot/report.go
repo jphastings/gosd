@@ -95,10 +95,37 @@ type FaultReportDeps struct {
 	RegisteredSecrets func() []redact.Rule
 }
 
+// maxReportsPerBoot bounds how many times fatalReporter.record ever actually
+// writes LAST_FATAL_ERROR.md in a single boot, regardless of how many
+// stable-run cycles occur. armed alone only bounds writes to one per crash
+// LOOP, not one per BOOT — and gosd-s9uq's adversarial pass found the gap
+// that leaves open: an app that dies just after StableRunThreshold produces
+// a delete-then-write pair of boot-FAT remounts every cycle
+// (markStableRun's cleanup, followed by the next record()), roughly 200
+// remounts an hour at gosd-init's ~35s crash/recover cadence — for as long
+// as the device stays up, which for a crash-looping /app under a live PID 1
+// can be indefinite. Every fatal gosd-init raises for ITSELF halts or
+// reboots before a second cycle can happen, so in practice this only ever
+// binds the app-crash path (gosd-s9uq), which is the first thing that makes
+// a fatal recoverable and therefore repeatable.
+//
+// The cap gates only NEW writes, not cleanup: once it's reached, record
+// simply stops refreshing the card, but markStableRun still deletes
+// whatever report is left the next time the app proves stable (that delete
+// isn't gated by armed either — see cleanUp). So a device that genuinely
+// recovers after its last recorded crash still ends up looking recovered;
+// it just can't be told about any FURTHER crash until the next reboot resets
+// the counter. That caps this boot's total fault-reporter remounts at
+// 2*maxReportsPerBoot+1 (each write, plus at most one trailing cleanup)
+// however long the crash loop runs — a hard ceiling on the total, not merely
+// a lower rate that still accumulates without bound over a long enough
+// uptime.
+const maxReportsPerBoot = 10
+
 // fatalReporter owns LAST_FATAL_ERROR.md for the life of one boot: it holds
 // the parts of the report header that don't change (which app, which board,
 // which image), fills in the parts that do at the moment of a failure, and
-// enforces the two rules that keep the file honest and its writes rare.
+// enforces the rules that keep the file honest and its writes rare.
 //
 // The first rule is one report per stable-run cycle. Writing means
 // remounting the boot partition read-write, which is the one moment a power
@@ -108,10 +135,16 @@ type FaultReportDeps struct {
 // the rest only narrate to the console.
 //
 // The second is that a recovered device must not look broken: once the app
-// has run stably, any report left on the card is deleted. Both rules are
-// enforced here rather than at each call site so that every producer — the
-// fatal paths below, and later the app-crash tail and the public fault
-// package — inherits them.
+// has run stably, any report left on the card is deleted.
+//
+// The third — added by gosd-s9uq, see maxReportsPerBoot — is that a boot
+// only ever writes so many reports in total, however many times the first
+// two rules cycle: the first two alone bound the rate of an indefinite crash
+// loop, not its total cost over an indefinitely long uptime.
+//
+// All three are enforced here rather than at each call site so that every
+// producer — the fatal paths below, the app-crash tail, and later the public
+// fault package — inherits them.
 //
 // A nil *fatalReporter is usable and does nothing, which is the state before
 // the boot partition is mounted; see fatal's enumeration of the failures
@@ -127,6 +160,10 @@ type fatalReporter struct {
 	ctx faultreport.Context
 	// armed is the one-report-per-stable-run-cycle gate.
 	armed bool
+	// writes counts how many reports this boot has actually written, so
+	// record can enforce maxReportsPerBoot regardless of how many times
+	// armed cycles between crash and recovery.
+	writes int
 }
 
 // newFatalReporter returns a reporter for the mounted boot partition, or nil
@@ -190,6 +227,10 @@ func (r *fatalReporter) record(report faultreport.Report) bool {
 		r.log("not recording %s: %s already describes this run's first failure", report.Code, faultreport.FileName)
 		return false
 	}
+	if r.writes >= maxReportsPerBoot {
+		r.log("not recording %s: this boot has already written the most reports it ever will (%d); %s still shows the last one recorded", report.Code, maxReportsPerBoot, faultreport.FileName)
+		return false
+	}
 
 	rendered := faultreport.Render(report, r.headerNow())
 	for _, replacement := range rendered.SkippedSecrets {
@@ -201,6 +242,7 @@ func (r *fatalReporter) record(report faultreport.Report) bool {
 		return false
 	}
 	r.armed = false
+	r.writes++
 	r.log("recorded this failure to %s at the root of the boot partition", faultreport.FileName)
 
 	// An upgraded card can still carry the file this one replaced. Deleting

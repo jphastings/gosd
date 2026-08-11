@@ -213,7 +213,7 @@ func main() {
 			// an Ethernet-only board's early return (no WiFi hardware)
 			// can never skip starting it.
 			guard.Go("cloudflared", func() {
-				cloudflared.Run(cloudflaredDeps(log, platform.Reaper.Wait), cloudflared.Options{
+				cloudflared.Run(cloudflaredDeps(log, exitCodeOnly(platform.Reaper.Wait)), cloudflared.Options{
 					BinaryPath:             cloudflaredBinaryPath,
 					Baked:                  cfg.IngressCloudflared,
 					Config:                 gosdToml.Ingress.Cloudflared,
@@ -229,7 +229,7 @@ func main() {
 			// Ethernet-only board's early return can never skip starting it
 			// either.
 			guard.Go("tailscale-funnel", func() {
-				tsfunnel.Run(tsfunnelDeps(log, platform.Reaper.Wait), tsfunnel.Options{
+				tsfunnel.Run(tsfunnelDeps(log, exitCodeOnly(platform.Reaper.Wait)), tsfunnel.Options{
 					BinaryPath:             tsfunnelBinaryPath,
 					Baked:                  cfg.IngressTailscaleFunnel,
 					Config:                 gosdToml.Ingress.TailscaleFunnel,
@@ -534,6 +534,20 @@ func mdnsresponderDeps(log func(format string, args ...any), changed *mdnsrespon
 		NewServer: func(hostname string) (mdnsresponder.Server, error) { return mdnsresponder.NewServer(hostname, log) },
 		Changed:   changed.C(),
 		Log:       log,
+	}
+}
+
+// exitCodeOnly adapts the reaper's wider boot.ExitStatus (see that type's
+// doc — gosd-s9uq widened it so /app's own supervision can name a signal
+// death in human terms) down to the bare exit code cloudflared and
+// tsfunnel have always logged: neither package supervises anything that
+// needs signal detail, only /app's own supervision does, and ExitCode
+// already matches what a plain Reaper.Wait returned before this type
+// existed, so this preserves their behavior exactly.
+func exitCodeOnly(wait func(pid int) (boot.ExitStatus, error)) func(pid int) (int, error) {
+	return func(pid int) (int, error) {
+		status, err := wait(pid)
+		return status.ExitCode, err
 	}
 }
 

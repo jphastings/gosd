@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"syscall"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ func TestSupervisorRestartsWithEscalatingBackoff(t *testing.T) {
 			}
 			return starts, nil
 		},
-		Wait:        func(int) (int, error) { return 0, nil }, // exits immediately every time
+		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, nil }, // exits immediately every time
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
 		Now:         clock.Now,
 		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
@@ -57,12 +58,12 @@ func TestSupervisorResetsBackoffAfterAStableRun(t *testing.T) {
 			}
 			return starts, nil
 		},
-		Wait: func(pid int) (int, error) {
+		Wait: func(pid int) (ExitStatus, error) {
 			if pid <= 2 {
-				return 1, nil // crashes immediately
+				return ExitStatus{ExitCode: 1}, nil // crashes immediately
 			}
 			clock.Sleep(45 * time.Second) // this run is long enough to be "stable"
-			return 0, nil
+			return ExitStatus{}, nil
 		},
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
 		Now:         clock.Now,
@@ -99,14 +100,14 @@ func TestSupervisorReportsAStableRunWhileTheAppIsStillRunning(t *testing.T) {
 			stableAfter <- time.Unix(0, 0)
 			return 1, nil
 		},
-		Wait: func(int) (int, error) {
+		Wait: func(int) (ExitStatus, error) {
 			select {
 			case <-stable:
 			case <-time.After(2 * time.Second):
 				t.Error("the app exited without a stable run ever being reported")
 			}
 			close(stop)
-			return 0, nil
+			return ExitStatus{}, nil
 		},
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
@@ -134,7 +135,7 @@ func TestSupervisorDoesNotReportAStableRunForACrashLoop(t *testing.T) {
 			}
 			return starts, nil
 		},
-		Wait:  func(int) (int, error) { return 1, nil }, // crashes immediately, every time
+		Wait:  func(int) (ExitStatus, error) { return ExitStatus{ExitCode: 1}, nil }, // crashes immediately, every time
 		Sleep: func(time.Duration) {},
 		Now:   clock.Now,
 		// A timer that never fires: the app never lives long enough.
@@ -165,7 +166,7 @@ func TestSupervisorLogsStartFailuresAndKeepsRetrying(t *testing.T) {
 			}
 			return 0, errBoom
 		},
-		Wait:        func(int) (int, error) { return 0, nil },
+		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, nil },
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
 		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
@@ -177,5 +178,77 @@ func TestSupervisorLogsStartFailuresAndKeepsRetrying(t *testing.T) {
 
 	if attempts != 2 {
 		t.Fatalf("Start called %d times, want 2 (supervisor should keep retrying after a start failure)", attempts)
+	}
+}
+
+// TestSupervisorReportsOnExitWithTheFullExitStatus pins that OnExit sees
+// exactly what Wait returned, including signal detail Supervisor itself has
+// no opinion about — deciding what counts as a crash is sequence.go's job,
+// not this package's (gosd-s9uq).
+func TestSupervisorReportsOnExitWithTheFullExitStatus(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	starts := 0
+	var got []ExitStatus
+
+	sup := &Supervisor{
+		Start: func() (int, error) {
+			starts++
+			return starts, nil
+		},
+		Wait: func(pid int) (ExitStatus, error) {
+			if pid == 1 {
+				return ExitStatus{ExitCode: 1}, nil
+			}
+			close(stop)
+			return ExitStatus{Signaled: true, Signal: syscall.SIGSEGV, ExitCode: -1}, nil
+		},
+		Sleep:       func(time.Duration) {},
+		Now:         clock.Now,
+		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		StableAfter: 30 * time.Second,
+		OnExit:      func(status ExitStatus, ran time.Duration) { got = append(got, status) },
+		Log:         func(string, ...any) {},
+	}
+
+	sup.Run(stop)
+
+	if len(got) != 2 {
+		t.Fatalf("OnExit called %d times, want 2", len(got))
+	}
+	if got[0].ExitCode != 1 || got[0].Signaled {
+		t.Errorf("first OnExit call = %+v, want a clean signal-free ExitCode 1", got[0])
+	}
+	if !got[1].Signaled || got[1].Signal != syscall.SIGSEGV {
+		t.Errorf("second OnExit call = %+v, want Signaled with SIGSEGV", got[1])
+	}
+}
+
+// TestSupervisorSkipsOnExitWhenWaitFails pins that a Wait error (never
+// happens against the real reaper, but the interface allows it) leaves
+// OnExit uncalled rather than handed a meaningless zero-value ExitStatus.
+func TestSupervisorSkipsOnExitWhenWaitFails(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	calls := 0
+
+	sup := &Supervisor{
+		Start: func() (int, error) {
+			close(stop)
+			return 1, nil
+		},
+		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, errBoom },
+		Sleep:       func(time.Duration) {},
+		Now:         clock.Now,
+		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		StableAfter: 30 * time.Second,
+		OnExit:      func(ExitStatus, time.Duration) { calls++ },
+		Log:         func(string, ...any) {},
+	}
+
+	sup.Run(stop)
+
+	if calls != 0 {
+		t.Errorf("OnExit called %d times after a Wait error, want 0", calls)
 	}
 }

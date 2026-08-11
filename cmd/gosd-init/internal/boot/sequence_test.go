@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1194,13 +1195,13 @@ func TestRunDeletesAStaleReportOnceTheAppHasRunStably(t *testing.T) {
 			stable <- time.Unix(0, 0)
 			return 1, nil
 		}),
-		Reaper: funcReaper(func(int) (int, error) {
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
 			select {
 			case <-deleted:
 			case <-time.After(2 * time.Second):
 			}
 			close(stop)
-			return 0, nil
+			return ExitStatus{}, nil
 		}),
 		Rebooter:    &fakeRebooter{},
 		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
@@ -1221,6 +1222,227 @@ func TestRunDeletesAStaleReportOnceTheAppHasRunStably(t *testing.T) {
 	removals := reports.removals()
 	if len(removals) != 1 || len(removals[0]) != 1 || removals[0][0] != faultreport.FileName {
 		t.Errorf("deleted %v from the boot partition, want exactly [%s]", removals, faultreport.FileName)
+	}
+}
+
+// TestRunTeesAppOutputToConsoleUnchanged pins gosd-s9uq's hardest console
+// requirement: serial is the bench's only diagnostic channel, so teeing
+// /app's stdout/stderr into the crash-tail buffer must not alter a single
+// byte of what still reaches it.
+func TestRunTeesAppOutputToConsoleUnchanged(t *testing.T) {
+	console := &bytes.Buffer{}
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprint(stdout, "hello from stdout\n")
+		_, _ = fmt.Fprint(stderr, "hello from stderr\n")
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !strings.Contains(console.String(), "hello from stdout\n") {
+		t.Errorf("console output missing the app's stdout verbatim: %q", console.String())
+	}
+	if !strings.Contains(console.String(), "hello from stderr\n") {
+		t.Errorf("console output missing the app's stderr verbatim: %q", console.String())
+	}
+}
+
+// TestRunWritesAnAppCrashReportOnANonZeroExit is the acceptance test for
+// gosd-s9uq: a panic, segfault or OOM kill previously only ever scrolled
+// past on a serial cable nobody had attached. Now PID 1 holds a copy and
+// records it.
+func TestRunWritesAnAppCrashReportOnANonZeroExit(t *testing.T) {
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprint(stdout, "about to explode\n")
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: appStarter,
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{ExitCode: 2}, nil
+		}),
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	for _, want := range []string{"GOSD-APP-CRASH", "status 2", "about to explode"} {
+		if !strings.Contains(written, want) {
+			t.Errorf("LAST_FATAL_ERROR.md content %q missing %q", written, want)
+		}
+	}
+}
+
+// TestRunDoesNotWriteAReportOnACleanExit locks in the bean's explicit
+// carve-out: exit 0 is not a crash, even though the supervisor restarts an
+// app that exits 0 exactly the same as it would a crash.
+func TestRunDoesNotWriteAReportOnACleanExit(t *testing.T) {
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+	starts := 0
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		starts++
+		if starts == 2 {
+			close(stop)
+		}
+		return starts, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{}, // always exits 0, unsignaled
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if got := reports.writeCount(); got != 0 {
+		t.Errorf("wrote %d reports for an app that only ever exited 0, want 0", got)
+	}
+}
+
+// TestRunNamesASignalDeathInTheAppCrashReport pins the bean's explicit
+// requirement that a signal death is named in human terms — "ran out of
+// memory", not "signal 9" — using the widened Reaper contract's Signaled/
+// Signal fields.
+func TestRunNamesASignalDeathInTheAppCrashReport(t *testing.T) {
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) { return 1, nil }),
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{Signaled: true, Signal: syscall.SIGKILL, ExitCode: -1}, nil
+		}),
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	if !strings.Contains(written, "ran out of memory") {
+		t.Errorf("LAST_FATAL_ERROR.md content %q does not name the OOM kill in human terms", written)
+	}
+	if strings.Contains(written, "signal 9") {
+		t.Errorf("LAST_FATAL_ERROR.md content %q leaked the bare signal number instead of naming it", written)
+	}
+}
+
+// TestRunRedactsAnEnvSecretFromAnAppCrashReport confirms the crash-tail path
+// is scrubbed by construction (gosd-m6py), not by anything specific to this
+// bean: it feeds newAppCrashReport through the exact same report.record ->
+// faultreport.Render path every other fatal already uses, so the app's own
+// env secret — leaked into its own stdout, the most realistic way a secret
+// reaches a console — must not survive into the written report.
+func TestRunRedactsAnEnvSecretFromAnAppCrashReport(t *testing.T) {
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprint(stdout, "auth failed with key sk_live_super_secret_key_1234\n")
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: appStarter,
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{ExitCode: 1}, nil
+		}),
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Env: map[string]string{"STRIPE_KEY": "sk_live_super_secret_key_1234"}}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	if strings.Contains(written, "sk_live_super_secret_key_1234") {
+		t.Errorf("LAST_FATAL_ERROR.md still contains the app's own secret env value:\n%s", written)
+	}
+	if !strings.Contains(written, "{$STRIPE_KEY}") {
+		t.Errorf("LAST_FATAL_ERROR.md is missing the redaction placeholder:\n%s", written)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/consoletail"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -459,9 +460,21 @@ func Run(deps Deps, opts Options) error {
 			deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
 		})
 	}
+
+	// tail retains /app's own last DefaultCapacity bytes of stdout/stderr,
+	// for a crash report's Technical detail — a panic, segfault or OOM kill
+	// otherwise scrolls past on a serial cable nobody has attached and PID 1
+	// never holds a copy (gosd-s9uq). appOutput tees console FIRST: tail's
+	// Write never blocks or errors (see consoletail.Buffer's doc), so
+	// ordering it after console can't change what reaches the console, and
+	// it keeps the console's own byte stream the primary path rather than a
+	// side effect of the tail's.
+	tail := consoletail.New()
+	appOutput := io.MultiWriter(console, tail)
+
 	sup := &Supervisor{
 		Start: func() (int, error) {
-			return deps.AppStarter.Start(opts.AppPath, env, console, console)
+			return deps.AppStarter.Start(opts.AppPath, env, appOutput, appOutput)
 		},
 		Wait:        deps.Reaper.Wait,
 		Sleep:       deps.Sleep,
@@ -478,6 +491,16 @@ func Run(deps Deps, opts Options) error {
 		// every other goroutine gosd-init starts — a panic in PID 1 is a
 		// dead appliance (gosd-fkkr).
 		sup.OnStableRun = func() { guard.Guard("the crash-report cleanup", report.markStableRun) }
+	}
+	// OnExit runs synchronously inside sup.Run, which is itself already
+	// wrapped by the guard.Guard call below, so a panic here (there
+	// shouldn't be one — record's own errors are all handled) is caught by
+	// that outer guard rather than needing one of its own.
+	sup.OnExit = func(status ExitStatus, ran time.Duration) {
+		if !isCrash(status) {
+			return
+		}
+		report.record(newAppCrashReport(status, tail.String()))
 	}
 	guard.Guard("app supervision", func() { sup.Run(opts.Stop) })
 	return nil

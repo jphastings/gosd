@@ -921,7 +921,13 @@ stdout and stderr are connected straight to the serial console —
 whatever your app prints is what shows up when someone has a serial
 cable attached (or a serial-over-USB/console viewer for their board).
 Log to stdout/stderr as you normally would; there's nowhere else for it
-to go, and nothing else reads it.
+to go, and nothing else reads it live.
+
+`gosd-init` does, however, quietly retain the last 64KiB of it: if your app
+exits unexpectedly, that tail becomes the technical detail in a
+[crash report](crash-reports.md) written to the boot partition, so an
+unattended device's owner has something to go on even with no serial cable
+ever attached. This changes nothing about what reaches the console itself.
 
 ## Serial console baud rate (`--console-baud`)
 
