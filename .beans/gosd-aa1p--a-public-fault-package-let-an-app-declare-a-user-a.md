@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:29Z
-updated_at: 2026-08-11T22:59:22Z
+updated_at: 2026-08-11T23:11:16Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -203,3 +203,27 @@ declared report once the crash tail (gosd-s9uq) can write first — worth
 deciding then whether a declared fault overrides it, since it halts and so
 cannot loop; and `OnStableRun` racing an exit within microseconds of
 `StableRunThreshold` can delete a just-written report.
+
+### Rebased onto gosd-s9uq (PR #261)
+
+The crash-tail work merged first, and the rebase surfaced a real bug rather
+than just a textual conflict: `fault.Fatal` exits non-zero, so gosd-s9uq's
+`isCrash` reads a declared fault as a crash. Recording both would have
+written `GOSD-APP-CRASH` first, consumed the one-report-per-stable-run gate,
+and left the card carrying the console tail instead of the report that names
+a fix — the exact opposite of this bean's locked precedence.
+
+Resolved by unifying the two exit hooks rather than running both:
+`Supervisor.OnExit` (gosd-s9uq's) now returns `stop bool`, and there is one
+exit handler in `sequence.go` — pick up a declared fault first, halt with it
+(tail folded in as technical detail); otherwise fall through to the crash
+report. Exactly one report per exit, one boot-FAT remount, and my
+`OnAppExit` field is gone. gosd-s9uq's own tests needed only `return false`
+added to two hook literals; its "Wait error leaves OnExit uncalled"
+behaviour is unchanged, which does mean a declared fault is missed when the
+reaper itself fails — pathological, and consistent with the existing
+contract. A new acceptance test
+(`TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault`) pins the whole path
+end to end: declared fault + crash-shaped exit + console tail → one report,
+the app's, with the panic kept as detail, and the device halted rather than
+restarted.
