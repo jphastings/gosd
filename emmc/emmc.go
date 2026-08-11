@@ -77,6 +77,18 @@ var ErrRefusedFormat = blockmount.ErrRefusedFormat
 // errors.Is and fall back to FAT32 knowing the eMMC is untouched.
 var ErrUnsupportedFS = blockmount.ErrUnsupportedFS
 
+// ErrUnmountable reports the narrower case within ErrRefusedFormat: the eMMC
+// already carries a volume labelled and formatted exactly as asked for, but
+// it could not be mounted. Unlike ErrRefusedFormat's other causes, this is
+// never someone else's data — it is the eMMC's own volume, unhealthy. The
+// mount-failure refusal wraps both sentinels, so it never replaces
+// ErrRefusedFormat and an existing errors.Is(err, ErrRefusedFormat) caller
+// sees no change. An app that exposes one config flag authorizing adoption of
+// a drive that isn't its own yet should gate on a second, differently-named
+// flag before retrying with destructive=true on ErrUnmountable — that retry
+// destroys the app's own data, not a stranger's.
+var ErrUnmountable = blockmount.ErrUnmountable
+
 // FormatAndMount ensures the board's onboard eMMC carries an ext4 filesystem
 // labelled label and mounts it read-write at mountpoint, then reports the
 // outcome on the returned channel.

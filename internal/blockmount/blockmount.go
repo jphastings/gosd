@@ -56,6 +56,24 @@ var ErrRefusedFormat = errors.New("refusing to reformat")
 // and retry, knowing the device is untouched.
 var ErrUnsupportedFS = errors.New("filesystem not supported by this board's kernel")
 
+// ErrUnmountable reports the narrow case within ErrRefusedFormat where the
+// device already carries a volume whose label AND filesystem both match what
+// the caller asked for, but that volume could not be mounted — "this is
+// yours, and it is sick", never a generic mount error and never foreign
+// content (a different label, or the same label under a different
+// filesystem, stay ErrRefusedFormat-only; see that sentinel). The
+// mount-failure refusal wraps both sentinels together, so it never replaces
+// ErrRefusedFormat: an existing errors.Is(err, ErrRefusedFormat) caller sees
+// no change, while a caller that wants to ask consent for destroying its own
+// data separately from adopting someone else's can match errors.Is(err,
+// ErrUnmountable) instead.
+//
+// Its message is a sentence fragment, like ErrRefusedFormat's, so wrapping
+// it costs the refusal no extra words: it stands in for the phrase the
+// message already used rather than being appended to it. The serial console
+// is the only user interface these boards have.
+var ErrUnmountable = errors.New("it could not be mounted")
+
 // maxLabelLen is the volume-label limit both FAT (11 bytes) and exFAT (11
 // UTF-16 characters) impose. Every formatter in this stack stores a label's
 // case exactly as given, and reads it back the same way; the mount-only
@@ -371,8 +389,11 @@ func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, 
 			// what a volume holding real data that has become unmountable
 			// through corruption or an unrelated hardware fault would also
 			// look like from here — indistinguishable from debris without
-			// being able to read it. Refuse rather than guess.
-			return "", fmt.Errorf("the %s at %s already carries a %s volume labelled %q, but it could not be mounted (%v); it may hold real data that cannot be read to check, so %w it without permission — pass destructive=true to reformat it anyway", s.Noun, device, fs, label, mountErr, ErrRefusedFormat)
+			// being able to read it. Refuse rather than guess — and wrap
+			// ErrUnmountable alongside ErrRefusedFormat, since this refusal
+			// is specifically about the caller's own volume rather than
+			// foreign content (see ErrUnmountable's doc).
+			return "", fmt.Errorf("the %s at %s already carries a %s volume labelled %q, but %w (%v); it may hold real data that cannot be read to check, so %w it without permission — pass destructive=true to reformat it anyway", s.Noun, device, fs, label, ErrUnmountable, mountErr, ErrRefusedFormat)
 		} else {
 			action = "reformatting"
 		}
