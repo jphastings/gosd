@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T10:46:32Z
+updated_at: 2026-08-11T14:41:09Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -62,6 +62,19 @@ On a non-clean app exit, format the ring buffer's contents as the report's
       loses the signal, so `Supervisor.Wait`'s contract may need widening
 - [ ] Honour the epic's write-rate rule: one report per stable-run cycle,
       not one per restart
+- [ ] **Bound the re-arming, or this bean reintroduces the boot-FAT thrash
+      the write-rate rule exists to prevent.** Found by gosd-pun9's
+      adversarial pass: an app that dies just AFTER `StableRunThreshold`
+      costs two remounts per cycle — delete the stale report on the stable
+      run, write a new one on the crash — which at a ~35s cycle is roughly
+      200 boot-partition remounts an hour. It is unreachable today because
+      every existing fatal path reboots or halts, so nothing re-arms; this
+      bean is what makes an app crash recoverable and therefore repeatable.
+      The two locked rules ("one report per stable-run cycle" and "a
+      recovered device stops looking broken") cannot both hold unbounded, so
+      pick a bound — a cap per boot, a minimum interval between writes, or
+      backoff on the re-arm — and record the reasoning. This is a
+      crash-safety argument, not a tuning knob
 - [ ] The "what it was doing" line has no app-supplied context on this path;
       fall back to "stopped unexpectedly while running"
 - [ ] Fakes-driven tests that pass on macOS, per the gosd-init convention

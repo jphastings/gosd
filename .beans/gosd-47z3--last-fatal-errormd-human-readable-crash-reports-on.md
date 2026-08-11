@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: high
 created_at: 2026-08-11T10:10:00Z
-updated_at: 2026-08-11T12:04:44Z
+updated_at: 2026-08-11T14:40:55Z
 ---
 
 Direction from JP (2026-08-11). GoSD devices are unattended and their owners
@@ -53,8 +53,15 @@ clock: ntp-synced
 uptime: 4m12s
 boot: 37
 device: Raspberry Pi Zero 2W (pi-zero-2w)
-image: myapp 0.1.0 #a1b2c3d4
+image: "myapp 0.1.0 #a1b2c3d4"
 ---
+
+CORRECTION (2026-08-11, found implementing gosd-pun9): the `image:` line
+above was originally written unquoted, which is not valid YAML for what it
+means — ` #` starts a comment, so a parser reads `myapp 0.1.0` and silently
+drops the build identity, the one part that tells two builds apart. The
+renderer quotes any value whose bare form would change what a parser reads
+back. Do not "tidy" the quotes away.
 
 # myapp crash report
 
