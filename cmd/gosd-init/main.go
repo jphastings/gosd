@@ -147,10 +147,11 @@ func main() {
 			Remove: func(names []string) error {
 				return platform.RemoveBootFiles(bootTarget, names)
 			},
-			DeviceModel: platform.DeviceModel,
-			Uptime:      platform.Uptime,
-			ClockSynced: clockSynced,
-			CountBoot:   countBoot,
+			DeviceModel:       platform.DeviceModel,
+			Uptime:            platform.Uptime,
+			ClockSynced:       clockSynced,
+			CountBoot:         countBoot,
+			RegisteredSecrets: platform.RegisteredSecrets,
 		},
 		Sleep: time.Sleep,
 		Now:   time.Now,

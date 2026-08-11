@@ -19,6 +19,7 @@ import (
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 func TestRunHappyPathOrchestratesTheBootSequence(t *testing.T) {
@@ -1670,6 +1671,31 @@ func TestRunAppEnvIsUnchangedWhenNoUserEnvIsSet(t *testing.T) {
 	}
 }
 
+func TestEnvRedactionRulesRedactsEachValueByItsOwnKey(t *testing.T) {
+	rules := envRedactionRules([]string{"API_KEY=sekrit", "PORT=8080"})
+
+	want := []redact.Rule{
+		{Needle: "sekrit", Replacement: "{$API_KEY}"},
+		{Needle: "8080", Replacement: "{$PORT}"},
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("envRedactionRules() = %v, want %v", rules, want)
+	}
+	for i := range want {
+		if rules[i] != want[i] {
+			t.Errorf("rules[%d] = %+v, want %+v", i, rules[i], want[i])
+		}
+	}
+}
+
+func TestEnvRedactionRulesIgnoresMalformedEntries(t *testing.T) {
+	// mergeUserEnv only ever emits well-formed KEY=VALUE strings; this just
+	// keeps the function from panicking if that ever stopped being true.
+	if rules := envRedactionRules([]string{"NO_EQUALS_SIGN"}); len(rules) != 0 {
+		t.Errorf("envRedactionRules(%q) = %v, want none", "NO_EQUALS_SIGN", rules)
+	}
+}
+
 // equalEnv compares two env slices exactly, in order: mergeUserEnv's output
 // is fully deterministic (GOSD_* vars in the fixed order Run builds them,
 // then the merged user env sorted by key), so tests can assert on it
@@ -1873,6 +1899,43 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	}
 	if mounter.callsFor("/data") != 0 {
 		t.Error("/data was mounted despite the halt")
+	}
+}
+
+// TestRunRedactsARegisteredSecretFromTheDataCorruptionReport proves the
+// RegisteredSecrets seam is wired all the way from FaultReportDeps through
+// to a real report Run() writes: unlike the env-value sweep (only set up
+// once mergeUserEnv runs, well after this halt), a /run registration is
+// read fresh at record time regardless of where in the boot sequence the
+// failure happens, so it must redact here too.
+func TestRunRedactsARegisteredSecretFromTheDataCorruptionReport(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith []string
+	reports := &fakeFaultReport{}
+	reports.setRegisteredSecrets([]redact.Rule{{Needle: "mmcblk0p2-secret-token", Replacement: "{secret: disk-token}"}})
+
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true,
+		fmt.Errorf("%w: mmcblk0p2-secret-token was leaked into this error by mistake", dataexpand.ErrDataCorrupt), &expandedWith)
+	deps.Rebooter = &fakeRebooter{}
+	deps.AppStarter = funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+	deps.FaultReport = reports.deps()
+	opts := testDataOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); !errors.Is(err, dataexpand.ErrDataCorrupt) {
+		t.Fatalf("Run() = %v, want the corruption error", err)
+	}
+
+	recorded := reports.written()
+	if strings.Contains(recorded, "mmcblk0p2-secret-token") {
+		t.Errorf("LAST_FATAL_ERROR.md still contains the registered secret:\n%s", recorded)
+	}
+	if !strings.Contains(recorded, "{secret: disk-token}") {
+		t.Errorf("LAST_FATAL_ERROR.md is missing the registered-secret placeholder:\n%s", recorded)
 	}
 }
 

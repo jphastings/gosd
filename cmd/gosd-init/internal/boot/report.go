@@ -1,12 +1,14 @@
 package boot
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jphastings/gosd/internal/faultreport"
+	"github.com/jphastings/gosd/internal/redact"
 )
 
 // parseDeviceModel extracts the model string from the raw contents of the
@@ -82,6 +84,15 @@ type FaultReportDeps struct {
 	// fields here it is called exactly once per boot, since it is the one
 	// that writes.
 	CountBoot func() (int, bool)
+
+	// RegisteredSecrets reads the /run registration file
+	// fault.RegisterSecretString writes (see internal/secretreg), fresh at
+	// the moment of every report rather than once at boot: a registration
+	// made moments before a panic must still redact. Like DeviceModel and
+	// Uptime, a nil result (nothing registered, or a registration file
+	// secretreg.Parse won't trust — see its doc) simply means this report
+	// carries no rules from this source, never an error.
+	RegisteredSecrets func() []redact.Rule
 }
 
 // fatalReporter owns LAST_FATAL_ERROR.md for the life of one boot: it holds
@@ -143,6 +154,24 @@ func (r *fatalReporter) setBootCount(count int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ctx.BootCount = count
+}
+
+// setSecrets records the redaction rules discovered from the app's own
+// environment (sequence.go's envRedactionRules) for every report written
+// from here on. Like setBootCount, this exists because the reporter is
+// constructed well before the app env is assembled — mergeUserEnv only
+// runs after gosd.toml/cloud-init have had their say — so there is no
+// single moment before both are ready. Rules registered through
+// fault.RegisterSecretString are NOT set this way: those are read fresh at
+// every record() call (see headerNow), since a registration made moments
+// before a crash has to count.
+func (r *fatalReporter) setSecrets(rules []redact.Rule) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ctx.Secrets = rules
 }
 
 // record renders report and writes it to the boot partition, and reports
@@ -235,6 +264,12 @@ func (r *fatalReporter) headerNow() faultreport.Context {
 	}
 	if r.deps.DeviceModel != nil {
 		ctx.DeviceModel = r.deps.DeviceModel()
+	}
+	if r.deps.RegisteredSecrets != nil {
+		// slices.Clone first: ctx.Secrets still shares r.ctx.Secrets's
+		// backing array at this point, and appending in place could
+		// clobber it under a concurrent record() call.
+		ctx.Secrets = append(slices.Clone(ctx.Secrets), r.deps.RegisteredSecrets()...)
 	}
 	return ctx
 }
