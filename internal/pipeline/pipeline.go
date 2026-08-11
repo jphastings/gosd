@@ -394,8 +394,9 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	identity := initcfg.ComputeIdentity(payload)
 
 	configJSON, err := json.Marshal(initcfg.Config{
-		Board:    opts.Board.Name(),
-		Hostname: opts.Config.Hostname,
+		Board:            opts.Board.Name(),
+		BoardDisplayName: opts.Board.DisplayName(),
+		Hostname:         opts.Config.Hostname,
 		Wifi: initcfg.Wifi{
 			SSID:       opts.Config.WifiSSID,
 			Passphrase: opts.Config.WifiPassword,

@@ -2416,14 +2416,18 @@ func TestBuildIdentityUnaffectedByLabelPrefix(t *testing.T) {
 }
 
 // TestBuildBakesReportMetadataIntoConfigJSON is the acceptance test for bean
-// gosd-my8e: the app name (derived, not a flag), --app-version, and
+// gosd-my8e: the board's display name (derived from the selected board, not
+// a flag), the app name (derived, not a flag), --app-version, and
 // --support-url all reach config.json under their own fields, so a future
-// LAST_FATAL_ERROR.md renderer has a data source for its image: line and its
-// "visit <support_url>" fallback text.
+// LAST_FATAL_ERROR.md renderer has a data source for its device: line,
+// image: line, and its "visit <support_url>" fallback text.
 func TestBuildBakesReportMetadataIntoConfigJSON(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
 	cfg := buildConfigJSON(t, imgPath, "--app-version", "1.4.2", "--support-url", "https://example.com/support")
 
+	if cfg.BoardDisplayName != "Raspberry Pi Zero 2W" {
+		t.Errorf("config.json's boardDisplayName = %q, want %q (pi-zero-2w's DisplayName)", cfg.BoardDisplayName, "Raspberry Pi Zero 2W")
+	}
 	if cfg.AppName != "hello" {
 		t.Errorf("config.json's appName = %q, want %q (examples/hello's sanitized basename)", cfg.AppName, "hello")
 	}
@@ -2436,14 +2440,17 @@ func TestBuildBakesReportMetadataIntoConfigJSON(t *testing.T) {
 }
 
 // TestBuildReportMetadataAppVersionAndSupportURLAreOptional confirms
-// --app-version and --support-url can both be omitted: the app name is
-// still baked in (it's derived, not a flag - gosd build always resolves
-// one), but AppVersion and SupportURL stay empty rather than getting a
-// fabricated value.
+// --app-version and --support-url can both be omitted: the board display
+// name and app name are still baked in (neither is a flag - gosd build
+// always resolves a board and an app name), but AppVersion and SupportURL
+// stay empty rather than getting a fabricated value.
 func TestBuildReportMetadataAppVersionAndSupportURLAreOptional(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
 	cfg := buildConfigJSON(t, imgPath)
 
+	if cfg.BoardDisplayName != "Raspberry Pi Zero 2W" {
+		t.Errorf("config.json's boardDisplayName = %q, want %q even with no --app-version/--support-url", cfg.BoardDisplayName, "Raspberry Pi Zero 2W")
+	}
 	if cfg.AppName != "hello" {
 		t.Errorf("config.json's appName = %q, want %q even with no --app-version/--support-url", cfg.AppName, "hello")
 	}

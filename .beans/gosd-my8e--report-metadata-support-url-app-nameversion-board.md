@@ -5,7 +5,7 @@ status: completed
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:16Z
-updated_at: 2026-08-11T10:51:55Z
+updated_at: 2026-08-11T11:07:50Z
 parent: gosd-47z3
 ---
 
@@ -54,6 +54,18 @@ and its "visit <support_url>" line have no data source in the codebase today.
 - [x] `gosd build --help` text, docs, and a fixture-driven integration test
       that reads the built image back and asserts config.json's contents
       (network-tripwire pattern, `cmd/gosd/build_integration_test.go`)
+- [x] Close the gap JP caught in review: `boards.Board.DisplayName()` was
+      wired up but never reached `config.json`, so gosd-init (which never
+      imports `internal/boards`) had no way to get it into the crash
+      report at runtime. Added `Config.BoardDisplayName` (`boardDisplayName`),
+      baked from the selected board's `DisplayName()`, same optional/
+      absent-safe/not-on-card-ABI treatment as the other three fields, with
+      an explicit docstring warning for gosd-pun9: it names the board this
+      field was baked for, which a `gosd.board=` kernel-cmdline override
+      (hand-editable via cmdline.txt) can make stale relative to
+      `Config.Board` at runtime - a renderer must only pair the two when
+      the board id it captured at config.json-parse time still matches,
+      falling back to the bare effective id otherwise
 
 ## LOCKED: --app-version is an explicit flag (JP, 2026-08-11)
 
@@ -79,12 +91,15 @@ and a wrong version in a crash report is worse than no version at all.
   same source `--hostname`'s default uses) is now also baked into
   `config.json` as `appName`, independent of any later `--hostname`/
   gosd.toml/cloud-init override.
-- All three new fields live on `internal/initcfg.Config`
-  (`AppName`/`AppVersion`/`SupportURL`), each `,omitempty` and documented as
-  optional/absent-safe exactly like `Identity`/`BuildTimestamp`. They flow
-  through new `pipeline.Options` fields (`AppName`/`AppVersion`/
-  `SupportURL`), set only by `cmd/gosd build.go` (not `run.go` - see the
-  decision note below).
+- All four new fields live on `internal/initcfg.Config`
+  (`BoardDisplayName`/`AppName`/`AppVersion`/`SupportURL`), each
+  `,omitempty` and documented as optional/absent-safe exactly like
+  `Identity`/`BuildTimestamp`. `AppName`/`AppVersion`/`SupportURL` flow
+  through new `pipeline.Options` fields, set only by `cmd/gosd build.go`
+  (not `run.go` - see the decision note below); `BoardDisplayName` is
+  baked directly from `opts.Board.DisplayName()` in `pipeline.Assemble`
+  (no new `Options` field - `Options.Board` already carries the selected
+  board), so both `gosd build` and `gosd run` get it automatically.
 - Config.json remains entirely excluded from `ComputeIdentity`'s hashed
   payload (unchanged), so the new fields never move the image identity and
   play no part in the data-partition adoption gate (confirmed against
@@ -98,8 +113,9 @@ and a wrong version in a crash report is worse than no version at all.
 - Tests: `cmd/gosd/build_test.go` (parseSupportURL unit tests,
   DisplayName registration test), `cmd/gosd/build_integration_test.go`
   (fixture-driven, network-tripwire-covered: bakes-in, optional-by-default,
-  invalid-URL refusal, identity-unaffected), `internal/initcfg/config_test.go`
-  (ParseConfig round-trip for the three new fields).
+  invalid-URL refusal, identity-unaffected - now also asserting
+  `boardDisplayName`), `internal/initcfg/config_test.go` (ParseConfig
+  round-trip for all four new fields).
 
 ## Decisions not covered by the bean
 
@@ -111,12 +127,28 @@ and a wrong version in a crash report is worse than no version at all.
   a `gosd run` image's config.json; `TestBuildAndRunProduceIdenticalInitramfsContent`
   already exempts config.json from its byte-for-byte comparison, so this
   doesn't break build/run parity.
-- **`DisplayName` was not baked into config.json.** The bean's todo list
-  only asked for the `boards.Board.DisplayName` method, its per-board
-  implementations, and a registration test - not a config.json field. Since
-  `gosd-init` doesn't import `internal/boards` (it's a heavy, CLI-only
-  package pulling in go-diskfs etc.), wiring the device: line's human name
-  into the on-device crash report will need its own config.json field (or
-  another mechanism) decided by whichever bean implements the actual
-  LAST_FATAL_ERROR.md renderer (gosd-pun9 per the epic). Flagging this so
-  it isn't missed when that bean starts.
+- **`DisplayName` → `config.json`'s `boardDisplayName` was initially
+  scoped out, then added after JP's review caught that the gap left the
+  bean failing its own purpose** (the whole point of `DisplayName` is the
+  crash report's `device:` line, which `gosd-init` renders at runtime and,
+  without this, had no way to reach). `Config.BoardDisplayName` is now baked
+  by `pipeline.Assemble` from `opts.Board.DisplayName()` directly (no new
+  `pipeline.Options` field needed - `Options.Board` was already there), so
+  it flows through both `gosd build` and `gosd run` for free. Its docstring
+  carries an explicit staleness warning for gosd-pun9 (see the Todos list
+  entry above and the "cmdline can override the board id" note below) rather
+  than building the fallback logic here, since designing the actual
+  renderer's behavior is gosd-pun9's job.
+- **`BoardDisplayName` can go stale relative to the *effective* board at
+  runtime, and gosd-pun9 must handle this, not assume `Config.Board` is
+  trustworthy at report-write time.** `cmd/gosd-init/internal/boot/
+  sequence.go` overwrites its in-memory `Config.Board` with any
+  `gosd.board=<id>` kernel-cmdline parameter it finds, and `cmdline.txt`
+  (which can carry that parameter) is a hand-editable file on the FAT boot
+  partition. `BoardDisplayName` is never touched by that override, so once
+  it has run, `Config.Board` and `Config.BoardDisplayName` can describe
+  different boards. `Config.BoardDisplayName`'s docstring spells out the
+  fix a consumer must apply (capture the board id at config.json-parse
+  time, before any override, and only pair it with `BoardDisplayName`;
+  fall back to the bare effective id otherwise) without implementing it -
+  that's deliberately left to gosd-pun9.

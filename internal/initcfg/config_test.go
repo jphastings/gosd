@@ -126,6 +126,16 @@ func TestParseConfig(t *testing.T) {
 			data: `{"hostname":"my-device"}`,
 			want: Config{Hostname: "my-device"},
 		},
+		{
+			name: "boardDisplayName parses when present",
+			data: `{"board":"pi-zero-2w","boardDisplayName":"Raspberry Pi Zero 2W"}`,
+			want: Config{Board: "pi-zero-2w", BoardDisplayName: "Raspberry Pi Zero 2W"},
+		},
+		{
+			name: "config predating boardDisplayName parses unchanged, not as an error",
+			data: `{"board":"pi-zero-2w"}`,
+			want: Config{Board: "pi-zero-2w"},
+		},
 	}
 
 	for _, tt := range tests {

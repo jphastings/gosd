@@ -42,7 +42,8 @@ type PayloadFile struct {
 // appears nowhere else in the payload. That covers every config.json-only
 // field documented on Config - Config.DataExpand and Config.DataFlush, but
 // also e.g. DataFilesystem, DataLabel, and the report metadata added by
-// bean gosd-my8e (AppName, AppVersion, SupportURL): Board/Hostname/Wifi/Env
+// bean gosd-my8e (BoardDisplayName, AppName, AppVersion, SupportURL):
+// Board/Hostname/Wifi/Env
 // are also baked into config.json, but they're baked into the rendered
 // gosd.toml template too
 // (a real, hashed FAT-root file — see pipeline.Assemble), so changing

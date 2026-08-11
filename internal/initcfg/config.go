@@ -169,6 +169,35 @@ type Config struct {
 	// rather than as a mismatch (see ShortIdentity).
 	Identity string `json:"identity,omitempty"`
 
+	// BoardDisplayName is the selected board's human-readable name (see
+	// boards.Board.DisplayName), baked in by gosd build/run for
+	// LAST_FATAL_ERROR.md's "device:" line - "Raspberry Pi Zero 2W" rather
+	// than the bare "pi-zero-2w" this struct's Board field carries (bean
+	// gosd-my8e, epic gosd-47z3). Optional: empty for every config.json
+	// baked before this field existed. Developer-set report metadata like
+	// AppName/AppVersion/SupportURL below: config.json only, no gosd.toml
+	// key, no GOSD_* override, excluded from ComputeIdentity's hashed
+	// payload (config.json is excluded from that payload in its entirety),
+	// and no part of the data-partition adoption gate - not on-card ABI.
+	//
+	// CAUTION for any renderer consuming this (gosd-pun9): it names the
+	// board THIS FIELD WAS BAKED FOR, not necessarily the board gosd-init
+	// ends up running as at boot. cmd/gosd-init/internal/boot/sequence.go
+	// overwrites its in-memory Config.Board with any gosd.board=<id> kernel
+	// cmdline parameter it finds (see initcfg.CmdlineArgs.Board) BEFORE most
+	// callers ever see the parsed config - and cmdline.txt, which carries
+	// that parameter, is a hand-editable file on the FAT boot partition. Once
+	// that override has run, Board no longer necessarily names the board
+	// BoardDisplayName was baked for, and this field is never touched by
+	// that override to keep them in sync. A consumer must capture the board
+	// id at the point config.json is parsed - before any gosd.board=
+	// override - and pair BoardDisplayName only with THAT id; if the
+	// board id actually in effect at report-writing time differs, fall back
+	// to printing the bare effective id rather than a display name that may
+	// now describe the wrong hardware. Building that fallback is gosd-pun9's
+	// job, not this package's - this field only carries the baked value.
+	BoardDisplayName string `json:"boardDisplayName,omitempty"`
+
 	// AppName is the app's name, baked in by gosd build: the sanitized
 	// basename of the main package's directory - the same source
 	// --hostname's unset default uses (see cmd/gosd's deriveAppName),
