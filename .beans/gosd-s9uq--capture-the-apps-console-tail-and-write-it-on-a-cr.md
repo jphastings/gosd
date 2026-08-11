@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T22:49:27Z
+updated_at: 2026-08-11T22:51:02Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -126,9 +126,10 @@ stays `todo` — it is not complete.
 
 ## Summary of Changes
 
-The wiring PR (#257 was the pure `consoletail` buffer; this is the second
-PR the bean's own note said would follow, now that gosd-pun9 and gosd-m6py
-have both merged).
+Landed the wiring PR: [jphastings/gosd#261](https://github.com/jphastings/gosd/pull/261).
+(#257 was the pure `consoletail` buffer; this is the second PR the bean's
+own note said would follow, now that gosd-pun9 and gosd-m6py have both
+merged.)
 
 **Tee.** `sequence.go` now builds one `consoletail.Buffer` per boot and tees
 `/app`'s stdout/stderr through `io.MultiWriter(console, tail)`, console
