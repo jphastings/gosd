@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T10:45:46Z
+updated_at: 2026-08-11T10:53:16Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -149,3 +149,31 @@ the docstring to state this precisely and added
 found where an applied (non-skipped) needle survives redaction; overlap and
 substring scenarios were checked by construction of the longest-first sort
 plus dedicated tests.
+
+## Open question for the wiring PR: does MinNeedleLength's floor apply to RegisterSecretString?
+
+Surfaced during review of PR #256. `internal/redact.MinNeedleLength`'s
+docstring rationale is entirely about the automatic env sweep — "gosd-init's
+plan is to redact every value in the app's environment," `DEBUG=1` and
+`PORT=80` turning a report into confetti. That rationale is about a blanket
+scan the app never asked for. It does not obviously transfer to
+`fault.RegisterSecretString`, where a developer has deliberately declared
+one specific string as secret.
+
+If the floor applies unmodified to registered secrets, a developer who
+registers a short (< `MinNeedleLength`) secret gets it silently left
+unredacted, against their explicit intent. `Result.Skipped` does report the
+skip, but only as far as gosd-init's own console log — which the app
+developer will essentially never read — so there is no realistic path for
+them to learn their secret went through unprotected.
+
+This is a decision for the wiring PR to make explicitly, not a conclusion
+reached here. One reasonable framing: apply `MinNeedleLength`'s floor to
+the automatic env sweep only, and have `RegisterSecretString` surface a
+too-short secret loudly at the point of the call — the off-device (macOS,
+`go test`) stderr rendering path is where a developer would actually see
+it, which is this mechanism's main development-time value.
+
+`internal/redact` itself is unchanged by this note: the floor as
+implemented is correct for the caller it currently has (the env sweep).
+This is a question about the caller that doesn't exist yet.
