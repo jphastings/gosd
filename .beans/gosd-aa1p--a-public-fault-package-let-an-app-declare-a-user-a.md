@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:29Z
-updated_at: 2026-08-11T22:56:29Z
+updated_at: 2026-08-11T22:59:22Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -124,3 +124,82 @@ keeps restarting with backoff exactly as it does today, and the report is
 written alongside. Flagged for JP in case the intent was broader: making an
 undeclared panic halt too would turn any transient app bug into a device
 that stays down until someone visits it.
+
+## Summary of Changes (PR #262)
+
+[jphastings/gosd#262](https://github.com/jphastings/gosd/pull/262).
+
+- **`fault/` (new public package).** `Fatal(Report)` and
+  `RegisterSecretString(secret, replacement)`, exactly the sketch above, with
+  `Report.Detail` an `error` (converted at the boundary to the `string`
+  `internal/faultreport.Report` takes). Docstrings carry the load-bearing
+  facts: Fatal halts and the board stays down until someone power-cycles it,
+  deferred functions do not run, anything a retry might fix belongs in a
+  returned error; a `replacement` is a LABEL, not a second secret; a secret
+  under `redact.MinNeedleLength` is silently skipped by the floor, said at
+  the point an app author reads it.
+- **How the halt actually happens.** The app never calls `reboot(2)` itself
+  — that would stop the machine before gosd-init could write the card. Fatal
+  writes `/run/gosd/fault.json` (tmpfs, 0600, `.tmp`→rename) and exits 70;
+  gosd-init picks it up after the app exits, records it, syncs and halts.
+- **`internal/faultdrop` (new).** The drop file`s format, mirroring
+  `internal/secretreg`: `Marshal`/`Parse`/`Take`, `MaxBytes`, `ExitCode`.
+  Named optional JSON fields, because the two ends need not be the same
+  release — the app pins `fault` via its own go.mod while gosd-init is built
+  by whichever CLI runs the build. `Take` removes the file (and any stale
+  `.tmp`) whether or not it parsed, and stats before reading so nothing can
+  pull an arbitrary-sized file into PID 1.
+- **`internal/secretreg` gained the writer half**: exported `Entry` and
+  `Encode`, which REFUSES rather than truncates past `MaxRegistrations`/
+  `MaxTotalBytes`. That is the crux of the quota decision: `Parse` drops an
+  oversized file wholesale, so writing one registration too many would cost
+  every registration in the file. `RegisterSecretString` therefore keeps the
+  first 64 (matching `Parse`s own truncation), leaves earlier registrations
+  untouched, and prints one stderr line naming the label.
+- **Off-device is a first-class path, gated on the `gosd` BUILD TAG** rather
+  than a probe for `/run` — /run is writable on any Linux box running as
+  root, and a probe would make a CI container look like a board. The
+  drop-writing code is not behind the tag, so the untagged `go test` gate
+  exercises both paths; a subprocess test runs the real exported `Fatal` and
+  asserts exit code 70, the rendered document, and that a registered
+  secret`s value never appears.
+- **gosd-init side kept to one file** (`boot/appfault.go`: `appFaultHook`,
+  `withConsoleTail`) plus three wiring lines — `FaultReportDeps.AppFault`,
+  `Supervisor.OnAppExit func() (stop bool)`, and one line in `sequence.go`
+  — so gosd-s9uq (which owns the app-exit path) rebases trivially. The
+  trailing `nil` argument in that line is the console tail: passing a
+  `func() string` is all the tail wiring needs. Precedence is implemented
+  and tested: the app`s own words win the human sections, the tail is kept
+  as technical detail.
+- **`examples/hello`** raises a deliberate fault when `HELLO_FATAL` is set
+  in gosd.toml`s `[env]` table, so the flow is demonstrable end to end on
+  real hardware without writing code. Docs: `docs/crash-reports.md` updated
+  (status note, the fault-package section, a rewritten Secrets section),
+  plus README, CLAUDE.md`s Public API surface bullet and UNRELEASED.md.
+
+### Corrections to this bean
+
+- The `RegisterSecretString ... implemented in gosd-m6py` todo was stale:
+  PR #260 shipped the READER only. The writer, the quota policy and the
+  write-through-on-call behaviour are this bean.
+- The expected `platform_linux.go`/`platform_other.go` split was not needed
+  (no syscalls); the split is on the `gosd` build tag instead.
+
+### Adversarial pass
+
+Found and fixed before review: `Take` read before checking the size (an app
+writing the drop path directly could have OOMed PID 1 on a 512MB board);
+`Marshal` trimmed the previous attempt`s detail, stamping one truncation
+marker per pass; a label containing its own secret would have published the
+value it was protecting (now `{secret: unnamed}`); an empty secret is
+refused outright rather than relying on the redaction floor to skip it; a
+stale `.tmp` is removed rather than written over so it cannot keep looser
+permissions. Also: the test fixture`s realistic `sk_live_` prefix tripped
+GitHub push protection — renamed, with a comment.
+
+Two known limitations recorded rather than fixed, both pre-existing shapes:
+the `armed` one-report-per-stable-run gate will be able to swallow a
+declared report once the crash tail (gosd-s9uq) can write first — worth
+deciding then whether a declared fault overrides it, since it halts and so
+cannot loop; and `OnStableRun` racing an exit within microseconds of
+`StableRunThreshold` can delete a just-written report.
