@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T10:24:51Z
+updated_at: 2026-08-11T10:45:43Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -43,11 +43,13 @@ On a non-clean app exit, format the ring buffer's contents as the report's
 
 ## Todos
 
-- [ ] Bounded ring buffer, default 64KiB, truncating from the FRONT with an
+- [x] Bounded ring buffer, default 64KiB, truncating from the FRONT with an
       explicit "(earlier output dropped)" marker — a Go panic prints every
       goroutine's stack, so the tail is where the useful part is, and an app
       that logs without newlines must never grow PID 1's memory (the concern
-      `logwriter.MaxBufferedLine` already exists for)
+      `logwriter.MaxBufferedLine` already exists for). Landed standalone in
+      `cmd/gosd-init/internal/consoletail` (PR TBD) — pure buffer only, no
+      wiring into sequence.go/supervisor.go yet; see the note below
 - [ ] Tee to console unchanged; verify on the bench that serial output is
       identical to today
 - [ ] Distinguish a crash from a clean exit. `Supervisor.runOnce` already
@@ -80,3 +82,14 @@ must not ship before the thing that scrubs it.
 Note the asymmetry that follows, and document it: the serial console keeps
 receiving unredacted output. It is a physically-attached debug channel for
 someone already holding the board, not a file that travels.
+
+## Note: core landed separately from the wiring
+
+The pure, standalone bounded-buffer package (`cmd/gosd-init/internal/consoletail`)
+landed in its own PR against `main`, deliberately split from the wiring
+(the remaining unchecked todos above: tee into `sequence.go`, crash-vs-clean-exit
+detection in `supervisor.go`, signal-death naming, write-rate honouring, the
+fallback narration line, and fakes-driven tests for all of that). The split
+parallelises the work; the wiring is still blocked on gosd-pun9 and gosd-m6py
+as noted above, so it lands in a second PR once those land. This bean's status
+stays `todo` — it is not complete.
