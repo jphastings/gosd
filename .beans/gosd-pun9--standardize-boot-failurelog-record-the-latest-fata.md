@@ -260,6 +260,23 @@ filesystem before restoring the read-only mount and reports a failed restore
 rather than swallowing it, because unlike the report write it runs on a device
 that carries on booting with a live app.
 
+### Evidence beyond the unit tests
+
+CI's `qemu first-boot data-partition expansion` job already forces the
+data-corruption halt on a real (virtual) card, and now asserts the console's
+"recorded this failure to LAST_FATAL_ERROR.md" line — which only prints once
+the write returned. So the remount-rw → write → fsync → remount-ro path is
+proven against a live vfat boot partition, not only against fakes. What that
+job still can't show is the file read back from the card: CI has no
+FAT-inspection tooling, and adding some was out of scope here. That is what
+the remaining bench todo covers.
+
+While wiring that assertion, the data-corruption class stopped wrapping its
+own cause: dataexpand's error already reads as a whole sentence, so
+`fatal()` was saying it twice ("reading the data partition failed: the data
+partition is corrupt: ..."). A `fatalClass` may now omit its action, which
+also restores the exact console line that job has always grepped for.
+
 ### What is NOT done, and why
 
 - **Bench verification of the device-tree read is outstanding** (a Pi and a
