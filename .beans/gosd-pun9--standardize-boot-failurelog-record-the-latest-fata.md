@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-07-30T21:11:39Z
-updated_at: 2026-08-11T10:12:12Z
+updated_at: 2026-08-11T12:04:56Z
 parent: gosd-47z3
 blocked_by:
     - gosd-my8e
@@ -60,6 +60,24 @@ paths reach it.
       already correctly distinguish an `expand` image from a fixed-size one)
 - [ ] Assign a stable `GOSD-*` code per fatal class, and keep them listed
       somewhere a support page could mirror
+- [ ] Render `device:` from the DEVICE TREE, not the board id — see the
+      epic's locked header-fields section for the full argument. Read
+      `/sys/firmware/devicetree/base/model` (NUL-terminated, needs
+      trimming), behind the usual interface seam with a fake-driven test
+      that passes on macOS and a `platform_linux.go` real read. Fall back
+      to config.json's `boardDisplayName` when it is unreadable, and emit
+      the gosd board id alongside either way. **Verify on the bench that
+      the file exists and reads sensibly on at least one Pi and one
+      Rockchip board** — no code in this repo reads the device tree today,
+      so its availability under our trimmed kernels is assumed, not proven.
+      Note what qemu-virt reports (expected: `linux,dummy-virt`) and make
+      sure the fallback handles it gracefully rather than printing it
+- [ ] Do NOT pair `boardDisplayName` with a board id it was not baked for:
+      `sequence.go:241` lets `gosd.board=` from the hand-editable
+      cmdline.txt overwrite `cfg.Board` without touching the baked display
+      name, so capture the config.json board id at parse time and fall back
+      to the bare id if the effective one differs (constraint documented on
+      the field itself by gosd-my8e)
 - [ ] Decide halt vs reboot per failure class: reboot for maybe-transient
       errors (current behaviour), halt for states no retry improves (the
       data-corruption path already halts). Record the rationale per class

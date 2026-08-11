@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: high
 created_at: 2026-08-11T10:10:00Z
-updated_at: 2026-08-11T10:25:37Z
+updated_at: 2026-08-11T12:04:44Z
 ---
 
 Direction from JP (2026-08-11). GoSD devices are unattended and their owners
@@ -107,8 +107,30 @@ summary — the section below is the part they need.
   on the boot partition means a write on every boot, which the risk note
   below argues against, so `/data` is the likely home with "unknown" when
   `/data` is read-only or absent.
-- `device`, `image` — need metadata that does not exist yet; that is the
-  child bean below.
+- `device` — **read the hardware's own self-description from the device
+  tree** (`/sys/firmware/devicetree/base/model`, equivalently
+  `/proc/device-tree/model`), NOT the baked board id. Decided 2026-08-11
+  after JP asked whether anything more canonical existed than the
+  cmdline. `gosd.board=` is a deliberate, documented override
+  (docs/runtime.md) baked into every board's cmdline template, and
+  `sequence.go` lets it overwrite `cfg.Board` — but cmdline.txt is a text
+  file on the FAT partition, so the least trustworthy source currently
+  wins. The device tree is written by the firmware from the DTB and needs
+  no new plumbing: gosd-init already mounts `/proc` and `/sys` in
+  `mountEarly`, so it is readable at fatal time.
+
+  It is also strictly more informative than our own id, because it
+  distinguishes hardware GoSD deliberately conflates: `pi-3b` is ONE image
+  covering the 3B and the 3B+ (the firmware picks the DTB by board
+  revision), and the device tree says which one actually booted.
+
+  Emit both, for two different readers: the model string answers "what
+  hardware is this?" for the owner, and the gosd board id answers "which
+  kernel and artifacts shipped?" for whoever debugs it. `boardDisplayName`
+  from config.json is the fallback when the model string is missing or
+  useless — qemu-virt reports `linux,dummy-virt`.
+- `image` — from config.json's `appName`, `appVersion` and
+  `ShortIdentity()`, all added by gosd-my8e.
 
 ## LOCKED: who writes, and when
 
