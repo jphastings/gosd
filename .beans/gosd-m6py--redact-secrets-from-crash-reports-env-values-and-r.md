@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T10:44:17Z
+updated_at: 2026-08-11T10:45:46Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -107,3 +107,45 @@ This is a security-relevant negative claim — "secrets do not reach the file"
 — so it needs an adversarial pass before JP's review, per CLAUDE.md. The
 interesting failure is not a missed replacement but over-redaction making a
 report useless, and the short-value threshold is where that lives.
+
+## Progress note: core redactor landed separately from the wiring
+
+The pure, standalone redactor package (`internal/redact`) landed in PR
+jphastings/gosd#256 (https://github.com/jphastings/gosd/pull/256), deliberately split from the wiring described in the
+rest of this bean (env-value scan in gosd-init, the `/run` registration
+channel, `fault.RegisterSecretString`, renderer integration) — those are
+each blocked on other beans (gosd-pun9's renderer, gosd-aa1p's `fault`
+package) and will land in a second PR against this same bean.
+
+What that PR delivers, and how it maps onto the todos above:
+
+- Todo 1 (pure, table-testable redactor) and todo 2 (longest-needle-first) —
+  fully done, checked off.
+- Todo 3 (minimum needle length, skip discoverable for logging without
+  exposing the value) — the mechanism is done:
+  `redact.MinNeedleLength` (8 bytes, rationale in its docstring) and
+  `Result.Skipped`, which carries only `Rule.Replacement` (never `Needle`)
+  for every skipped rule, so a caller cannot accidentally log a secret via
+  this API. Left unchecked because "the skip is logged" needs an actual
+  caller emitting a log line, which is wiring that doesn't exist yet.
+- Todo 6 (negative-claim test) — `internal/redact`'s own tests assert this
+  directly (`TestRedact_SecretDoesNotSurvive`, plus the substring/overlap
+  cases). Left unchecked because the wording describes an end-to-end
+  console-tail/rendered-report scenario, which needs the capture and
+  renderer wiring this PR doesn't touch.
+- Todos 4 and 5 (redact the whole rendered body, wire into the renderer)
+  and the entire "RegisterSecretString" section — untouched, out of scope
+  for this PR, tracked for the wiring PR.
+
+Adversarial pass (per the Review note below and CLAUDE.md's
+crash-ordering/adversarial-review requirement): the interesting finding
+was not a missed replacement but an incorrect docstring claim. `Redact`'s
+doc originally claimed the result was independent of rule order; that's
+false in exactly one case — two rules sharing the identical `Needle` with
+different `Replacement`s, where the first one in the slice wins because
+replacing it exhausts every occurrence before the second rule runs. Fixed
+the docstring to state this precisely and added
+`TestRedact_DuplicateNeedleUsesFirstRule` to pin the behavior. No case was
+found where an applied (non-skipped) needle survives redaction; overlap and
+substring scenarios were checked by construction of the longest-first sort
+plus dedicated tests.
