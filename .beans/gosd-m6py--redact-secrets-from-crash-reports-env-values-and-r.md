@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T10:24:30Z
+updated_at: 2026-08-11T12:06:34Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -49,9 +49,9 @@ possible secrets.
 
 ## Todos
 
-- [ ] An internal redactor package: takes a set of (needle, replacement)
+- [x] An internal redactor package: takes a set of (needle, replacement)
       pairs and a body, returns the redacted body. Pure, table-testable
-- [ ] **Longest needle first.** Otherwise a secret that contains another
+- [x] **Longest needle first.** Otherwise a secret that contains another
       secret as a substring leaves a mangled fragment of the longer one
 - [ ] **A minimum needle length**, below which a value is skipped and the
       skip is logged (key only, never the value). An app with `DEBUG=1` or
@@ -92,6 +92,10 @@ gosd-init BEFORE the crash.
 - [ ] The `replacement` is a human label, not a secret: render as
       `{secret: stripe-api-key}`. Say so in the docstring, since the
       parameter name alone invites someone to pass a second secret
+- [ ] Exported docstring must also state that a secret shorter than
+      `redact.MinNeedleLength` is silently skipped (see the LOCKED
+      decision above) — the point an app author will actually read it,
+      since `RegisterSecretString`'s docstring doesn't exist yet
 
 ## Known limitation to document, not fix
 
@@ -107,3 +111,63 @@ This is a security-relevant negative claim — "secrets do not reach the file"
 — so it needs an adversarial pass before JP's review, per CLAUDE.md. The
 interesting failure is not a missed replacement but over-redaction making a
 report useless, and the short-value threshold is where that lives.
+
+## Progress note: core redactor landed separately from the wiring
+
+The pure, standalone redactor package (`internal/redact`) landed in PR
+jphastings/gosd#256 (https://github.com/jphastings/gosd/pull/256), deliberately split from the wiring described in the
+rest of this bean (env-value scan in gosd-init, the `/run` registration
+channel, `fault.RegisterSecretString`, renderer integration) — those are
+each blocked on other beans (gosd-pun9's renderer, gosd-aa1p's `fault`
+package) and will land in a second PR against this same bean.
+
+What that PR delivers, and how it maps onto the todos above:
+
+- Todo 1 (pure, table-testable redactor) and todo 2 (longest-needle-first) —
+  fully done, checked off.
+- Todo 3 (minimum needle length, skip discoverable for logging without
+  exposing the value) — the mechanism is done:
+  `redact.MinNeedleLength` (8 bytes, rationale in its docstring) and
+  `Result.Skipped`, which carries only `Rule.Replacement` (never `Needle`)
+  for every skipped rule, so a caller cannot accidentally log a secret via
+  this API. Left unchecked because "the skip is logged" needs an actual
+  caller emitting a log line, which is wiring that doesn't exist yet.
+- Todo 6 (negative-claim test) — `internal/redact`'s own tests assert this
+  directly (`TestRedact_SecretDoesNotSurvive`, plus the substring/overlap
+  cases). Left unchecked because the wording describes an end-to-end
+  console-tail/rendered-report scenario, which needs the capture and
+  renderer wiring this PR doesn't touch.
+- Todos 4 and 5 (redact the whole rendered body, wire into the renderer)
+  and the entire "RegisterSecretString" section — untouched, out of scope
+  for this PR, tracked for the wiring PR.
+
+Adversarial pass (per the Review note below and CLAUDE.md's
+crash-ordering/adversarial-review requirement): the interesting finding
+was not a missed replacement but an incorrect docstring claim. `Redact`'s
+doc originally claimed the result was independent of rule order; that's
+false in exactly one case — two rules sharing the identical `Needle` with
+different `Replacement`s, where the first one in the slice wins because
+replacing it exhausts every occurrence before the second rule runs. Fixed
+the docstring to state this precisely and added
+`TestRedact_DuplicateNeedleUsesFirstRule` to pin the behavior. No case was
+found where an applied (non-skipped) needle survives redaction; overlap and
+substring scenarios were checked by construction of the longest-first sort
+plus dedicated tests.
+
+## LOCKED: MinNeedleLength's floor applies to every caller, including RegisterSecretString (JP, 2026-08-11)
+
+Resolves the question raised during review of PR #256. No special case for
+explicit registrations: a secret registered through
+`fault.RegisterSecretString` shorter than `internal/redact.MinNeedleLength`
+is skipped exactly like a short env value would be. `internal/redact` is
+unchanged by this decision — the floor was already unconditional; this
+locks that as intended rather than an oversight, and is now stated on
+`MinNeedleLength`'s own docstring so a reader doesn't have to find this
+bean to learn it.
+
+`Result.Skipped` remains the only redactor-level signal of a skip, and it
+only reaches gosd-init's console log, which an app developer will rarely
+read. Since a registered secret is a deliberate declaration, the wiring
+PR's job is to make a too-short one visible where the developer actually
+looks: see the `RegisterSecretString` todo below requiring its own
+docstring to state this limitation.
