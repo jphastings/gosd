@@ -649,7 +649,9 @@ type fatalClass struct {
 	// code is the report's error_code, stable and greppable.
 	code string
 	// action names what failed, in the gerund form the returned error and
-	// the console line both use ("mounting the boot partition").
+	// the console line both use ("mounting the boot partition"). Empty
+	// leaves the cause to speak for itself, for a class whose own error
+	// already reads as a complete statement.
 	action string
 	// doing is what the device was doing for its user at the time, in the
 	// terms its owner thinks in.
@@ -719,9 +721,11 @@ func haltForDataCorruption(deps Deps, log func(format string, args ...any), repo
 		orStartOver = "delete partition 2 entirely — the next boot will recreate it, empty"
 	}
 
+	// No action: dataexpand's own error already reads as a whole sentence
+	// ("the data partition is corrupt: /dev/mmcblk0p2 holds nothing ..."),
+	// and wrapping it in another gerund would only say it twice.
 	return fatal(deps, log, report, fatalClass{
 		code:    "GOSD-DATA-CORRUPT",
-		action:  "reading the data partition",
 		doing:   "starting up",
 		problem: "The part of the card this device keeps its data on no longer holds a filesystem it recognises. It was stopped rather than started, so that whatever is still there can be salvaged.",
 		fix: fmt.Sprintf("Plug the card into a computer and save anything you need from partition 2. Then either reformat that partition as %s, labelled %s, or %s.",
@@ -741,7 +745,10 @@ func haltForDataCorruption(deps Deps, log func(format string, args ...any), repo
 // there is nowhere to write a report, so those failures reach the serial
 // console and nowhere else.
 func fatal(deps Deps, log func(format string, args ...any), report *fatalReporter, class fatalClass, err error) error {
-	wrapped := fmt.Errorf("%s failed: %w", class.action, err)
+	wrapped := err
+	if class.action != "" {
+		wrapped = fmt.Errorf("%s failed: %w", class.action, err)
+	}
 
 	if class.halt {
 		log("fatal: %v; halting", wrapped)
