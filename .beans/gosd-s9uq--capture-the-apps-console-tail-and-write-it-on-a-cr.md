@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T10:45:43Z
+updated_at: 2026-08-11T10:46:32Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -48,7 +48,7 @@ On a non-clean app exit, format the ring buffer's contents as the report's
       goroutine's stack, so the tail is where the useful part is, and an app
       that logs without newlines must never grow PID 1's memory (the concern
       `logwriter.MaxBufferedLine` already exists for). Landed standalone in
-      `cmd/gosd-init/internal/consoletail` (PR TBD) — pure buffer only, no
+      `cmd/gosd-init/internal/consoletail` (PR #257) — pure buffer only, no
       wiring into sequence.go/supervisor.go yet; see the note below
 - [ ] Tee to console unchanged; verify on the bench that serial output is
       identical to today
