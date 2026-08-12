@@ -9,6 +9,7 @@ export type GosdErrorCode =
   | "manifest-invalid"
   | "manifest-hash-mismatch"
   | "unknown-placeholder"
+  | "invalid-env"
   | "content-too-large"
   | "image-fetch"
   | "image-precondition"
@@ -57,6 +58,14 @@ export class GosdUnknownPlaceholderError extends GosdError {
   constructor(message: string, options?: { cause?: unknown }) {
     super("unknown-placeholder", message, options);
     this.name = "GosdUnknownPlaceholderError";
+  }
+}
+
+/** An `env` entry can't be rendered into the reserved [env] region. */
+export class GosdInvalidEnvError extends GosdError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("invalid-env", message, options);
+    this.name = "GosdInvalidEnvError";
   }
 }
 

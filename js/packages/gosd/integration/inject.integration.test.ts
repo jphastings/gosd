@@ -15,8 +15,11 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   deriveManifestURL,
+  ENV_REGION_KEY,
   GosdImageHashMismatchError,
+  GosdInvalidEnvError,
   GosdPlaceholderNotPristineError,
+  padAll,
   padContents,
   parseManifest,
   runDownload,
@@ -172,3 +175,86 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
     ).rejects.toThrow(GosdImageHashMismatchError);
   });
 });
+
+// The reserved [env] region travels a different manifest key than a
+// placeholder and lands inside gosd.toml rather than in a file of its own,
+// so it gets its own round trip against the real Go-built fixture.
+describe("cross-implementation integration: gosd build --env-placeholder round trip", () => {
+  let manifest: Manifest;
+  let pristine: Uint8Array;
+
+  beforeAll(() => {
+    manifest = parseManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
+    pristine = new Uint8Array(readFileSync(imgPath));
+  });
+
+  it("publishes an env region whose pristine bytes are the gosd.toml [env] body gosd rendered", () => {
+    if (!manifest.env) throw new Error("fixture manifest has no env region; regenerate it");
+    const region = readRegion(pristine, manifest.env.ranges);
+    const text = new TextDecoder().decode(region);
+    expect(text).toMatch(/^# GOSD-INJECTABLE v1 env/);
+    expect(text).toContain('API_URL = "https://example.invalid"');
+  });
+
+  it("splices real settings into it, leaving the rest of gosd.toml untouched", async () => {
+    if (!manifest.env) throw new Error("fixture manifest has no env region; regenerate it");
+    const padded = padAll(
+      {},
+      { API_TOKEN: "s3cret", API_URL: "https://injected.example" },
+      manifest,
+    );
+    const sink = collectingSink();
+
+    await runDownload({
+      manifest,
+      padded,
+      fetchImage: async () =>
+        new Response(
+          Readable.toWeb(createReadStream(imgPath)) as unknown as ReadableStream<Uint8Array>,
+          {
+            headers: {
+              "content-type": "application/octet-stream",
+              "content-length": String(manifest.image.size),
+              etag: manifest.image.sha256,
+            },
+          },
+        ),
+      sink,
+    });
+
+    const output = sink.bytes();
+    const text = new TextDecoder().decode(readRegion(output, manifest.env.ranges));
+    expect(text).toBe(
+      'API_TOKEN = "s3cret"\nAPI_URL = "https://injected.example"\n'.padEnd(
+        manifest.env.size,
+        "\n",
+      ),
+    );
+
+    const expected = Uint8Array.from(pristine);
+    const replacement = padded.get(ENV_REGION_KEY);
+    if (!replacement) throw new Error("test setup error: no padded content for the env region");
+    let consumed = 0;
+    for (const range of manifest.env.ranges) {
+      expected.set(replacement.subarray(consumed, consumed + range.length), range.offset);
+      consumed += range.length;
+    }
+    expect(Buffer.compare(output, expected)).toBe(0);
+  });
+
+  it("refuses settings the device would ignore, before anything is downloaded", () => {
+    expect(() => padAll({}, { GOSD_BOARD: "pi-zero-2w" }, manifest)).toThrow(GosdInvalidEnvError);
+  });
+});
+
+/** Concatenates an image's bytes at `ranges`, in order. */
+function readRegion(image: Uint8Array, ranges: { offset: number; length: number }[]): Uint8Array {
+  const total = ranges.reduce((sum, r) => sum + r.length, 0);
+  const out = new Uint8Array(total);
+  let consumed = 0;
+  for (const r of ranges) {
+    out.set(image.subarray(r.offset, r.offset + r.length), consumed);
+    consumed += r.length;
+  }
+  return out;
+}
