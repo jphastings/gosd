@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-07-30T21:11:39Z
-updated_at: 2026-08-12T06:10:55Z
+updated_at: 2026-08-12T06:17:39Z
 parent: gosd-47z3
 blocked_by:
     - gosd-my8e
@@ -369,3 +369,34 @@ Note for whoever retries: the SDWire is currently enumerating at USB location
 `.1.1.4` while name-based resolution still resolves to a stale `.1.1.3` and
 fails. USB operations must use `-s 20120501030900000.1.1.4`; power MUST use
 `-s bench`, because the identity form silently no-ops power.
+
+
+
+## Pi 3B+ bench verification, 2026-08-12 — PASSED, epic fully verified
+
+The earlier two Pi attempts failed on an unseated USB-C cable, not on
+anything in GoSD. Reseated, the same card and image booted first time.
+
+**`device: Raspberry Pi 3 Model B Plus Rev 1.3 (pi-3b)`** — the device-tree
+read works on the Pi family, whose DTBs come from the firmware rather than
+our kernel build. That closes the last gap in epic gosd-47z3; both board
+families are now verified.
+
+It also proved the argument for reading the device tree at all, by accident:
+the board was set up as a "Pi 3B" and the hardware says **3B+**. One image
+ships both DTBs and both boards answer to the id `pi-3b`, so nothing baked
+could have told them apart — the model string did, unprompted.
+
+Also confirmed in the same run: partition 2 created and filled the card
+(`boot: 1`, `uptime: 5s`), the clock honestly reported unsynced, the quoted
+image line, env-value redaction (`HELLO_FATAL="{$HELLO_FATAL}"`), and
+`fault.Fatal` halting the board. The app's own stderr reached the serial
+console AND the captured tail, which is the tee behaving as designed.
+
+`gosd-72ga`'s fix verified on hardware too: the report is 1104 bytes with the
+technical detail holding only the short pointer line, against 2025 bytes and
+a full nested copy on the pre-fix NanoPi run.
+
+One new defect found: bean `gosd-fs34` — on the halt paths the device stops
+before gosd-init's console copy of the report is flushed, so a serial
+observer sees a truncated line while the card copy is complete.

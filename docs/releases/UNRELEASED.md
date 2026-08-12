@@ -21,8 +21,10 @@ this stub. Last folded into: v0.4.0 (2026-08-12).
   though the header just above knew all three). On a device, `fault.Fatal`
   now prints only a short line naming the error code, never the report
   itself; gosd-init logs the complete, real report to the serial console on
-  its own once it commits one, which is strictly better than anything the
-  app could print for itself. The developer preview `fault.Fatal` prints off
+  its own once it commits one, which carries detail the app could never
+  print for itself (bench-tested caveat: on the paths that halt immediately,
+  the device can stop before that console copy is flushed — the card copy is
+  unaffected, and bean `gosd-fs34` tracks it). The developer preview `fault.Fatal` prints off
   a device is otherwise unchanged, except that a header field it could never
   honestly answer there (`uptime`, `boot`, `device`) is now left out
   entirely rather than printed as `unknown`, so the preview reads like a

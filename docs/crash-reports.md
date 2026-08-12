@@ -9,11 +9,8 @@ secrets no environment variable names. gosd-init keeps the tail of your app's
 own console output and writes a report when it crashes — see "What you get
 for free" below — with no code changes required, and the `fault` package below
 is importable, so a condition your own code understands ("your API key is
-wrong") can declare a report of its own and stop the device. One gap remains:
-the `device:` line's device-tree read is confirmed on the Rockchip boards but
-not yet on the Raspberry Pi family, whose device trees come from the firmware
-rather than the kernel build (it falls back to the board name baked into the
-image whenever it can't be read). Tracked by bean `gosd-47z3`.
+wrong") can declare a report of its own and stop the device. All of it is
+verified on real hardware, on both a Rockchip board and a Raspberry Pi.
 
 ## Why this exists
 
