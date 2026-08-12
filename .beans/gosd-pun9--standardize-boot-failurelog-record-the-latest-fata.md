@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-07-30T21:11:39Z
-updated_at: 2026-08-12T03:44:01Z
+updated_at: 2026-08-12T06:10:55Z
 parent: gosd-47z3
 blocked_by:
     - gosd-my8e
@@ -328,3 +328,44 @@ model string was the argued benefit (a 3B vs a 3B+ from one image).
 The run also found bug `gosd-72ga`: a declared fault's report embeds a
 nested copy of itself, because `fault.Fatal` renders to stderr and the
 console tail then gets folded back in.
+
+
+
+## Pi 3B bench attempt, 2026-08-12 — INCONCLUSIVE, physical setup suspected
+
+Two attempts, both leaving the card with **no partition 2**. With
+`--data-size expand` the device creates that itself on first boot, so its
+absence means the first-boot chain never completed — the same signal that
+read `boot: 1` on the NanoPi.
+
+The second attempt had every earlier mistake corrected:
+- Image freshly built from post-gosd-72ga `main` (a3669e9), `--board pi-3b
+  --data-size expand --support-url ... --app-version 0.4.1-bench` plus
+  `HELLO_FATAL`.
+- Power driven by the NAMED config entry and confirmed engaged —
+  `power on --debug` printed `controlling power for device "bench"`, the
+  documented tell that it is not silently no-opping.
+- Mux confirmed `Target` after the flash, which proves the card was really
+  handed over.
+- 120s of boot time.
+- Console captured with `~/.local/bin/serialcap.py` (raw termios + os.read),
+  NOT `stty`+`cat` — the first attempt used the latter, which is documented
+  as never working on this Mac, so that run's "0 bytes" proved nothing.
+
+**Result: 0 bytes of console and no partition 2.** The image itself looks
+correct — full Pi boot chain (`bootcode.bin`, `start.elf`, `fixup.dat`,
+`kernel8.img`, both 3B and 3B+ DTBs, initramfs), `arm_64bit=1`,
+`initramfs ... followkernel`, `enable_uart=1`, and
+`console=serial0,115200 quiet init=/init gosd.board=pi-3b panic=10`.
+
+Two physical things were NOT verified and are the most likely explanation,
+since the board was swapped in mid-session: whether the CP2102N's TX/RX/GND
+are actually on the Pi's GPIO header (they may still be on the NanoPi's),
+and whether the Pi's PSU is in the bench Meross outlet. `power on --debug`
+proves the command reached the configured plug, never that this board is
+plugged into it.
+
+Note for whoever retries: the SDWire is currently enumerating at USB location
+`.1.1.4` while name-based resolution still resolves to a stale `.1.1.3` and
+fails. USB operations must use `-s 20120501030900000.1.1.4`; power MUST use
+`-s bench`, because the identity form silently no-ops power.
