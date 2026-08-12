@@ -1,11 +1,11 @@
 ---
 # gosd-m6py
 title: 'Redact secrets from crash reports: env values and RegisterSecretString'
-status: in-progress
+status: completed
 type: feature
 priority: high
 created_at: 2026-08-11T10:24:30Z
-updated_at: 2026-08-11T15:18:03Z
+updated_at: 2026-08-12T10:21:00Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -75,24 +75,24 @@ secret registered only in the app's memory is exactly the one still in the
 tail gosd-init is about to write. The registration therefore has to reach
 gosd-init BEFORE the crash.
 
-- [ ] `RegisterSecretString` writes through to a registration file in `/run`
+- [x] `RegisterSecretString` writes through to a registration file in `/run`
       (tmpfs, already mounted) immediately on call, so gosd-init can redact
       a panic the app never saw coming. Mode 0600; write-`.tmp`-then-rename
       so gosd-init can never read a half-written registration
-- [ ] It is idempotent and additive; registering the same secret twice is
+- [x] It is idempotent and additive; registering the same secret twice is
       not an error. Bound the number and total size of registrations —
       an app that registers in a loop must not fill tmpfs
-- [ ] Off-device (macOS, `go test`, no `/run/gosd`), registrations are held
+- [x] Off-device (macOS, `go test`, no `/run/gosd`), registrations are held
       in memory and applied to the stderr rendering, so the developer sees
       the same redaction their user will
-- [ ] Exported docstring must be explicit that the plaintext secret is
+- [x] Exported docstring must be explicit that the plaintext secret is
       written to tmpfs. It is RAM, never the card, and the app already holds
       it in RAM on a device with no shell and no interactive surface — but a
       reader deserves to know rather than infer it
-- [ ] The `replacement` is a human label, not a secret: render as
+- [x] The `replacement` is a human label, not a secret: render as
       `{secret: stripe-api-key}`. Say so in the docstring, since the
       parameter name alone invites someone to pass a second secret
-- [ ] Exported docstring must also state that a secret shorter than
+- [x] Exported docstring must also state that a secret shorter than
       `redact.MinNeedleLength` is silently skipped (see the LOCKED
       decision above) — the point an app author will actually read it,
       since `RegisterSecretString`'s docstring doesn't exist yet

@@ -1,11 +1,11 @@
 ---
 # gosd-47z3
 title: 'LAST_FATAL_ERROR.md: human-readable crash reports on the SD card'
-status: todo
+status: completed
 type: epic
 priority: high
 created_at: 2026-08-11T10:10:00Z
-updated_at: 2026-08-11T14:40:55Z
+updated_at: 2026-08-12T10:21:00Z
 ---
 
 Direction from JP (2026-08-11). GoSD devices are unattended and their owners

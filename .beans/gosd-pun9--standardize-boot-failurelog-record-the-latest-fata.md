@@ -1,11 +1,11 @@
 ---
 # gosd-pun9
 title: The LAST_FATAL_ERROR.md format, and gosd-init's own fatal paths
-status: in-progress
+status: completed
 type: feature
 priority: high
 created_at: 2026-07-30T21:11:39Z
-updated_at: 2026-08-12T06:17:39Z
+updated_at: 2026-08-12T10:21:00Z
 parent: gosd-47z3
 blocked_by:
     - gosd-my8e
@@ -60,7 +60,7 @@ paths reach it.
       already correctly distinguish an `expand` image from a fixed-size one)
 - [x] Assign a stable `GOSD-*` code per fatal class, and keep them listed
       somewhere a support page could mirror
-- [ ] Render `device:` from the DEVICE TREE, not the board id — see the
+- [x] Render `device:` from the DEVICE TREE, not the board id — see the
       epic's locked header-fields section for the full argument. Read
       `/sys/firmware/devicetree/base/model` (NUL-terminated, needs
       trimming), behind the usual interface seam with a fake-driven test
@@ -95,16 +95,16 @@ paths reach it.
       fail, which the owner will experience as the app being broken
 - [x] Update docs/runtime.md, replacing the `boot-failure.log` paragraphs
       at the "An established data partition is never repaired away" bullet
-- [ ] The developer-facing guide already exists as docs/crash-reports.md
+- [x] The developer-facing guide already exists as docs/crash-reports.md
       (written 2026-08-11 ahead of the code, carrying a "partly built"
       status banner in the ab-updates.md house style). Keep it TRUE as each
       slice lands, and delete the banner only when the whole epic is done —
       it is the file JP points other agents at, so a stale claim there
       misleads them directly
-- [ ] Link the guide from README.mds docs list once the feature actually
+- [x] Link the guide from README.mds docs list once the feature actually
       works. It is deliberately unlinked while unbuilt, so nobody finds it
       by browsing and believes the API is importable
-- [ ] Verify on the bench: pull the card after a forced fatal and confirm
+- [x] Verify on the bench: pull the card after a forced fatal and confirm
       the file is present, complete and renders as prose on macOS
 
 ## Crash-ordering argument (required before review)

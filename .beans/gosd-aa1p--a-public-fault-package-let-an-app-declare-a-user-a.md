@@ -1,11 +1,11 @@
 ---
 # gosd-aa1p
 title: 'A public fault package: let an app declare a user-actionable fatal error'
-status: in-progress
+status: completed
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:29Z
-updated_at: 2026-08-11T23:11:16Z
+updated_at: 2026-08-12T10:21:00Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
