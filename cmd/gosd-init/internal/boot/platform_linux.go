@@ -60,6 +60,30 @@ type linuxRebooter struct{}
 
 func (linuxRebooter) Sync() { unix.Sync() }
 
+// FlushConsole waits for every byte already written to /dev/console to
+// actually be transmitted, so a Reboot or Halt that follows immediately
+// after can't cut it off mid-flight (gosd-fs34). It opens its own handle
+// rather than reusing Run's: the output queue TCSBRK drains belongs to the
+// underlying tty device, not to any one file descriptor, so a fresh open
+// drains exactly the same queue gosd-init's own logger has been writing
+// into all boot. Best-effort, like Sync: a console that was never a real
+// serial line — a framebuffer console, a qemu virtio console with no
+// backing UART, one that failed to open in the first place — has nothing
+// to drain, and there's nothing more useful to do about either failure
+// than continue toward the reboot/halt that's already been decided.
+func (linuxRebooter) FlushConsole() {
+	f, err := os.OpenFile("/dev/console", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	// TCSBRK with a nonzero argument is glibc's tcdrain(3) on Linux: wait
+	// for previously-written output to finish transmitting, without
+	// sending an actual break (see tty_ioctl(4)'s TCSBRK entry — a zero
+	// argument is the break-sending form this deliberately avoids).
+	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
+}
+
 func (linuxRebooter) Reboot() {
 	// Best-effort: if this fails there is nothing more gosd-init can do.
 	_ = unix.Reboot(unix.LINUX_REBOOT_CMD_RESTART)

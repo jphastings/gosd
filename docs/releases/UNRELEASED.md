@@ -22,9 +22,12 @@ this stub. Last folded into: v0.4.0 (2026-08-12).
   now prints only a short line naming the error code, never the report
   itself; gosd-init logs the complete, real report to the serial console on
   its own once it commits one, which carries detail the app could never
-  print for itself (bench-tested caveat: on the paths that halt immediately,
-  the device can stop before that console copy is flushed — the card copy is
-  unaffected, and bean `gosd-fs34` tracks it). The developer preview `fault.Fatal` prints off
+  print for itself. A follow-up bench run found that on the paths that halt
+  or reboot immediately, the device could stop before that console copy
+  finished transmitting over a slow serial line — the card copy was never
+  affected, only what a cable showed — and bean `gosd-fs34` closed that gap:
+  every fatal path now blocks until the console has actually drained before
+  it halts or reboots. The developer preview `fault.Fatal` prints off
   a device is otherwise unchanged, except that a header field it could never
   honestly answer there (`uptime`, `boot`, `device`) is now left out
   entirely rather than printed as `unknown`, so the preview reads like a

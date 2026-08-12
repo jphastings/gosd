@@ -3,6 +3,7 @@ package boot
 import (
 	"io"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/jphastings/gosd/internal/redact"
@@ -127,29 +128,79 @@ func (h *fakeHostname) SetHostname(name string) error {
 	return h.err
 }
 
+// fakeRebooter records not just what was called but the order it happened
+// in (calls), so a test can assert gosd-fs34's fix directly: FlushConsole
+// happened before Reboot/Halt, not merely that both happened somewhere.
 type fakeRebooter struct {
 	mu        sync.Mutex
 	syncCalls int
 	rebooted  bool
 	halted    bool
+	calls     []string
 }
 
 func (r *fakeRebooter) Sync() {
 	r.mu.Lock()
 	r.syncCalls++
+	r.calls = append(r.calls, "Sync")
+	r.mu.Unlock()
+}
+
+func (r *fakeRebooter) FlushConsole() {
+	r.mu.Lock()
+	r.calls = append(r.calls, "FlushConsole")
 	r.mu.Unlock()
 }
 
 func (r *fakeRebooter) Reboot() {
 	r.mu.Lock()
 	r.rebooted = true
+	r.calls = append(r.calls, "Reboot")
 	r.mu.Unlock()
 }
 
 func (r *fakeRebooter) Halt() {
 	r.mu.Lock()
 	r.halted = true
+	r.calls = append(r.calls, "Halt")
 	r.mu.Unlock()
+}
+
+// callOrder returns the sequence of Rebooter methods invoked, so a test can
+// assert one happened before another rather than merely that both happened.
+func (r *fakeRebooter) callOrder() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+// assertBefore fails the test unless both first and second appear in order,
+// and first's earliest occurrence precedes second's — the gosd-fs34
+// ordering guarantee (the console flush happens before the halt/reboot that
+// could otherwise cut it off) needs exactly this, not merely proof that both
+// eventually happened.
+func assertBefore(t *testing.T, order []string, first, second string) {
+	t.Helper()
+	fi, si := -1, -1
+	for i, call := range order {
+		if call == first && fi == -1 {
+			fi = i
+		}
+		if call == second && si == -1 {
+			si = i
+		}
+	}
+	if fi == -1 {
+		t.Errorf("%s was never called (order=%v)", first, order)
+		return
+	}
+	if si == -1 {
+		t.Errorf("%s was never called (order=%v)", second, order)
+		return
+	}
+	if fi > si {
+		t.Errorf("%s was called after %s, want it first so a halt/reboot can't cut it off (order=%v)", first, second, order)
+	}
 }
 
 // fakeReaper always reports an immediate, clean exit (status 0, unsignaled).

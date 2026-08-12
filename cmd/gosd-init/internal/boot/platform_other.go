@@ -56,6 +56,8 @@ func (unsupportedPlatform) Wait(int) (ExitStatus, error) { return ExitStatus{}, 
 
 func (unsupportedPlatform) Sync() {}
 
+func (unsupportedPlatform) FlushConsole() {}
+
 func (unsupportedPlatform) Reboot() {}
 
 func (unsupportedPlatform) Halt() {}

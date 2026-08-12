@@ -43,6 +43,11 @@ func TestAFaultTheAppDeclaredReachesTheCardAndStopsTheDevice(t *testing.T) {
 	if rebooter.syncCalls == 0 {
 		t.Error("the card was not synced before halting")
 	}
+	// gosd-fs34: the console copy of this report must be flushed before
+	// the halt that could otherwise cut it off mid-transmission — this is
+	// the ordering bug found on the bench, not merely "was it flushed at
+	// all".
+	assertBefore(t, rebooter.callOrder(), "FlushConsole", "Halt")
 
 	if f.writeCount() != 1 || !strings.Contains(f.written(), "the weather service rejected our API key") {
 		t.Errorf("wrote %d reports (last: %q), want exactly the app's own", f.writeCount(), f.written())
