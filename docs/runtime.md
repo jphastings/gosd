@@ -103,6 +103,11 @@ To *document* those baked defaults for whoever holds the card — per-key
 comments, and commented-out "suggested" settings a user opts into — build
 with `gosd build --env-file`; see [`docs/gosd.toml.md`](gosd.toml.md).
 
+To give each device *different* values without building it a different
+image — a per-user API token spliced in as the image downloads, say —
+neither source will do: see
+[injecting environment variables](image-injection.md#injecting-environment-variables).
+
 Your app's environment is otherwise a clean slate: it gets exactly the
 `GOSD_*` vars above plus this merged user env, not a copy of
 `gosd-init`'s own environment (`os.Environ()`).

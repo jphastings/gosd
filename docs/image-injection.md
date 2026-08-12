@@ -114,6 +114,92 @@ threat model, and save-tier details. A worked implementation (browser-side,
 spliced entirely client-side between the CDN and the user's disk) also
 lives in the Backup.ist project's `docs/IMAGE-INJECTION.md`.
 
+## Injecting environment variables
+
+Your app's environment variables are the one setting this mechanism can't
+reach directly. They come from two places only (see
+[how an app receives its environment](runtime.md#app-environment-variables-gosdtoml-env)):
+defaults baked into `config.json`, which lives inside the compressed
+initramfs and so has no stable byte ranges, and the card's `gosd.toml [env]`
+table — and `gosd.toml`, like every other existing boot file, is refused as
+a `--placeholder` path. Cloud-init provisioning carries a hostname and WiFi
+credentials, never environment variables.
+
+Reserve a placeholder your app reads for itself instead. The boot partition
+stays mounted read-only at `/boot` while your app runs (see
+[the storage tiers](runtime.md#root-filesystem-ram-wiped-every-reboot)), so
+a placeholder is an ordinary file it can open at startup:
+
+```sh
+gosd build . --board pi-zero-2w --placeholder app.env=4KiB
+```
+
+Fill it in like any other placeholder. Content shorter than the reserved
+size is padded with trailing newlines, so pick a format that tolerates
+trailing whitespace — JSON does, and escapes any value you can throw at it:
+
+```ts
+await withPlaceholders("https://dl.example.com/myapp-pi-zero-2w.img", {
+  "app.env": JSON.stringify({ API_URL: "https://api.example.com", API_TOKEN: token }),
+});
+```
+
+Then read it back before anything consults the environment. Setting the
+values with `os.Setenv` keeps every `os.Getenv` call site in your app
+unchanged, whether the values were injected, baked with `--env`, or
+hand-written into `gosd.toml`:
+
+```go
+// loadInjectedEnv applies the settings a provisioning tool spliced into a
+// placeholder file on the boot partition. A missing file, or one no tool has
+// filled in, leaves the environment untouched.
+func loadInjectedEnv(path string) error {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if bytes.HasPrefix(raw, []byte("# GOSD-PLACEHOLDER")) {
+		return nil
+	}
+
+	var injected map[string]string
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &injected); err != nil {
+		return fmt.Errorf("reading injected settings from %s: %w", path, err)
+	}
+	for key, value := range injected {
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+```
+
+Called as `loadInjectedEnv("/boot/app.env")` at the top of `main`. If a
+dependency reads its configuration in a package `init` function, hand it the
+values directly rather than relying on `os.Setenv` running first.
+
+Three differences from a real `gosd.toml [env]` value are worth knowing
+before choosing this route:
+
+- **Crash-report redaction isn't automatic.** `gosd-init` turns every
+  environment value it merges into a redaction rule, so an `[env]` secret
+  never reaches a crash report; values your app loads for itself are
+  invisible to it. Register the secret ones as soon as you hold them, with
+  `fault.RegisterSecretString(os.Getenv("API_TOKEN"), "api-token")` (see
+  [what a crash report does with secrets](crash-reports.md#secrets)) — and
+  only the secret ones, since a registered value is replaced everywhere it
+  appears, including in the technical detail you wanted to read.
+- **The reserved names aren't policed.** `gosd build --env` refuses a
+  `GOSD_*` key and `gosd-init` ignores one written into `gosd.toml`, but
+  nothing stops your own `os.Setenv` from overwriting `GOSD_BOARD` or
+  `GOSD_HOSTNAME` with an injected value. Don't.
+- **It's plaintext on the boot FAT**, exactly like a `gosd.toml [env]`
+  value or a WiFi passphrase: anyone holding the card can read it.
+
 ## Imager compatibility
 
 An image built with `--placeholder` stays fully compatible with Raspberry
