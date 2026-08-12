@@ -2,6 +2,7 @@ package boot
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -266,6 +267,41 @@ func TestFatalReporterLeavesOrdinaryShortValuesReadable(t *testing.T) {
 	}
 	if !strings.Contains(written, "{$STRIPE_KEY}") {
 		t.Errorf("the long secret's placeholder is missing:\n%s", written)
+	}
+}
+
+// TestFatalReporterLogsTheFullReportToTheConsole proves gosd-init logs the
+// exact bytes it just committed to the card, on the console, every time it
+// records a report. This is the copy gosd-72ga's fix relies on: it can never
+// be folded back into a future report's technical detail (that only ever
+// happens to /app's own stdout/stderr — see sequence.go's appOutput tee),
+// unlike anything the declaring app could print for itself, and it is
+// strictly more complete since it carries the device model, uptime and boot
+// count only gosd-init ever knows.
+func TestFatalReporterLogsTheFullReportToTheConsole(t *testing.T) {
+	f := &fakeFaultReport{
+		deviceModel: "FriendlyElec NanoPi Zero2",
+		uptime:      3 * time.Second,
+		uptimeKnown: true,
+		clockSynced: true,
+	}
+	var logged []string
+	report := newFatalReporter(
+		Deps{FaultReport: f.deps(), Now: func() time.Time { return time.Unix(0, 0) }},
+		func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) },
+		faultreport.Context{AppName: "hello", BoardID: "nanopi-zero2"},
+	)
+	report.setBootCount(1)
+
+	report.record(faultreport.Report{Code: "HELLO-DEMO-FATAL", Problem: "HELLO_FATAL was set"})
+
+	written := f.written()
+	if written == "" {
+		t.Fatal("nothing was written to the card")
+	}
+
+	if console := strings.Join(logged, "\n"); !strings.Contains(console, written) {
+		t.Errorf("the console log does not contain the exact report the card received:\nconsole:\n%s\nwant it to contain:\n%s", console, written)
 	}
 }
 

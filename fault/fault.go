@@ -38,6 +38,16 @@
 // scrubbed from it — see [RegisterSecretString] for the secrets your app
 // holds that no environment variable names.
 //
+// On a device, [Fatal] prints only a short line naming the error code and
+// pointing at LAST_FATAL_ERROR.md — never the full report. gosd-init keeps a
+// tail of your app's own console output for the crash report it writes when
+// your app dies unexpectedly, so printing the whole report here would hand
+// gosd-init a copy of the report as your app's own "technical detail",
+// nested inside the very report gosd-init is about to write. gosd-init logs
+// the complete report to the serial console itself once it commits one — a
+// strictly better copy, since it knows the device model, uptime and boot
+// count your app's own process never can.
+//
 // The full guide, including what gosd-init reports for itself, is
 // docs/crash-reports.md.
 package fault
@@ -101,7 +111,8 @@ type Report struct {
 const unnamedSecret = "unnamed"
 
 // Fatal records r for gosd-init to write to LAST_FATAL_ERROR.md at the root
-// of the boot partition, prints the same report to stderr, and stops the
+// of the boot partition, prints a short pointer to that hand-off on stderr
+// (the full report, off a device — see the package doc), and stops the
 // device. It does not return.
 //
 // The device stays down until someone power-cycles it. Nothing restarts,
@@ -186,8 +197,22 @@ type reporter struct {
 }
 
 // deliver is Fatal without the exit: it hands the report to gosd-init when
-// there is a gosd-init to hand it to, prints the rendered report, and says
-// which of those two happened.
+// there is a gosd-init to hand it to, and says on this console what
+// happened — the report itself when there's no gosd-init to read it, or
+// only a short pointer to it when there is.
+//
+// The short pointer, not the full report, is the load-bearing half of this
+// function (gosd-72ga). gosd-init's console tail is a verbatim copy of this
+// process's own stdout/stderr — that's the whole point of it, for a panic
+// that has no report of its own to declare — so anything printed here when
+// handed is true is what a FUTURE crash report's Detail could contain. A
+// full report printed here would, the moment gosd-init folds this run's own
+// tail into the very report it's about to write, put a complete second copy
+// of the report inside itself: thinner, since this process can't know the
+// device model, uptime or boot count, and therefore contradicting the real
+// header a few lines above it. gosd-init writes and logs the genuine
+// article once it has the report in hand (see fatalReporter.record) — this
+// process saying anything more here would only be a worse rendering of it.
 func (r *reporter) deliver(rep Report) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -206,33 +231,46 @@ func (r *reporter) deliver(rep Report) {
 		handed = handoffErr == nil
 	}
 
+	if handed {
+		code := report.Code
+		if code == "" {
+			code = faultreport.UnspecifiedCode
+		}
+		r.warn("%s — handed to gosd-init; see %s on the boot partition; this device now stays down until someone power-cycles it", code, faultreport.FileName)
+		return
+	}
+
 	rendered := faultreport.Render(report, r.context())
 	_, _ = fmt.Fprintf(r.out, "%s\n", rendered.Markdown)
 	for _, replacement := range rendered.SkippedSecrets {
 		r.warn("%s is shorter than gosd redacts, so its value is printed above as it stands", replacement)
 	}
 
-	switch {
-	case handed:
-		r.warn("handed to gosd-init, which will write %s to the boot partition; this device now stays down until someone power-cycles it", faultreport.FileName)
-	case handoffErr != nil:
+	if handoffErr != nil {
 		r.warn("handing this report to gosd-init failed (%v), so it is on this console and nowhere else; nothing will be written to the card", handoffErr)
-	default:
+	} else {
 		r.warn("this isn't a GoSD device, so the report above was printed rather than written to %s on a card; on a device the board would stop here and stay down until it was power-cycled", faultreport.FileName)
 	}
 }
 
 // context is everything about the report's header this process can honestly
-// claim for itself. Off a device that includes the clock and the app's own
-// name; on one it deliberately doesn't, because gosd-init's copy — the one
-// on the card, which is the copy that matters — has better answers for both
-// (the baked app name, and whether the clock was ever set from a time
-// server) and this copy is only the console echo. Callers must hold r.mu.
+// claim for itself, used only when a report is actually going to be printed
+// to this console: the off-device developer preview, and the fallback print
+// when a handoff to gosd-init has failed and nothing will reach the card
+// either way. It never fills in the device model, uptime or boot count —
+// this process can never know them, unlike gosd-init, which reads them
+// fresh at record time (see faultreport.Context) — and marks Preview only
+// for the genuinely off-device case, so faultreport omits an "unknown" line
+// there instead of printing one for something this render was never going
+// to know regardless (a report actually on a device still says "unknown"
+// honestly: there it's diagnostic, not a stand-in for "off device").
+// Callers must hold r.mu.
 func (r *reporter) context() faultreport.Context {
 	ctx := faultreport.Context{Secrets: r.rules}
 	if r.dir != "" {
 		return ctx
 	}
+	ctx.Preview = true
 	// This binary's own name IS the app's name off a device: gosd derives
 	// the name it bakes from the same main package. On a device the
 	// binary is always /app, which would name nothing useful.

@@ -72,36 +72,6 @@ func TestWithoutAWayToPickUpAFaultNothingIsDeclared(t *testing.T) {
 	}
 }
 
-func TestTheAppsOwnWordsWinButTheTailIsStillKept(t *testing.T) {
-	// A fault.Fatal call on one goroutine and a panic on another can
-	// genuinely coincide. The app knows what its user was promised; the
-	// tail knows what actually blew up.
-	declared := faultreport.Report{
-		Code:    "NO-API-KEY",
-		Doing:   "fetching the forecast",
-		Problem: "the weather service rejected our API key",
-		Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
-		Detail:  "401 unauthorized",
-	}
-
-	got := withConsoleTail(declared, "panic: nil map write\ngoroutine 7 [running]:")
-
-	if got.Code != declared.Code || got.Doing != declared.Doing || got.Problem != declared.Problem || got.Fix != declared.Fix {
-		t.Errorf("the human sections became %+v, want the app's own", got)
-	}
-	if !strings.Contains(got.Detail, "401 unauthorized") || !strings.Contains(got.Detail, "panic: nil map write") {
-		t.Errorf("technical detail = %q, want both the app's error and the console tail", got.Detail)
-	}
-}
-
-func TestADeclaredFaultWithNoDetailTakesTheTailAsItsDetail(t *testing.T) {
-	got := withConsoleTail(faultreport.Report{Code: "NO-API-KEY"}, "listening on :80\npanic: nil map write")
-
-	if got.Detail != "listening on :80\npanic: nil map write" {
-		t.Errorf("technical detail = %q, want the console tail alone", got.Detail)
-	}
-}
-
 func TestSupervisionEndsWhenTheExitHookAsksItTo(t *testing.T) {
 	starts := 0
 	sup := &Supervisor{

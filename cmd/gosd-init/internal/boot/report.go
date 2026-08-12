@@ -253,7 +253,16 @@ func (r *fatalReporter) record(report faultreport.Report) bool {
 	}
 	r.armed = false
 	r.writes++
-	r.log("recorded this failure to %s at the root of the boot partition", faultreport.FileName)
+	r.log("recorded this failure to %s at the root of the boot partition; the report follows on this console", faultreport.FileName)
+	// gosd-init's own console line is the one copy of this report that can
+	// never end up nested inside itself: consoletail only ever captures
+	// /app's own stdout/stderr (sequence.go's appOutput tee), never what r.log
+	// writes directly to the console, so this can't be folded into a future
+	// report's Detail the way a printed-to-stderr copy from the app's own
+	// process could (gosd-72ga). It is also strictly more complete than
+	// anything an app could print for itself: the device model, uptime and
+	// boot count below are only ever known here.
+	r.log("%s", rendered.Markdown)
 
 	// An upgraded card can still carry the file this one replaced. Deleting
 	// it here as well as at markStableRun covers the device that crashes

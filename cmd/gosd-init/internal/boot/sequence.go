@@ -500,9 +500,10 @@ func Run(deps Deps, opts Options) error {
 	// Exactly one report is written per exit, and a fault the app declared
 	// for itself outranks the crash tail: the app knows what its user was
 	// promised and what would fix it, where the tail only knows what blew
-	// up — which withConsoleTail keeps, as technical detail. Recording both
-	// would spend two boot-FAT remounts to leave the less useful one on the
-	// card, since fault.Fatal exits non-zero and so reads as a crash too.
+	// up — which faultreport.FoldConsoleTail keeps, as technical detail.
+	// Recording both would spend two boot-FAT remounts to leave the less
+	// useful one on the card, since fault.Fatal exits non-zero and so reads
+	// as a crash too.
 	sup.OnExit = func(status ExitStatus, _ time.Duration) (stop bool) {
 		if declared, ok := appFault(deps); ok {
 			haltForAppFault(deps, log, report, declared, tail.String())
