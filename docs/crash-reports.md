@@ -44,7 +44,7 @@ clock: unsynced — timestamp is not trustworthy
 uptime: 4m12s
 boot: 37
 device: Raspberry Pi 3 Model B Plus Rev 1.3 (pi-3b)
-image: myapp 0.1.0 #a1b2c3d4
+image: "myapp 0.1.0 #a1b2c3d4"
 ---
 
 # myapp crash report
