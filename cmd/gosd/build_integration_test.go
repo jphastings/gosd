@@ -193,6 +193,38 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 	}
 }
 
+// TestBuildRemovesItsTempDirectory pins bean gosd-7llw: gosd build abandoned
+// the working directory it cross-compiles into, leaking one per invocation -
+// including one per test in this file - until $TMPDIR held tens of GB of stale
+// binaries.
+func TestBuildRemovesItsTempDirectory(t *testing.T) {
+	disableNetwork(t)
+
+	// os.TempDir reads $TMPDIR on every call, so this redirects the build's
+	// own os.MkdirTemp("", "gosd-build-") somewhere this test can inspect.
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", filepath.Join(tempRoot, "hello-pi-zero-2w.img"),
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	leaked, err := filepath.Glob(filepath.Join(tempRoot, "gosd-build-*"))
+	if err != nil {
+		t.Fatalf("globbing %s failed: %v", tempRoot, err)
+	}
+	if len(leaked) > 0 {
+		t.Errorf("gosd build left its working directory behind: %v", leaked)
+	}
+}
+
 // TestBuildWithDataSizeZeroOmitsTheDataPartition covers the explicit opt-out,
 // which is also now the default: --data-size=0 must produce the
 // single-partition layout.

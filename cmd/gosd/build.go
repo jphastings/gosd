@@ -311,6 +311,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("creating a temp build directory failed: %w", err)
 	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, ingressSelected.TailscaleFunnel, build.CrossCompile, build.CrossCompileGosdInit, build.CrossCompileTsfunnel)
 	if err != nil {
