@@ -1,6 +1,7 @@
 package gosdtoml
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
@@ -412,112 +413,110 @@ func TestRenderBothIngressBlocksTogether(t *testing.T) {
 	}
 }
 
-func TestRenderWithReservedEnvFillsTheExactReservedSize(t *testing.T) {
-	const reserve = 4096
-	out, span, err := RenderWithReservedEnv("my-device", true, "", "", EnvSection{Values: map[string]string{"API_URL": "https://example.com"}}, Ingress{}, reserve)
+func TestRenderReservedFillsTheExactReservedSize(t *testing.T) {
+	const reserve = 8192
+	out, err := RenderReserved("my-device", true, "", "", EnvSection{Values: map[string]string{"API_URL": "https://example.com"}}, Ingress{}, reserve)
 	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+		t.Fatalf("RenderReserved: %v", err)
 	}
-	if span.LengthBytes != reserve {
-		t.Errorf("span.LengthBytes = %d, want the reserved %d", span.LengthBytes, reserve)
+	if len(out) != reserve {
+		t.Errorf("rendered %d bytes, want exactly the reserved %d", len(out), reserve)
 	}
-	if got := string(out[span.OffsetBytes-len("[env]\n") : span.OffsetBytes]); got != "[env]\n" {
-		t.Errorf("the reserved span starts after %q, want it to start immediately after %q", got, "[env]\n")
-	}
-	if body := out[span.OffsetBytes : span.OffsetBytes+span.LengthBytes]; body[len(body)-1] != '\n' {
-		t.Errorf("reserved body's last byte = %q, want a newline so the next section starts on its own line", body[len(body)-1])
+	if out[len(out)-1] != '\n' {
+		t.Errorf("last byte = %q, want a newline", out[len(out)-1])
 	}
 }
 
-func TestRenderWithReservedEnvParsesToTheSameSettingsAsAnUnreservedBuild(t *testing.T) {
+func TestRenderReservedParsesToTheSameSettingsAsAnUnreservedBuild(t *testing.T) {
 	env := map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}
 
 	plain, _, err := Parse(Render("my-device", true, "net", "pw", EnvSection{Values: env}, Ingress{}))
 	if err != nil {
 		t.Fatalf("Parse(Render(...)): %v", err)
 	}
-	reserved, _, err := RenderWithReservedEnv("my-device", true, "net", "pw", EnvSection{Values: env}, Ingress{}, 4096)
+	reserved, err := RenderReserved("my-device", true, "net", "pw", EnvSection{Values: env}, Ingress{}, 8192)
 	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+		t.Fatalf("RenderReserved: %v", err)
 	}
 	got, warnings, err := Parse(reserved)
 	if err != nil {
-		t.Fatalf("Parse(RenderWithReservedEnv(...)): %v", err)
+		t.Fatalf("Parse(RenderReserved(...)): %v", err)
 	}
 	if warnings != nil {
-		t.Errorf("Parse warnings = %v, want none — padding is comment only", warnings)
+		t.Errorf("Parse warnings = %v, want none — the padding is comment only", warnings)
 	}
 	if !reflect.DeepEqual(got, plain) {
 		t.Errorf("reserving space changed the settings the card parses to:\n got %+v\nwant %+v", got, plain)
 	}
 }
 
-func TestReservedEnvRegionAcceptsSameLengthInjectedContent(t *testing.T) {
-	const reserve = 2048
-	out, span, err := RenderWithReservedEnv("", false, "", "", EnvSection{Values: map[string]string{"API_URL": "https://example.com"}}, Ingress{}, reserve)
+// The point of reserving the whole file rather than one table's body: a
+// provisioning tool can write sections the template only offers as examples,
+// [ingress.*] especially, which is what a per-device tunnel credential needs.
+func TestReservedFileAcceptsSameLengthReplacementWithNewSections(t *testing.T) {
+	const reserve = 8192
+	out, err := RenderReserved("", false, "", "", EnvSection{}, Ingress{}, reserve)
 	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+		t.Fatalf("RenderReserved: %v", err)
 	}
 
-	injected := []byte("API_TOKEN = \"t0ken\"\nAPI_URL = \"https://injected.example\"\n")
-	injected = append(injected, strings.Repeat("\n", reserve-len(injected))...)
-	copy(out[span.OffsetBytes:span.OffsetBytes+span.LengthBytes], injected)
+	replacement := []byte(`hostname = "injected-device"
+
+[wifi]
+ssid = "somewhere"
+passphrase = "hunter2"
+
+[env]
+API_TOKEN = "t0ken"
+
+[ingress.cloudflared]
+token = "tunnel-token"
+hostname = "device.example.com"
+port = 8080
+`)
+	copy(out, append(replacement, bytes.Repeat([]byte("\n"), reserve-len(replacement))...))
 
 	got, _, err := Parse(out)
 	if err != nil {
-		t.Fatalf("Parse of the patched file: %v", err)
+		t.Fatalf("Parse of the replaced file: %v", err)
 	}
-	want := map[string]string{"API_TOKEN": "t0ken", "API_URL": "https://injected.example"}
-	if !reflect.DeepEqual(got.Env, want) {
-		t.Errorf("patched [env] = %+v, want %+v", got.Env, want)
+	if got.Hostname != "injected-device" {
+		t.Errorf("hostname = %q, want the injected one", got.Hostname)
 	}
-}
-
-func TestRenderWithReservedEnvWritesALiveHeaderWithNoValues(t *testing.T) {
-	out, span, err := RenderWithReservedEnv("", false, "", "", EnvSection{}, Ingress{}, 1024)
-	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+	if got.Wifi.SSID != "somewhere" || got.Wifi.Passphrase != "hunter2" {
+		t.Errorf("wifi = %+v, want the injected pair", got.Wifi)
 	}
-	if strings.Contains(string(out[:span.OffsetBytes]), "# [env]") {
-		t.Error("reserving space rendered the commented-out [env] example; injected keys would land in the root table")
+	if got.Env["API_TOKEN"] != "t0ken" {
+		t.Errorf("[env] = %+v, want the injected token", got.Env)
 	}
-
-	injected := []byte("ONLY_INJECTED = \"yes\"\n")
-	injected = append(injected, strings.Repeat("\n", span.LengthBytes-len(injected))...)
-	copy(out[span.OffsetBytes:span.OffsetBytes+span.LengthBytes], injected)
-
-	got, _, err := Parse(out)
-	if err != nil {
-		t.Fatalf("Parse of the patched file: %v", err)
-	}
-	if got.Env["ONLY_INJECTED"] != "yes" {
-		t.Errorf("injected key landed as %+v, want it under [env]", got.Env)
+	if got.Ingress.Cloudflared.Token != "tunnel-token" || got.Ingress.Cloudflared.Hostname != "device.example.com" {
+		t.Errorf("[ingress.cloudflared] = %+v, want the injected tunnel", got.Ingress.Cloudflared)
 	}
 }
 
-func TestRenderWithReservedEnvRefusesASizeTooSmallForItsValues(t *testing.T) {
-	_, _, err := RenderWithReservedEnv("", false, "", "", EnvSection{Values: map[string]string{"API_URL": "https://example.com"}}, Ingress{}, 64)
+func TestRenderReservedRefusesASizeSmallerThanTheFile(t *testing.T) {
+	_, err := RenderReserved("", false, "", "", EnvSection{}, Ingress{}, 64)
 	if err == nil {
-		t.Fatal("RenderWithReservedEnv with 64 bytes reserved = nil error, want a refusal naming the size it needs")
+		t.Fatal("RenderReserved with 64 bytes reserved = nil error, want a refusal naming the size it needs")
 	}
 	if !strings.Contains(err.Error(), "64") {
 		t.Errorf("error %q doesn't mention the reserved size, so it can't be acted on", err)
 	}
 }
 
-func TestRenderWithReservedEnvIsDeterministic(t *testing.T) {
+func TestRenderReservedIsDeterministic(t *testing.T) {
 	env := EnvSection{Values: map[string]string{"B": "2", "A": "1", "C": "3"}}
-	first, _, err := RenderWithReservedEnv("dev", true, "net", "pw", env, Ingress{}, 3000)
+	first, err := RenderReserved("dev", true, "net", "pw", env, Ingress{}, 8192)
 	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+		t.Fatalf("RenderReserved: %v", err)
 	}
 	for range 5 {
-		again, _, err := RenderWithReservedEnv("dev", true, "net", "pw", env, Ingress{}, 3000)
+		again, err := RenderReserved("dev", true, "net", "pw", env, Ingress{}, 8192)
 		if err != nil {
-			t.Fatalf("RenderWithReservedEnv: %v", err)
+			t.Fatalf("RenderReserved: %v", err)
 		}
 		if !reflect.DeepEqual(first, again) {
-			t.Fatal("RenderWithReservedEnv isn't byte-identical across calls; the image identity would stop being reproducible")
+			t.Fatal("RenderReserved isn't byte-identical across calls; the image identity would stop being reproducible")
 		}
 	}
 }

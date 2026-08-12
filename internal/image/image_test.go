@@ -501,7 +501,7 @@ func TestWriteReportsExactAbsoluteFileRanges(t *testing.T) {
 			"gosd.toml":     strings.NewReader("hostname = \"x\"\n"),
 			placeholderName: bytes.NewReader(original),
 		},
-		ReportRanges: []image.RangeRequest{{Path: placeholderName}, {Path: "gosd.toml"}},
+		ReportRanges: []string{placeholderName, "gosd.toml"},
 	})
 	if err != nil {
 		t.Fatalf("Write() failed: %v", err)
@@ -595,7 +595,7 @@ func TestWriteRejectsReportRangesPathNotInBootFiles(t *testing.T) {
 		BootLabel:    testBootLabel,
 		DataLabel:    testDataLabel,
 		BootFiles:    map[string]io.Reader{"gosd.toml": strings.NewReader("hostname = \"x\"\n")},
-		ReportRanges: []image.RangeRequest{{Path: "not-a-boot-file.yaml"}},
+		ReportRanges: []string{"not-a-boot-file.yaml"},
 	})
 	if err == nil {
 		t.Fatal("Write() with a ReportRanges path absent from BootFiles succeeded, want an error")

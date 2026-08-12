@@ -134,6 +134,10 @@ func Render(p Placeholder) ([]byte, error) {
 	return buf, nil
 }
 
+// configPath is where gosd writes the config file --config-placeholder
+// reserves space in, on the FAT root of the boot partition.
+const configPath = "gosd.toml"
+
 // manifestSchemaVersion is the current value of Manifest.GosdInject.
 const manifestSchemaVersion = 1
 
@@ -146,30 +150,34 @@ type Manifest struct {
 	Image        ImageInfo         `json:"image"`
 	Placeholders []PlaceholderInfo `json:"placeholders"`
 
-	// Env is the reserved [env] region inside gosd.toml
-	// (gosd build --env-placeholder), absent when the build reserved none.
-	// It is deliberately NOT an entry in Placeholders: those name a real
-	// FAT-root file and report its whole content, while this is a span of a
-	// file whose remaining bytes must not be touched. The schema version
-	// stays 1 - a client that predates this key ignores it and keeps
-	// working on the placeholders it does understand.
-	Env *EnvInfo `json:"env,omitempty"`
+	// Config is the reserved gosd.toml (gosd build --config-placeholder),
+	// absent when the build reserved none. The schema version stays 1 - a
+	// client that predates this key ignores it and keeps working on the
+	// placeholders it does understand.
+	Config *ConfigInfo `json:"config,omitempty"`
 }
 
-// EnvInfo is the reserved [env] region's manifest entry: how many bytes were
-// reserved, the SHA-256 of the region as gosd built it, and the ordered
-// absolute byte ranges it occupies in the image.
+// ConfigInfo is the reserved gosd.toml's manifest entry: how many bytes it
+// was padded out to, the SHA-256 of the file as gosd built it, the ordered
+// absolute byte ranges it occupies in the image, and - unlike a placeholder,
+// whose pristine content a client re-derives from the documented format -
+// the pristine text itself.
 //
-// A client overwrites those ranges with exactly Size bytes of TOML [env]
-// body - KEY = "value" lines and comments, no section headers, since a
-// header would capture every line gosd wrote after the region - padded to
-// length with newlines. What lands there is an ordinary gosd.toml value: the
-// device merges it with no special case, and the provisioning snapshot
-// carries it across a later reflash (docs/image-injection.md).
-type EnvInfo struct {
-	Size   int64   `json:"size"`
-	SHA256 string  `json:"sha256"`
-	Ranges []Range `json:"ranges"`
+// Publishing that text is what lets a client EDIT the config it was actually
+// handed rather than replace it. gosd.toml is a document written for
+// whoever opens the card, and a client rebuilding it from scratch would have
+// to duplicate that template and keep it in sync with gosd forever. It leaks
+// nothing - the same bytes sit in the public image - costs no second fetch,
+// and since it is the region's exact padded content, hashing it reproduces
+// SHA256, so a client can prove what it was given before writing over it.
+type ConfigInfo struct {
+	// Path is where the file lives on the boot partition - always
+	// "gosd.toml" today, published so a client needn't hardcode it.
+	Path     string  `json:"path"`
+	Size     int64   `json:"size"`
+	SHA256   string  `json:"sha256"`
+	Ranges   []Range `json:"ranges"`
+	Pristine string  `json:"pristine"`
 }
 
 // ImageInfo describes the whole pristine image file a Manifest belongs to.
@@ -211,20 +219,20 @@ type ManifestSpec struct {
 	// Placeholders are the --placeholder files this build reserved.
 	Placeholders []Placeholder
 
-	// EnvReservedBytes is --env-placeholder's size, or zero when the build
-	// reserved no [env] region.
-	EnvReservedBytes int64
+	// ConfigReservedBytes is --config-placeholder's size, or zero when the
+	// build reserved no space in gosd.toml.
+	ConfigReservedBytes int64
 
 	// FileRanges is image.WriteReport.FileRanges: the reported byte ranges,
 	// keyed by boot-file path. It must hold an entry for every placeholder's
-	// Path, and for "gosd.toml" when EnvReservedBytes is non-zero.
+	// Path, and for gosd.toml when ConfigReservedBytes is non-zero.
 	FileRanges map[string][]image.ByteRange
 }
 
 // WriteManifest streams imgPath (the just-built, pristine image) through
 // SHA-256, builds a Manifest recording each placeholder's rendered content
-// hash and reported byte ranges (plus the reserved [env] region, when there
-// is one), and writes it to ManifestPath(imgPath) as indented JSON. It
+// hash and reported byte ranges (plus the reserved gosd.toml, when there is
+// one), and writes it to ManifestPath(imgPath) as indented JSON. It
 // returns the path written.
 //
 // spec.FileRanges must have an entry for every placeholder's Path -
@@ -238,7 +246,7 @@ func WriteManifest(imgPath string, spec ManifestSpec) (string, error) {
 		return "", fmt.Errorf("hashing image %s for its injection manifest failed: %w", imgPath, err)
 	}
 
-	env, err := envInfo(imgPath, spec)
+	config, err := configInfo(imgPath, spec)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +291,7 @@ func WriteManifest(imgPath string, spec ManifestSpec) (string, error) {
 			SHA256:   sha256Hex,
 		},
 		Placeholders: infos,
-		Env:          env,
+		Config:       config,
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -299,21 +307,23 @@ func WriteManifest(imgPath string, spec ManifestSpec) (string, error) {
 	return path, nil
 }
 
-// envInfo builds the manifest's reserved-[env] entry, or nil when the build
-// reserved none. Unlike a placeholder - which gosd can re-render from its
-// spec alone - the region's pristine content is whatever gosd.toml's [env]
-// body came out as, so its hash is taken from the bytes actually written to
-// the image at the ranges being published. That makes the published hash
-// wrong exactly when the published ranges are wrong, which is the failure a
-// client's pristine-check exists to catch.
-func envInfo(imgPath string, spec ManifestSpec) (*EnvInfo, error) {
-	if spec.EnvReservedBytes == 0 {
+// configInfo builds the manifest's reserved-gosd.toml entry, or nil when the
+// build reserved none. Unlike a placeholder - which gosd can re-render from
+// its spec alone - the file's content depends on every build flag that
+// reaches gosd.toml, so both its hash and its published text are read back
+// from the bytes actually written to the image at the ranges being
+// published. That makes the published hash wrong exactly when the published
+// ranges are wrong, which is the failure a client's pristine-check exists to
+// catch - and it means the text a client edits is provably the text on the
+// card.
+func configInfo(imgPath string, spec ManifestSpec) (*ConfigInfo, error) {
+	if spec.ConfigReservedBytes == 0 {
 		return nil, nil
 	}
 
-	ranges, ok := spec.FileRanges["gosd.toml"]
+	ranges, ok := spec.FileRanges[configPath]
 	if !ok {
-		return nil, fmt.Errorf("no reported byte ranges for gosd.toml's reserved [env] region; internal/image.Spec.ReportRanges must include it whenever --env-placeholder reserves one")
+		return nil, fmt.Errorf("no reported byte ranges for %s; internal/image.Spec.ReportRanges must include it whenever --config-placeholder reserves space", configPath)
 	}
 
 	manifestRanges := make([]Range, len(ranges))
@@ -322,34 +332,42 @@ func envInfo(imgPath string, spec ManifestSpec) (*EnvInfo, error) {
 		manifestRanges[i] = Range{Offset: r.OffsetBytes, Length: r.LengthBytes}
 		total += r.LengthBytes
 	}
-	if total != spec.EnvReservedBytes {
-		return nil, fmt.Errorf("gosd.toml's reported [env] ranges total %d bytes, want exactly the %d reserved", total, spec.EnvReservedBytes)
+	if total != spec.ConfigReservedBytes {
+		return nil, fmt.Errorf("%s's reported ranges total %d bytes, want exactly the %d reserved", configPath, total, spec.ConfigReservedBytes)
 	}
 
-	sum, err := hashRanges(imgPath, ranges)
+	pristine, err := readRanges(imgPath, ranges)
 	if err != nil {
-		return nil, fmt.Errorf("hashing the reserved [env] region of %s failed: %w", imgPath, err)
+		return nil, fmt.Errorf("reading the reserved %s back out of %s failed: %w", configPath, imgPath, err)
 	}
-	return &EnvInfo{Size: spec.EnvReservedBytes, SHA256: sum, Ranges: manifestRanges}, nil
+	sum := sha256.Sum256(pristine)
+
+	return &ConfigInfo{
+		Path:     configPath,
+		Size:     spec.ConfigReservedBytes,
+		SHA256:   hex.EncodeToString(sum[:]),
+		Ranges:   manifestRanges,
+		Pristine: string(pristine),
+	}, nil
 }
 
-// hashRanges returns the hex-encoded SHA-256 of the image's bytes at ranges,
-// concatenated in order - the same bytes, in the same order, a client
-// reassembles when it checks the region is still pristine.
-func hashRanges(imgPath string, ranges []image.ByteRange) (string, error) {
+// readRanges returns the image's bytes at ranges, concatenated in order -
+// the same bytes, in the same order, a client reassembles when it checks a
+// region is still pristine.
+func readRanges(imgPath string, ranges []image.ByteRange) ([]byte, error) {
 	f, err := os.Open(imgPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
-	h := sha256.New()
+	var out bytes.Buffer
 	for _, r := range ranges {
-		if _, err := io.Copy(h, io.NewSectionReader(f, r.OffsetBytes, r.LengthBytes)); err != nil {
-			return "", err
+		if _, err := io.Copy(&out, io.NewSectionReader(f, r.OffsetBytes, r.LengthBytes)); err != nil {
+			return nil, err
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return out.Bytes(), nil
 }
 
 // hashAndSize returns the size in bytes and hex-encoded SHA-256 of the file

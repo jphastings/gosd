@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { padContents, padEnv } from "./content.js";
-import { ENV_REGION_KEY } from "./env.js";
+import { padConfig, padContents } from "./content.js";
 import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
 import type { Manifest } from "./manifest.js";
 
@@ -98,47 +97,67 @@ describe("padContents", () => {
   });
 });
 
-describe("padEnv", () => {
-  const withEnvRegion = (size: number): Manifest => ({
+describe("padConfig", () => {
+  const pristine = 'hostname = "device"\n';
+  const withConfigRegion = (size: number): Manifest => ({
     gosd_inject: 1,
     board: "test",
     image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
     placeholders: [],
-    env: { size, sha256: "0".repeat(64), ranges: [{ offset: 0, length: size }] },
+    config: {
+      path: "gosd.toml",
+      size,
+      sha256: "0".repeat(64),
+      ranges: [{ offset: 0, length: size }],
+      pristine: pristine.padEnd(size, "#"),
+    },
   });
 
-  it("renders the settings and pads to the reserved size with newlines", () => {
-    const padded = padEnv({ API_URL: "https://example.com" }, withEnvRegion(64));
+  it("pads a replacement to the reserved size with newlines", () => {
+    const padded = padConfig('hostname = "other"\n', withConfigRegion(64));
     expect(padded.length).toBe(64);
-    expect(new TextDecoder().decode(padded)).toBe(
-      'API_URL = "https://example.com"\n' +
-        "\n".repeat(64 - 'API_URL = "https://example.com"\n'.length),
-    );
+    expect(new TextDecoder().decode(padded)).toBe('hostname = "other"\n'.padEnd(64, "\n"));
+  });
+
+  it("hands an edit function the pristine file it will replace", () => {
+    let seen = "";
+    padConfig((current) => {
+      seen = current;
+      return current;
+    }, withConfigRegion(64));
+    expect(seen).toBe(pristine.padEnd(64, "#"));
   });
 
   it("refuses an image that reserved no region, naming the flag that would", () => {
-    const manifest = withEnvRegion(64);
-    delete manifest.env;
-    expect(() => padEnv({ A: "b" }, manifest)).toThrow(/--env-placeholder/);
+    const manifest = withConfigRegion(64);
+    delete manifest.config;
+    expect(() => padConfig('hostname = "x"\n', manifest)).toThrow(/--config-placeholder/);
   });
 
-  it("refuses settings too large for the region, naming both sizes", () => {
-    expect(() => padEnv({ API_URL: "https://example.com" }, withEnvRegion(8))).toThrow(
+  it("refuses a config too large for the region, naming both sizes", () => {
+    expect(() => padConfig('hostname = "a-very-long-name-indeed"\n', withConfigRegion(8))).toThrow(
       GosdContentTooLargeError,
     );
   });
 });
 
-describe("padContents with the env region's key", () => {
-  it("points at the env option rather than treating it as a missing placeholder", () => {
+describe("padContents with the config file's path", () => {
+  it("points at the config option rather than treating it as a missing placeholder", () => {
     const manifest: Manifest = {
       gosd_inject: 1,
       board: "test",
       image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
       placeholders: [],
+      config: {
+        path: "gosd.toml",
+        size: 16,
+        sha256: "0".repeat(64),
+        ranges: [{ offset: 0, length: 16 }],
+        pristine: "#".repeat(16),
+      },
     };
-    expect(() => padContents({ [ENV_REGION_KEY]: 'API_URL = "x"' }, manifest)).toThrow(
-      /env` option/,
+    expect(() => padContents({ "gosd.toml": 'hostname = "x"' }, manifest)).toThrow(
+      /config` option/,
     );
   });
 });

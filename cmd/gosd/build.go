@@ -64,31 +64,31 @@ func init() {
 }
 
 var (
-	boardIDs       []string
-	output         string
-	hostname       string
-	wifiSSID       string
-	wifiPass       string
-	artifactsDir   string
-	gosdInitSrc    string
-	dataSize       string
-	bootSize       string
-	catalogFlag    bool
-	publishBaseURL string
-	usbGadget      bool
-	envFlags       []string
-	envFile        string
-	kernelCfgPath  string
-	withExternal   []string
-	consoleBaud    int
-	dataFlush      bool
-	dataFilesystem string
-	labelPrefix    string
-	placeholders   []string
-	envPlaceholder string
-	ingressFlags   []string
-	supportURL     string
-	appVersion     string
+	boardIDs          []string
+	output            string
+	hostname          string
+	wifiSSID          string
+	wifiPass          string
+	artifactsDir      string
+	gosdInitSrc       string
+	dataSize          string
+	bootSize          string
+	catalogFlag       bool
+	publishBaseURL    string
+	usbGadget         bool
+	envFlags          []string
+	envFile           string
+	kernelCfgPath     string
+	withExternal      []string
+	consoleBaud       int
+	dataFlush         bool
+	dataFilesystem    string
+	labelPrefix       string
+	placeholders      []string
+	configPlaceholder string
+	ingressFlags      []string
+	supportURL        string
+	appVersion        string
 )
 
 // defaultDataSize is the data partition's size when --data-size is
@@ -169,8 +169,9 @@ not touch the cache at all.`,
 			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
-	cmd.Flags().StringVar(&envPlaceholder, "env-placeholder", "",
-		"reserve <size> bytes (e.g. --env-placeholder 8KiB) for gosd.toml's [env] section, and record that region's byte ranges in the <image>.inject.json manifest, so a provisioning tool can write per-device settings into a downloaded .img the same way --placeholder works; what it writes arrives as an ordinary gosd.toml [env] value, so the device needs no app code for it and the provisioning snapshot carries it across a later reflash; see docs/image-injection.md")
+	cmd.Flags().StringVar(&configPlaceholder, "config-placeholder", "",
+		fmt.Sprintf("pad the card's gosd.toml out to <size> (%s when the flag is given with no value) and record its byte ranges and pristine text in the <image>.inject.json manifest, so a provisioning tool can rewrite the whole config - hostname, [wifi], [env], [ingress.*] - in a downloaded .img the same way --placeholder works; what it writes arrives as ordinary gosd.toml settings, so the device needs no app code for them and the provisioning snapshot carries them across a later reflash; see docs/image-injection.md", defaultConfigPlaceholderSize))
+	cmd.Flags().Lookup("config-placeholder").NoOptDefVal = defaultConfigPlaceholderSize
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
 	cmd.Flags().StringVar(&supportURL, "support-url", "",
@@ -244,7 +245,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	envPlaceholderBytes, err := parseEnvPlaceholderFlag(envPlaceholder)
+	configPlaceholderBytes, err := parseConfigPlaceholderFlag(configPlaceholder)
 	if err != nil {
 		return err
 	}
@@ -408,7 +409,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ExtraExecutables:       extraExecutables,
 			ExtraFiles:             extraFiles,
 			Placeholders:           placeholderSpecs,
-			EnvPlaceholderBytes:    envPlaceholderBytes,
+			ConfigPlaceholderBytes: configPlaceholderBytes,
 			IngressCloudflared:     ingressSelected.Cloudflared,
 			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
 			AppName:                appName,
@@ -424,12 +425,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 		printBootVolumeUsage(cmd, b.Name(), report)
 
-		if len(placeholderSpecs) > 0 || envPlaceholderBytes > 0 {
+		if len(placeholderSpecs) > 0 || configPlaceholderBytes > 0 {
 			manifestPath, err := inject.WriteManifest(outputs[b.Name()], inject.ManifestSpec{
-				Board:            b.Name(),
-				Placeholders:     placeholderSpecs,
-				EnvReservedBytes: int64(envPlaceholderBytes),
-				FileRanges:       report.FileRanges,
+				Board:               b.Name(),
+				Placeholders:        placeholderSpecs,
+				ConfigReservedBytes: int64(configPlaceholderBytes),
+				FileRanges:          report.FileRanges,
 			})
 			if err != nil {
 				return fmt.Errorf("writing the injection manifest for %s (%s) failed: %w", appName, b.Name(), err)
@@ -674,32 +675,40 @@ func parseBootSize(s string) (int64, error) {
 	return size, nil
 }
 
-// maxEnvPlaceholderBytes is the largest region --env-placeholder will
-// reserve. [env] holds settings a person can read on the card, not payloads;
-// a value this far past that is a units slip (bytes where MiB was meant),
-// and refusing it here beats reserving it and failing later with a full boot
-// partition.
-const maxEnvPlaceholderBytes = 1 << 20
+const (
+	// defaultConfigPlaceholderSize is what --config-placeholder reserves
+	// when given without a size. gosd.toml renders to a few KiB, and the
+	// boot partition is measured in hundreds of MiB, so the common case
+	// shouldn't have to think about the number at all.
+	defaultConfigPlaceholderSize = "16KiB"
 
-// parseEnvPlaceholderFlag turns --env-placeholder <size> into a byte count,
-// zero when the flag wasn't given. Sizes are checked before compilation
-// starts, so a bad value fails fast; a region too small for the values this
-// build bakes in can only be caught once they're rendered, and pipeline
-// reports that.
-func parseEnvPlaceholderFlag(flag string) (int, error) {
+	// maxConfigPlaceholderBytes is the largest gosd.toml
+	// --config-placeholder will reserve. The file holds settings a person
+	// reads on the card, not payloads; a value this far past that is a
+	// units slip (bytes where MiB was meant), and refusing it here beats
+	// reserving it and failing later with a full boot partition.
+	maxConfigPlaceholderBytes = 1 << 20
+)
+
+// parseConfigPlaceholderFlag turns --config-placeholder <size> into a byte
+// count, zero when the flag wasn't given. Sizes are checked before
+// compilation starts, so a bad value fails fast; a size too small for the
+// gosd.toml this build renders can only be caught once it's rendered, and
+// pipeline reports that.
+func parseConfigPlaceholderFlag(flag string) (int, error) {
 	if flag == "" {
 		return 0, nil
 	}
 
-	size, err := parseSizeBytes("--env-placeholder", flag)
+	size, err := parseSizeBytes("--config-placeholder", flag)
 	if err != nil {
 		return 0, err
 	}
 	if size <= 0 {
-		return 0, fmt.Errorf("--env-placeholder %q reserves nothing; give a size like 8KiB, or leave the flag off entirely", flag)
+		return 0, fmt.Errorf("--config-placeholder %q reserves nothing; give a size like 16KiB, pass the flag with no value for the default, or leave it off entirely", flag)
 	}
-	if size > maxEnvPlaceholderBytes {
-		return 0, fmt.Errorf("--env-placeholder %q reserves %s of gosd.toml, more than the %s ceiling; [env] holds settings, not payloads, so check the units", flag, humanizeBinaryBytes(size), humanizeBinaryBytes(maxEnvPlaceholderBytes))
+	if size > maxConfigPlaceholderBytes {
+		return 0, fmt.Errorf("--config-placeholder %q reserves %s for gosd.toml, more than the %s ceiling; it holds settings, not payloads, so check the units", flag, humanizeBinaryBytes(size), humanizeBinaryBytes(maxConfigPlaceholderBytes))
 	}
 	return int(size), nil
 }

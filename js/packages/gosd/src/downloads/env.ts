@@ -1,21 +1,14 @@
-// Renders the TOML `[env]` body that goes into an image's reserved [env]
-// region (`gosd build --env-placeholder`; see docs/image-injection.md in the
-// gosd repo). What lands there is an ordinary gosd.toml setting, so this is
-// the one place in the package that has to speak the device's config format
-// rather than treating bytes as opaque.
+// Renders a TOML `[env]` table body. The package doesn't need this itself —
+// `options.config` carries whole gosd.toml text — but assembling one by hand
+// is fiddly in exactly the ways that bite silently on a device (escaping, and
+// the `GOSD_*` names gosd-init logs-and-ignores), so it's exported for
+// callers building an `[env]` section inside their own config edit.
 //
-// Only the body — `KEY = "value"` lines — is written: gosd already wrote the
-// `[env]` header above the region, and a section header of our own would
-// capture every setting gosd wrote below it. Keys are sorted so the same
-// settings always produce the same bytes.
+// Only the body — `KEY = "value"` lines — is produced; the caller places it
+// under an `[env]` header. Keys are sorted so the same settings always
+// produce the same bytes.
 
 import { GosdInvalidEnvError } from "./errors.js";
-
-/** The key the reserved [env] region uses in the internal padded-content and
- * captured-pristine maps. Square brackets can't appear in a placeholder path
- * (gosd restricts those to `[A-Za-z0-9._-]`), so it can never collide with
- * one. */
-export const ENV_REGION_KEY = "[env]";
 
 /** Mirrors gosd's own envKeyPattern (cmd/gosd): the shape a settings name
  * must have to reach an app. */

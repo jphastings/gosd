@@ -32,11 +32,11 @@ const bootSizeBytes = 8 * 1024 * 1024 // 8MiB - just enough for gosd.toml plus t
 // would be (naming.LabelPrefix; see `gosd build --label-prefix`).
 const fixtureAppName = "fixture"
 
-// envReservedBytes matches `gosd build --env-placeholder`: the fixture
-// carries a real reserved [env] region, rendered by the same code a real
-// build uses, so the TypeScript client is proved against the actual bytes
-// rather than a hand-written approximation of them.
-const envReservedBytes = 2048
+// configReservedBytes matches `gosd build --config-placeholder`: the fixture
+// carries a real reserved gosd.toml, rendered by the same code a real build
+// uses, so the TypeScript client is proved against the actual bytes rather
+// than a hand-written approximation of them.
+const configReservedBytes = 8192
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -60,10 +60,10 @@ func run(args []string) error {
 		{Path: "net.cfg", SizeBytes: 2048},
 	}
 
-	gosdToml, envSpan, err := gosdtoml.RenderWithReservedEnv(
+	gosdToml, err := gosdtoml.RenderReserved(
 		fixtureAppName, true, "", "",
 		gosdtoml.EnvSection{Values: map[string]string{"API_URL": "https://example.invalid"}},
-		gosdtoml.Ingress{}, envReservedBytes,
+		gosdtoml.Ingress{}, configReservedBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("rendering the fixture's gosd.toml failed: %w", err)
@@ -72,19 +72,15 @@ func run(args []string) error {
 	bootFiles := map[string]io.Reader{
 		"gosd.toml": bytes.NewReader(gosdToml),
 	}
-	reportRanges := make([]image.RangeRequest, 0, len(placeholders)+1)
-	reportRanges = append(reportRanges, image.RangeRequest{
-		Path:        "gosd.toml",
-		OffsetBytes: int64(envSpan.OffsetBytes),
-		LengthBytes: int64(envSpan.LengthBytes),
-	})
+	reportRanges := make([]string, 0, len(placeholders)+1)
+	reportRanges = append(reportRanges, "gosd.toml")
 	for _, p := range placeholders {
 		rendered, err := inject.Render(p)
 		if err != nil {
 			return fmt.Errorf("rendering placeholder %q failed: %w", p.Path, err)
 		}
 		bootFiles[p.Path] = bytes.NewReader(rendered)
-		reportRanges = append(reportRanges, image.RangeRequest{Path: p.Path})
+		reportRanges = append(reportRanges, p.Path)
 	}
 
 	imgPath := filepath.Join(outDir, "fixture.img")
@@ -109,10 +105,10 @@ func run(args []string) error {
 	}
 
 	manifestPath, err := inject.WriteManifest(imgPath, inject.ManifestSpec{
-		Board:            "test-fixture",
-		Placeholders:     placeholders,
-		EnvReservedBytes: envReservedBytes,
-		FileRanges:       report.FileRanges,
+		Board:               "test-fixture",
+		Placeholders:        placeholders,
+		ConfigReservedBytes: configReservedBytes,
+		FileRanges:          report.FileRanges,
 	})
 	if err != nil {
 		return fmt.Errorf("writing injection manifest for %s failed: %w", imgPath, err)

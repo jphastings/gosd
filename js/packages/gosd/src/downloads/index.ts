@@ -8,7 +8,7 @@
 
 import { GosdCancelledError, GosdSaveFailedError } from "./errors.js";
 import { deriveManifestURL, fetchManifest, type Manifest } from "./manifest.js";
-import { padAll } from "./content.js";
+import { padAll, type ConfigOption } from "./content.js";
 import { runDownload } from "./run.js";
 import { createFsAccessSink, fsAccessAvailable } from "./sinks/fs-access.js";
 import { createMemorySink } from "./sinks/memory.js";
@@ -45,17 +45,18 @@ export interface WithPlaceholdersOptions {
   /** The filename offered to the save picker / browser download. Defaults
    * to the image URL's last path segment. */
   suggestedName?: string;
-  /** App settings to write into the image's reserved [env] region (`gosd
-   * build --env-placeholder`), rendered as gosd.toml `[env]` entries. Unlike
-   * `files` these aren't a path-keyed map: the region is a span of
-   * gosd.toml, not a file of its own. What lands there behaves exactly like
-   * a setting typed onto the card by hand — the app reads it with
-   * `os.Getenv`, crash reports redact it, and it survives a later reflash
-   * (see docs/image-injection.md in the gosd repo). Throws if the image
-   * reserved no region, if a key isn't a valid environment variable name or
-   * is in the reserved `GOSD_*` namespace, or if the rendered settings
-   * don't fit. */
-  env?: Record<string, string>;
+  /** The gosd.toml to write into the image's reserved config region (`gosd
+   * build --config-placeholder`): either a complete replacement, or — better
+   * — a function handed the pristine file to edit, which keeps the
+   * plain-language guidance gosd wrote for whoever opens the card.
+   *
+   * Whatever lands there behaves exactly like a config typed onto the card
+   * by hand: it sets the hostname, WiFi, `[env]` settings and `[ingress.*]`
+   * tunnel, the device needs no app code for any of it, and the provisioning
+   * snapshot carries it across a later reflash (see docs/image-injection.md
+   * in the gosd repo). Throws if the image reserved no region, or if the
+   * result doesn't fit it. */
+  config?: ConfigOption;
   ignoreETag?: boolean;
   /** Defaults to the global `fetch`. */
   fetch?: typeof fetch;
@@ -140,7 +141,7 @@ export async function withPlaceholders(
         manifestSha256: options.manifestSha256,
         signal: options.signal,
       }));
-    const padded = padAll(files, options.env, manifest);
+    const padded = padAll(files, options.config, manifest);
 
     let sink: SaveSink;
     let tier: SaveTier;
@@ -233,16 +234,17 @@ export type {
   Manifest,
   ImageInfo,
   PlaceholderInfo,
-  EnvInfo,
+  ConfigInfo,
   RegionInfo,
   ByteRange,
   FetchManifestOptions,
 } from "./manifest.js";
 export { injectableRegions } from "./manifest.js";
 
-export { padContents, padEnv, padAll } from "./content.js";
+export { padContents, padConfig, padAll } from "./content.js";
+export type { ConfigOption } from "./content.js";
 
-export { ENV_REGION_KEY, renderEnvBody } from "./env.js";
+export { renderEnvBody } from "./env.js";
 
 export { createSubstitutionTransform, patchStream } from "./substitute.js";
 export type { SubstitutionProgress, SubstitutionOptions } from "./substitute.js";

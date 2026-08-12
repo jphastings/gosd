@@ -105,11 +105,10 @@ with `gosd build --env-file`; see [`docs/gosd.toml.md`](gosd.toml.md).
 
 To give each device *different* values without building it a different
 image — a per-user API token spliced in as the image downloads, say — build
-with `gosd build --env-placeholder <size>`, which reserves space in the
-card's `[env]` table for a downloader to fill in. What lands there is an
-ordinary `gosd.toml` value, so everything on this page applies to it
-unchanged; see
-[injecting environment variables](image-injection.md#injecting-environment-variables).
+with `gosd build --config-placeholder`, which reserves space for a
+downloader to rewrite the card's whole `gosd.toml`. What lands there is an
+ordinary setting, so everything on this page applies to it unchanged; see
+[injecting configuration](image-injection.md#injecting-configuration-hostname-wifi-settings-ingress).
 
 Your app's environment is otherwise a clean slate: it gets exactly the
 `GOSD_*` vars above plus this merged user env, not a copy of

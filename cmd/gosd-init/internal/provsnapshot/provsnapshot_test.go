@@ -687,14 +687,13 @@ func TestWriteFileDurablyReplacesContentsAndLeavesNoTemporaryFile(t *testing.T) 
 func renderedCard(t *testing.T, values map[string]string, patch string) gosdtoml.Config {
 	t.Helper()
 
-	const reserved = 4096
-	rendered, span, err := gosdtoml.RenderWithReservedEnv("hello", true, "", "", gosdtoml.EnvSection{Values: values}, gosdtoml.Ingress{}, reserved)
+	const reserved = 8192
+	rendered, err := gosdtoml.RenderReserved("hello", true, "", "", gosdtoml.EnvSection{Values: values}, gosdtoml.Ingress{}, reserved)
 	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
+		t.Fatalf("RenderReserved: %v", err)
 	}
 	if patch != "" {
-		body := append([]byte(patch), bytes.Repeat([]byte("\n"), span.LengthBytes-len(patch))...)
-		copy(rendered[span.OffsetBytes:span.OffsetBytes+span.LengthBytes], body)
+		copy(rendered, append([]byte(patch), bytes.Repeat([]byte("\n"), reserved-len(patch))...))
 	}
 
 	cfg, _, err := gosdtoml.Parse(rendered)
@@ -743,7 +742,7 @@ func TestReflashKeepsAnInjectedEnvValueOverTheSnapshot(t *testing.T) {
 	res := Run(s.deps(), Input{
 		Identity: "new",
 		Baked:    Provisioning{Hostname: "hello", Env: maps.Clone(baked)},
-		GosdToml: renderedCard(t, baked, "API_URL = \"https://injected\"\n"),
+		GosdToml: renderedCard(t, baked, "hostname = \"hello\"\n\n[env]\nAPI_URL = \"https://injected\"\n"),
 	})
 
 	if got := res.GosdToml.Env["API_URL"]; got != "https://injected" {

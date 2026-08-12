@@ -71,10 +71,11 @@ yourself with `--env-file`.
 
 When the value differs per device — a per-user API token, a device
 identity — bake no default at all and reserve space for one instead, with
-`gosd build --env-placeholder <size>`: a downloader fills the reserved region
-in as the image is downloaded, and what it writes is an ordinary entry in
-this table. See
-[injecting environment variables](image-injection.md#injecting-environment-variables).
+`gosd build --config-placeholder`: a downloader rewrites this whole file as
+the image is downloaded, and what it writes is an ordinary entry in this
+table. The same mechanism sets a per-device hostname, WiFi network or
+[`[ingress.*]`](ingress.md) tunnel. See
+[injecting configuration](image-injection.md#injecting-configuration-hostname-wifi-settings-ingress).
 
 ### Documenting and suggesting settings — `--env-file`
 

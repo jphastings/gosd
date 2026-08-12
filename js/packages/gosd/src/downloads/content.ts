@@ -6,7 +6,6 @@
 // are left untouched (read as absent, per the placeholder contract) but are
 // still hash-verified during the substitution pass in substitute.ts.
 
-import { ENV_REGION_KEY, renderEnvBody } from "./env.js";
 import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
 import type { Manifest } from "./manifest.js";
 
@@ -27,9 +26,9 @@ export function padContents(
   const padded = new Map<string, Uint8Array>();
 
   for (const [path, content] of Object.entries(files)) {
-    if (path === ENV_REGION_KEY) {
+    if (manifest.config && path === manifest.config.path) {
       throw new GosdUnknownPlaceholderError(
-        `withPlaceholders: "${ENV_REGION_KEY}" is not a placeholder path; pass app settings as the separate \`env\` option instead, e.g. withPlaceholders(url, files, { env: { API_TOKEN: "..." } })`,
+        `withPlaceholders: "${path}" is this image's reserved config file, not a placeholder; pass it as the separate \`config\` option instead, e.g. withPlaceholders(url, files, { config: (current) => current.replace(...) })`,
       );
     }
     const placeholder = byPath.get(path);
@@ -61,34 +60,47 @@ export function padContents(
  * one did. */
 export function padAll(
   files: Record<string, string | Uint8Array>,
-  env: Record<string, string> | undefined,
+  config: ConfigOption | undefined,
   manifest: Manifest,
 ): Map<string, Uint8Array> {
   const padded = padContents(files, manifest);
-  if (env) {
-    padded.set(ENV_REGION_KEY, padEnv(env, manifest));
+  if (config !== undefined) {
+    const region = manifest.config;
+    if (!region) {
+      throw new GosdUnknownPlaceholderError(
+        "withPlaceholders: this image reserved no space for its gosd.toml, so its configuration can't be injected; rebuild it with `gosd build --config-placeholder`",
+      );
+    }
+    padded.set(region.path, padConfig(config, manifest));
   }
   return padded;
 }
 
-/** Renders `env` as a TOML [env] body and pads it to the image's reserved
- * region, ready to splice like any placeholder's content. Throws when the
- * image reserved no region (nothing to write into), and when the rendered
- * settings don't fit — both at the call, before a byte is downloaded. */
-export function padEnv(env: Record<string, string>, manifest: Manifest): Uint8Array {
-  if (!manifest.env) {
+/** A replacement gosd.toml, or a function handed the pristine one to edit —
+ * editing keeps the plain-language guidance gosd wrote for whoever opens the
+ * card, which a generated replacement would drop. */
+export type ConfigOption = string | ((pristine: string) => string);
+
+/** Resolves `config` against the manifest's published pristine text and pads
+ * the result to the reserved size. Throws when the image reserved no config
+ * region, and when the result doesn't fit — both before a byte is
+ * downloaded. */
+export function padConfig(config: ConfigOption, manifest: Manifest): Uint8Array {
+  const region = manifest.config;
+  if (!region) {
     throw new GosdUnknownPlaceholderError(
-      "withPlaceholders: this image reserved no [env] region, so its app settings can't be injected; rebuild it with `gosd build --env-placeholder <size>`",
+      "withPlaceholders: this image reserved no space for its gosd.toml, so its configuration can't be injected; rebuild it with `gosd build --config-placeholder`",
     );
   }
 
-  const body = new TextEncoder().encode(renderEnvBody(env));
-  if (body.length > manifest.env.size) {
+  const text = typeof config === "function" ? config(region.pristine) : config;
+  const body = new TextEncoder().encode(text);
+  if (body.length > region.size) {
     throw new GosdContentTooLargeError(
-      `withPlaceholders: the rendered [env] settings are ${body.length} bytes, which does not fit in this image's ${manifest.env.size}-byte reserved region; shorten them, or reserve a larger region with --env-placeholder at build time`,
+      `withPlaceholders: the gosd.toml to inject is ${body.length} bytes, which does not fit in this image's ${region.size}-byte reserved region; shorten it, or reserve more with --config-placeholder at build time`,
     );
   }
-  return padTo(body, manifest.env.size);
+  return padTo(body, region.size);
 }
 
 /** Pads `body` to exactly `size` with trailing `0x0A` newlines — never NUL

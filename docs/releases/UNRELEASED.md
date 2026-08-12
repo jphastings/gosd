@@ -11,16 +11,21 @@ this stub. Last folded into: v0.4.2 (2026-08-12).
 
 ## Other call-outs
 
-- **Environment variables can be injected into a downloaded image, and
-  survive a reflash (bean `gosd-dwub`).** `gosd build --env-placeholder
-  <size>` reserves space for the body of the card's `[env]` table and
-  publishes that region's byte ranges in the `<image>.inject.json` manifest,
-  under a new top-level `env` key. A downloader overwrites it exactly as it
-  overwrites a `--placeholder` file, and what it writes arrives as an
-  ordinary `gosd.toml` setting: the app needs no code for it, crash reports
-  redact it automatically, and — because it is the operator's own value as
-  far as the device is concerned — the provisioning snapshot carries it
-  across a later reflash, which an injected file of gosd's own could never
-  do. Existing manifest consumers are unaffected: the key is additive,
-  `gosd_inject` stays `1`, and a client that doesn't know it ignores it.
-  See [image injection](../image-injection.md#injecting-environment-variables).
+- **A downloaded image's whole configuration can be injected, and survives a
+  reflash (beans `gosd-dwub`, `gosd-48k0`).** `gosd build
+  --config-placeholder` pads the card's `gosd.toml` out to a fixed size and
+  publishes it in the `<image>.inject.json` manifest — byte ranges, hash, and
+  the file's pristine text — under a new top-level `config` key. A downloader
+  rewrites it exactly as it overwrites a `--placeholder` file, so a per-device
+  hostname, WiFi network, `[env]` setting or [`[ingress.*]`](../ingress.md)
+  tunnel credential can be spliced into an image between the CDN and the
+  user's disk. What it writes is an ordinary `gosd.toml`: the device needs no
+  app code for it, crash reports redact `[env]` values automatically, and the
+  provisioning snapshot carries the settings across a later reflash — ingress
+  sections restored as a whole unit, so a tunnel keeps working after an
+  upgrade. Because the manifest publishes the pristine text, a client can
+  *edit* the config it was handed rather than replace it, keeping the
+  plain-language guidance gosd writes for whoever opens the card. Existing
+  manifest consumers are unaffected: the key is additive and `gosd_inject`
+  stays `1`. See [image
+  injection](../image-injection.md#injecting-configuration-hostname-wifi-settings-ingress).

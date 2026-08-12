@@ -13,7 +13,6 @@ import {
   GosdManifestHashMismatchError,
   GosdManifestInvalidError,
 } from "./errors.js";
-import { ENV_REGION_KEY } from "./env.js";
 import { Sha256 } from "./sha256.js";
 
 export interface ByteRange {
@@ -34,14 +33,17 @@ export interface ImageInfo {
   sha256: string;
 }
 
-/** The reserved `[env]` region inside gosd.toml (`gosd build
- * --env-placeholder`), when the build reserved one. Same three fields as a
- * placeholder, but no path: it's a span of gosd.toml, not a file, so its
- * `size` bytes must go to its `ranges` and nowhere else. */
-export interface EnvInfo {
+/** The card's reserved `gosd.toml` (`gosd build --config-placeholder`), when
+ * the build reserved one. Unlike a placeholder it publishes `pristine` — the
+ * file's exact text as gosd wrote it — so a client can edit the config it was
+ * handed rather than reconstruct one. Hashing `pristine` reproduces `sha256`.
+ */
+export interface ConfigInfo {
+  path: string;
   size: number;
   sha256: string;
   ranges: ByteRange[];
+  pristine: string;
 }
 
 export interface Manifest {
@@ -49,9 +51,9 @@ export interface Manifest {
   board: string;
   image: ImageInfo;
   placeholders: PlaceholderInfo[];
-  /** Absent on an image built without `--env-placeholder`, and on every
+  /** Absent on an image built without `--config-placeholder`, and on every
    * manifest written before gosd learned to reserve one. */
-  env?: EnvInfo;
+  config?: ConfigInfo;
 }
 
 /** One patchable, hash-verified span of the image: a placeholder file, or
@@ -79,13 +81,13 @@ export function injectableRegions(manifest: Manifest): RegionInfo[] {
     sha256: p.sha256,
     ranges: p.ranges,
   }));
-  if (manifest.env) {
+  if (manifest.config) {
     regions.push({
-      key: ENV_REGION_KEY,
-      label: "the reserved [env] region",
-      size: manifest.env.size,
-      sha256: manifest.env.sha256,
-      ranges: manifest.env.ranges,
+      key: manifest.config.path,
+      label: `the reserved ${manifest.config.path}`,
+      size: manifest.config.size,
+      sha256: manifest.config.sha256,
+      ranges: manifest.config.ranges,
     });
   }
   return regions;
@@ -185,20 +187,23 @@ export function parseManifest(data: unknown): Manifest {
   const placeholders = expectArray(obj.placeholders, "manifest.placeholders").map((p, i) =>
     parsePlaceholderInfo(p, `manifest.placeholders[${i}]`, image.size),
   );
-  const env = obj.env === undefined ? undefined : parseEnvInfo(obj.env, "manifest.env", image.size);
+  const config =
+    obj.config === undefined
+      ? undefined
+      : parseConfigInfo(obj.config, "manifest.config", image.size);
 
   const manifest: Manifest = {
     gosd_inject: expectLiteral(obj.gosd_inject, 1, "manifest.gosd_inject"),
     board: expectString(obj.board, "manifest.board"),
     image,
     placeholders,
-    ...(env ? { env } : {}),
+    ...(config ? { config } : {}),
   };
   checkNoOverlaps(manifest);
   return manifest;
 }
 
-function parseEnvInfo(value: unknown, at: string, imageSize: number): EnvInfo {
+function parseConfigInfo(value: unknown, at: string, imageSize: number): ConfigInfo {
   const obj = expectRecord(value, at);
   const size = expectNonNegativeInt(obj.size, `${at}.size`);
   const ranges = expectArray(obj.ranges, `${at}.ranges`).map((r, i) =>
@@ -211,7 +216,21 @@ function parseEnvInfo(value: unknown, at: string, imageSize: number): EnvInfo {
   if (total !== size) {
     throw new GosdManifestInvalidError(`${at}: ranges sum to ${total} bytes but size is ${size}`);
   }
-  return { size, sha256: expectSha256Hex(obj.sha256, `${at}.sha256`), ranges };
+
+  const pristine = expectString(obj.pristine, `${at}.pristine`);
+  if (new TextEncoder().encode(pristine).length !== size) {
+    throw new GosdManifestInvalidError(
+      `${at}.pristine: is ${new TextEncoder().encode(pristine).length} bytes but size is ${size}; it must be the region's exact content`,
+    );
+  }
+
+  return {
+    path: expectString(obj.path, `${at}.path`),
+    size,
+    sha256: expectSha256Hex(obj.sha256, `${at}.sha256`),
+    ranges,
+    pristine,
+  };
 }
 
 function parseImageInfo(obj: Record<string, unknown>): ImageInfo {

@@ -214,14 +214,14 @@ type Options struct {
 	// sidecar (see internal/inject.WriteManifest).
 	Placeholders []inject.Placeholder
 
-	// EnvPlaceholderBytes is `gosd build --env-placeholder <size>`: the exact
-	// number of bytes to reserve for gosd.toml's [env] body, so a downloader
-	// can overwrite that region with real settings (see
-	// internal/gosdtoml.RenderWithReservedEnv and docs/image-injection.md).
-	// Its byte ranges join the placeholders' in the image.WriteReport's
-	// FileRanges, keyed by "gosd.toml". Zero reserves nothing, which is every
+	// ConfigPlaceholderBytes is `gosd build --config-placeholder <size>`: the
+	// exact size to pad gosd.toml out to, so a downloader can rewrite the
+	// whole file - hostname, [wifi], [env], [ingress.*] - in a built image
+	// (see internal/gosdtoml.RenderReserved and docs/image-injection.md).
+	// gosd.toml's byte ranges then join the placeholders' in the
+	// image.WriteReport's FileRanges. Zero reserves nothing, which is every
 	// build that doesn't ask.
-	EnvPlaceholderBytes int
+	ConfigPlaceholderBytes int
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -321,26 +321,22 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// [env] as before (see Options.EnvBody).
 	envSection := gosdtoml.EnvSection{Values: opts.Config.Env, Verbatim: opts.EnvBody}
 
-	reportRanges := make([]image.RangeRequest, 0, len(opts.Placeholders)+1)
+	reportRanges := make([]string, 0, len(opts.Placeholders)+1)
 	gosdToml := gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{})
 
-	// --env-placeholder reserves the [env] body itself rather than adding a
-	// file of its own, so an injected value arrives as an ordinary gosd.toml
-	// value: gosd-init merges it with no new precedence rule, and the
-	// provisioning snapshot treats it as the operator's own intent, which is
-	// what lets it survive a later reflash (see provsnapshot and
+	// --config-placeholder pads gosd.toml itself rather than adding a file of
+	// its own, so injected settings arrive as ordinary gosd.toml values:
+	// gosd-init parses them with no new precedence rule, and the provisioning
+	// snapshot treats them as the operator's own intent, which is what lets
+	// them survive a later reflash (see provsnapshot and
 	// docs/image-injection.md).
-	if opts.EnvPlaceholderBytes > 0 {
-		reserved, span, err := gosdtoml.RenderWithReservedEnv(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}, opts.EnvPlaceholderBytes)
+	if opts.ConfigPlaceholderBytes > 0 {
+		reserved, err := gosdtoml.RenderReserved(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}, opts.ConfigPlaceholderBytes)
 		if err != nil {
-			return image.WriteReport{}, fmt.Errorf("reserving --env-placeholder space in gosd.toml for %s failed: %w; raise --env-placeholder or bake fewer --env values in", opts.Board.Name(), err)
+			return image.WriteReport{}, fmt.Errorf("reserving --config-placeholder space in gosd.toml for %s failed: %w; raise --config-placeholder", opts.Board.Name(), err)
 		}
 		gosdToml = reserved
-		reportRanges = append(reportRanges, image.RangeRequest{
-			Path:        "gosd.toml",
-			OffsetBytes: int64(span.OffsetBytes),
-			LengthBytes: int64(span.LengthBytes),
-		})
+		reportRanges = append(reportRanges, "gosd.toml")
 	}
 	bootFiles["gosd.toml"] = bytes.NewReader(gosdToml)
 
@@ -364,7 +360,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 			return image.WriteReport{}, fmt.Errorf("rendering --placeholder %s failed: %w", p.Path, err)
 		}
 		bootFiles[p.Path] = bytes.NewReader(rendered)
-		reportRanges = append(reportRanges, image.RangeRequest{Path: p.Path})
+		reportRanges = append(reportRanges, p.Path)
 	}
 
 	// Read every FAT-root file into memory — both to hash it into the

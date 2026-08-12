@@ -63,7 +63,7 @@ export interface SubstitutionOptions {
    * already are its pristine bytes). Used by the fs-access resumable
    * download path (resume.ts) to stash those bytes for reconstructing this
    * prefix again in a later session. The key is a placeholder's path, or
-   * ENV_REGION_KEY for the reserved [env] region. */
+   * the reserved config file's path. */
   onPlaceholderVerified?: (key: string, pristine: Uint8Array) => void;
 }
 

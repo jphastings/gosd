@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2928,15 +2927,13 @@ func recordContent(t *testing.T, records []cpio.Record, name string) []byte {
 	return nil
 }
 
-// TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion is the acceptance
-// test for injectable app settings (gosd-dwub): `gosd build
-// --env-placeholder` reserves gosd.toml's [env] body, publishes its byte
-// ranges, and a plain os.WriteAt of same-length TOML into those ranges
-// changes what the device's [env] parses to - without disturbing the rest of
-// gosd.toml, and with the pristine region parsing to exactly the baked
-// --env defaults, which is what keeps a plain reflash restorable from the
-// provisioning snapshot.
-func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
+// TestBuildWithConfigPlaceholderWritesAPatchableGosdToml is the acceptance
+// test for injectable configuration (bean gosd-48k0): `gosd build
+// --config-placeholder` pads gosd.toml, publishes its ranges and its
+// pristine text, and a plain os.WriteAt of same-length TOML into those
+// ranges changes what the device reads - including the [ingress.*] sections
+// a narrower [env]-only region could never carry.
+func TestBuildWithConfigPlaceholderWritesAPatchableGosdToml(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
@@ -2944,7 +2941,7 @@ func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
 	})
 	t.Cleanup(func() { http.DefaultTransport = origTransport })
 
-	const reserved = 8 * 1024
+	const reserved = 16 * 1024
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
 
 	cmd := newRootCmd()
@@ -2952,9 +2949,8 @@ func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "injected-device",
 		"--env", "API_URL=https://example.com",
-		"--env-placeholder", "8KiB",
+		"--config-placeholder",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -2969,54 +2965,62 @@ func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("manifest is not valid JSON: %v", err)
 	}
-	if manifest.Env == nil {
-		t.Fatal("manifest has no env region; --env-placeholder must publish one")
+	if manifest.Config == nil {
+		t.Fatal("manifest has no config region; --config-placeholder must publish one")
 	}
-	if manifest.Env.Size != reserved {
-		t.Errorf("env.size = %d, want the reserved %d", manifest.Env.Size, reserved)
+	if manifest.Config.Path != "gosd.toml" {
+		t.Errorf("config.path = %q, want gosd.toml", manifest.Config.Path)
 	}
-	var total int64
-	for _, r := range manifest.Env.Ranges {
-		total += r.Length
+	if manifest.Config.Size != reserved {
+		t.Errorf("config.size = %d, want the default reserve %d", manifest.Config.Size, reserved)
 	}
-	if total != reserved {
-		t.Errorf("env ranges total %d bytes, want exactly the reserved %d", total, reserved)
+
+	// The published pristine text must be exactly the file on the card, or a
+	// client editing it would be editing something else.
+	onCard := readBootFile(t, imgPath, "gosd.toml")
+	if manifest.Config.Pristine != string(onCard) {
+		t.Error("config.pristine differs from the gosd.toml actually written to the image")
 	}
+	sum := sha256.Sum256(onCard)
+	if hex.EncodeToString(sum[:]) != manifest.Config.SHA256 {
+		t.Errorf("config.sha256 = %s, want the hash of the file on the card %x", manifest.Config.SHA256, sum)
+	}
+	if before := envOf(t, onCard); before["API_URL"] != "https://example.com" {
+		t.Errorf("pristine [env] = %+v, want the baked --env default so a reflash has no hand-edit to defer to", before)
+	}
+
+	// Edit the file we were handed, the way a client adapting the config
+	// does, rather than replacing it wholesale: swap the commented-out
+	// cloudflared example for a real one, in place, keeping the length.
+	patched := strings.Replace(
+		manifest.Config.Pristine,
+		"# [ingress.cloudflared]\n# token = \"paste-your-tunnel-token-here\"\n",
+		"[ingress.cloudflared]\ntoken = \"injected-token\"\n",
+		1,
+	)
+	if patched == manifest.Config.Pristine {
+		t.Fatal("test setup error: the commented cloudflared example wasn't found in the pristine text")
+	}
+	patched += strings.Repeat("\n", reserved-len(patched))
 
 	imgFile, err := os.OpenFile(imgPath, os.O_RDWR, 0)
 	if err != nil {
-		t.Fatalf("opening the image for range reads/patches: %v", err)
+		t.Fatalf("opening the image for patching: %v", err)
 	}
-	defer func() { _ = imgFile.Close() }()
-
-	pristine := readRangesAt(t, imgFile, manifest.Env.Ranges)
-	gotSum := sha256.Sum256(pristine)
-	if hex.EncodeToString(gotSum[:]) != manifest.Env.SHA256 {
-		t.Errorf("the env region hashes to %x, want its manifest sha256 %s", gotSum, manifest.Env.SHA256)
-	}
-	if before := envOf(t, readBootFile(t, imgPath, "gosd.toml")); before["API_URL"] != "https://example.com" {
-		t.Errorf("pristine [env] = %+v, want it to carry the baked --env default so a reflash has no hand-edit to defer to", before)
-	}
-
-	body := []byte("API_URL = \"https://injected.example\"\nAPI_TOKEN = \"s3cret\"\n")
-	writeRangesAt(t, imgFile, manifest.Env.Ranges, append(body, bytes.Repeat([]byte("\n"), reserved-len(body))...))
+	writeRangesAt(t, imgFile, manifest.Config.Ranges, []byte(patched))
 	if err := imgFile.Close(); err != nil {
 		t.Fatalf("closing the image after patching: %v", err)
 	}
 
-	patched := readBootFile(t, imgPath, "gosd.toml")
-	got := envOf(t, patched)
-	want := map[string]string{"API_URL": "https://injected.example", "API_TOKEN": "s3cret"}
-	if !maps.Equal(got, want) {
-		t.Errorf("[env] after the splice = %+v, want %+v", got, want)
-	}
-
-	cfg, _, err := gosdtoml.Parse(patched)
+	cfg, _, err := gosdtoml.Parse(readBootFile(t, imgPath, "gosd.toml"))
 	if err != nil {
 		t.Fatalf("patched gosd.toml no longer parses: %v", err)
 	}
-	if cfg.Hostname != "injected-device" {
-		t.Errorf("hostname after the splice = %q, want the built-in %q: the splice must not disturb the rest of the file", cfg.Hostname, "injected-device")
+	if cfg.Ingress.Cloudflared.Token != "injected-token" {
+		t.Errorf("[ingress.cloudflared] token = %q, want the injected one", cfg.Ingress.Cloudflared.Token)
+	}
+	if cfg.Env["API_URL"] != "https://example.com" {
+		t.Errorf("[env] = %+v, want the baked default preserved by an edit that only touched the ingress block", cfg.Env)
 	}
 }
 

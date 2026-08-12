@@ -24,7 +24,7 @@
 
 import { GosdImageFetchError, GosdImagePreconditionError, GosdSaveFailedError } from "./errors.js";
 import { deriveManifestURL, fetchManifest, injectableRegions, type Manifest } from "./manifest.js";
-import { padAll } from "./content.js";
+import { padAll, type ConfigOption } from "./content.js";
 import { primeSubstitutionState, type SubstitutionProgress } from "./substitute.js";
 import { runDownload, type DownloadCheckpoint } from "./run.js";
 import type { SeekableSaveSink } from "./sinks/types.js";
@@ -239,10 +239,10 @@ export interface ResumeDownloadOptions {
   /** The `ResumeRecord.key` to resume — from `listResumableDownloads`. */
   key: string;
   files: Record<string, string | Uint8Array>;
-  /** The app settings for the reserved [env] region — pass the same ones
-   * the interrupted download used, exactly as with `files`: a resume
-   * continues that attempt's bytes, it doesn't re-decide them. */
-  env?: Record<string, string>;
+  /** The gosd.toml for the reserved config region — pass the same one the
+   * interrupted download used, exactly as with `files`: a resume continues
+   * that attempt's bytes, it doesn't re-decide them. */
+  config?: ConfigOption;
   manifestURL?: string | URL;
   manifestSha256?: string;
   manifest?: Manifest;
@@ -292,7 +292,7 @@ export async function resumeDownload(
       `the manifest at the resumed image's URL now describes a different image (sha256 ${manifest.image.sha256}) than the interrupted download (${record.key}); discard this resumable download (discardResumableDownload) and start fresh`,
     );
   }
-  const padded = padAll(options.files, options.env, manifest);
+  const padded = padAll(options.files, options.config, manifest);
 
   const persisted = await openPersistedFsAccessHandle(record.handle);
   const onDiskOffset = Math.min(record.bytesWritten, persisted.existingBytes.length);
