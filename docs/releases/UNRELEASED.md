@@ -32,3 +32,12 @@ this stub. Last folded into: v0.4.0 (2026-08-12).
   honestly answer there (`uptime`, `boot`, `device`) is now left out
   entirely rather than printed as `unknown`, so the preview reads like a
   real report rather than a half-populated one.
+- **`gosd build` no longer leaves its working directory behind.** The
+  cross-compile temp directory was abandoned on every path, successful builds
+  included — the one temp dir in the codebase without cleanup. Each leak holds
+  the app binary plus gosd-init per architecture, so roughly 17MB for a single
+  board and 70MB for a default all-boards build. Nothing about your images
+  changes; you simply stop losing disk to every build you run. The heaviest
+  source was the test suite, where one observed run left 1.3GB behind, so this
+  is felt most by anyone developing against gosd itself. An interrupted build
+  (Ctrl-C, no signal handler) still leaks, which is unchanged.
