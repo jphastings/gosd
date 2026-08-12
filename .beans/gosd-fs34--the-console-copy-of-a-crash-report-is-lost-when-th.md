@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T06:17:04Z
-updated_at: 2026-08-12T07:28:33Z
+updated_at: 2026-08-12T07:38:03Z
 parent: gosd-47z3
 ---
 
@@ -131,3 +131,37 @@ now true without qualification.
 Quality gates: `go test ./...`, `go vet ./...`, `gofmt -l .` (clean),
 `golangci-lint run ./...` and `GOOS=linux golangci-lint run ./...` (both 0
 issues).
+
+
+
+## Bench-verified on hardware, 2026-08-12 (before merge)
+
+The fix was checked on the same Pi 3B+ that exposed the bug, since the
+failure is a race against a syscall no test can execute — the unit tests can
+only assert ordering.
+
+Same image shape as the original reproduction (`examples/hello` with
+`HELLO_FATAL`, `--data-size expand`), built from this branch, captured with
+`serialcap.py` across a full boot.
+
+**Before:** the capture contained no part of the report — zero occurrences of
+`error_code:` — and gosd-init's final line was cut mid-word by the halt.
+
+**After:** the complete rendered report reaches the console, frontmatter and
+all, and exactly ONCE:
+
+```
+error_code: HELLO-DEMO-FATAL
+timestamp: unknown
+clock: unsynced — timestamp is not trustworthy
+uptime: 5s
+boot: 1
+device: Raspberry Pi 3 Model B Plus Rev 1.3 (pi-3b)
+image: "hello fs34-bench #701a6209ea0e"
+```
+
+Counted occurrences across the whole capture: `error_code:` 1, `device:` 1,
+`uptime:` 1, `image:` 1, `# hello crash report` 1. Exactly one of each
+matters as much as their presence — it confirms `gosd-72ga`'s fix still
+holds and the console copy has not reintroduced duplication by another
+route.
