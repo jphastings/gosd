@@ -85,6 +85,16 @@ type FaultReportDeps struct {
 	// that writes.
 	CountBoot func() (int, bool)
 
+	// AppFault reads and removes the /run drop file a fault.Fatal call
+	// leaves behind (see internal/faultdrop), reporting false — the
+	// common case, since most exits declare nothing — when the app named
+	// no fault of its own. It is called after every exit of /app, so it
+	// must consume the file rather than merely read it: a report is
+	// delivered once, to the exit that raised it. A nil AppFault means
+	// declared faults are never picked up, which is what the pure-logic
+	// tests get.
+	AppFault func() (faultreport.Report, bool)
+
 	// RegisteredSecrets reads the /run registration file
 	// fault.RegisterSecretString writes (see internal/secretreg), fresh at
 	// the moment of every report rather than once at boot: a registration

@@ -46,6 +46,7 @@ package secretreg
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/jphastings/gosd/internal/redact"
 )
@@ -72,11 +73,39 @@ const MaxRegistrations = 64
 // close to this.
 const MaxTotalBytes = 64 * 1024
 
-// registration is one entry in the file: RegisterSecretString's two
-// arguments, unchanged.
-type registration struct {
+// Entry is one entry in the file: RegisterSecretString's two arguments,
+// unchanged. It is exported so the writer builds the file from the same
+// type [Parse] reads it back into, rather than a second struct whose JSON
+// tags could drift from these.
+type Entry struct {
 	Secret      string `json:"secret"`
 	Replacement string `json:"replacement"`
+}
+
+// Encode marshals the whole registration set into the file's exact bytes,
+// and refuses — rather than truncating — anything [Parse] would not read
+// back identically: more than [MaxRegistrations] entries, or an encoding
+// larger than [MaxTotalBytes].
+//
+// Refusing is the important half. Parse drops an oversized file WHOLESALE,
+// so a writer that let one registration too many through wouldn't lose that
+// registration, it would lose every registration in the file — a redaction
+// outage caused by the mechanism meant to prevent one. The caller's move on
+// an error is therefore to keep the file it already has (which is still
+// correct for everything registered so far) and tell the app author, never
+// to write the oversized set anyway.
+func Encode(entries []Entry) ([]byte, error) {
+	if len(entries) > MaxRegistrations {
+		return nil, fmt.Errorf("%d registered secrets is more than the %d gosd will redact", len(entries), MaxRegistrations)
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxTotalBytes {
+		return nil, fmt.Errorf("the registered secrets encode to %d bytes, more than the %d gosd will read back", len(data), MaxTotalBytes)
+	}
+	return data, nil
 }
 
 // Label formats a registered secret's human replacement exactly the way
@@ -103,7 +132,7 @@ func Parse(data []byte) []redact.Rule {
 		return nil
 	}
 
-	var entries []registration
+	var entries []Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil
 	}

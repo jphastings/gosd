@@ -7,8 +7,9 @@
 // It also demonstrates gosd.toml's [env] app environment variables (see
 // docs/runtime.md's "App environment variables" section): an optional
 // GREETING var, read with a plain os.Getenv, is included in the startup
-// log and the HTTP response when set. Leave it unset and hello behaves
-// exactly as it always has.
+// log and the HTTP response when set, and HELLO_FATAL raises a deliberate
+// crash report (see docs/crash-reports.md). Leave both unset and hello
+// behaves exactly as it always has.
 package main
 
 import (
@@ -22,11 +23,17 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jphastings/gosd/fault"
 )
 
 var startTime = time.Now()
 
 func main() {
+	if reason := os.Getenv("HELLO_FATAL"); reason != "" {
+		demonstrateCrashReport(reason)
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -56,6 +63,26 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gosd hello: server stopped: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// demonstrateCrashReport raises a deliberate fatal fault so the whole
+// crash-report path can be exercised on real hardware without writing any
+// code: add HELLO_FATAL to gosd.toml's [env] table on the card, power the
+// device on, and it writes LAST_FATAL_ERROR.md to the boot partition and
+// stays down until it is power-cycled. Off a device (go run ./examples/hello
+// with HELLO_FATAL set) the same report is printed to stderr instead.
+//
+// It never fires unless the variable is set, so an ordinary hello image is
+// unaffected — and fault.Fatal never returns, which is why this is the first
+// thing main does.
+func demonstrateCrashReport(reason string) {
+	fault.Fatal(fault.Report{
+		Code:    "HELLO-DEMO-FATAL",
+		Doing:   "showing what a crash report looks like",
+		Problem: "Nothing is actually wrong. This device was asked to demonstrate the report a GoSD app writes when it hits a problem only a person can fix.",
+		Fix:     "Delete the HELLO_FATAL line from gosd.toml on this card, then turn the device off and on again.",
+		Detail:  fmt.Errorf("HELLO_FATAL=%q", reason),
+	})
 }
 
 // greetingSuffix turns the optional GREETING env var into a log/response

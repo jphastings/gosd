@@ -1,11 +1,11 @@
 ---
 # gosd-aa1p
 title: 'A public fault package: let an app declare a user-actionable fatal error'
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:29Z
-updated_at: 2026-08-11T10:25:25Z
+updated_at: 2026-08-11T23:11:16Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -64,36 +64,44 @@ func RegisterSecretString(secret, replacement string)
 
 ## Todos
 
-- [ ] Settle the package name. `fault` reads well at the call site
+- [x] Settle the package name. `fault` reads well at the call site
       (`fault.Fatal(...)`) and doesn't collide with stdlib `log`; alternatives
       considered: `crashreport`, `diag`, `report`
-- [ ] `Fatal` is the whole reporting API — no non-exiting `Record(r)`: a
+- [x] `Fatal` is the whole reporting API — no non-exiting `Record(r)`: a
       "fatal error" the app survives is a contradiction, and with halt
       semantics locked there is nothing for it to return to
-- [ ] `RegisterSecretString(secret, replacement string)` is exported from
-      this package but specified and implemented in gosd-m6py, which blocks
-      this bean. Keep the two in one package so an app has a single import
-- [ ] Handoff format and path: `/run/gosd/fault.json`, write `.tmp` → rename.
+- [x] `RegisterSecretString(secret, replacement string)` is exported AND
+      implemented here. (Corrected 2026-08-11: this line used to say gosd-m6py
+      implemented it. PR #260 built only the READER — `internal/secretreg`'s
+      file format and `Parse` — so the writer, the quota policy and the
+      write-through-on-call behaviour are this bean's work. gosd-m6py gained
+      `secretreg.Entry`/`Encode` here so both ends share one definition of
+      the file's shape.) Kept in one package so an app has a single import
+- [x] Handoff format and path: `/run/gosd/fault.json`, write `.tmp` → rename.
       gosd-init reads and unlinks it in `Supervisor.runOnce` after the app
       exits. An unparseable or empty drop file is dropped, not trusted (the
       self-heal lesson from gosd-6cf2)
-- [ ] Precedence when both a drop file and a crash tail exist for the same
+- [x] Precedence when both a drop file and a crash tail exist for the same
       exit: the app's own explicit report wins the human sections; the tail
       still supplies "Technical detail" (a `fault.Fatal` call and a panic in
       another goroutine can genuinely coincide)
-- [ ] Off-device degradation: on macOS, or under `go test`, or anywhere
+- [x] Off-device degradation: on macOS, or under `go test`, or anywhere
       `/run/gosd` isn't there, `Fatal` renders the identical Markdown to
       stderr and exits — so a developer sees exactly what their user will,
       without flashing a card. This is the package's main development-time
       value and should be tested as behaviour, not an afterthought
-- [ ] `platform_linux.go` / `platform_other.go` split per the convention, if
-      it ends up needing any syscall at all
-- [ ] The shared formatter lives in an internal package that both this and
+- [x] `platform_linux.go` / `platform_other.go` split per the convention, if
+      it ends up needing any syscall at all — it needed none (MkdirAll,
+      WriteFile, Rename are portable), so the split is on the `gosd` BUILD
+      TAG instead (`device_gosd.go` / `device_other.go`), which is the
+      accurate axis: /run is writable on any Linux machine running as root,
+      and a probe would make a CI container look exactly like a board
+- [x] The shared formatter lives in an internal package that both this and
       gosd-init import, so there is exactly one renderer (see gosd-pun9)
-- [ ] Exported-API docstrings, a docs/ page, and an example. Consider whether
+- [x] Exported-API docstrings, a docs/ page, and an example. Consider whether
       `examples/hello` should raise one deliberately behind a flag so the
       flow is demonstrable end to end
-- [ ] Add to CLAUDE.md's "Public API surface" bullet in the same PR
+- [x] Add to CLAUDE.md's "Public API surface" bullet in the same PR
 
 ## LOCKED: fault.Fatal halts the device (JP, 2026-08-11)
 
@@ -116,3 +124,106 @@ keeps restarting with backoff exactly as it does today, and the report is
 written alongside. Flagged for JP in case the intent was broader: making an
 undeclared panic halt too would turn any transient app bug into a device
 that stays down until someone visits it.
+
+## Summary of Changes (PR #262)
+
+[jphastings/gosd#262](https://github.com/jphastings/gosd/pull/262).
+
+- **`fault/` (new public package).** `Fatal(Report)` and
+  `RegisterSecretString(secret, replacement)`, exactly the sketch above, with
+  `Report.Detail` an `error` (converted at the boundary to the `string`
+  `internal/faultreport.Report` takes). Docstrings carry the load-bearing
+  facts: Fatal halts and the board stays down until someone power-cycles it,
+  deferred functions do not run, anything a retry might fix belongs in a
+  returned error; a `replacement` is a LABEL, not a second secret; a secret
+  under `redact.MinNeedleLength` is silently skipped by the floor, said at
+  the point an app author reads it.
+- **How the halt actually happens.** The app never calls `reboot(2)` itself
+  — that would stop the machine before gosd-init could write the card. Fatal
+  writes `/run/gosd/fault.json` (tmpfs, 0600, `.tmp`→rename) and exits 70;
+  gosd-init picks it up after the app exits, records it, syncs and halts.
+- **`internal/faultdrop` (new).** The drop file`s format, mirroring
+  `internal/secretreg`: `Marshal`/`Parse`/`Take`, `MaxBytes`, `ExitCode`.
+  Named optional JSON fields, because the two ends need not be the same
+  release — the app pins `fault` via its own go.mod while gosd-init is built
+  by whichever CLI runs the build. `Take` removes the file (and any stale
+  `.tmp`) whether or not it parsed, and stats before reading so nothing can
+  pull an arbitrary-sized file into PID 1.
+- **`internal/secretreg` gained the writer half**: exported `Entry` and
+  `Encode`, which REFUSES rather than truncates past `MaxRegistrations`/
+  `MaxTotalBytes`. That is the crux of the quota decision: `Parse` drops an
+  oversized file wholesale, so writing one registration too many would cost
+  every registration in the file. `RegisterSecretString` therefore keeps the
+  first 64 (matching `Parse`s own truncation), leaves earlier registrations
+  untouched, and prints one stderr line naming the label.
+- **Off-device is a first-class path, gated on the `gosd` BUILD TAG** rather
+  than a probe for `/run` — /run is writable on any Linux box running as
+  root, and a probe would make a CI container look like a board. The
+  drop-writing code is not behind the tag, so the untagged `go test` gate
+  exercises both paths; a subprocess test runs the real exported `Fatal` and
+  asserts exit code 70, the rendered document, and that a registered
+  secret`s value never appears.
+- **gosd-init side kept to one file** (`boot/appfault.go`: `appFaultHook`,
+  `withConsoleTail`) plus three wiring lines — `FaultReportDeps.AppFault`,
+  `Supervisor.OnAppExit func() (stop bool)`, and one line in `sequence.go`
+  — so gosd-s9uq (which owns the app-exit path) rebases trivially. The
+  trailing `nil` argument in that line is the console tail: passing a
+  `func() string` is all the tail wiring needs. Precedence is implemented
+  and tested: the app`s own words win the human sections, the tail is kept
+  as technical detail.
+- **`examples/hello`** raises a deliberate fault when `HELLO_FATAL` is set
+  in gosd.toml`s `[env]` table, so the flow is demonstrable end to end on
+  real hardware without writing code. Docs: `docs/crash-reports.md` updated
+  (status note, the fault-package section, a rewritten Secrets section),
+  plus README, CLAUDE.md`s Public API surface bullet and UNRELEASED.md.
+
+### Corrections to this bean
+
+- The `RegisterSecretString ... implemented in gosd-m6py` todo was stale:
+  PR #260 shipped the READER only. The writer, the quota policy and the
+  write-through-on-call behaviour are this bean.
+- The expected `platform_linux.go`/`platform_other.go` split was not needed
+  (no syscalls); the split is on the `gosd` build tag instead.
+
+### Adversarial pass
+
+Found and fixed before review: `Take` read before checking the size (an app
+writing the drop path directly could have OOMed PID 1 on a 512MB board);
+`Marshal` trimmed the previous attempt`s detail, stamping one truncation
+marker per pass; a label containing its own secret would have published the
+value it was protecting (now `{secret: unnamed}`); an empty secret is
+refused outright rather than relying on the redaction floor to skip it; a
+stale `.tmp` is removed rather than written over so it cannot keep looser
+permissions. Also: the test fixture`s realistic `sk_live_` prefix tripped
+GitHub push protection — renamed, with a comment.
+
+Two known limitations recorded rather than fixed, both pre-existing shapes:
+the `armed` one-report-per-stable-run gate will be able to swallow a
+declared report once the crash tail (gosd-s9uq) can write first — worth
+deciding then whether a declared fault overrides it, since it halts and so
+cannot loop; and `OnStableRun` racing an exit within microseconds of
+`StableRunThreshold` can delete a just-written report.
+
+### Rebased onto gosd-s9uq (PR #261)
+
+The crash-tail work merged first, and the rebase surfaced a real bug rather
+than just a textual conflict: `fault.Fatal` exits non-zero, so gosd-s9uq's
+`isCrash` reads a declared fault as a crash. Recording both would have
+written `GOSD-APP-CRASH` first, consumed the one-report-per-stable-run gate,
+and left the card carrying the console tail instead of the report that names
+a fix — the exact opposite of this bean's locked precedence.
+
+Resolved by unifying the two exit hooks rather than running both:
+`Supervisor.OnExit` (gosd-s9uq's) now returns `stop bool`, and there is one
+exit handler in `sequence.go` — pick up a declared fault first, halt with it
+(tail folded in as technical detail); otherwise fall through to the crash
+report. Exactly one report per exit, one boot-FAT remount, and my
+`OnAppExit` field is gone. gosd-s9uq's own tests needed only `return false`
+added to two hook literals; its "Wait error leaves OnExit uncalled"
+behaviour is unchanged, which does mean a declared fault is missed when the
+reaper itself fails — pathological, and consistent with the existing
+contract. A new acceptance test
+(`TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault`) pins the whole path
+end to end: declared fault + crash-shaped exit + console tail → one report,
+the app's, with the panic kept as detail, and the device halted rather than
+restarted.

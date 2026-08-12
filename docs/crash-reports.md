@@ -3,19 +3,16 @@
 **Status: partly built.** The report format, the renderer every producer
 shares, and the writing of `LAST_FATAL_ERROR.md` are shipped: gosd-init
 records its own fatal errors this way, and deletes the file once your app has
-proven it recovered. Redaction is wired in too: every value in your app's own
-environment is scrubbed automatically, and gosd-init already reads a
-registration file from `/run` fresh at the moment of each report, ready for
-`RegisterSecretString` once it ships. **New:** gosd-init now also keeps the
-tail of your app's own console output and writes a report when it crashes —
-see "What you get for free" below — with no code changes required. What is
-still not built is everything your *app* has to say for itself: the `fault`
-package described below, including `RegisterSecretString` itself, is **not
-importable**, so a condition your own code understands ("your API key is
-wrong") can't yet declare its own report — only an unclassified crash can.
-One smaller gap: the `device:` line's device-tree read has not yet been
-confirmed on real hardware (it falls back to the board name baked into the
-image whenever it can't be read). Tracked by bean `gosd-47z3`.
+proven it recovered. Redaction is wired in: every value in your app's own
+environment is scrubbed automatically, and `RegisterSecretString` covers the
+secrets no environment variable names. gosd-init keeps the tail of your app's
+own console output and writes a report when it crashes — see "What you get
+for free" below — with no code changes required, and the `fault` package below
+is importable, so a condition your own code understands ("your API key is
+wrong") can declare a report of its own and stop the device. One gap remains:
+the `device:` line's device-tree read has not yet been confirmed on real
+hardware (it falls back to the board name baked into the image whenever it
+can't be read). Tracked by bean `gosd-47z3`.
 
 ## Why this exists
 
@@ -147,9 +144,6 @@ it. So the writes are deliberately rare, and three rules keep them that way:
 
 ## When to raise one yourself
 
-_Not built yet — the `fault` package described here is not importable. See the
-status note at the top._
-
 Use `fault.Fatal` for a condition **no restart can improve** and a human can
 act on. An invalid API key, a config naming a sensor this build doesn't
 support, a required environment variable that isn't set. These fail
@@ -162,6 +156,8 @@ that might succeed on a retry should be an ordinary returned error instead,
 left to the supervisor's backoff.
 
 ```go
+import "github.com/jphastings/gosd/fault"
+
 if cfg.APIKey == "" {
     fault.Fatal(fault.Report{
         Code:    "NO-API-KEY",
@@ -177,9 +173,40 @@ Write `Doing`, `Problem` and `Fix` for the device's owner, not for yourself.
 `Detail` is the only field aimed at a developer. If you can't name a `Fix`,
 leave it empty and the report points the reader at your support URL instead.
 
+`Fatal` ends the process where it stands, so **deferred functions do not
+run**. Flush whatever must be flushed before you call it.
+
+Your app never writes to the boot partition itself — it would race
+gosd-init's own remounts and leave the card writable under a live app.
+`Fatal` leaves the report in `/run`, a RAM filesystem, and gosd-init writes
+it to the card once your app has exited.
+
+Your report and the free one above never fight over the card. A `Fatal` exit
+is a non-zero exit, so it looks like a crash too — but the device writes
+exactly one report per exit, and yours wins: it knows what your user was
+promised and what would fix it, where the console tail only knows what blew
+up. The tail is kept as your report's technical detail, which matters when a
+`Fatal` on one goroutine and a panic on another genuinely coincide. The write
+rules above do still apply across exits: a device already carrying a report
+from this stable run keeps it, and your newer one only reaches the console.
+
 Off-device — on your Mac, or under `go test` — `fault.Fatal` renders the same
-Markdown to stderr rather than looking for a boot partition, so you can see
-exactly what your user will see without flashing anything.
+Markdown to stderr and exits non-zero, rather than looking for a boot
+partition, so you can see exactly what your user will see without flashing
+anything. The line after the report says which of the two happened. The
+printed copy carries only what your own process can know: on a device, the
+copy on the card also names the hardware, the image, the uptime and the boot
+count, and has your app's environment scrubbed out of it.
+
+The switch is the `gosd` build tag, which `gosd build` sets and nothing else
+does — not a probe for `/run`, which any Linux machine running as root would
+pass. A binary you built yourself never writes to `/run`, however
+device-shaped its filesystem looks.
+
+`examples/hello` has this wired up behind an environment variable: set
+`HELLO_FATAL` in `gosd.toml`'s `[env]` table, reboot, and the device writes a
+report and stays down — the whole path, on real hardware, without writing any
+code.
 
 ## Secrets
 
@@ -197,16 +224,34 @@ Anything you register explicitly becomes `{secret: your-label}`:
 fault.RegisterSecretString(token, "session-token")
 ```
 
-_`RegisterSecretString` itself is not built yet — see the status note at the
-top — but the channel it will write to already is: gosd-init reads a
-registration file from `/run` fresh at the moment of every report, so a
-secret registered moments before a crash will still redact once that call
-ships._
+The second argument is a **label, not a second secret** — it is printed in
+the file you're asking someone to forward.
 
-Two limits worth knowing. Very short values are left alone deliberately — a
-`DEBUG=1` would otherwise blank every `1` in a stack trace — so a short
-secret is not protected. And the serial console is never redacted; it's a
-channel for someone already holding the board, not a file that travels.
+Register as soon as your app holds the value, not when something goes wrong.
+The registration is written through to `/run` on that call, and gosd-init
+re-reads it at the moment of every report, because the crash that most needs
+redacting is the one your app never sees coming: on a panic your code gets no
+chance to hand anything over, and the secret still sitting in the console
+output is exactly the one nobody registered in time. `/run` is a RAM
+filesystem, so the plaintext value never touches the card.
+
+Registering is additive and idempotent — registering the same value twice is
+not an error, and the first label given for a value is the one that sticks.
+
+Three limits worth knowing:
+
+- **Very short values are left alone deliberately.** Anything under eight
+  bytes is not redacted, because a `DEBUG=1` would otherwise blank every `1`
+  in a stack trace. A short secret is therefore not protected, and the
+  omission is logged by label wherever the report is produced.
+- **At most 64 registered secrets, and 64KiB of them.** A registration past
+  either bound is refused, with a line on stderr naming its label, and
+  leaves the ones already made working — the whole set has to be readable
+  back for any of it to apply, so dropping the newest is what protects the
+  rest. Register the handful of long-lived credentials your app holds, not
+  one per request.
+- **The serial console is never redacted.** It's a channel for someone
+  already holding the board, not a file that travels.
 
 ## Building for it
 

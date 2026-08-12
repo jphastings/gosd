@@ -2394,3 +2394,75 @@ func assertFatalPathTriggered(t *testing.T, rebooter *fakeRebooter, sleeps []tim
 		t.Errorf("fatal path did not sleep 5s before rebooting (sleeps=%v)", sleeps)
 	}
 }
+
+// TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault is the acceptance
+// test for gosd-aa1p: an app that calls fault.Fatal leaves a report in /run
+// and exits non-zero, which also looks like a crash. Exactly one report
+// reaches the card — the app's own, since it names a fix the console tail
+// never could — and the device stops rather than restarting into a failure
+// the app has already said no restart can help.
+func TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault(t *testing.T) {
+	reports := &fakeFaultReport{}
+	rebooter := &fakeRebooter{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprintln(stdout, "panic: nil map write")
+		return 1, nil
+	})
+
+	faultDeps := reports.deps()
+	// One declared fault, delivered once — exactly what faultdrop.Take
+	// does with the drop file the app left behind.
+	declared := 0
+	faultDeps.AppFault = func() (faultreport.Report, bool) {
+		declared++
+		if declared > 1 {
+			return faultreport.Report{}, false
+		}
+		return faultreport.Report{
+			Code:    "NO-API-KEY",
+			Problem: "the weather service rejected our API key",
+			Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+		}, true
+	}
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      funcReaper(func(int) (ExitStatus, error) { return ExitStatus{ExitCode: 70}, nil }),
+		Rebooter:    rebooter,
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: faultDeps,
+		Sleep:       func(time.Duration) { t.Error("the supervisor waited to restart an app that declared a fatal fault") },
+		Now:         time.Now,
+	}
+
+	// No opts.Stop: supervision has to end on its own, which is the
+	// behaviour under test.
+	if err := Run(deps, testOptions()); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if !rebooter.halted {
+		t.Error("the device did not halt")
+	}
+	if rebooter.rebooted {
+		t.Error("the device rebooted; a declared fault must leave it down")
+	}
+	if reports.writeCount() != 1 {
+		t.Fatalf("wrote %d reports for one exit, want 1", reports.writeCount())
+	}
+	written := reports.written()
+	for _, want := range []string{"NO-API-KEY", "add WEATHER_API_KEY to gosd.toml on this card", "panic: nil map write"} {
+		if !strings.Contains(written, want) {
+			t.Errorf("LAST_FATAL_ERROR.md content %q missing %q", written, want)
+		}
+	}
+	if strings.Contains(written, "GOSD-APP-CRASH") {
+		t.Error("the crash-tail report won over the app's own; the fix it names is the reason this path exists")
+	}
+}

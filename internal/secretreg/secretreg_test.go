@@ -93,6 +93,39 @@ func TestParseDropsOversizedFile(t *testing.T) {
 	}
 }
 
+func TestEncodeWritesWhatParseReadsBack(t *testing.T) {
+	entries := []Entry{{Secret: "sk_live_51H_abcdefg", Replacement: "stripe-api-key"}}
+
+	data, err := Encode(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rules := Parse(data)
+	if len(rules) != 1 || rules[0].Needle != entries[0].Secret || rules[0].Replacement != Label(entries[0].Replacement) {
+		t.Errorf("Parse(Encode(entries)) = %+v, want the entry back under its label", rules)
+	}
+}
+
+func TestEncodeRefusesWhatParseWouldNotReadBackWhole(t *testing.T) {
+	// Both bounds matter to the writer, for different reasons: past
+	// MaxRegistrations Parse silently drops the tail, and past
+	// MaxTotalBytes it drops every entry in the file — so a writer that
+	// let either through would cause a redaction outage rather than lose
+	// one registration.
+	tooMany := make([]Entry, MaxRegistrations+1)
+	for i := range tooMany {
+		tooMany[i] = Entry{Secret: fmt.Sprintf("secret-value-number-%02d", i), Replacement: "label"}
+	}
+	if _, err := Encode(tooMany); err == nil {
+		t.Errorf("Encode() accepted %d registrations, want a refusal past %d", len(tooMany), MaxRegistrations)
+	}
+
+	if _, err := Encode([]Entry{{Secret: strings.Repeat("s", MaxTotalBytes), Replacement: "enormous"}}); err == nil {
+		t.Errorf("Encode() accepted an entry larger than the %d bytes Parse will read", MaxTotalBytes)
+	}
+}
+
 func TestLabelNamesTheReplacementNotTheSecret(t *testing.T) {
 	if got, want := Label("stripe-api-key"), "{secret: stripe-api-key}"; got != want {
 		t.Errorf("Label(%q) = %q, want %q", "stripe-api-key", got, want)

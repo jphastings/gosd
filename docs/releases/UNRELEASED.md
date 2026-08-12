@@ -27,8 +27,8 @@ this stub. Last folded into: v0.3.0 (2026-08-10).
   been up and how many times it has booted — and says plainly when the clock
   can't be trusted rather than printing a 1970 timestamp. It is deleted again
   once your app has run for thirty seconds, so a device that recovered doesn't
-  keep looking broken. Reports for your *app's* own crashes are still to come;
-  see [the crash report guide](../crash-reports.md).
+  keep looking broken. Your app's own crashes are covered by the two
+  call-outs below; see [the crash report guide](../crash-reports.md).
 - **Your app now gets a crash report too, with no code changes.** gosd-init
   keeps the tail of your app's own console output and, if it exits
   unexpectedly — a panic, a segfault, an OOM kill, any non-zero or
@@ -40,3 +40,17 @@ this stub. Last folded into: v0.3.0 (2026-08-10).
   broken. A single boot writes at most 10 of these reports, however long an
   app keeps crash-looping — see [the crash report guide](../crash-reports.md)
   for the reasoning.
+- **New public package: `fault`.** Your app can now raise a crash report of
+  its own, for the failures it understands and a stack trace never could — a
+  rejected API key, a config naming a sensor this build doesn't support.
+  `fault.Fatal` describes the problem in the device owner's terms, and the
+  device writes it to the card and **halts**: an app calling it is asserting
+  that no restart can help, so it stays down until someone power-cycles it.
+  Anything that might succeed on a retry should stay an ordinary returned
+  error. On your Mac, or under `go test`, the same call prints the same
+  report to stderr and exits, so you can read exactly what your user would
+  read without flashing a card. `fault.RegisterSecretString` names a value
+  that must never appear in a report — written through the moment you call
+  it, so it still redacts a panic your code never saw coming. See
+  [the crash report guide](../crash-reports.md); `examples/hello` will raise
+  one on demand if you set `HELLO_FATAL` in `gosd.toml`.

@@ -128,6 +128,15 @@ the people you send them to never need a terminal.
 - **The runtime contract** your app runs under once booted — supervision,
   environment variables, networking timing, storage, logging, and what
   survives an upgrade: [`docs/runtime.md`](docs/runtime.md)
+- **Crash reports on the card** — an unattended device with no screen and no
+  console still has to tell someone what went wrong. On a fatal error it
+  writes `LAST_FATAL_ERROR.md` to the root of its boot partition, readable on
+  any computer and safe to forward: your app's own environment values are
+  scrubbed out of it. The `fault` package lets your app raise one for a
+  problem only a person can fix — and prints exactly the same report to your
+  terminal when you run it off a device, so you can read what your user would
+  read without flashing a card:
+  [when to raise one, and what it says](docs/crash-reports.md)
 - **The device's `gosd.toml`** — the hand-editable settings file on every
   card. Pre-populate and *document* your app's environment variables with
   per-key comments and commented-out suggestions (`gosd build --env` /

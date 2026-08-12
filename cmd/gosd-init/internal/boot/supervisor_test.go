@@ -207,7 +207,7 @@ func TestSupervisorReportsOnExitWithTheFullExitStatus(t *testing.T) {
 		Now:         clock.Now,
 		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
-		OnExit:      func(status ExitStatus, ran time.Duration) { got = append(got, status) },
+		OnExit:      func(status ExitStatus, ran time.Duration) bool { got = append(got, status); return false },
 		Log:         func(string, ...any) {},
 	}
 
@@ -242,7 +242,7 @@ func TestSupervisorSkipsOnExitWhenWaitFails(t *testing.T) {
 		Now:         clock.Now,
 		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
-		OnExit:      func(ExitStatus, time.Duration) { calls++ },
+		OnExit:      func(ExitStatus, time.Duration) bool { calls++; return false },
 		Log:         func(string, ...any) {},
 	}
 
