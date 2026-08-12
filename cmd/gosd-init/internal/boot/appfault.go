@@ -24,13 +24,13 @@ func appFault(deps Deps) (faultreport.Report, bool) {
 // is unknowable.
 //
 // tail is the console output captured for this run (gosd-s9uq), folded into
-// the report by withConsoleTail; see there for why a declared report and a
-// console tail are not alternatives.
+// the report by faultreport.FoldConsoleTail; see there for why a declared
+// report and a console tail are not alternatives.
 //
 // Like fatal(), this returns after asking for the halt: in production the
 // machine is already on its way down, and the return only matters to tests.
 func haltForAppFault(deps Deps, log func(format string, args ...any), reporter *fatalReporter, report faultreport.Report, tail string) {
-	report = withConsoleTail(report, tail)
+	report = faultreport.FoldConsoleTail(report, tail)
 
 	declared := report.Code
 	if declared == "" {
@@ -41,25 +41,4 @@ func haltForAppFault(deps Deps, log func(format string, args ...any), reporter *
 
 	deps.Rebooter.Sync()
 	deps.Rebooter.Halt()
-}
-
-// withConsoleTail folds the console output captured for this run into a
-// declared report's technical detail.
-//
-// The app's own report always wins the human sections: it knows what its
-// user was promised and what would fix it, and a console tail never can.
-// But the two are not alternatives — a fault.Fatal call on one goroutine
-// and a panic on another can genuinely coincide, and when they do the panic
-// is the part whoever gets the file forwarded to them needs. So both are
-// kept, the app's own detail first.
-func withConsoleTail(report faultreport.Report, tail string) faultreport.Report {
-	if tail == "" {
-		return report
-	}
-	if report.Detail == "" {
-		report.Detail = tail
-		return report
-	}
-	report.Detail += "\n\nconsole output up to the exit:\n\n" + tail
-	return report
 }

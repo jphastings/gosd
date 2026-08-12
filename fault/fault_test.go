@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jphastings/gosd/internal/faultdrop"
+	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/secretreg"
 )
 
@@ -81,6 +83,11 @@ func TestFatalPrintsTheReportAndExitsWithoutReturning(t *testing.T) {
 	if strings.Contains(report, longSecret) {
 		t.Error("Fatal printed the registered secret's value")
 	}
+	for _, absent := range []string{"uptime:", "boot:", "device:"} {
+		if strings.Contains(report, absent) {
+			t.Errorf("Fatal printed:\n%s\nwant %q omitted rather than printed as unknown: nothing off a device could ever have answered it", report, absent)
+		}
+	}
 }
 
 func TestReportsHandedOverAreWaitingForGosdInit(t *testing.T) {
@@ -113,6 +120,83 @@ func TestReportsHandedOverAreWaitingForGosdInit(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "stays down until someone power-cycles it") {
 		t.Errorf("console said:\n%s\nwant it to say the device stays down", out)
+	}
+	if !strings.Contains(out.String(), "NO-API-KEY") {
+		t.Errorf("console said:\n%s\nwant the error code named, so someone with a serial cable knows what happened", out)
+	}
+	// The load-bearing assertion for gosd-72ga: once a report is handed to
+	// gosd-init, nothing report-shaped may still reach this process's own
+	// console. consoletail captures this process's stdout/stderr verbatim as
+	// /app's own output, and gosd-init folds that tail into the very report
+	// it is about to write — so anything that looks like the report here
+	// would end up nested inside the real one on the card.
+	for _, absent := range []string{"---\n", "## Technical detail", "## The problem", "the key was rejected"} {
+		if strings.Contains(out.String(), absent) {
+			t.Errorf("console said:\n%s\nwant no rendering of the report itself (contains %q) — see TestADeclaredFaultsCardCopyNeverContainsItsOwnBodyTwice for why", out, absent)
+		}
+	}
+}
+
+// TestADeclaredFaultsCardCopyNeverContainsItsOwnBodyTwice is the regression
+// test for gosd-72ga: a fault.Fatal report handed to gosd-init must never
+// carry a nested copy of itself, however gosd-init assembles the file it
+// actually writes to the card.
+//
+// It reassembles that file the same way gosd-init's own haltForAppFault
+// does — parse the drop file this package left behind, fold in whatever
+// this process's own console produced as the technical detail, then render
+// — using the exact shared functions gosd-init calls (faultdrop.Parse,
+// faultreport.FoldConsoleTail, faultreport.Render), so a regression
+// reintroduced through either side of that handoff fails here: this
+// package printing more than a pointer on deliver, or a future change to
+// the fold/render step that stops treating the two as independent.
+func TestADeclaredFaultsCardCopyNeverContainsItsOwnBodyTwice(t *testing.T) {
+	r, out, dir := onDevice(t)
+
+	r.deliver(Report{
+		Code:    "HELLO-DEMO-FATAL",
+		Doing:   "demonstrating a fatal error",
+		Problem: "HELLO_FATAL was set",
+		Detail:  errors.New("boom"),
+	})
+
+	// out is exactly what gosd-init's consoletail would have captured from
+	// this process's own stdout/stderr on a real device (sequence.go tees
+	// /app's stdio to both the console and the tail) — the bench evidence
+	// behind gosd-72ga was this exact channel carrying a full copy of the
+	// report.
+	tail := out.String()
+
+	data, err := os.ReadFile(filepath.Join(dir, "fault.json"))
+	if err != nil {
+		t.Fatalf("no report was left for gosd-init: %v", err)
+	}
+	dropped, ok := faultdrop.Parse(data)
+	if !ok {
+		t.Fatalf("gosd-init would not trust the dropped report: %s", data)
+	}
+
+	folded := faultreport.FoldConsoleTail(dropped, tail)
+	final := faultreport.Render(folded, faultreport.Context{
+		AppName:     "hello",
+		AppVersion:  "0.4.0-bench1",
+		BoardID:     "nanopi-zero2",
+		DeviceModel: "FriendlyElec NanoPi Zero2",
+		Timestamp:   time.Now(),
+		ClockSynced: false,
+		Uptime:      3 * time.Second,
+		UptimeKnown: true,
+		BootCount:   1,
+	}).Markdown
+
+	if n := strings.Count(final, "## Technical detail"); n != 1 {
+		t.Errorf("the report gosd-init would write has %d \"## Technical detail\" sections, want exactly 1 — it must not embed a copy of its own body:\n%s", n, final)
+	}
+	if n := strings.Count(final, "error_code:"); n != 1 {
+		t.Errorf("the report gosd-init would write has %d error_code frontmatter lines, want exactly 1 — a nested copy contradicts the real header:\n%s", n, final)
+	}
+	if n := strings.Count(final, "device: unknown"); n != 0 {
+		t.Errorf("the report gosd-init would write says \"device: unknown\" %d times, though the real device (%q) is known — that only happens when a second, thinner copy of the report is nested inside the first:\n%s", n, "FriendlyElec NanoPi Zero2 (nanopi-zero2)", final)
 	}
 }
 

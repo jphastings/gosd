@@ -36,11 +36,15 @@ const FileName = "LAST_FATAL_ERROR.md"
 // leaving two contradictory files on the same card.
 const LegacyFileName = "boot-failure.log"
 
-// unspecifiedCode is the error_code emitted for a report whose raiser didn't
+// UnspecifiedCode is the error_code emitted for a report whose raiser didn't
 // set one. Deliberately not in the GOSD-* namespace: that namespace is
 // gosd-init's own, and a missing code is far more likely to be an app's
-// omission than one of ours.
-const unspecifiedCode = "UNSPECIFIED"
+// omission than one of ours. Exported so a caller that has to name a
+// report's code before Render has run — the public fault package's
+// on-device console pointer, which prints only the code and never the
+// report itself (gosd-72ga) — can match it exactly rather than hand-rolling
+// the same string.
+const UnspecifiedCode = "UNSPECIFIED"
 
 // unknown is what every header field renders as when its value genuinely
 // isn't knowable, rather than guessing. A wrong timestamp in a crash report
@@ -149,6 +153,18 @@ type Context struct {
 	// applied — Result.SkippedSecrets reports which, without exposing any
 	// of them.
 	Secrets []redact.Rule
+
+	// Preview marks a report rendered off a device: the developer preview
+	// the public fault package prints to stderr on a Mac, under go test, or
+	// anywhere else gosd build didn't produce the binary. A header field
+	// that no off-device process can ever honestly know — Uptime, BootCount,
+	// DeviceModel/BoardID — is omitted from the frontmatter entirely rather
+	// than printed as "unknown" when Preview is set, so the preview reads
+	// like a real report rather than a half-populated one. On a device the
+	// same fields still print "unknown" when a read genuinely fails, because
+	// there it is diagnostic information, not a placeholder for something
+	// this render was never going to know in the first place.
+	Preview bool
 }
 
 // Result is a rendered report.
@@ -172,6 +188,37 @@ func Render(r Report, c Context) Result {
 	}
 }
 
+// FoldConsoleTail folds a captured console tail into a declared report's
+// technical detail (gosd-aa1p). It is the one place that logic lives, so
+// every caller that owns a tail — gosd-init's own app-crash halt path today —
+// applies it identically.
+//
+// The app's own report always wins the human sections: it knows what its
+// user was promised and what would fix it, and a console tail never can.
+// But the two are not alternatives — a fault call on one goroutine and a
+// panic on another can genuinely coincide, and when they do the panic is the
+// part whoever gets the file forwarded to them needs. So both are kept, the
+// app's own detail first.
+//
+// tail must be exactly what the raiser's own process wrote to its console —
+// never a rendering of a report itself. A caller that hands this a tail
+// containing another report's body (frontmatter, section headings, all of
+// it) gets exactly that nested inside Detail: this function has no way to
+// tell a legitimate stack trace from an accidental self-copy, which is why
+// the fix for gosd-72ga is upstream of here, in what a raiser is allowed to
+// put on its own console in the first place.
+func FoldConsoleTail(r Report, tail string) Report {
+	if tail == "" {
+		return r
+	}
+	if r.Detail == "" {
+		r.Detail = tail
+		return r
+	}
+	r.Detail += "\n\nconsole output up to the exit:\n\n" + tail
+	return r
+}
+
 // frontmatter renders the machine-readable header, in the locked field
 // order. Every value is emitted through yamlScalar so that a device model or
 // app version containing YAML's own punctuation can't silently truncate the
@@ -179,12 +226,12 @@ func Render(r Report, c Context) Result {
 func frontmatter(r Report, c Context) string {
 	var b strings.Builder
 	b.WriteString("---\n")
-	writeField(&b, "error_code", or(r.Code, unspecifiedCode))
+	writeField(&b, "error_code", or(r.Code, UnspecifiedCode))
 	writeField(&b, "timestamp", timestampField(c))
 	writeField(&b, "clock", clockField(c))
-	writeField(&b, "uptime", uptimeField(c))
-	writeField(&b, "boot", bootField(c))
-	writeField(&b, "device", deviceField(c))
+	writeOptionalField(&b, c, "uptime", uptimeField(c))
+	writeOptionalField(&b, c, "boot", bootField(c))
+	writeOptionalField(&b, c, "device", deviceField(c))
 	writeField(&b, "image", imageField(c))
 	b.WriteString("---\n\n")
 	return b.String()
@@ -195,6 +242,18 @@ func writeField(b *strings.Builder, name, value string) {
 	b.WriteString(": ")
 	b.WriteString(yamlScalar(value))
 	b.WriteString("\n")
+}
+
+// writeOptionalField writes name: value exactly like writeField, except in
+// an off-device preview (c.Preview) where value is the "unknown" sentinel:
+// there, the whole line is dropped instead of printed. See Context.Preview
+// for why — this is the one difference between the on-device header and the
+// preview one.
+func writeOptionalField(b *strings.Builder, c Context, name, value string) {
+	if c.Preview && value == unknown {
+		return
+	}
+	writeField(b, name, value)
 }
 
 func timestampField(c Context) string {

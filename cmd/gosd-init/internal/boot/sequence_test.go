@@ -2466,3 +2466,68 @@ func TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault(t *testing.T) {
 		t.Error("the crash-tail report won over the app's own; the fix it names is the reason this path exists")
 	}
 }
+
+// TestGosdInitsOwnConsoleLinesNeverReachTheCardReport is the load-bearing
+// assumption behind gosd-72ga's fix: gosd-init logs the full report to its
+// own console (see fatalReporter.record), and that is only safe because
+// nothing gosd-init itself writes to the console ever flows into
+// consoletail — only /app's own stdout/stderr does (sequence.go's appOutput
+// tee). If a future change routed gosd-init's own logging through that same
+// tee, this report's Detail would start accumulating gosd-init's console
+// lines — including, eventually, a whole previous report — the same
+// self-nesting bug by a different route.
+func TestGosdInitsOwnConsoleLinesNeverReachTheCardReport(t *testing.T) {
+	reports := &fakeFaultReport{}
+	rebooter := &fakeRebooter{}
+	console := &bytes.Buffer{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprintln(stdout, "panic: nil map write")
+		return 1, nil
+	})
+
+	faultDeps := reports.deps()
+	declared := 0
+	faultDeps.AppFault = func() (faultreport.Report, bool) {
+		declared++
+		if declared > 1 {
+			return faultreport.Report{}, false
+		}
+		return faultreport.Report{Code: "NO-API-KEY", Problem: "the weather service rejected our API key"}, true
+	}
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      funcReaper(func(int) (ExitStatus, error) { return ExitStatus{ExitCode: 70}, nil }),
+		Rebooter:    rebooter,
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		FaultReport: faultDeps,
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+
+	if err := Run(deps, testOptions()); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if reports.writeCount() != 1 {
+		t.Fatalf("wrote %d reports for one exit, want 1", reports.writeCount())
+	}
+
+	// gosd-init's own lines are prefixed "[gosd] " (see logger.go); proving
+	// that prefix reached the real console but never the card confirms the
+	// two channels are actually independent, not just independent by
+	// coincidence in this test's fixtures.
+	if !strings.Contains(console.String(), "[gosd] ") {
+		t.Fatal("the console never received any of gosd-init's own log lines; this test can't prove anything")
+	}
+	written := reports.written()
+	if strings.Contains(written, "[gosd] ") {
+		t.Errorf("LAST_FATAL_ERROR.md contains a gosd-init console line:\n%s\nwant only /app's own output folded in as technical detail", written)
+	}
+}

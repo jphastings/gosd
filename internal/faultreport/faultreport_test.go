@@ -195,6 +195,87 @@ func TestRenderKeepsTheHeaderParseable(t *testing.T) {
 	}
 }
 
+func TestFoldConsoleTailKeepsTheAppsOwnWordsAndTheTailBoth(t *testing.T) {
+	// A fault call on one goroutine and a panic on another can genuinely
+	// coincide. The app knows what its user was promised; the tail knows
+	// what actually blew up.
+	declared := Report{
+		Code:    "NO-API-KEY",
+		Doing:   "fetching the forecast",
+		Problem: "the weather service rejected our API key",
+		Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+		Detail:  "401 unauthorized",
+	}
+
+	got := FoldConsoleTail(declared, "panic: nil map write\ngoroutine 7 [running]:")
+
+	if got.Code != declared.Code || got.Doing != declared.Doing || got.Problem != declared.Problem || got.Fix != declared.Fix {
+		t.Errorf("the human sections became %+v, want the app's own", got)
+	}
+	if !strings.Contains(got.Detail, "401 unauthorized") || !strings.Contains(got.Detail, "panic: nil map write") {
+		t.Errorf("technical detail = %q, want both the app's error and the console tail", got.Detail)
+	}
+}
+
+func TestFoldConsoleTailBecomesTheOnlyDetailWhenThereIsNone(t *testing.T) {
+	got := FoldConsoleTail(Report{Code: "NO-API-KEY"}, "listening on :80\npanic: nil map write")
+
+	if got.Detail != "listening on :80\npanic: nil map write" {
+		t.Errorf("technical detail = %q, want the console tail alone", got.Detail)
+	}
+}
+
+func TestFoldConsoleTailLeavesAnEmptyTailAlone(t *testing.T) {
+	declared := Report{Code: "NO-API-KEY", Detail: "401 unauthorized"}
+
+	got := FoldConsoleTail(declared, "")
+
+	if got.Detail != "401 unauthorized" {
+		t.Errorf("technical detail = %q, want it unchanged when there is no tail to fold in", got.Detail)
+	}
+}
+
+// TestRenderOmitsUnhonestUnknownsInAPreview pins the "worth fixing while
+// here" half of gosd-72ga: the off-device developer preview never had a
+// device tree, a boot counter or an uptime clock to read in the first
+// place, so printing "unknown" for each reads as a broken report rather
+// than a genuine preview of a complete one. The same fields on a real
+// device (Preview unset) still print "unknown" honestly — see the
+// "full" golden case, which keeps them.
+func TestRenderOmitsUnhonestUnknownsInAPreview(t *testing.T) {
+	got := Render(Report{Code: "NO-API-KEY", Problem: "the key was rejected"}, Context{
+		AppName:     "myapp",
+		Timestamp:   time.Now(),
+		ClockSynced: true,
+		Preview:     true,
+	}).Markdown
+
+	for _, absent := range []string{"uptime:", "boot:", "device:"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("preview report contains %q, want it omitted entirely rather than printed as unknown:\n%s", absent, got)
+		}
+	}
+	if !strings.Contains(got, "error_code: NO-API-KEY") || !strings.Contains(got, "image: myapp") {
+		t.Errorf("preview report is missing fields it CAN honestly claim:\n%s", got)
+	}
+}
+
+// TestRenderStillSaysUnknownOnADeviceWhenAFieldGenuinelyFailsToRead proves
+// Preview is the only thing that changes: an on-device report — this image
+// simply has no writable /data, no readable device tree, and hasn't
+// measured uptime — still says so plainly, because there "unknown" is
+// diagnostic information, not a placeholder for something a preview could
+// never have known anyway.
+func TestRenderStillSaysUnknownOnADeviceWhenAFieldGenuinelyFailsToRead(t *testing.T) {
+	got := Render(Report{Code: "GOSD-APP-CRASH"}, Context{BoardID: "pi-zero-2w"}).Markdown
+
+	for _, want := range []string{"uptime: unknown", "boot: unknown"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("on-device report is missing %q, want it printed honestly:\n%s", want, got)
+		}
+	}
+}
+
 func checkGolden(t *testing.T, name, got string) {
 	t.Helper()
 

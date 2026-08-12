@@ -191,13 +191,29 @@ up. The tail is kept as your report's technical detail, which matters when a
 rules above do still apply across exits: a device already carrying a report
 from this stable run keeps it, and your newer one only reaches the console.
 
+**On a device, `Fatal` prints only a short line naming your error code — never
+the full report.** gosd-init keeps a tail of your app's own console output for
+the free crash report above, and that tail is exactly this process's own
+stdout/stderr. Printing the whole report there would hand gosd-init a copy of
+your report as its own technical detail, nested inside the very report
+gosd-init is about to write — the thinner copy, since your app's own process
+can never know the device model, uptime or boot count, so it would sit right
+below the real header contradicting it. gosd-init logs the complete report to
+the serial console itself once it commits one, which is strictly better than
+anything your app could print for itself: someone with a cable attached still
+sees the full report, with the answers only gosd-init has.
+
 Off-device — on your Mac, or under `go test` — `fault.Fatal` renders the same
 Markdown to stderr and exits non-zero, rather than looking for a boot
 partition, so you can see exactly what your user will see without flashing
 anything. The line after the report says which of the two happened. The
 printed copy carries only what your own process can know: on a device, the
 copy on the card also names the hardware, the image, the uptime and the boot
-count, and has your app's environment scrubbed out of it.
+count, and has your app's environment scrubbed out of it. A header field this
+process could never honestly answer off a device — `uptime`, `boot`, `device`
+— is left out of the preview entirely, rather than printed as `unknown`, so
+what you see reads like the real report you're checking the wording of, not a
+half-populated one.
 
 The switch is the `gosd` build tag, which `gosd build` sets and nothing else
 does — not a probe for `/run`, which any Linux machine running as root would
