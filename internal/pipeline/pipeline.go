@@ -213,6 +213,15 @@ type Options struct {
 	// FileRanges - the raw material for cmd/gosd's <image>.inject.json
 	// sidecar (see internal/inject.WriteManifest).
 	Placeholders []inject.Placeholder
+
+	// EnvPlaceholderBytes is `gosd build --env-placeholder <size>`: the exact
+	// number of bytes to reserve for gosd.toml's [env] body, so a downloader
+	// can overwrite that region with real settings (see
+	// internal/gosdtoml.RenderWithReservedEnv and docs/image-injection.md).
+	// Its byte ranges join the placeholders' in the image.WriteReport's
+	// FileRanges, keyed by "gosd.toml". Zero reserves nothing, which is every
+	// build that doesn't ask.
+	EnvPlaceholderBytes int
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -311,7 +320,29 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// verbatim; otherwise Config.Env's baked defaults render the plain, sorted
 	// [env] as before (see Options.EnvBody).
 	envSection := gosdtoml.EnvSection{Values: opts.Config.Env, Verbatim: opts.EnvBody}
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}))
+
+	reportRanges := make([]image.RangeRequest, 0, len(opts.Placeholders)+1)
+	gosdToml := gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{})
+
+	// --env-placeholder reserves the [env] body itself rather than adding a
+	// file of its own, so an injected value arrives as an ordinary gosd.toml
+	// value: gosd-init merges it with no new precedence rule, and the
+	// provisioning snapshot treats it as the operator's own intent, which is
+	// what lets it survive a later reflash (see provsnapshot and
+	// docs/image-injection.md).
+	if opts.EnvPlaceholderBytes > 0 {
+		reserved, span, err := gosdtoml.RenderWithReservedEnv(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}, opts.EnvPlaceholderBytes)
+		if err != nil {
+			return image.WriteReport{}, fmt.Errorf("reserving --env-placeholder space in gosd.toml for %s failed: %w; raise --env-placeholder or bake fewer --env values in", opts.Board.Name(), err)
+		}
+		gosdToml = reserved
+		reportRanges = append(reportRanges, image.RangeRequest{
+			Path:        "gosd.toml",
+			OffsetBytes: int64(span.OffsetBytes),
+			LengthBytes: int64(span.LengthBytes),
+		})
+	}
+	bootFiles["gosd.toml"] = bytes.NewReader(gosdToml)
 
 	// opts.Placeholders land at the FAT root the same way, right after
 	// gosd.toml and still before the read-and-hash loop below, so they're
@@ -322,7 +353,6 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	// differing only by case can't coexist on the card anyway. Checking
 	// against bootFiles itself (mutated as the loop adds each rendered
 	// placeholder) catches both kinds of collision with one check.
-	reportRanges := make([]string, 0, len(opts.Placeholders))
 	for _, p := range opts.Placeholders {
 		for existing := range bootFiles {
 			if strings.EqualFold(existing, p.Path) {
@@ -334,7 +364,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 			return image.WriteReport{}, fmt.Errorf("rendering --placeholder %s failed: %w", p.Path, err)
 		}
 		bootFiles[p.Path] = bytes.NewReader(rendered)
-		reportRanges = append(reportRanges, p.Path)
+		reportRanges = append(reportRanges, image.RangeRequest{Path: p.Path})
 	}
 
 	// Read every FAT-root file into memory — both to hash it into the

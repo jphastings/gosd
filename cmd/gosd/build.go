@@ -85,6 +85,7 @@ var (
 	dataFilesystem string
 	labelPrefix    string
 	placeholders   []string
+	envPlaceholder string
 	ingressFlags   []string
 	supportURL     string
 	appVersion     string
@@ -168,6 +169,8 @@ not touch the cache at all.`,
 			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
+	cmd.Flags().StringVar(&envPlaceholder, "env-placeholder", "",
+		"reserve <size> bytes (e.g. --env-placeholder 8KiB) for gosd.toml's [env] section, and record that region's byte ranges in the <image>.inject.json manifest, so a provisioning tool can write per-device settings into a downloaded .img the same way --placeholder works; what it writes arrives as an ordinary gosd.toml [env] value, so the device needs no app code for it and the provisioning snapshot carries it across a later reflash; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
 	cmd.Flags().StringVar(&supportURL, "support-url", "",
@@ -237,6 +240,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	placeholderSpecs, err := parsePlaceholderFlags(placeholders)
+	if err != nil {
+		return err
+	}
+
+	envPlaceholderBytes, err := parseEnvPlaceholderFlag(envPlaceholder)
 	if err != nil {
 		return err
 	}
@@ -400,6 +408,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ExtraExecutables:       extraExecutables,
 			ExtraFiles:             extraFiles,
 			Placeholders:           placeholderSpecs,
+			EnvPlaceholderBytes:    envPlaceholderBytes,
 			IngressCloudflared:     ingressSelected.Cloudflared,
 			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
 			AppName:                appName,
@@ -415,8 +424,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 		printBootVolumeUsage(cmd, b.Name(), report)
 
-		if len(placeholderSpecs) > 0 {
-			manifestPath, err := inject.WriteManifest(outputs[b.Name()], b.Name(), placeholderSpecs, report.FileRanges)
+		if len(placeholderSpecs) > 0 || envPlaceholderBytes > 0 {
+			manifestPath, err := inject.WriteManifest(outputs[b.Name()], inject.ManifestSpec{
+				Board:            b.Name(),
+				Placeholders:     placeholderSpecs,
+				EnvReservedBytes: int64(envPlaceholderBytes),
+				FileRanges:       report.FileRanges,
+			})
 			if err != nil {
 				return fmt.Errorf("writing the injection manifest for %s (%s) failed: %w", appName, b.Name(), err)
 			}
@@ -658,6 +672,36 @@ func parseBootSize(s string) (int64, error) {
 			s, size, (size+bootSizeAlignmentBytes/2)/bootSizeAlignmentBytes)
 	}
 	return size, nil
+}
+
+// maxEnvPlaceholderBytes is the largest region --env-placeholder will
+// reserve. [env] holds settings a person can read on the card, not payloads;
+// a value this far past that is a units slip (bytes where MiB was meant),
+// and refusing it here beats reserving it and failing later with a full boot
+// partition.
+const maxEnvPlaceholderBytes = 1 << 20
+
+// parseEnvPlaceholderFlag turns --env-placeholder <size> into a byte count,
+// zero when the flag wasn't given. Sizes are checked before compilation
+// starts, so a bad value fails fast; a region too small for the values this
+// build bakes in can only be caught once they're rendered, and pipeline
+// reports that.
+func parseEnvPlaceholderFlag(flag string) (int, error) {
+	if flag == "" {
+		return 0, nil
+	}
+
+	size, err := parseSizeBytes("--env-placeholder", flag)
+	if err != nil {
+		return 0, err
+	}
+	if size <= 0 {
+		return 0, fmt.Errorf("--env-placeholder %q reserves nothing; give a size like 8KiB, or leave the flag off entirely", flag)
+	}
+	if size > maxEnvPlaceholderBytes {
+		return 0, fmt.Errorf("--env-placeholder %q reserves %s of gosd.toml, more than the %s ceiling; [env] holds settings, not payloads, so check the units", flag, humanizeBinaryBytes(size), humanizeBinaryBytes(maxEnvPlaceholderBytes))
+	}
+	return int(size), nil
 }
 
 // parsePlaceholderFlags turns the repeated --placeholder <path>=<size> flag

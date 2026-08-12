@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/diskfmt"
+	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/inject"
@@ -2924,4 +2926,106 @@ func recordContent(t *testing.T, records []cpio.Record, name string) []byte {
 	}
 	t.Fatalf("no record named %q found in initramfs", name)
 	return nil
+}
+
+// TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion is the acceptance
+// test for injectable app settings (gosd-dwub): `gosd build
+// --env-placeholder` reserves gosd.toml's [env] body, publishes its byte
+// ranges, and a plain os.WriteAt of same-length TOML into those ranges
+// changes what the device's [env] parses to - without disturbing the rest of
+// gosd.toml, and with the pristine region parsing to exactly the baked
+// --env defaults, which is what keeps a plain reflash restorable from the
+// provisioning snapshot.
+func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	const reserved = 8 * 1024
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--hostname", "injected-device",
+		"--env", "API_URL=https://example.com",
+		"--env-placeholder", "8KiB",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	manifestData, err := os.ReadFile(inject.ManifestPath(imgPath))
+	if err != nil {
+		t.Fatalf("reading the injection manifest: %v", err)
+	}
+	var manifest inject.Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if manifest.Env == nil {
+		t.Fatal("manifest has no env region; --env-placeholder must publish one")
+	}
+	if manifest.Env.Size != reserved {
+		t.Errorf("env.size = %d, want the reserved %d", manifest.Env.Size, reserved)
+	}
+	var total int64
+	for _, r := range manifest.Env.Ranges {
+		total += r.Length
+	}
+	if total != reserved {
+		t.Errorf("env ranges total %d bytes, want exactly the reserved %d", total, reserved)
+	}
+
+	imgFile, err := os.OpenFile(imgPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("opening the image for range reads/patches: %v", err)
+	}
+	defer func() { _ = imgFile.Close() }()
+
+	pristine := readRangesAt(t, imgFile, manifest.Env.Ranges)
+	gotSum := sha256.Sum256(pristine)
+	if hex.EncodeToString(gotSum[:]) != manifest.Env.SHA256 {
+		t.Errorf("the env region hashes to %x, want its manifest sha256 %s", gotSum, manifest.Env.SHA256)
+	}
+	if before := envOf(t, readBootFile(t, imgPath, "gosd.toml")); before["API_URL"] != "https://example.com" {
+		t.Errorf("pristine [env] = %+v, want it to carry the baked --env default so a reflash has no hand-edit to defer to", before)
+	}
+
+	body := []byte("API_URL = \"https://injected.example\"\nAPI_TOKEN = \"s3cret\"\n")
+	writeRangesAt(t, imgFile, manifest.Env.Ranges, append(body, bytes.Repeat([]byte("\n"), reserved-len(body))...))
+	if err := imgFile.Close(); err != nil {
+		t.Fatalf("closing the image after patching: %v", err)
+	}
+
+	patched := readBootFile(t, imgPath, "gosd.toml")
+	got := envOf(t, patched)
+	want := map[string]string{"API_URL": "https://injected.example", "API_TOKEN": "s3cret"}
+	if !maps.Equal(got, want) {
+		t.Errorf("[env] after the splice = %+v, want %+v", got, want)
+	}
+
+	cfg, _, err := gosdtoml.Parse(patched)
+	if err != nil {
+		t.Fatalf("patched gosd.toml no longer parses: %v", err)
+	}
+	if cfg.Hostname != "injected-device" {
+		t.Errorf("hostname after the splice = %q, want the built-in %q: the splice must not disturb the rest of the file", cfg.Hostname, "injected-device")
+	}
+}
+
+// envOf parses a gosd.toml and returns its [env] table.
+func envOf(t *testing.T, gosdToml []byte) map[string]string {
+	t.Helper()
+	cfg, _, err := gosdtoml.Parse(gosdToml)
+	if err != nil {
+		t.Fatalf("parsing gosd.toml: %v", err)
+	}
+	return cfg.Env
 }

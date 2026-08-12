@@ -56,14 +56,14 @@ func run(args []string) error {
 	bootFiles := map[string]io.Reader{
 		"gosd.toml": bytes.NewReader([]byte("# injectfixture: a token gosd.toml, not read by anything\n")),
 	}
-	reportRanges := make([]string, 0, len(placeholders))
+	reportRanges := make([]image.RangeRequest, 0, len(placeholders))
 	for _, p := range placeholders {
 		rendered, err := inject.Render(p)
 		if err != nil {
 			return fmt.Errorf("rendering placeholder %q failed: %w", p.Path, err)
 		}
 		bootFiles[p.Path] = bytes.NewReader(rendered)
-		reportRanges = append(reportRanges, p.Path)
+		reportRanges = append(reportRanges, image.RangeRequest{Path: p.Path})
 	}
 
 	imgPath := filepath.Join(outDir, "fixture.img")
@@ -87,7 +87,11 @@ func run(args []string) error {
 		return fmt.Errorf("writing fixture image %s failed: %w", imgPath, err)
 	}
 
-	manifestPath, err := inject.WriteManifest(imgPath, "test-fixture", placeholders, report.FileRanges)
+	manifestPath, err := inject.WriteManifest(imgPath, inject.ManifestSpec{
+		Board:        "test-fixture",
+		Placeholders: placeholders,
+		FileRanges:   report.FileRanges,
+	})
 	if err != nil {
 		return fmt.Errorf("writing injection manifest for %s failed: %w", imgPath, err)
 	}

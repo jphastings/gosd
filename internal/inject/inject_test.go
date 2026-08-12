@@ -156,7 +156,7 @@ func TestWriteManifestWritesTheDocumentedSchema(t *testing.T) {
 		"network-config": {{OffsetBytes: 17334272, LengthBytes: 1024}, {OffsetBytes: 17336320, LengthBytes: 1024}},
 	}
 
-	manifestPath, err := inject.WriteManifest(imgPath, "pi-zero-2w", placeholders, fileRanges)
+	manifestPath, err := inject.WriteManifest(imgPath, inject.ManifestSpec{Board: "pi-zero-2w", Placeholders: placeholders, FileRanges: fileRanges})
 	if err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestWriteManifestErrorsOnMissingFileRangesEntry(t *testing.T) {
 
 	placeholders := []inject.Placeholder{{Path: "backupist.yaml", SizeBytes: 4096}}
 
-	_, err := inject.WriteManifest(imgPath, "pi-zero-2w", placeholders, map[string][]image.ByteRange{})
+	_, err := inject.WriteManifest(imgPath, inject.ManifestSpec{Board: "pi-zero-2w", Placeholders: placeholders, FileRanges: map[string][]image.ByteRange{}})
 	if err == nil {
 		t.Fatal("WriteManifest() with no fileRanges entry for the placeholder succeeded, want an error")
 	}

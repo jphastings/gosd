@@ -52,9 +52,9 @@ placeholder is refused case-insensitively (FAT paths are case-insensitive).
 
 ## The manifest: `<image basename>.inject.json`
 
-Written next to the built image whenever `--placeholder` was given (the
-extension is swapped, the same convention `--catalog`'s `os_list.json`
-fragments use):
+Written next to the built image whenever `--placeholder` or
+`--env-placeholder` was given (the extension is swapped, the same convention
+`--catalog`'s `os_list.json` fragments use):
 
 ```json
 {
@@ -72,7 +72,12 @@ fragments use):
       "sha256": "<hex, the placeholder's rendered content>",
       "ranges": [ { "offset": 17301504, "length": 32768 } ]
     }
-  ]
+  ],
+  "env": {
+    "size": 8192,
+    "sha256": "<hex, the reserved region as gosd built it>",
+    "ranges": [ { "offset": 17334272, "length": 8192 } ]
+  }
 }
 ```
 
@@ -87,6 +92,14 @@ fragments use):
 - `placeholders[].sha256` lets a consumer prove a placeholder's ranges are
   still pristine (unpatched) before writing to them, independent of the
   whole-image hash.
+- `env` is present only on a build that passed `--env-placeholder`, and
+  describes a region *inside* `gosd.toml` rather than a file of its own —
+  same three fields, same guarantees, and the same
+  `# GOSD-PLACEHOLDER`-style pristine check via its `sha256`. It's a
+  separate key precisely because it isn't a whole file: writing its `size`
+  bytes anywhere but its `ranges` would corrupt the rest of gosd.toml. See
+  "Injecting environment variables" below. A client that predates the key
+  ignores it and keeps working.
 
 ## Client algorithm (typical shape)
 
@@ -94,9 +107,9 @@ A tool consuming this manifest to splice in real configuration should:
 
 1. Obtain the manifest from a source it trusts (its own origin, a
    signed/pinned URL — the manifest itself carries no signature).
-2. Render the real configuration for each placeholder, padded to exactly
-   that placeholder's `size`; refuse up front if the real content wouldn't
-   fit.
+2. Render the real configuration for each placeholder — and for the `env`
+   region, if the manifest has one — padded to exactly the `size` declared
+   for it; refuse up front if the real content wouldn't fit.
 3. Fetch the image; verify its SHA-256 against `image.sha256`.
 4. Verify each placeholder's currently-pristine ranges hash to
    `placeholders[].sha256`, proving nothing unexpected has changed there.
@@ -116,89 +129,97 @@ lives in the Backup.ist project's `docs/IMAGE-INJECTION.md`.
 
 ## Injecting environment variables
 
-Your app's environment variables are the one setting this mechanism can't
-reach directly. They come from two places only (see
-[how an app receives its environment](runtime.md#app-environment-variables-gosdtoml-env)):
-defaults baked into `config.json`, which lives inside the compressed
-initramfs and so has no stable byte ranges, and the card's `gosd.toml [env]`
-table — and `gosd.toml`, like every other existing boot file, is refused as
-a `--placeholder` path. Cloud-init provisioning carries a hostname and WiFi
-credentials, never environment variables.
-
-Reserve a placeholder your app reads for itself instead. The boot partition
-stays mounted read-only at `/boot` while your app runs (see
-[the storage tiers](runtime.md#root-filesystem-ram-wiped-every-reboot)), so
-a placeholder is an ordinary file it can open at startup:
+Most per-device configuration is a handful of settings the app reads from its
+environment, so those have a mechanism of their own.
+`gosd build --env-placeholder <size>` reserves that many bytes for the body of
+gosd.toml's `[env]` table and publishes that region's byte ranges in the
+manifest, under a top-level `env` key:
 
 ```sh
-gosd build . --board pi-zero-2w --placeholder app.env=4KiB
+gosd build . --board pi-zero-2w \
+  --env API_URL=https://api.example.com \
+  --env-placeholder 8KiB
 ```
 
-Fill it in like any other placeholder. Content shorter than the reserved
-size is padded with trailing newlines, so pick a format that tolerates
-trailing whitespace — JSON does, and escapes any value you can throw at it:
+A downloader overwrites those ranges the same way it overwrites a
+placeholder's, and what it writes becomes an ordinary `gosd.toml` `[env]`
+value. That is the whole point of reserving space *inside* gosd.toml rather
+than shipping a file of gosd's own:
 
-```ts
-await withPlaceholders("https://dl.example.com/myapp-pi-zero-2w.img", {
-  "app.env": JSON.stringify({ API_URL: "https://api.example.com", API_TOKEN: token }),
-});
-```
+- **No app code.** `gosd-init` merges the region into your app's environment
+  along with everything else, so `os.Getenv` finds it (see
+  [how an app receives its environment](runtime.md#app-environment-variables-gosdtoml-env)).
+- **It survives a reflash**, through the same provisioning snapshot that
+  carries hand-edited settings across an upgrade — see below.
+- **Crash reports redact it.** Every value `gosd-init` merges becomes a
+  redaction rule, so an injected API token can't reach
+  `LAST_FATAL_ERROR.md`.
+- **The card still explains itself.** Someone who opens gosd.toml sees the
+  injected settings where every other setting lives, and can edit them.
 
-Then read it back before anything consults the environment. Setting the
-values with `os.Setenv` keeps every `os.Getenv` call site in your app
-unchanged, whether the values were injected, baked with `--env`, or
-hand-written into `gosd.toml`:
+### What to write into the region
 
-```go
-// loadInjectedEnv applies the settings a provisioning tool spliced into a
-// placeholder file on the boot partition. A missing file, or one no tool has
-// filled in, leaves the environment untouched.
-func loadInjectedEnv(path string) error {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if bytes.HasPrefix(raw, []byte("# GOSD-PLACEHOLDER")) {
-		return nil
-	}
+Exactly `size` bytes of TOML `[env]` **body** — `KEY = "value"` lines and
+comments — padded to length with newlines. Two rules:
 
-	var injected map[string]string
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &injected); err != nil {
-		return fmt.Errorf("reading injected settings from %s: %w", path, err)
-	}
-	for key, value := range injected {
-		if err := os.Setenv(key, value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-```
+- **No section headers.** The region sits inside the `[env]` table, so a
+  `[wifi]` or `[anything]` line would capture every setting gosd wrote after
+  it.
+- **Restate every key you want.** The region is the whole body, not an
+  addition to it, and a key given twice in one TOML table is a parse error
+  rather than a last-one-wins override. Whatever you leave out falls back to
+  the image's baked default.
 
-Called as `loadInjectedEnv("/boot/app.env")` at the top of `main`. If a
-dependency reads its configuration in a package `init` function, hand it the
-values directly rather than relying on `os.Setenv` running first.
+A pristine region isn't "absent" the way an untouched placeholder file is: it
+holds the `--env`/`--env-file` defaults this image was built with, rendered
+exactly as they would be without `--env-placeholder`, plus comment padding.
+An un-injected card therefore behaves as if the flag had never been passed.
 
-Three differences from a real `gosd.toml [env]` value are worth knowing
-before choosing this route:
+### What happens on the next reflash
 
-- **Crash-report redaction isn't automatic.** `gosd-init` turns every
-  environment value it merges into a redaction rule, so an `[env]` secret
-  never reaches a crash report; values your app loads for itself are
-  invisible to it. Register the secret ones as soon as you hold them, with
-  `fault.RegisterSecretString(os.Getenv("API_TOKEN"), "api-token")` (see
-  [what a crash report does with secrets](crash-reports.md#secrets)) — and
-  only the secret ones, since a registered value is replaced everywhere it
-  appears, including in the technical detail you wanted to read.
-- **The reserved names aren't policed.** `gosd build --env` refuses a
-  `GOSD_*` key and `gosd-init` ignores one written into `gosd.toml`, but
-  nothing stops your own `os.Setenv` from overwriting `GOSD_BOARD` or
-  `GOSD_HOSTNAME` with an injected value. Don't.
-- **It's plaintext on the boot FAT**, exactly like a `gosd.toml [env]`
-  value or a WiFi passphrase: anyone holding the card can read it.
+Reflashing rewrites the whole boot partition, gosd.toml included. On a
+`--data-size=expand` image, `gosd-init` keeps a
+[provisioning snapshot](runtime.md#the-provisioning-snapshot-surviving-a-reflash)
+in `/data` of what each boot settled on, and the first boot after a reflash
+decides each `[env]` key on its own:
+
+1. **What the new card says wins** — whether a tool injected it or a person
+   typed it, both are the same file. So re-injecting a device with new
+   settings works, and so does hand-editing one.
+2. **Otherwise the snapshot restores** what this device settled on before,
+   provided that value differed from the baked default it was measured
+   against — the proof somebody chose it. This is the plain-reflash case: an
+   image flashed with no injection at all gets the device's previous settings
+   back.
+3. **Otherwise the newly flashed image's baked default applies**, exactly as
+   on a first flash.
+
+Consequence worth knowing: re-injecting overrides a hand-edit made on the
+previous card, because a freshly injected card is the newer statement of
+intent. And recovery of any kind presupposes `/data` survived the reflash —
+an `--data-size=expand` image whose on-card ABI (`--boot-size`,
+`--data-filesystem`, `--label-prefix`) hasn't changed. No data partition
+means no snapshot: the injected values are simply gone, replaced by the new
+image's defaults.
+
+### Secrets
+
+An injected secret is redacted from crash reports automatically, but it is
+still **plaintext on the boot FAT**, exactly like a WiFi passphrase — and
+because the snapshot carries it, a copy also lives in `/data` and is
+re-rendered into the *next* card's gosd.toml on an upgrade. A reflash is
+therefore not a way to wipe a device's injected credentials; only clearing
+`/data` is.
+
+### Settings that aren't environment variables
+
+An app whose configuration is a YAML document, a key file, or anything else
+that doesn't reduce to `KEY=value` still wants an ordinary `--placeholder`
+file, read from `/boot` at startup — the boot partition stays mounted
+read-only while the app runs. That was the only way to inject anything
+app-facing before `--env-placeholder` existed, and it still works; what it
+doesn't get is any of the four properties above, so a file read this way is
+lost on reflash unless the app persists it to `/data` itself.
 
 ## Imager compatibility
 

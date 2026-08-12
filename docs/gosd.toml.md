@@ -69,6 +69,13 @@ That is enough when the defaults are self-explanatory. When they aren't — or
 when you want to *offer* a setting without turning it on — write the section
 yourself with `--env-file`.
 
+When the value differs per device — a per-user API token, a device
+identity — bake no default at all and reserve space for one instead, with
+`gosd build --env-placeholder <size>`: a downloader fills the reserved region
+in as the image is downloaded, and what it writes is an ordinary entry in
+this table. See
+[injecting environment variables](image-injection.md#injecting-environment-variables).
+
 ### Documenting and suggesting settings — `--env-file`
 
 `gosd build --env-file <path>` points at a TOML file whose contents become the
