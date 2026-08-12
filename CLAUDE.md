@@ -517,8 +517,13 @@ say so in the bean rather than silently diverging.
 - Run the gates — and any `gh pr checks` polling — in the FOREGROUND and read
   the results directly. Agents that parked on background monitors for a test
   run or CI watch stalled repeatedly (2026-08: six separate stalls, each
-  leaving finished work unpushed until nudged). Poll CI with plain
-  `sleep 60 && gh pr checks <n>` loops.
+  leaving finished work unpushed until nudged). **Poll CI with
+  `gh pr checks <n> --watch --interval 30`**, which blocks in the foreground,
+  prints as it goes, and exits when the checks settle. Do NOT use a
+  `sleep`-based loop: the agent harness hard-blocks foreground `sleep`, so
+  this instruction previously guaranteed the very failure it exists to
+  prevent — six of seven agents on one epic hit the block, improvised a
+  background monitor, and stalled mid-task.
 - Bizarre build failures while sibling agents/worktrees run on this machine —
   stdlib packages "not in std", ENOSPC, evicted cache entries — mean the
   shared Go build cache is contended or corrupted, not that your change is
