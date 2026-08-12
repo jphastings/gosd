@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: high
 created_at: 2026-07-30T21:11:39Z
-updated_at: 2026-08-11T13:53:13Z
+updated_at: 2026-08-12T03:44:01Z
 parent: gosd-47z3
 blocked_by:
     - gosd-my8e
@@ -298,3 +298,33 @@ also restores the exact console line that job has always grepped for.
   names the hardware) is cosmetic with a guaranteed fallback, so a matrix row
   would be a placeholder for something no board fails at. Worth adding if the
   bench pass finds a board with no device tree at all.
+
+
+
+## Bench verification, 2026-08-12 (Rockchip half done)
+
+First real-hardware run of the finished epic: nanopi-zero2, `examples/hello`
+with `HELLO_FATAL`, image built from v0.4.0 with `--data-size expand
+--console-baud 115200 --support-url ... --app-version 0.4.0-bench1`, flashed
+over sdwire, booted, halted, card read on the Mac.
+
+**The device-tree read works.** The card carried
+`device: FriendlyElec NanoPi Zero2 (nanopi-zero2)` — read from
+`/sys/firmware/devicetree/base/model`, not the baked fallback. That closes
+the gap named in the v0.4.0 release notes for the Rockchip family.
+
+Also proven in the same run: the boot counter on `/data` (`boot: 1`, so
+dataexpand ran), `uptime: 3s`, the unsynced clock reported honestly rather
+than as a 1970 date, the quoted `image:` line carrying app name + version +
+identity, env-value redaction on device (`HELLO_FATAL="{$HELLO_FATAL}"`),
+`fault.Fatal` halting the board, and the whole remount → write → fsync →
+remount path against a live vfat boot partition.
+
+**Still outstanding: the Pi family.** Its DTBs come from the firmware out of
+the downstream tree with different compatibles and conventions, so a
+Rockchip pass does not transfer — and the Pi is where the finer-grained
+model string was the argued benefit (a 3B vs a 3B+ from one image).
+
+The run also found bug `gosd-72ga`: a declared fault's report embeds a
+nested copy of itself, because `fault.Fatal` renders to stderr and the
+console tail then gets folded back in.
