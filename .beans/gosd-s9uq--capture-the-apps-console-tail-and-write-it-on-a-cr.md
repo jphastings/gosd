@@ -1,11 +1,11 @@
 ---
 # gosd-s9uq
 title: Capture the app's console tail and write it on a crash
-status: in-progress
+status: completed
 type: feature
 priority: high
 created_at: 2026-08-11T10:11:22Z
-updated_at: 2026-08-11T22:51:02Z
+updated_at: 2026-08-12T07:16:46Z
 parent: gosd-47z3
 blocked_by:
     - gosd-pun9
@@ -50,7 +50,7 @@ On a non-clean app exit, format the ring buffer's contents as the report's
       `logwriter.MaxBufferedLine` already exists for). Landed standalone in
       `cmd/gosd-init/internal/consoletail` (PR #257) — pure buffer only, no
       wiring into sequence.go/supervisor.go yet; see the note below
-- [ ] Tee to console unchanged; verify on the bench that serial output is
+- [x] Tee to console unchanged; verify on the bench that serial output is
       identical to today. Wired (`sequence.go`'s `appOutput := io.MultiWriter(console, tail)`)
       and proven by an automated test asserting the app's stdout/stderr reach
       the fake console verbatim (`TestRunTeesAppOutputToConsoleUnchanged`) —
@@ -260,3 +260,40 @@ bound.
   gosd-aa1p to layer on top of `Supervisor.OnExit`/`report.record`, per the
   epic's own locked precedence ("the app's own explicit report wins the
   human sections; the tail still supplies Technical detail").
+
+
+
+## Bench verification, 2026-08-12 — console fidelity PASSED
+
+The outstanding todo was the one thing automated tests could not settle: that
+teeing the app's streams through `consoletail` leaves the serial console
+byte-for-byte unchanged. Serial is the bench's only diagnostic channel, so
+"we did not break it" deserved real hardware.
+
+Verified on a Pi 3B+ (the bench board; see gosd-pun9 for why it is a 3B+ and
+not the 3B it was set up as). Method deliberately avoids diffing two boots,
+since a fault present in both would hide: a throwaway app emitted a
+DETERMINISTIC pattern, and the host reconstructed the exact expected bytes
+independently and compared.
+
+The pattern was chosen to attack the tee's known seams:
+- 60 numbered lines per stream, so loss or reordering is visible
+- a 2000-character line, proving nothing re-wraps or splits in transit
+- multi-byte UTF-8 (`héllo — naïve ✓ 日本語`), proving nothing mangles non-ASCII
+- a write with NO trailing newline, later completed by one — the case
+  `consoletail`'s line-boundary handling could plausibly have disturbed
+
+Result: **127 of 127 expected lines present, zero missing, zero corrupted,
+order preserved on both streams.** Every byte the app wrote reached the
+console intact.
+
+One false alarm worth recording so nobody re-runs it: the first comparison
+reported all 127 lines simultaneously missing AND unexpected, with the counts
+matching exactly. That is the tty's `ONLCR` translation appending `\r` to
+every line — the serial line discipline, not the app's bytes and not the
+tee. Strip `\r` before comparing.
+
+Evidence: the capture and the comparator live outside the repo (the app was a
+throwaway, deliberately not committed). The claim in v0.4.0's release notes —
+"your app's stdout/stderr still reach it byte-for-byte, exactly as before" —
+is now backed by hardware rather than by unit tests alone.
