@@ -5,6 +5,7 @@ import {
   GosdPlaceholderNotPristineError,
 } from "./errors.js";
 import type { Manifest } from "./manifest.js";
+import { ENV_REGION_KEY } from "./env.js";
 import { Sha256 } from "./sha256.js";
 import {
   createSubstitutionTransform,
@@ -377,5 +378,51 @@ describe("primeSubstitutionState + resumeFrom: continuing a download across a se
       patchStream(readableFrom(chunksOfSizes(image, [51])), manifest, padded, {}, resumeState),
     );
     expect(output).toEqual(expected);
+  });
+});
+
+// The reserved [env] region is a span of gosd.toml rather than a file of its
+// own, but the engine treats it as one more region — these pin that it gets
+// the same substitution and pristine-verification behaviour a placeholder
+// does, since it travels a different manifest key to get here.
+describe("the reserved [env] region", () => {
+  function fixtureWithEnvRegion(): { image: Uint8Array; manifest: Manifest } {
+    const { image, manifest } = buildFixture(4096, [
+      { path: "app.yaml", ranges: [{ offset: 0, length: 64 }] },
+    ]);
+    const ranges = [{ offset: 1024, length: 128 }];
+    const pristine = image.subarray(1024, 1024 + 128);
+    return {
+      image,
+      manifest: { ...manifest, env: { size: 128, sha256: sha256Hex(pristine), ranges } },
+    };
+  }
+
+  it("substitutes its bytes and leaves the rest of the image alone", async () => {
+    const { image, manifest } = fixtureWithEnvRegion();
+    const replacement = new Uint8Array(128).fill(0x41);
+
+    const out = await collect(
+      patchStream(readableFrom([image]), manifest, new Map([[ENV_REGION_KEY, replacement]])),
+    );
+
+    expect(out.subarray(1024, 1024 + 128)).toEqual(replacement);
+    expect(out.subarray(0, 1024)).toEqual(image.subarray(0, 1024));
+    expect(out.subarray(1152)).toEqual(image.subarray(1152));
+  });
+
+  it("verifies it is pristine first, naming it in a way a caller can act on", async () => {
+    const { image, manifest } = fixtureWithEnvRegion();
+    const tampered: Manifest = { ...manifest, env: { ...manifest.env!, sha256: "b".repeat(64) } };
+
+    await expect(
+      collect(
+        patchStream(
+          readableFrom([image]),
+          tampered,
+          new Map([[ENV_REGION_KEY, new Uint8Array(128)]]),
+        ),
+      ),
+    ).rejects.toThrow(/reserved \[env\] region is not pristine/);
   });
 });

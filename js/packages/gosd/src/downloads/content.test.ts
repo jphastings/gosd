@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { padContents } from "./content.js";
+import { padContents, padEnv } from "./content.js";
+import { ENV_REGION_KEY } from "./env.js";
 import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
 import type { Manifest } from "./manifest.js";
 
@@ -94,5 +95,50 @@ describe("padContents", () => {
   it("reports the unknown-placeholder error even with no placeholders at all", () => {
     const manifest = manifestWith([]);
     expect(() => padContents({ x: "y" }, manifest)).toThrow(/this image has no placeholders/);
+  });
+});
+
+describe("padEnv", () => {
+  const withEnvRegion = (size: number): Manifest => ({
+    gosd_inject: 1,
+    board: "test",
+    image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
+    placeholders: [],
+    env: { size, sha256: "0".repeat(64), ranges: [{ offset: 0, length: size }] },
+  });
+
+  it("renders the settings and pads to the reserved size with newlines", () => {
+    const padded = padEnv({ API_URL: "https://example.com" }, withEnvRegion(64));
+    expect(padded.length).toBe(64);
+    expect(new TextDecoder().decode(padded)).toBe(
+      'API_URL = "https://example.com"\n' +
+        "\n".repeat(64 - 'API_URL = "https://example.com"\n'.length),
+    );
+  });
+
+  it("refuses an image that reserved no region, naming the flag that would", () => {
+    const manifest = withEnvRegion(64);
+    delete manifest.env;
+    expect(() => padEnv({ A: "b" }, manifest)).toThrow(/--env-placeholder/);
+  });
+
+  it("refuses settings too large for the region, naming both sizes", () => {
+    expect(() => padEnv({ API_URL: "https://example.com" }, withEnvRegion(8))).toThrow(
+      GosdContentTooLargeError,
+    );
+  });
+});
+
+describe("padContents with the env region's key", () => {
+  it("points at the env option rather than treating it as a missing placeholder", () => {
+    const manifest: Manifest = {
+      gosd_inject: 1,
+      board: "test",
+      image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
+      placeholders: [],
+    };
+    expect(() => padContents({ [ENV_REGION_KEY]: 'API_URL = "x"' }, manifest)).toThrow(
+      /env` option/,
+    );
   });
 });

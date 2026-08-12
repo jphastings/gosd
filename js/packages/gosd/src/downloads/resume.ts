@@ -23,8 +23,8 @@
 //     the download from scratch, reusing the same already-picked file.
 
 import { GosdImageFetchError, GosdImagePreconditionError, GosdSaveFailedError } from "./errors.js";
-import { deriveManifestURL, fetchManifest, type Manifest } from "./manifest.js";
-import { padContents } from "./content.js";
+import { deriveManifestURL, fetchManifest, injectableRegions, type Manifest } from "./manifest.js";
+import { padAll } from "./content.js";
 import { primeSubstitutionState, type SubstitutionProgress } from "./substitute.js";
 import { runDownload, type DownloadCheckpoint } from "./run.js";
 import type { SeekableSaveSink } from "./sinks/types.js";
@@ -65,9 +65,9 @@ export function clampToSafeResumeOffset(
   offset: number,
 ): number {
   let clamped = offset;
-  for (const placeholder of manifest.placeholders) {
-    if (!padded.has(placeholder.path) || placeholder.path in capturedPristine) continue;
-    for (const range of placeholder.ranges) {
+  for (const region of injectableRegions(manifest)) {
+    if (!padded.has(region.key) || region.key in capturedPristine) continue;
+    for (const range of region.ranges) {
       const start = range.offset;
       const end = range.offset + range.length;
       if (offset > start && offset < end) {
@@ -97,11 +97,11 @@ export function reconstructPristinePrefix(
   capturedPristine: Record<string, Uint8Array>,
 ): Uint8Array {
   const out = Uint8Array.from(prefixOnDisk);
-  for (const placeholder of manifest.placeholders) {
-    const pristine = capturedPristine[placeholder.path];
+  for (const region of injectableRegions(manifest)) {
+    const pristine = capturedPristine[region.key];
     if (!pristine) continue;
     let consumed = 0;
-    for (const range of placeholder.ranges) {
+    for (const range of region.ranges) {
       const start = range.offset;
       const end = start + range.length;
       if (end > out.length) break;
@@ -239,6 +239,10 @@ export interface ResumeDownloadOptions {
   /** The `ResumeRecord.key` to resume — from `listResumableDownloads`. */
   key: string;
   files: Record<string, string | Uint8Array>;
+  /** The app settings for the reserved [env] region — pass the same ones
+   * the interrupted download used, exactly as with `files`: a resume
+   * continues that attempt's bytes, it doesn't re-decide them. */
+  env?: Record<string, string>;
   manifestURL?: string | URL;
   manifestSha256?: string;
   manifest?: Manifest;
@@ -288,7 +292,7 @@ export async function resumeDownload(
       `the manifest at the resumed image's URL now describes a different image (sha256 ${manifest.image.sha256}) than the interrupted download (${record.key}); discard this resumable download (discardResumableDownload) and start fresh`,
     );
   }
-  const padded = padContents(options.files, manifest);
+  const padded = padAll(options.files, options.env, manifest);
 
   const persisted = await openPersistedFsAccessHandle(record.handle);
   const onDiskOffset = Math.min(record.bytesWritten, persisted.existingBytes.length);

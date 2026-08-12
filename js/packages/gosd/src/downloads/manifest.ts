@@ -13,6 +13,7 @@ import {
   GosdManifestHashMismatchError,
   GosdManifestInvalidError,
 } from "./errors.js";
+import { ENV_REGION_KEY } from "./env.js";
 import { Sha256 } from "./sha256.js";
 
 export interface ByteRange {
@@ -33,11 +34,61 @@ export interface ImageInfo {
   sha256: string;
 }
 
+/** The reserved `[env]` region inside gosd.toml (`gosd build
+ * --env-placeholder`), when the build reserved one. Same three fields as a
+ * placeholder, but no path: it's a span of gosd.toml, not a file, so its
+ * `size` bytes must go to its `ranges` and nowhere else. */
+export interface EnvInfo {
+  size: number;
+  sha256: string;
+  ranges: ByteRange[];
+}
+
 export interface Manifest {
   gosd_inject: 1;
   board: string;
   image: ImageInfo;
   placeholders: PlaceholderInfo[];
+  /** Absent on an image built without `--env-placeholder`, and on every
+   * manifest written before gosd learned to reserve one. */
+  env?: EnvInfo;
+}
+
+/** One patchable, hash-verified span of the image: a placeholder file, or
+ * the reserved [env] region. Everything downstream of the manifest —
+ * padding, substitution, resume — works in these terms, so the [env] region
+ * gets the same verification and resume behaviour as a placeholder without
+ * a second code path. */
+export interface RegionInfo {
+  /** How this region is keyed in the padded-content and captured-pristine
+   * maps: a placeholder's FAT path, or ENV_REGION_KEY. */
+  key: string;
+  /** How the region is named in an error message. */
+  label: string;
+  size: number;
+  sha256: string;
+  ranges: ByteRange[];
+}
+
+/** Every injectable region of `manifest`, placeholders first. */
+export function injectableRegions(manifest: Manifest): RegionInfo[] {
+  const regions: RegionInfo[] = manifest.placeholders.map((p) => ({
+    key: p.path,
+    label: `placeholder "${p.path}"`,
+    size: p.size,
+    sha256: p.sha256,
+    ranges: p.ranges,
+  }));
+  if (manifest.env) {
+    regions.push({
+      key: ENV_REGION_KEY,
+      label: "the reserved [env] region",
+      size: manifest.env.size,
+      sha256: manifest.env.sha256,
+      ranges: manifest.env.ranges,
+    });
+  }
+  return regions;
 }
 
 /** Derives the injection manifest URL for an image URL: the last path
@@ -134,14 +185,33 @@ export function parseManifest(data: unknown): Manifest {
   const placeholders = expectArray(obj.placeholders, "manifest.placeholders").map((p, i) =>
     parsePlaceholderInfo(p, `manifest.placeholders[${i}]`, image.size),
   );
-  checkNoOverlaps(placeholders, "manifest.placeholders");
+  const env = obj.env === undefined ? undefined : parseEnvInfo(obj.env, "manifest.env", image.size);
 
-  return {
+  const manifest: Manifest = {
     gosd_inject: expectLiteral(obj.gosd_inject, 1, "manifest.gosd_inject"),
     board: expectString(obj.board, "manifest.board"),
     image,
     placeholders,
+    ...(env ? { env } : {}),
   };
+  checkNoOverlaps(manifest);
+  return manifest;
+}
+
+function parseEnvInfo(value: unknown, at: string, imageSize: number): EnvInfo {
+  const obj = expectRecord(value, at);
+  const size = expectNonNegativeInt(obj.size, `${at}.size`);
+  const ranges = expectArray(obj.ranges, `${at}.ranges`).map((r, i) =>
+    parseByteRange(r, `${at}.ranges[${i}]`, imageSize),
+  );
+  if (ranges.length === 0) {
+    throw new GosdManifestInvalidError(`${at}.ranges: must have at least one range`);
+  }
+  const total = ranges.reduce((sum, r) => sum + r.length, 0);
+  if (total !== size) {
+    throw new GosdManifestInvalidError(`${at}: ranges sum to ${total} bytes but size is ${size}`);
+  }
+  return { size, sha256: expectSha256Hex(obj.sha256, `${at}.sha256`), ranges };
 }
 
 function parseImageInfo(obj: Record<string, unknown>): ImageInfo {
@@ -185,15 +255,18 @@ function parseByteRange(value: unknown, at: string, imageSize: number): ByteRang
   return { offset, length };
 }
 
-/** Every placeholder's ranges, pooled across the whole manifest, must be
- * disjoint — two placeholders can't claim the same image byte. */
-function checkNoOverlaps(placeholders: PlaceholderInfo[], at: string): void {
-  const intervals = placeholders
-    .flatMap((p) =>
-      p.ranges.map((r) => ({
+/** Every region's ranges, pooled across the whole manifest, must be
+ * disjoint — two regions can't claim the same image byte. The [env] region
+ * is included: it lives inside gosd.toml, so a manifest that also reported
+ * gosd.toml as a whole placeholder would have them overlap, and patching
+ * both would produce whichever won by range order. */
+function checkNoOverlaps(manifest: Manifest): void {
+  const intervals = injectableRegions(manifest)
+    .flatMap((region) =>
+      region.ranges.map((r) => ({
         start: r.offset,
         end: r.offset + r.length,
-        path: p.path,
+        label: region.label,
       })),
     )
     .sort((a, b) => a.start - b.start);
@@ -203,7 +276,7 @@ function checkNoOverlaps(placeholders: PlaceholderInfo[], at: string): void {
     const cur = intervals[i];
     if (prev !== undefined && cur !== undefined && cur.start < prev.end) {
       throw new GosdManifestInvalidError(
-        `${at}: placeholder "${cur.path}"'s range [${cur.start}, ${cur.end}) overlaps placeholder "${prev.path}"'s range [${prev.start}, ${prev.end})`,
+        `manifest: ${cur.label}'s range [${cur.start}, ${cur.end}) overlaps ${prev.label}'s range [${prev.start}, ${prev.end})`,
       );
     }
   }

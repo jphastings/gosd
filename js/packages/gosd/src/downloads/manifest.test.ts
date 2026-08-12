@@ -185,3 +185,54 @@ describe("fetchManifest", () => {
     ).rejects.toThrow(GosdManifestHashMismatchError);
   });
 });
+
+describe("the optional env key", () => {
+  const base = {
+    gosd_inject: 1,
+    board: "pi-zero-2w",
+    image: { filename: "app.img", size: 100_000, sha256: "a".repeat(64) },
+    placeholders: [],
+  };
+
+  it("is absent on a manifest that has none, so older images still parse", () => {
+    expect(parseManifest(base).env).toBeUndefined();
+  });
+
+  it("parses into the same shape a placeholder has, minus the path", () => {
+    const parsed = parseManifest({
+      ...base,
+      env: { size: 8192, sha256: "b".repeat(64), ranges: [{ offset: 4096, length: 8192 }] },
+    });
+    expect(parsed.env).toEqual({
+      size: 8192,
+      sha256: "b".repeat(64),
+      ranges: [{ offset: 4096, length: 8192 }],
+    });
+  });
+
+  it("refuses ranges that don't sum to its size, which would truncate a splice", () => {
+    expect(() =>
+      parseManifest({
+        ...base,
+        env: { size: 8192, sha256: "b".repeat(64), ranges: [{ offset: 4096, length: 4096 }] },
+      }),
+    ).toThrow(/manifest.env: ranges sum to 4096 bytes but size is 8192/);
+  });
+
+  it("refuses ranges that overlap a placeholder's, since one splice would clobber the other", () => {
+    expect(() =>
+      parseManifest({
+        ...base,
+        placeholders: [
+          {
+            path: "app.yaml",
+            size: 4096,
+            sha256: "c".repeat(64),
+            ranges: [{ offset: 4096, length: 4096 }],
+          },
+        ],
+        env: { size: 4096, sha256: "b".repeat(64), ranges: [{ offset: 6144, length: 4096 }] },
+      }),
+    ).toThrow(/overlaps/);
+  });
+});

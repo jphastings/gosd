@@ -47,6 +47,7 @@ import {
   GosdPlaceholderNotPristineError,
 } from "./errors.js";
 import type { Manifest } from "./manifest.js";
+import { injectableRegions } from "./manifest.js";
 import { Sha256 } from "./sha256.js";
 
 export interface SubstitutionProgress {
@@ -56,32 +57,34 @@ export interface SubstitutionProgress {
 
 export interface SubstitutionOptions {
   onProgress?: (progress: SubstitutionProgress) => void;
-  /** Fires the instant a placeholder that `padded` supplied a replacement
-   * for finishes verifying, with that placeholder's PRISTINE (pre-
-   * substitution) bytes — never for a placeholder `padded` left untouched
-   * (its on-disk bytes already are its pristine bytes). Used by the
-   * fs-access resumable download path (resume.ts) to stash those bytes for
-   * reconstructing this prefix again in a later session. */
-  onPlaceholderVerified?: (path: string, pristine: Uint8Array) => void;
+  /** Fires the instant a region that `padded` supplied a replacement for
+   * finishes verifying, with that region's PRISTINE (pre-substitution)
+   * bytes — never for a region `padded` left untouched (its on-disk bytes
+   * already are its pristine bytes). Used by the fs-access resumable
+   * download path (resume.ts) to stash those bytes for reconstructing this
+   * prefix again in a later session. The key is a placeholder's path, or
+   * ENV_REGION_KEY for the reserved [env] region. */
+  onPlaceholderVerified?: (key: string, pristine: Uint8Array) => void;
 }
 
 interface Segment {
   start: number;
   end: number;
-  placeholderIndex: number;
+  regionIndex: number;
   /** The full replacement content for this segment (same length as
-   * `end - start`), or null when this placeholder was left untouched. */
+   * `end - start`), or null when this region was left untouched. */
   replacement: Uint8Array | null;
 }
 
-interface PlaceholderState {
-  path: string;
+interface RegionState {
+  key: string;
+  label: string;
   sha256: string;
   hasher: Sha256;
   remaining: number;
-  /** Accumulates this placeholder's pristine bytes as they're seen, but
-   * only when it's being patched (`onPlaceholderVerified` needs them for a
-   * patched placeholder; an untouched one's on-disk bytes are already its
+  /** Accumulates this region's pristine bytes as they're seen, but only
+   * when it's being patched (`onPlaceholderVerified` needs them for a
+   * patched region; an untouched one's on-disk bytes are already its
    * pristine bytes, so capturing them again would just waste memory). */
   capture: Uint8Array | null;
   captureOffset: number;
@@ -98,7 +101,7 @@ export interface SubstitutionState {
   pos: number;
   segIndex: number;
   imageHasher: Sha256;
-  placeholderStates: PlaceholderState[];
+  placeholderStates: RegionState[];
 }
 
 interface Engine {
@@ -110,14 +113,14 @@ interface Engine {
 
 function buildSegments(manifest: Manifest, padded: Map<string, Uint8Array>): Segment[] {
   const segments: Segment[] = [];
-  manifest.placeholders.forEach((p, placeholderIndex) => {
-    const replacement = padded.get(p.path);
+  injectableRegions(manifest).forEach((region, regionIndex) => {
+    const replacement = padded.get(region.key);
     let consumed = 0;
-    for (const r of p.ranges) {
+    for (const r of region.ranges) {
       segments.push({
         start: r.offset,
         end: r.offset + r.length,
-        placeholderIndex,
+        regionIndex,
         replacement: replacement ? replacement.subarray(consumed, consumed + r.length) : null,
       });
       consumed += r.length;
@@ -132,12 +135,13 @@ function freshState(manifest: Manifest, padded: Map<string, Uint8Array>): Substi
     pos: 0,
     segIndex: 0,
     imageHasher: new Sha256(),
-    placeholderStates: manifest.placeholders.map((p) => ({
-      path: p.path,
-      sha256: p.sha256,
+    placeholderStates: injectableRegions(manifest).map((region) => ({
+      key: region.key,
+      label: region.label,
+      sha256: region.sha256,
       hasher: new Sha256(),
-      remaining: p.size,
-      capture: padded.has(p.path) ? new Uint8Array(p.size) : null,
+      remaining: region.size,
+      capture: padded.has(region.key) ? new Uint8Array(region.size) : null,
       captureOffset: 0,
     })),
   };
@@ -157,15 +161,15 @@ function createEngine(
   };
 }
 
-function verifyPristine(engine: Engine, state: PlaceholderState): void {
+function verifyPristine(engine: Engine, state: RegionState): void {
   const digest = state.hasher.digestHex();
   if (digest !== state.sha256) {
     throw new GosdPlaceholderNotPristineError(
-      `placeholder "${state.path}" is not pristine: expected sha256 ${state.sha256}, got ${digest}; the image may be corrupt, already patched by something else, or tampered with`,
+      `${state.label} is not pristine: expected sha256 ${state.sha256}, got ${digest}; the image may be corrupt, already patched by something else, or tampered with`,
     );
   }
   if (state.capture) {
-    engine.options.onPlaceholderVerified?.(state.path, state.capture);
+    engine.options.onPlaceholderVerified?.(state.key, state.capture);
   }
 }
 
@@ -210,9 +214,9 @@ function engineProcessChunk(engine: Engine, chunk: Uint8Array): Uint8Array {
     if (intersectEnd > intersectStart) {
       const localStart = intersectStart - chunkStart;
       const localEnd = intersectEnd - chunkStart;
-      const placeholderState = state.placeholderStates[seg.placeholderIndex];
+      const placeholderState = state.placeholderStates[seg.regionIndex];
       if (!placeholderState) {
-        throw new Error("substitute: internal error, segment references an unknown placeholder");
+        throw new Error("substitute: internal error, segment references an unknown region");
       }
 
       const original = chunk.subarray(localStart, localEnd);
