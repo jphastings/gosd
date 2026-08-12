@@ -31,6 +31,9 @@ func TestGuardTurnsAPanicIntoAStackTraceAndAReboot(t *testing.T) {
 	if rebooter.syncCalls == 0 {
 		t.Error("a panic in a guarded function rebooted without syncing first")
 	}
+	// gosd-fs34: a panic's stack trace deserves the same flush-before-reboot
+	// guarantee as the boot sequence's own fatal path.
+	assertBefore(t, rebooter.callOrder(), "FlushConsole", "Reboot")
 	if len(slept) != 1 || slept[0] != PanicRebootDelay {
 		t.Errorf("sleeps before reboot = %v, want [%s]", slept, PanicRebootDelay)
 	}

@@ -2105,6 +2105,10 @@ func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	if rebooter.syncCalls == 0 {
 		t.Error("no sync before halting")
 	}
+	// gosd-fs34: this halt path had no 5s reboot pause to accidentally
+	// cover for it, which is exactly why it was the path that lost its
+	// console copy on the bench — the flush must happen before Halt.
+	assertBefore(t, rebooter.callOrder(), "FlushConsole", "Halt")
 	// The recovery instructions have to name the exact volume the next boot
 	// will accept — this image's own filesystem and per-app label — since
 	// that is all whoever reads the report has to go on. This is an expand
@@ -2393,6 +2397,11 @@ func assertFatalPathTriggered(t *testing.T, rebooter *fakeRebooter, sleeps []tim
 	if !found {
 		t.Errorf("fatal path did not sleep 5s before rebooting (sleeps=%v)", sleeps)
 	}
+	// gosd-fs34: the console must be flushed before Reboot, not merely at
+	// some point during the fatal path — the 5s sleep here happened to give
+	// this path cover even before FlushConsole existed, but the guarantee
+	// must not rest on that alone (see fatal's comment).
+	assertBefore(t, rebooter.callOrder(), "FlushConsole", "Reboot")
 }
 
 // TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault is the acceptance
@@ -2453,6 +2462,10 @@ func TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault(t *testing.T) {
 	if rebooter.rebooted {
 		t.Error("the device rebooted; a declared fault must leave it down")
 	}
+	// gosd-fs34: this is the exact path the bench evidence reproduced —
+	// the console copy of the app's own declared fault must be flushed
+	// before the halt that follows it, not merely written at some point.
+	assertBefore(t, rebooter.callOrder(), "FlushConsole", "Halt")
 	if reports.writeCount() != 1 {
 		t.Fatalf("wrote %d reports for one exit, want 1", reports.writeCount())
 	}

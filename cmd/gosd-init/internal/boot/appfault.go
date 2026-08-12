@@ -40,5 +40,10 @@ func haltForAppFault(deps Deps, log func(format string, args ...any), reporter *
 	reporter.record(report)
 
 	deps.Rebooter.Sync()
+	// See fatal's matching comment: without this, the full report record
+	// just logged above can still be sitting in the console's output
+	// queue, undrained, when Halt cuts it off (gosd-fs34) — this path had
+	// no 5s reboot pause to mask that even by accident.
+	deps.Rebooter.FlushConsole()
 	deps.Rebooter.Halt()
 }

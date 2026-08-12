@@ -44,14 +44,18 @@ func (g PanicGuard) Guard(name string, fn func()) {
 	fn()
 }
 
-// Reboot flushes disks and restarts the machine, after logging reason and
-// pausing PanicRebootDelay so the console keeps it readable.
+// Reboot flushes disks and the console, then restarts the machine, after
+// logging reason and pausing PanicRebootDelay so the console keeps it
+// readable. FlushConsole is the same gosd-fs34 guarantee the boot
+// sequence's own fatal path uses — a stack trace worth reading deserves the
+// same protection against being cut off mid-transmission.
 func (g PanicGuard) Reboot(reason string) {
 	g.log("fatal: %s; rebooting in %s", reason, PanicRebootDelay)
 	if g.Rebooter == nil {
 		return
 	}
 	g.Rebooter.Sync()
+	g.Rebooter.FlushConsole()
 	g.sleep(PanicRebootDelay)
 	g.Rebooter.Reboot()
 }

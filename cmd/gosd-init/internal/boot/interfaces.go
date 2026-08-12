@@ -72,14 +72,27 @@ type Reaper interface {
 	Wait(pid int) (ExitStatus, error)
 }
 
-// Rebooter performs the fatal-error shutdown paths: flush disks, then
-// either restart the machine (transient failures, where a retry may
-// succeed) or halt it (states no retry can improve, like a corrupt data
-// partition — see Deps.FaultReport). The 5s pause before a reboot is
-// a plain time.Sleep, injected separately (see Deps.Sleep) so it can be
-// faked in tests.
+// Rebooter performs the fatal-error shutdown paths: flush disks and the
+// console, then either restart the machine (transient failures, where a
+// retry may succeed) or halt it (states no retry can improve, like a
+// corrupt data partition — see Deps.FaultReport). The 5s pause before a
+// reboot is a plain time.Sleep, injected separately (see Deps.Sleep) so it
+// can be faked in tests.
 type Rebooter interface {
 	Sync()
+	// FlushConsole blocks until every byte already written to the console
+	// has actually left the machine, so the crash report gosd-init just
+	// logged there survives the Reboot/Halt call that follows it
+	// (gosd-fs34). A write(2) to a tty returns once the kernel has queued
+	// the bytes for a slow serial line, not once they've been physically
+	// transmitted; unix.Reboot cuts that queue off without warning, which
+	// is why a card plugged into a computer showed the complete report
+	// while a cable attached to the same crash showed none of it. Called
+	// on every path that halts or reboots, alongside Sync — a console
+	// that isn't a real serial line (a fake, or one that was never opened)
+	// has nothing to drain and nothing useful to do about a failure here,
+	// so this is best-effort, like Sync.
+	FlushConsole()
 	Reboot()
 	Halt()
 }

@@ -837,6 +837,17 @@ func fatal(deps Deps, log func(format string, args ...any), report *fatalReporte
 	}
 
 	deps.Rebooter.Sync()
+	// The console copy just logged above (and, when report != nil, the
+	// full rendered report record() logged inside it) must survive the
+	// Halt/Reboot that follows: a write(2) to a slow serial console
+	// returns once the kernel has queued the bytes, not once they've
+	// actually gone out over the wire, and unix.Reboot discards whatever
+	// is still queued (gosd-fs34). This used to be true only by accident
+	// on the reboot branch, which happened to have 5s of Sleep between the
+	// last console write and Reboot(); the halt branch had no such
+	// cushion, and FlushConsole replaces both with an explicit guarantee
+	// that doesn't depend on report size or baud rate.
+	deps.Rebooter.FlushConsole()
 	if class.halt {
 		deps.Rebooter.Halt()
 		return wrapped
