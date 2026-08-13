@@ -5,9 +5,9 @@ custom-repository catalog entry (locked decision — see `CLAUDE.md` and
 `docs/provisioning-formats.md`). It's the only way to get Imager's
 WiFi/hostname customization wizard for a GoSD image: the plain "Use custom
 image" file picker disables customization entirely, regardless of the
-image (see §0 of `docs/provisioning-formats.md`). Hand-editing `gosd.toml`
-on the flashed boot partition is the always-present fallback for anyone not
-using this flow.
+image (see §0 of `docs/provisioning-formats.md`). Hand-editing [the config
+tree](config.md) on the flashed boot partition is the always-present
+fallback for anyone not using this flow.
 
 The recipe: build with `--catalog`, host the resulting files, send users
 the `os_list.json` URL.
@@ -89,11 +89,12 @@ copy-paste snippet for your own README.
 If your app reads configuration from the environment, bake per-deployment
 defaults in from your app's own `config/` directory (`gosd build
 --config-dir`) — see
-[`docs/runtime.md`'s "App environment variables"](runtime.md#app-environment-variables-gosdtoml-env)
-section for the full precedence rules. Each baked default also appears
-pre-filled in the card's `gosd.toml [env]` table, so whoever flashes the
-card can see what you've set and override any key by editing that file —
-no rebuild needed on their end.
+[`docs/runtime.md`'s "App environment variables"](runtime.md#app-environment-variables)
+section for the full precedence rules. Each setting you bake also ships as
+its own file under `config/env/` on the card, documented by whatever
+`.explain.md` you wrote for it, so whoever flashes the card can see what
+you've set and override any value by editing that file — no rebuild needed
+on their end.
 
 ## Keeping `/data` across upgrades (`--data-size=expand`)
 
@@ -105,11 +106,11 @@ itself, so flashing any later version overwrites that region directly —
 data partition at all and has the device grow one on first boot instead;
 because the image never carries those bytes, a later reflash leaves them
 untouched, and the device re-adopts its existing `/data` — plus a
-hand-edited hostname, WiFi network, or `gosd.toml [env]` value — instead
+hand-edited hostname, WiFi network, or `env/` value — instead
 of starting over. See
 [`docs/runtime.md`'s "Persistent storage: `/data`"
 section](runtime.md#persistent-storage-data) for the full mechanics
-(re-adoption, the provisioning snapshot, and what doesn't survive).
+(re-adoption, the config store, and what doesn't survive).
 
 This survival only holds across a reflash that keeps the same
 `--boot-size` the earlier release used — see below.
@@ -210,8 +211,8 @@ entry's `devices` with the matching official tags where they exist:
   deliberately non-matching tag, which means they **only appear when the
   user selects "No filtering"** on the device page. This is a limitation
   of Raspberry Pi Imager itself, not something a catalog can work around;
-  tell your non-Pi users to pick "No filtering" (the `gosd.toml`
-  hand-edit fallback also always works, with any flasher).
+  tell your non-Pi users to pick "No filtering" ([the config tree's
+  hand-edit fallback](config.md) also always works, with any flasher).
 
 ## Combining catalogs
 

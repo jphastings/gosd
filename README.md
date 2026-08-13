@@ -107,7 +107,7 @@ the people you send them to never need a terminal.
    (Imager's plain "Use custom image" file picker skips that wizard for
    *every* image, GoSD's included — see
    [`docs/provisioning-formats.md`](docs/provisioning-formats.md). If you
-   flash that way, hand-edit `gosd.toml` on the flashed boot partition
+   flash that way, hand-edit the config tree on the flashed boot partition
    instead.)
 
    Then open `http://<hostname>.local/` — the hostname defaults to your
@@ -137,8 +137,8 @@ the people you send them to never need a terminal.
   terminal when you run it off a device, so you can read what your user would
   read without flashing a card:
   [when to raise one, and what it says](docs/crash-reports.md)
-- **The device's `gosd.toml`** — the hand-editable settings file on every
-  card: [`docs/gosd.toml.md`](docs/gosd.toml.md)
+- **The device's config tree** — the hand-editable settings on every
+  card, one plain-text file per setting: [`docs/config.md`](docs/config.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
   Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in

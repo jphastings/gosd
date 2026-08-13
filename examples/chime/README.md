@@ -153,8 +153,9 @@ is a line in the log rather than something to deduce from silence.
 | `CHIME_DEVICE` | unset | Play to this PCM instead of choosing one |
 | `CHIME_OUTPUT` | `hdmi` | Which output to prefer: `hdmi`, `analog` or `any` |
 
-Set them at build time via `gosd.toml`'s `[env]` table or
-a `CHIME_EVERY` file in the app's `config/env/` directory.
+Bake a default in with a `CHIME_EVERY` file in the app's own `config/env/`
+directory at build time, or hand-edit `config/env/CHIME_EVERY` on a
+flashed card.
 
 ## No audio device?
 

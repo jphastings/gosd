@@ -8,10 +8,10 @@ boards. Most of what it does is board-independent — on every board, GoSD:
 - Provisions end users through Raspberry Pi Imager's WiFi/hostname wizard,
   via a [custom-repository catalog entry](docs/publishing.md); non-Pi
   boards appear under Imager's "No filtering" device option.
-- Falls back to hand-editing [`gosd.toml`](docs/provisioning-formats.md)
+- Falls back to hand-editing [the config tree](docs/config.md)
   on the boot partition, so any flasher works.
 - Passes configuration to the app as environment variables
-  (`gosd.toml [env]`).
+  (`config/env/`).
 - Announces over mDNS — end users reach the device at `<hostname>.local`.
 - Syncs time over SNTP (these boards have no battery-backed clock).
 - Offers a [persistent `/data` partition](docs/runtime.md) that survives

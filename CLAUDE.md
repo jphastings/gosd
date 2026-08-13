@@ -95,7 +95,8 @@ say so in the bean rather than silently diverging.
   each other; `--board` (repeatable) restricts.
 - **Naming surfaces:** env vars `GOSD_*`; kernel cmdline params `gosd.*`;
   FAT partition labels, **per-app**: `<prefix>-boot` / `<prefix>-data`;
-  boot-partition config file `gosd.toml`; app build tags — the bare `gosd`
+  boot-partition config tree at `config/` (one value per file — see
+  `internal/configtree` and `docs/config.md`); app build tags — the bare `gosd`
   (set for every image gosd builds, so an app can gate device-only source
   with `//go:build gosd` and fall back with `//go:build !gosd`, bean
   `gosd-cm4b`) plus `gosd_<board-id>` (underscored, e.g.
@@ -108,7 +109,8 @@ say so in the bean rather than silently diverging.
   pre-`gosd-lo7k` release fails the reflash-upgrade adoption gate on its
   data partition and is cleanly reformatted, never halted.
 - **Default hostname:** the sanitized basename of the app's main package,
-  overridable via `--hostname` and `gosd.toml`.
+  overridable via a `config/hostname` file (`--config-dir`, or hand-edited
+  on the card).
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
   library), `emmc/` (onboard-eMMC format/mount), `disk/` (the same for any
   attached mass storage — NVMe, USB drive, card reader), `sound/` (ALSA PCM
@@ -190,7 +192,7 @@ say so in the bean rather than silently diverging.
   Windows host. The journal buys metadata crash-consistency and mount-time
   replay, never data durability: `docs/runtime.md`'s fsync sequence is the
   app-facing contract for both filesystems. The choice is baked into
-  config.json only (no gosd.toml key, no `GOSD_*` override) and is part of
+  config.json only (no config-tree key, no `GOSD_*` override) and is part of
   the app's on-card ABI, like `--boot-size`. Refused at build time for any
   selected board whose pinned kernel lacks `CONFIG_EXT4_FS` — which matters
   because a bare `gosd build` builds every public board; see
@@ -247,7 +249,7 @@ say so in the bean rather than silently diverging.
   somebody put on the card back onto the newly flashed one.
 - **vfat `flush` is opt-in, default off (decided 2026-08-02, bean
   gosd-9m1k):** normal writeback everywhere (`gosd build --data-flush` /
-  gosd.toml `data_flush` / env `GOSD_DATA_FLUSH` to opt in). Durability
+  the card's `config/data_flush` / env `GOSD_DATA_FLUSH` to opt in). Durability
   comes from docs/runtime.md's fsync sequence, never from `flush` — do not
   reintroduce it as a correctness measure.
 - **gosd-init source location:** `gosd build` builds gosd-init from a local
@@ -288,10 +290,10 @@ say so in the bean rather than silently diverging.
   an `os_list.json` entry declaring `init_format: "cloudinit"`, the developer
   hosts it next to their image, and end users paste the repo URL into Imager's
   Settings → Custom repository to get the full WiFi/hostname wizard.
-  `gosd.toml` hand-editing is the always-present fallback (works with any
+  Hand-editing the config tree is the always-present fallback (works with any
   flasher). Consequence: gosd-init's provisioning parser reads cloud-init
-  YAML + gosd.toml only; `firstrun.sh` parsing is out of scope (log-and-point
-  -at-gosd.toml if encountered). See docs/provisioning-formats.md.
+  YAML + the config tree; `firstrun.sh` parsing is out of scope (log-and-point
+  -at-the-config-tree if encountered). See docs/provisioning-formats.md.
 - **qemu-virt board:** an internal-only board profile for CI and local
   testing (`qemu-system-aarch64 -M virt`, virtio, SD appears as /dev/vda).
   It is EXCLUDED from default all-boards builds and from end-user docs;
@@ -361,6 +363,28 @@ say so in the bean rather than silently diverging.
   asserts a `go` exists; `explainBuildFailure` recognises Go's own floor error
   and appends remediation, naming no version of its own (the floor that tripped
   may be the user's app's, not ours).
+- **A per-attribute config tree replaces the old single hand-editable boot
+  file wholesale (decided 2026-08-12/13, epic `gosd-rw6n`).** One value per
+  file, newline-trimmed, empty means unset; padding is the reservation, a
+  value ships padded to at least 256 bytes and one shipped larger reserves
+  its own size; every value needs an `.explain.md` sidecar (its own or
+  inherited), required at build, never required at runtime. gosd ships its
+  own defaults tree, overlaid file-by-file by an app's own
+  `gosd build --config-dir`. The injection manifest carries a `config`
+  array alongside `placeholders`, and the TypeScript client gained a
+  matching `config` option. A `/data` store (`cmd/gosd-init/internal/configstore`,
+  bean `gosd-87ip`) keeps whatever differs from the shipped tree and
+  restores it only when a *different* image identity boots, surfacing a
+  new image's own changed default as `<name>.new` and an orphaned setting
+  as `<name>.unused` — presence in the store is the whole record of
+  intent, so putting a value back exactly as shipped (or reflashing the
+  same image) is indistinguishable from a revert and stops it being kept.
+  A Raspberry Pi Imager cloud-init seed is consumed — read, then durably
+  deleted, then written into the tree — rather than kept as a competing
+  source, so a wizard's answers become ordinary settings from that point
+  on. `--env`, `--env-file`, `--hostname`, `--wifi-ssid` and `--wifi-pass`
+  are removed: the overlay directory is the developer's input, the wizard
+  (or a hand-edit) is the operator's. See `docs/config.md`.
 
 ## Board work & artifact releases
 

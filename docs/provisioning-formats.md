@@ -68,9 +68,9 @@ GoSD image:
    were captured through.
 
 This is why the flagship flashing path is a custom-repository catalog
-entry with `gosd.toml` hand-editing as the always-present fallback, not
-"flash the `.img` and click the gear icon" — that GUI step doesn't exist
-for a locally-selected file.
+entry with [the config tree's](config.md) hand-editing as the
+always-present fallback, not "flash the `.img` and click the gear icon" —
+that GUI step doesn't exist for a locally-selected file.
 
 ## Mechanisms, and when each applies
 
@@ -381,43 +381,43 @@ gosd-init consumes.
 `firstrun.sh` is detected (an `os.Stat`, nothing more) but never opened,
 parsed, or executed — the locked end-user-flashing decision (root
 `CLAUDE.md`) puts firstrun.sh parsing out of scope: gosd-init logs one
-line pointing the user at `gosd.toml` instead. Executing it was never on
-the table anyway, since gosd-init ships no shell. `custom.toml` isn't checked for at all, since it isn't a real
-Imager output format (see above) — nothing produces it to parse.
+line pointing the user at [the config tree](config.md) instead. Executing
+it was never on the table anyway, since gosd-init ships no shell.
+`custom.toml` isn't checked for at all, since it isn't a real Imager output
+format (see above) — nothing produces it to parse.
 
-### Precedence
+### A seed, not a competing source
+
+Cloud-init's files aren't a third value gosd-init compares against the
+card and `config.json` on every boot — they're a **seed**, consumed once.
+`boot.Run` reads `user-data`/`network-config`, deletes them from the boot
+partition durably, and only then writes what they named into the ordinary
+`config/hostname` and `config/wifi/*` files — the same files a hand-edit
+would have used
+(`consumeCloudInit` in `cmd/gosd-init/internal/boot/sequence.go`; see [how
+the wizard's answers land in the tree](config.md#how-the-imager-wizards-answers-land-here)
+for the full crash-ordering argument). From the very next read of the tree
+onward, a wizard answer is indistinguishable from a hand-edit — there is no
+separate cloud-init precedence tier to reason about at runtime.
+
+What's left is a two-tier resolution, evaluated fresh every boot:
 
 ```
-gosd.toml  >  cloud-init (user-data / network-config)  >  baked config.json
+config tree (card, wizard answers already folded in)  >  baked config.json
 ```
 
-This is implemented, not merely recommended. `boot.Run` reads cloud-init
-first and lets a subsequent `gosd.toml` value overwrite the hostname it set
-(`cmd/gosd-init/internal/boot/sequence.go`);
-`wifiup.ConfigCredentials.Credentials` resolves the same order for WiFi —
-`gosd.toml`'s network wins if set, else the first cloud-init network, else
-the network baked into `config.json` at build time
-(`cmd/gosd-init/internal/wifiup/credentials.go`).
-
-Rationale:
-
-1. **`gosd.toml`** first because it's GoSD's own hand-editable format
-   (locked project-wide decision, see root `CLAUDE.md`) — an explicit,
-   purpose-built file always wins over an inferred one.
-2. **Cloud-init files** next because they're structured YAML, not a shell
-   script — parsing YAML is safer and less ambiguous than regexing shell,
-   and it's the format GoSD's own catalog entry asks Imager to produce.
-3. **Baked `config.json`** last: it's what GoSD wrote at build time, before
-   the user ever touched Imager, so any of the above sources represents
-   later, more explicit user intent.
+`cardHostname` falls back to `config.json`'s baked hostname only when
+`config/hostname` names none (`cmd/gosd-init/internal/boot/sequence.go`);
+`wifiup.ConfigCredentials.Credentials` resolves WiFi the same way — the
+card's network wins if it names one, else the network baked into
+`config.json` at build time (`cmd/gosd-init/internal/wifiup/credentials.go`).
 
 `custom.toml` was left out of this chain entirely, rather than kept as a
 reserved-but-unused slot, because it has no real producer (see above); and
-`firstrun.sh` was scoped out of parsing rather than placed below cloud-init
-in precedence, because it's a shell script gosd-init must never execute and
-cloud-init already covers the flagship flashing path (see the "no
-interactive surface" and "end-user flashing path" locked decisions, root
-`CLAUDE.md`).
+`firstrun.sh` was scoped out of parsing rather than treated as another seed,
+because it's a shell script gosd-init must never execute and cloud-init
+already covers the flagship flashing path (see the "no interactive
+surface" and "end-user flashing path" locked decisions, root `CLAUDE.md`).
 
 ### WiFi PSK handling
 
@@ -441,10 +441,12 @@ Three scenarios are committed (`wifi-hostname`, `hostname-only`,
 against each and asserts on the extracted hostname, WiFi network(s), and
 log output.
 
-`config.txt` and `gosd.toml` are not committed as fixtures: across all
-three captures they were byte-identical to GoSD's own builder output
-(`pizero2w/templates.RenderConfigTxt`, `gosdtoml.Render`), confirming
-Imager left both untouched in the cloud-init flow. One capture-process
+`config.txt` and the boot partition's own settings are not committed as
+fixtures: across all three captures they were byte-identical to GoSD's own
+builder output for that release (`pizero2w/templates.RenderConfigTxt`),
+confirming Imager left both untouched in the cloud-init flow — see
+`internal/provision/testdata/imager-2.0.10/capture-notes.md` for exactly
+what was captured and how the comparison was made. One capture-process
 quirk to know when reading the raw fixtures: Imager's customization dialog
 persists field values between runs, so `hostname: fixture-one` appears in
 all three captured `user-data` files rather than a per-scenario name — the

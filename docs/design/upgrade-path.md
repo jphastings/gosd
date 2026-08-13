@@ -19,10 +19,14 @@ already did — flash the SD card with Raspberry Pi Imager per
    which this design makes non-destructive. (Bootloader bumps are rare and
    per-family; this is the same posture ab-updates took for the kernel.)
 2. **Route 3 (non-destructive plain reflash) is the baseline upgrade
-   path, contingent on a `gosd.toml` self-healing mitigation** — losing
+   path, contingent on a config-tree self-healing mitigation** — losing
    the operator's hand-edits (or forcing WiFi re-entry on a board whose
    provisioning came from a card edit rather than the wizard) was judged
-   not acceptable without one. The mitigation is §3.
+   not acceptable without one. The mitigation is §3 (shipped as the config
+   store, `cmd/gosd-init/internal/configstore`, bean `gosd-87ip` — its
+   mechanics ended up per-setting-file rather than the whole-document
+   snapshot sketched below, but the requirement and the locked precedence
+   are unchanged).
 3. **Route 1 (self-update over the network) is phase 2**, riding the
    app-slot update machinery (`gosd-vxal`) once it exists. Route 4
    (sneakernet bundle) folds into phase 2's staging design. Route 2 (a
@@ -77,7 +81,7 @@ already did — flash the SD card with Raspberry Pi Imager per
 
 ## 1. The four routes, against the constraint
 
-| Route | Operator effort | Offline boards | Data partition | gosd.toml | New tooling |
+| Route | Operator effort | Offline boards | Data partition | Config tree | New tooling |
 |---|---|---|---|---|---|
 | 1 self-update | zero (automatic) | ✗ never works | survives | survives | update endpoint (gosd-vxal) |
 | 2 custom flasher | new tool, same clicks | ✓ | survives | survives | GUI × 3 OSes, signed, maintained |
@@ -169,42 +173,53 @@ What re-adoption does NOT promise: schema compatibility of `/data`
 contents across app versions is the app's own concern, same as after any
 app update (`docs/runtime.md` already frames `/data` this way).
 
-## 3. The `gosd.toml` self-healing mitigation (provisioning snapshot)
+## 3. Self-healing the config tree across a reflash (the config store)
 
 Requirement (locked): an upgrade must not silently discard the
-operator's provisioning — hand-edited `[env]` values, and WiFi/hostname
+operator's provisioning — hand-edited `env/` values, and WiFi/hostname
 on boards provisioned by card-edit rather than the wizard.
 
-Mechanism: gosd-init snapshots provisioning into the data partition, and
-re-applies it on the first boot after a reflash.
+Mechanism sketched at this spike's date: gosd-init snapshots the whole
+effective boot-partition config into the data partition, and re-applies it
+on the first boot after a reflash. **What actually shipped differs in its
+mechanics** (`cmd/gosd-init/internal/configstore`, bean `gosd-87ip`, once
+the settings tree — epic `gosd-rw6n` — replaced the single hand-editable
+file this section was written against): rather than one whole-file
+snapshot compared key-by-key against a remembered baked default, the store
+keeps one entry *per setting file*, keyed on whether that file's bytes
+differ from what the running image shipped it with — no copy of any old
+default needed, since "differs from the image's own value" is decidable
+from `config.json`'s per-file digests alone. The requirement this section
+locks, and the freshest-intent-wins precedence, carried through unchanged;
+see [the config tree's own
+guide](../config.md#keeping-your-settings-across-a-reflash) and
+[the runtime contract's
+description](../runtime.md#keeping-settings-across-a-reflash-the-config-store)
+for how it actually behaves. The rest of this section is kept for its
+historical reasoning.
 
-- **Snapshot (every successful boot, after provisioning settles):** write
-  `/data/.gosd/provision-snapshot/` containing the effective `gosd.toml`,
-  the baked `[env]` defaults it was merged against (from `config.json`),
-  and the image identity (§4). Durable-write rules apply
-  (`docs/runtime.md` "Making a write durable"). No data partition → no
-  snapshot → no self-healing; the docs say so (one more reason `expand`
+- **Record (every boot, after provisioning settles):** write an entry for
+  every setting whose card file differs from the running image's own,
+  keyed to the data partition. Durable-write rules apply
+  (`docs/runtime.md` "Making a write durable"). No data partition → nothing
+  kept → no self-healing; the docs say so (one more reason `expand`
   is the updatable-deployment default).
-- **Detect "first boot after reflash":** the snapshot's recorded image
+- **Detect "first boot after reflash":** the store's recorded image
   identity differs from the running image's (§4). Wizard re-provisioning
-  is visible independently: fresh cloud-init files on the boot partition.
+  is visible independently: fresh cloud-init files on the boot partition,
+  consumed into the tree before this reconciliation ever runs.
 - **Restore precedence (freshest intent wins):**
   1. Anything the operator just provided via the wizard (fresh cloud-init
-     hostname/WiFi) is applied as normal and *also refreshes the
-     snapshot* — the wizard is the operator speaking most recently.
-  2. `[env]` keys in the snapshot whose values differ from their
-     *contemporaneous* baked defaults (i.e. provable hand-edits) are
-     restored into the new card's `gosd.toml` — written back to
-     the boot partition so the operator can still see and edit them — unless the
-     new image's template itself changed that key's baked default AND the
-     snapshot value equals the old default (not a hand-edit at all).
-  3. Hostname/WiFi restore from the snapshot only when the fresh boot has
-     none (wizard skipped — the "Use custom image" flow): this turns
-     "reflash via the no-wizard path" from "board falls off the network"
-     into "board comes back by itself".
-- The exact merge rules live with the implementation bean; the invariant
-  this spike locks is **the wizard always wins over the snapshot, and the
-  snapshot always wins over baked defaults.**
+     hostname/WiFi, already folded into the tree by the time this runs) or
+     a pre-boot hand-edit is applied as normal and wins outright — the
+     freshest statement of the operator's intent.
+  2. A kept setting whose value differs from the newly flashed card's own
+     is restored back onto the card.
+  3. Anything neither kept nor present on the freshly flashed card falls
+     back to this image's own baked defaults, exactly as on a first flash.
+- The invariant this spike locks, still true of what shipped: **the card's
+  own freshest value always wins over the kept copy, and the kept copy
+  always wins over baked defaults.**
 
 ## 4. Image identity (small prerequisite)
 

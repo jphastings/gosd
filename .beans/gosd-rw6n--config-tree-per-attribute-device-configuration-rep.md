@@ -1,10 +1,11 @@
 ---
 # gosd-rw6n
 title: 'Config tree: per-attribute device configuration replaces gosd.toml'
-status: in-progress
+status: completed
 type: epic
+priority: normal
 created_at: 2026-08-13T15:38:50Z
-updated_at: 2026-08-13T15:38:50Z
+updated_at: 2026-08-13T20:29:20Z
 ---
 
 Per-attribute device configuration as a directory tree on the boot partition,
@@ -146,3 +147,28 @@ unpublished. The dead `npm/gosd/v0.2.0` tag stays dead; the client ships as
 - The config store (blocked by the read side)
 - Docs (blocked by the store; written as if the tree always existed, per JP —
   no mention of the previous format anywhere)
+
+## Summary of Changes
+
+Shipped across four PRs, one per child bean, implemented 2026-08-13:
+
+- **#273** (gosd-cn4p): `internal/configtree` — embedded defaults tree,
+  `--config-dir` overlay, build-gate validation, padding-is-reservation,
+  per-board/per-flag feature pruning, `configDigests` in config.json, the
+  manifest `config` array, `--env-placeholder` and
+  `--env`/`--env-file`/`--hostname`/`--wifi-ssid`/`--wifi-pass` removed;
+  TypeScript client's `config` option replaces `env`/TOML wholesale.
+- **#274** (gosd-ypkv): `cmd/gosd-init/internal/cardconfig` reads the tree;
+  cloud-init seed consumed (read → durable delete → write into tree);
+  `internal/gosdtoml`, provsnapshot and the gosd.toml boot file deleted.
+- **#275** (gosd-87ip): `cmd/gosd-init/internal/configstore` on /data —
+  identity-gated restore, `.new`/`.unused`, revert-is-default,
+  write → sync → digest → sync commits; qemu reflash CI extended end-to-end.
+- **#277** (gosd-fdt2): docs rewritten as if the tree always existed
+  (docs/config.md replaces docs/gosd.toml.md); CLAUDE.md decisions updated.
+
+Notable in-flight decisions: defaults ship as EMPTY value files (unset →
+config.json's baked per-field fallback; hostname stays the sanitized app
+name); the store keeps parallel values//digests/ trees because value names
+may contain periods; `wifi/hidden` was dropped (not in the locked path
+list); a restored `data_flush` takes effect one boot later.

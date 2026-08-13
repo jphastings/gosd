@@ -240,7 +240,7 @@ license = "GPL-2.0-or-later"
   file — even nested inside an `[external.<name>]` section or a `[[source]]`
   entry — is an error naming the offending key, the same strictness
   `gosd-kernel.toml` uses (this is a developer-authored build input, not
-  `gosd.toml`, so a silent typo should fail loudly).
+  the config tree, so a silent typo should fail loudly).
 
 ## Fitting inside the boot partition
 

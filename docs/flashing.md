@@ -150,22 +150,25 @@ redoing anything:
    Don't rename it, or any other drive from this card: the device
    recognises its own storage by name, and treats a renamed data drive as a
    damaged one — it will refuse to start until the name is put back.
-3. Inside, you'll find a file called `gosd.toml` — open it with any plain
-   text editor (Notepad on Windows, TextEdit on a Mac, or similar). The
-   file itself explains, in plain language at the top, exactly what to
-   change and how to save it.
-4. Update the WiFi name and password, save the file, then put the card
-   back in your device and turn it on (or restart it) — your changes take
-   effect the next time it starts up.
+3. Inside, you'll find a folder called `config`. Open it, then open `wifi`
+   — inside that are two files, `ssid` and `passphrase`. Open each one with
+   any plain text editor (Notepad on Windows, TextEdit on a Mac, or
+   similar). Each file sits beside another one ending in `.explain.md`
+   that explains, in plain language, exactly what to type in and how to
+   save it.
+4. Update the WiFi name (in `ssid`) and password (in `passphrase`), save
+   both files, then put the card back in your device and turn it on (or
+   restart it) — your changes take effect the next time it starts up.
 
-This same file is also the fallback if you ever need to change your
-device's name or WiFi details without going through Imager again.
+The same `config` folder is also the fallback if you ever need to change
+your device's name or WiFi details without going through Imager again —
+its `hostname` file is right next to the `wifi` folder.
 
 **Extra settings.** Some apps need a bit of extra information to work the
-way you want — the same `gosd.toml` file above may have a section for
-these near the bottom, with its own plain-language instructions. If your
-app's developer told you to set something there, that's the file and the
-section they mean; if not, you can ignore it.
+way you want — look inside the same `config` folder for other files with
+their own plain-language `.explain.md` instructions. If your app's
+developer told you to set something there, that's the folder they mean; if
+not, you can ignore anything you don't recognise.
 
 ---
 

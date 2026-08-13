@@ -63,8 +63,9 @@ connect a mini-HDMI adapter to a monitor, and power up.
 ## Choosing the satellite
 
 `SATTRACK_NORAD_ID` selects the satellite by NORAD catalog id (default
-`68498`); set it at build time via `gosd.toml`'s `[env]` table or
-a `SATTRACK_NORAD_ID` file in the app's `config/env/` directory. TLEs come from
+`68498`); bake a default in with a `SATTRACK_NORAD_ID` file in the app's
+own `config/env/` directory at build time, or hand-edit
+`config/env/SATTRACK_NORAD_ID` on a flashed card. TLEs come from
 [tle.ivanstanojevic.me](https://tle.ivanstanojevic.me) at startup
 (retrying with backoff until the network is up) and refresh every 6 hours;
 a failed refresh keeps the previous element set. Propagation waits until

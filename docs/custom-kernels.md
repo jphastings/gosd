@@ -176,9 +176,9 @@ dest   = "vendor/blob.fw"        # relative path under /lib/firmware in the init
 
 Every key is validated strictly: an unrecognized key anywhere in the file —
 even nested inside a board section or a firmware entry — is an error naming
-the offending key, since (unlike `gosd.toml`, the end-user-facing runtime
-config) this file is a developer-authored build input where a silent typo
-should fail loudly rather than silently do nothing.
+the offending key, since (unlike the config tree, the end-user-facing
+runtime config) this file is a developer-authored build input where a
+silent typo should fail loudly rather than silently do nothing.
 
 `[[module]]` — building an out-of-tree loadable `.ko` — is reserved but not
 implemented: GoSD kernels are monolithic today (`CONFIG_MODULES` always

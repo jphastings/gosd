@@ -28,9 +28,9 @@ size and location are recorded separately, in a directory entry and the FAT
 tables. Overwriting a placeholder's content ranges with **exactly the same
 number of bytes** changes the file's content without touching any
 filesystem structure. Nothing at boot checksums the boot partition's contents
-(gosd-init only requires that `gosd.toml` exists and parses), so the patch
-is invisible to everything except whatever reads that specific file — which
-is the point.
+(gosd-init only requires that `config/explain.md` exists, as the one part of
+the tree no feature selection ever prunes), so the patch is invisible to
+everything except whatever reads that specific file — which is the point.
 
 ## Placeholder file contract
 
@@ -49,12 +49,13 @@ is the point.
   cloud-init file unmarshals to an empty document, which gosd-init already
   treats as "no WiFi seed provided" (see `docs/provisioning-formats.md`).
 
-Placeholders join the FAT root's other files (`gosd.toml` included) before
-`gosd build` computes the image's content-derived identity, so they're
-covered by it exactly the same way — an identical `--placeholder` flag set
-across rebuilds keeps the identity reproducible. A `--placeholder` path
-that collides with an existing boot file, `gosd.toml`, or another
-placeholder is refused case-insensitively (FAT paths are case-insensitive).
+Placeholders join the FAT root's other files (the `config/` tree included)
+before `gosd build` computes the image's content-derived identity, so
+they're covered by it exactly the same way — an identical `--placeholder`
+flag set across rebuilds keeps the identity reproducible. A `--placeholder`
+path that collides with an existing boot file (a `config/` tree file
+included) or another placeholder is refused case-insensitively (FAT paths
+are case-insensitive).
 
 ## The manifest: `<image basename>.inject.json`
 
@@ -192,7 +193,7 @@ itself.
 
 An image built with `--placeholder` stays fully compatible with Raspberry
 Pi Imager's custom-repository flow (`docs/publishing.md`): Imager's own
-customization wizard writes real files (`gosd.toml`, `user-data`, etc.)
+customization wizard writes real files (`user-data`, `network-config`, etc.)
 over the placeholders using the OS's normal FAT driver, exactly as it would
 on an image with no placeholders at all. The two mechanisms don't
 interact — a placeholder is just an ordinary file until something,

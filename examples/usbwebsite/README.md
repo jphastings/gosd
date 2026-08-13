@@ -52,11 +52,11 @@ it just serves.
 
 Real hardware often ships with something already on the eMMC — vendor
 firmware, a prior project. `usbwebsite` refuses to touch that without
-explicit consent: set `WEBSITE_WIPE_EMMC = "yes"` in the `[env]` table of
-`gosd.toml` on the boot partition (see docs/runtime.md's "App
-environment variables"), then reboot. Without it, the app logs what to do
-and idles rather than exiting, since `gosd-init` restarts exited apps
-regardless of exit code and would otherwise crash-loop it forever.
+explicit consent: create `config/env/WEBSITE_WIPE_EMMC` on the boot
+partition with `yes` in it (see docs/runtime.md's "App environment
+variables"), then reboot. Without it, the app logs what to do and idles
+rather than exiting, since `gosd-init` restarts exited apps regardless of
+exit code and would otherwise crash-loop it forever.
 
 The SD path needs no consent knob: the data partition exists solely
 for app data, and the app never reformats or relabels it.

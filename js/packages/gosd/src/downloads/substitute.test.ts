@@ -381,8 +381,7 @@ describe("primeSubstitutionState + resumeFrom: continuing a download across a se
   });
 });
 
-// The reserved [env] region is a span of gosd.toml rather than a file of its
-/// A config tree setting is a value file of its own, not a placeholder, and
+// A config tree setting is a value file of its own, not a placeholder, and
 // travels a different manifest key to get here — these pin that it gets the
 // same substitution and pristine-verification behaviour a placeholder does.
 describe("a config tree setting", () => {
