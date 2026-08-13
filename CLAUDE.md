@@ -242,8 +242,9 @@ say so in the bean rather than silently diverging.
   + size), the way dataexpand does. Plain Imager reflash is the baseline
   upgrade path: `--data-size=expand` images keep the data partition via
   first-boot re-adoption (now gated on this image's configured data label,
-  matched case-insensitively), and the provisioning snapshot in /data
-  self-heals gosd.toml hand-edits.
+  matched case-insensitively), and the config store in /data
+  (`cmd/gosd-init/internal/configstore`, bean gosd-87ip) puts the settings
+  somebody put on the card back onto the newly flashed one.
 - **vfat `flush` is opt-in, default off (decided 2026-08-02, bean
   gosd-9m1k):** normal writeback everywhere (`gosd build --data-flush` /
   gosd.toml `data_flush` / env `GOSD_DATA_FLUSH` to opt in). Durability

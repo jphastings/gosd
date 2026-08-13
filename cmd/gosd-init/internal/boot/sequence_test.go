@@ -2462,6 +2462,85 @@ func TestGosdInitsOwnConsoleLinesNeverReachTheCardReport(t *testing.T) {
 	}
 }
 
+func TestRunPutsKeptSettingsBackOnTheCardAfterAReFlash(t *testing.T) {
+	// The store lives on the data partition, which a re-flash leaves alone:
+	// one directory outliving both boots below, while each boot gets the
+	// card its own image was flashed onto.
+	store := t.TempDir()
+	baked := bakedDigests("hostname")
+
+	// Somebody has named this device and given their app an environment
+	// variable, so both are kept.
+	bootOnce(t, store, t.TempDir(), "image-a", baked, map[string]string{"hostname": "kitchen-pi", "env/GREETING": "hello"})
+
+	// A different image is written over the card: its config tree is back
+	// to the values that image ships, and neither setting is on it.
+	card := t.TempDir()
+	hostname, env := bootOnce(t, store, card, "image-b", baked, map[string]string{"hostname": ""})
+
+	if want := []string{"hello", "kitchen-pi"}; !slices.Equal(hostname.set, want) {
+		t.Errorf("SetHostname calls = %v, want %v: the new image's own name, then the one put back, before /app starts", hostname.set, want)
+	}
+	if got := readCardValue(t, card, "hostname"); got != "kitchen-pi" {
+		t.Errorf("hostname on the card = %q, want it back in the file its owner left it in", got)
+	}
+	if !slices.Contains(env, "GREETING=hello") {
+		t.Errorf("app env = %v, want the restored GREETING among it", env)
+	}
+}
+
+// bootOnce runs one whole boot of the image identity against a card holding
+// card's settings and a store directory that outlives it, reporting the
+// hostnames that boot set and the environment it started /app with.
+func bootOnce(t *testing.T, store, root, identity string, baked, card map[string]string) (*fakeHostname, []string) {
+	t.Helper()
+	stop := make(chan struct{})
+	var gotEnv []string
+	hostname := &fakeHostname{}
+
+	deps := Deps{
+		Mounter:  &fakeMounter{},
+		Hostname: hostname,
+		Reaper:   fakeReaper{},
+		Rebooter: &fakeRebooter{},
+		AppStarter: funcAppStarter(func(_ string, env []string, _, _ io.Writer) (int, error) {
+			gotEnv = env
+			close(stop)
+			return 1, nil
+		}),
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "hello", Identity: identity, ConfigDigests: baked}, nil
+		},
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(card),
+		EditBoot:       func(edit func(root string) error) error { return edit(root) },
+		Sleep:          func(time.Duration) {},
+		Now:            time.Now,
+	}
+	opts := testOptions()
+	opts.ConfigStoreDir = store
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	return hostname, gotEnv
+}
+
+// bakedDigests is the digest map config.json carries for an image whose
+// settings all ship unset — the state a freshly flashed card is in.
+func bakedDigests(paths ...string) map[string]string {
+	tree := cardconfig.Tree{}
+	digests := make(map[string]string, len(paths))
+	for _, path := range paths {
+		tree.Set(path, "")
+		digests[path] = tree[path].SHA256()
+	}
+	return digests
+}
+
 // readsCard wires Deps.ReadConfigTree to hand Run a config tree holding
 // values, keyed by tree path ("wifi/ssid", "env/API_TOKEN") — a card
 // somebody has edited, or (nil) one nobody has.
