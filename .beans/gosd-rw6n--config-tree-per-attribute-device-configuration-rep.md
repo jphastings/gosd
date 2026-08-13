@@ -172,3 +172,12 @@ config.json's baked per-field fallback; hostname stays the sanitized app
 name); the store keeps parallel values//digests/ trees because value names
 may contain periods; `wifi/hidden` was dropped (not in the locked path
 list); a restored `data_flush` takes effect one boot later.
+
+## Correction (2026-08-13, after close)
+
+The "nothing shipped" premise above was wrong when written: CLI v0.5.0 (with
+the old single-file config and the `--env-placeholder` mechanism) was tagged
+and released 2026-08-12, and npm 0.2.0 was published to the `next` dist-tag
+(never `latest`). Numbering therefore moves on: the config tree ships as CLI
+v0.6.0 and npm 0.3.0 (bean gosd-pnl2). Whether the v0.6.0 release notes call
+out the break for v0.5.0 users is JP's call at tag time.
