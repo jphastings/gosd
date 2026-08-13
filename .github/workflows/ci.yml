@@ -173,7 +173,6 @@ jobs:
           mkdir -p dist
           go run ./cmd/gosd build ./examples/hello \
             --artifacts-dir cmd/gosd/testdata/fake-artifacts \
-            --hostname ci-smoke-test \
             -o dist
       - name: Assert both board images were produced
         run: |
@@ -235,7 +234,6 @@ jobs:
           mkdir -p dist
           go run ./cmd/gosd build ./examples/hello \
             --board=qemu-virt \
-            --hostname ci-qemu-hello \
             -o dist/hello-qemu-virt.img
       - name: Boot the image and poll until HTTP responds
         run: |
@@ -245,7 +243,10 @@ jobs:
           # This runner is amd64, so qemu TCG-emulates arm64: boot takes
           # far longer than the ~3s of an arm64 host. 180s is generous
           # headroom, not an expectation.
-          expected="host=ci-qemu-hello"
+          # The device names itself after the app: config/hostname ships
+          # unset, so config.json's baked default (the main package's name)
+          # is what gosd-init falls back to.
+          expected="host=hello"
           success=0
           for i in $(seq 1 180); do
             if ! kill -0 "$runner_pid" 2>/dev/null; then
@@ -320,7 +321,7 @@ jobs:
           go build -o dist/gosd-cli ./cmd/gosd
 
           expected="cloudflared: binary is baked into this image, but [ingress.cloudflared] isn't configured in gosd.toml; nothing to do"
-          ./dist/gosd-cli run ./examples/hello --ingress cloudflared --hostname ci-cloudflared-baked > cloudflared.log 2>&1 &
+          ./dist/gosd-cli run ./examples/hello --ingress cloudflared > cloudflared.log 2>&1 &
           run_pid=$!
 
           seen=0
@@ -371,7 +372,7 @@ jobs:
       - name: "gosd run --ingress tailscale-funnel: baked-but-not-configured logs exactly once"
         run: |
           expected="tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do"
-          ./dist/gosd-cli run ./examples/hello --ingress tailscale-funnel --data-size 64MiB --hostname ci-tsfunnel-baked > tsfunnel.log 2>&1 &
+          ./dist/gosd-cli run ./examples/hello --ingress tailscale-funnel --data-size 64MiB > tsfunnel.log 2>&1 &
           run_pid=$!
 
           seen=0
@@ -431,7 +432,6 @@ jobs:
           mkdir -p dist
           go run ./cmd/gosd build ./examples/hello \
             --board=qemu-virt \
-            --hostname ci-qemu-expand \
             --data-size=expand \
             -o dist/hello-qemu-virt.img
           # Kept aside as the flasher's copy, for the re-flash step below.
@@ -534,7 +534,6 @@ jobs:
           mkdir -p dist
           go run ./cmd/gosd build ./examples/hello \
             --board=qemu-virt \
-            --hostname ci-qemu-data-ext4 \
             --data-filesystem=ext4 \
             --data-size=expand \
             -o dist/expand.img
@@ -582,7 +581,6 @@ jobs:
         run: |
           go run ./cmd/gosd build ./examples/hello \
             --board=qemu-virt \
-            --hostname ci-qemu-data-ext4-fixed \
             --data-filesystem=ext4 \
             --data-size=1GiB \
             -o dist/fixed.img
@@ -632,7 +630,6 @@ jobs:
           mkdir -p dist
           go run ./cmd/gosd build ./examples/diskstorage \
             --board=qemu-virt \
-            --hostname ci-qemu-disk-ext4 \
             -o dist/diskstorage-qemu-virt.img
       # A few GiB, sparse, well past ext4golden's fixed 512MiB image so the
       # "grew, not golden" assertion below is unambiguous — and cheap to

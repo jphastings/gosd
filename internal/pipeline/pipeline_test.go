@@ -18,6 +18,7 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
@@ -100,7 +101,7 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 		Board:          b,
 		AppBinaryPath:  appPath,
 		InitBinaryPath: initPath,
-		Config:         boards.BuildConfig{Hostname: "myhost", HostnameExplicit: true, WifiSSID: "ssid", WifiPassword: "pass"},
+		Config:         boards.BuildConfig{Hostname: "myhost"},
 		OutputPath:     imgPath,
 	})
 	if err != nil {
@@ -136,20 +137,14 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 	assertRecordContent(t, records, "lib/firmware/wifi.bin", "wifi bytes")
 
 	config := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"hostname":"myhost"`, `"ssid":"ssid"`, `"passphrase":"pass"`, `"board":"fake-board"`} {
+	for _, want := range []string{`"hostname":"myhost"`, `"board":"fake-board"`} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("config.json = %s, want it to contain %q", config, want)
 		}
 	}
 
-	gosdToml, err := fs.ReadFile("gosd.toml")
-	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
-	}
-	for _, want := range []string{`hostname = "myhost"`, `ssid = "ssid"`, `passphrase = "pass"`} {
-		if !strings.Contains(string(gosdToml), want) {
-			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
-		}
+	if _, err := fs.ReadFile("gosd.toml"); err != nil {
+		t.Errorf("reading gosd.toml back from the FAT root: %v", err)
 	}
 }
 
@@ -633,57 +628,6 @@ func TestAssembleBakesBuildTimestampIntoConfigJSON(t *testing.T) {
 	}
 }
 
-func TestAssembleBakesEnvIntoConfigJSONAndGosdToml(t *testing.T) {
-	dir := t.TempDir()
-	appPath := writeTempFile(t, dir, "app", "app")
-	initPath := writeTempFile(t, dir, "gosd-init", "init")
-
-	b := &fakeBoard{name: "fake-board"}
-	imgPath := filepath.Join(dir, "out.img")
-	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Labels: testLabels,
-		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
-		Config:     boards.BuildConfig{Env: map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}},
-		OutputPath: imgPath,
-	})
-	if err != nil {
-		t.Fatalf("Assemble: %v", err)
-	}
-
-	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
-	if err != nil {
-		t.Fatalf("reopening the image: %v", err)
-	}
-	defer func() { _ = d.Close() }()
-
-	fs, err := d.GetFilesystem(1)
-	if err != nil {
-		t.Fatalf("GetFilesystem(1): %v", err)
-	}
-
-	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
-	if err != nil {
-		t.Fatalf("reading initramfs.cpio.zst: %v", err)
-	}
-	records := decodeInitramfs(t, initramfsBytes)
-	config := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"API_URL":"https://example.com"`, `"LOG_LEVEL":"debug"`} {
-		if !strings.Contains(string(config), want) {
-			t.Errorf("config.json = %s, want it to contain %q", config, want)
-		}
-	}
-
-	gosdToml, err := fs.ReadFile("gosd.toml")
-	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
-	}
-	for _, want := range []string{`API_URL = "https://example.com"`, `LOG_LEVEL = "debug"`} {
-		if !strings.Contains(string(gosdToml), want) {
-			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
-		}
-	}
-}
-
 func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")
@@ -719,12 +663,11 @@ func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 }
 
 // TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault is the
-// core regression test for bean gosd-4hz1: a build's sanitized-default
-// hostname (HostnameExplicit left false, as `gosd build` leaves it when
-// --hostname isn't passed) must still land in config.json as the baked
-// fallback, but must NOT be baked uncommented into gosd.toml - otherwise it
-// always shadows an Imager wizard's cloud-init hostname, since gosd.toml
-// outranks cloud-init in the locked precedence chain.
+// core regression test for bean gosd-4hz1: the app's own name must land in
+// config.json as the baked fallback, but must NOT be baked uncommented into
+// gosd.toml - otherwise it always shadows an Imager wizard's cloud-init
+// hostname, since gosd.toml outranks cloud-init in the locked precedence
+// chain.
 func TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")
@@ -999,5 +942,67 @@ func assertRecordContent(t *testing.T, records []cpio.Record, name, want string)
 	t.Helper()
 	if got := string(recordContent(t, records, name)); got != want {
 		t.Errorf("record %q content = %q, want %q", name, got, want)
+	}
+}
+
+// TestAssembleWritesTheConfigTreeAndReportsItsValueRanges pins this
+// package's half of the injection contract: the tree's files land on the
+// card under configtree.Dir, and every value file - not its documentation -
+// comes back in the report's FileRanges, which is what internal/inject
+// publishes for a downloader to overwrite.
+func TestAssembleWritesTheConfigTreeAndReportsItsValueRanges(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	tree := configtree.Tree{
+		Values: []configtree.Value{{Path: "wifi/ssid", Content: []byte("home\n\n\n\n"), Value: "home"}},
+		Docs:   []configtree.Doc{{Path: "wifi/ssid.explain.md", Content: []byte("# The network's name\n")}},
+	}
+
+	imgPath := filepath.Join(dir, "out.img")
+	report, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Labels:        testLabels,
+		Board:         &fakeBoard{name: "fake-board"},
+		AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		ConfigTree: tree,
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	ranges, ok := report.FileRanges[configtree.Dir+"/wifi/ssid"]
+	if !ok {
+		t.Fatalf("no reported ranges for the setting; got %v", report.FileRanges)
+	}
+	var total int64
+	for _, r := range ranges {
+		total += r.LengthBytes
+	}
+	if total != int64(len(tree.Values[0].Content)) {
+		t.Errorf("reported ranges total %d bytes, want the setting's whole %d-byte reservation", total, len(tree.Values[0].Content))
+	}
+	if _, reported := report.FileRanges[configtree.Dir+"/wifi/ssid.explain.md"]; reported {
+		t.Error("documentation was reported as an injectable region; only value files are")
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the image: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1): %v", err)
+	}
+	for path, want := range tree.BootFiles() {
+		got, err := fs.ReadFile(path)
+		if err != nil {
+			t.Errorf("reading %s off the card: %v", path, err)
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s on the card is %q, want %q", path, got, want)
+		}
 	}
 }

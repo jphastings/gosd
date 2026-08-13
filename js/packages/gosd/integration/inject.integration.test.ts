@@ -14,8 +14,8 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+  configRegionKey,
   deriveManifestURL,
-  ENV_REGION_KEY,
   GosdImageHashMismatchError,
   GosdInvalidEnvError,
   GosdPlaceholderNotPristineError,
@@ -176,10 +176,12 @@ describe("cross-implementation integration: gosd build --placeholder round trip"
   });
 });
 
-// The reserved [env] region travels a different manifest key than a
-// placeholder and lands inside gosd.toml rather than in a file of its own,
-// so it gets its own round trip against the real Go-built fixture.
-describe("cross-implementation integration: gosd build --env-placeholder round trip", () => {
+// The config tree's settings travel a different manifest key than a
+// placeholder and are real files of their own on the card, so they get
+// their own round trip against the real Go-built fixture — including the
+// FAT-level readback that proves an injected value is what the device will
+// actually read.
+describe("cross-implementation integration: config tree round trip", () => {
   let manifest: Manifest;
   let pristine: Uint8Array;
 
@@ -188,19 +190,27 @@ describe("cross-implementation integration: gosd build --env-placeholder round t
     pristine = new Uint8Array(readFileSync(imgPath));
   });
 
-  it("publishes an env region whose pristine bytes are the gosd.toml [env] body gosd rendered", () => {
-    if (!manifest.env) throw new Error("fixture manifest has no env region; regenerate it");
-    const region = readRegion(pristine, manifest.env.ranges);
-    const text = new TextDecoder().decode(region);
-    expect(text).toMatch(/^# GOSD-INJECTABLE v1 env/);
-    expect(text).toContain('API_URL = "https://example.invalid"');
+  it("publishes the settings gosd built, unset and padded to their reservation", () => {
+    const paths = manifest.config.map((c) => c.path);
+    expect(paths).toContain("wifi/ssid");
+    expect(paths).toContain("env/API_TOKEN");
+    // --ingress cloudflared was selected for the fixture; the other agent
+    // was not, so its settings must not be on the card at all.
+    expect(paths).toContain("ingress/cloudflared/token");
+    expect(paths.some((p) => p.startsWith("ingress/tailscale-funnel/"))).toBe(false);
+
+    for (const setting of manifest.config) {
+      expect(setting.value).toBe("");
+      const region = readRegion(pristine, setting.ranges);
+      expect(region.length).toBe(setting.size);
+      expect(new TextDecoder().decode(region)).toMatch(/^\n*$/);
+    }
   });
 
-  it("splices real settings into it, leaving the rest of gosd.toml untouched", async () => {
-    if (!manifest.env) throw new Error("fixture manifest has no env region; regenerate it");
+  it("splices settings in, leaving every other byte of the image alone", async () => {
     const padded = padAll(
       {},
-      { API_TOKEN: "s3cret", API_URL: "https://injected.example" },
+      { "env/API_TOKEN": "s3cret", "ingress/cloudflared/token": "tunnel-token" },
       manifest,
     );
     const sink = collectingSink();
@@ -223,27 +233,29 @@ describe("cross-implementation integration: gosd build --env-placeholder round t
     });
 
     const output = sink.bytes();
-    const text = new TextDecoder().decode(readRegion(output, manifest.env.ranges));
-    expect(text).toBe(
-      'API_TOKEN = "s3cret"\nAPI_URL = "https://injected.example"\n'.padEnd(
-        manifest.env.size,
-        "\n",
-      ),
+    const token = manifest.config.find((c) => c.path === "env/API_TOKEN");
+    if (!token) throw new Error("fixture manifest has no env/API_TOKEN setting; regenerate it");
+    expect(new TextDecoder().decode(readRegion(output, token.ranges))).toBe(
+      "s3cret".padEnd(token.size, "\n"),
     );
 
     const expected = Uint8Array.from(pristine);
-    const replacement = padded.get(ENV_REGION_KEY);
-    if (!replacement) throw new Error("test setup error: no padded content for the env region");
-    let consumed = 0;
-    for (const range of manifest.env.ranges) {
-      expected.set(replacement.subarray(consumed, consumed + range.length), range.offset);
-      consumed += range.length;
+    for (const setting of manifest.config) {
+      const replacement = padded.get(configRegionKey(setting.path));
+      if (!replacement) continue;
+      let consumed = 0;
+      for (const range of setting.ranges) {
+        expected.set(replacement.subarray(consumed, consumed + range.length), range.offset);
+        consumed += range.length;
+      }
     }
     expect(Buffer.compare(output, expected)).toBe(0);
   });
 
   it("refuses settings the device would ignore, before anything is downloaded", () => {
-    expect(() => padAll({}, { GOSD_BOARD: "pi-zero-2w" }, manifest)).toThrow(GosdInvalidEnvError);
+    expect(() => padAll({}, { "env/GOSD_BOARD": "pi-zero-2w" }, manifest)).toThrow(
+      GosdInvalidEnvError,
+    );
   });
 });
 

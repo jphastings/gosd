@@ -69,8 +69,8 @@ and it carries traffic for one public hostname to one local port on your
 app — no port forwarding, no public IP address, and no app code at all. v1
 is deliberately narrow: one locally-managed tunnel, declared entirely
 through `gosd.toml`, with the ingress rule fixed at build-time-independent
-runtime resolution (there's no `--ingress-token` build flag — unlike
-`--wifi-ssid`/`--wifi-pass`, nothing here is baked into the image itself).
+runtime resolution (there's no `--ingress-token` build flag — nothing here
+is baked into the image itself).
 
 Remote/dashboard-managed tunnels and quick tunnels are out of scope for v1
 (see "Why a CLI-created tunnel" below).

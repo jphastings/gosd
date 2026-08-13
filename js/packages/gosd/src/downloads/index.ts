@@ -45,17 +45,16 @@ export interface WithPlaceholdersOptions {
   /** The filename offered to the save picker / browser download. Defaults
    * to the image URL's last path segment. */
   suggestedName?: string;
-  /** App settings to write into the image's reserved [env] region (`gosd
-   * build --env-placeholder`), rendered as gosd.toml `[env]` entries. Unlike
-   * `files` these aren't a path-keyed map: the region is a span of
-   * gosd.toml, not a file of its own. What lands there behaves exactly like
-   * a setting typed onto the card by hand — the app reads it with
-   * `os.Getenv`, crash reports redact it, and it survives a later reflash
-   * (see docs/image-injection.md in the gosd repo). Throws if the image
-   * reserved no region, if a key isn't a valid environment variable name or
-   * is in the reserved `GOSD_*` namespace, or if the rendered settings
-   * don't fit. */
-  env?: Record<string, string>;
+  /** Settings to write into the image's `config/` tree, keyed by their path
+   * within it with no leading `config/` — `"wifi/ssid"`, `"env/API_TOKEN"`.
+   * What lands there is exactly what someone would have typed into that
+   * file on the card by hand, so the device treats it as its own setting
+   * and it survives a later reflash. Throws — before anything downloads —
+   * if the image has no settings, if a path isn't one of them (the error
+   * lists what is), if a value is longer than that setting's reservation,
+   * or if an `env/` name is unusable or in the reserved `GOSD_*`
+   * namespace. */
+  config?: Record<string, string>;
   ignoreETag?: boolean;
   /** Defaults to the global `fetch`. */
   fetch?: typeof fetch;
@@ -140,7 +139,7 @@ export async function withPlaceholders(
         manifestSha256: options.manifestSha256,
         signal: options.signal,
       }));
-    const padded = padAll(files, options.env, manifest);
+    const padded = padAll(files, options.config, manifest);
 
     let sink: SaveSink;
     let tier: SaveTier;
@@ -216,6 +215,7 @@ export {
   GosdManifestInvalidError,
   GosdManifestHashMismatchError,
   GosdUnknownPlaceholderError,
+  GosdUnknownConfigError,
   GosdInvalidEnvError,
   GosdContentTooLargeError,
   GosdImageFetchError,
@@ -233,16 +233,14 @@ export type {
   Manifest,
   ImageInfo,
   PlaceholderInfo,
-  EnvInfo,
+  ConfigInfo,
   RegionInfo,
   ByteRange,
   FetchManifestOptions,
 } from "./manifest.js";
-export { injectableRegions } from "./manifest.js";
+export { injectableRegions, configRegionKey, CONFIG_DIR } from "./manifest.js";
 
-export { padContents, padEnv, padAll } from "./content.js";
-
-export { ENV_REGION_KEY, renderEnvBody } from "./env.js";
+export { padContents, padConfig, padAll } from "./content.js";
 
 export { createSubstitutionTransform, patchStream } from "./substitute.js";
 export type { SubstitutionProgress, SubstitutionOptions } from "./substitute.js";

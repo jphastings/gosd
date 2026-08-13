@@ -84,8 +84,8 @@ the people you send them to never need a terminal.
    ```
 
    Omit `--board` to build every supported board at once; `gosd build
-   --help` lists the full flag set (`--hostname`, `--wifi-ssid` /
-   `--wifi-pass`, `-o`/`--output`, repeatable `--with-external` — see
+   --help` lists the full flag set (`--config-dir`, `-o`/`--output`,
+   repeatable `--with-external` — see
    [`docs/runtime.md`](docs/runtime.md#bundling-a-companion-binary---with-external)).
 
    No board on hand yet? `gosd run .` cross-compiles your app, builds an
@@ -111,7 +111,7 @@ the people you send them to never need a terminal.
    instead.)
 
    Then open `http://<hostname>.local/` — the hostname defaults to your
-   main package's sanitized name unless you passed `--hostname`.
+   main package's sanitized name.
    `gosd-init` runs its own mDNS responder, so `.local` resolves on macOS,
    Linux, and Windows with no extra setup; if your network blocks mDNS,
    find the device's address via your router.
@@ -138,9 +138,7 @@ the people you send them to never need a terminal.
   read without flashing a card:
   [when to raise one, and what it says](docs/crash-reports.md)
 - **The device's `gosd.toml`** — the hand-editable settings file on every
-  card. Pre-populate and *document* your app's environment variables with
-  per-key comments and commented-out suggestions (`gosd build --env` /
-  `--env-file`): [`docs/gosd.toml.md`](docs/gosd.toml.md)
+  card: [`docs/gosd.toml.md`](docs/gosd.toml.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
   Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in

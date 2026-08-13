@@ -19,6 +19,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/artifacts"
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
@@ -60,18 +61,19 @@ type Options struct {
 	InitBinaryPath string
 
 	// Config is the per-build configuration baked into
-	// /etc/gosd/config.json (hostname, WiFi) and passed through to the
-	// board's BootFiles.
+	// /etc/gosd/config.json and passed through to the board's BootFiles.
 	Config boards.BuildConfig
 
-	// EnvBody is a developer-authored [env] section body to splice verbatim
-	// into gosd.toml (gosd build --env-file; see cmd/gosd), preserving its
-	// comments and commented-out "suggested" entries. It's rendered under a
-	// bare "[env]" line as-is. Config.Env still carries the active (baked)
-	// defaults into config.json — cmd/gosd derives it from the same file, so
-	// the two agree. When EnvBody is empty, Config.Env drives the plain,
-	// sorted [env] rendering as before (--env, or no env at all).
-	EnvBody string
+	// ConfigTree is this board's assembled config/ directory (gosd's
+	// defaults overlaid with `gosd build --config-dir`, pruned to the
+	// features this image carries - see internal/configtree). Its files
+	// land at the FAT root under configtree.Dir, are covered by the image
+	// identity like every other FAT-root file, and each value file's byte
+	// ranges come back in the image.WriteReport's FileRanges so a
+	// provisioning tool can write settings into a downloaded .img. Its
+	// per-value digests are baked into config.json, so the device can tell
+	// a hand-edited or injected value from the one it shipped with.
+	ConfigTree configtree.Tree
 
 	// ExtraFirmware holds additional runtime firmware files to land under
 	// /lib/firmware in the initramfs, alongside the board's own
@@ -146,8 +148,8 @@ type Options struct {
 	// emmc/disk vfat mount) uses the vfat "flush" mount option by default.
 	// Default false (see internal/initcfg.Config.DataFlush and gosd-9m1k);
 	// overridable per-device via gosd.toml's data_flush key at boot, which
-	// is why this is a plain baked default and not a template value like
-	// Config.Env — gosd-init computes the effective setting itself.
+	// is why this is a plain baked default rather than anything the card
+	// renders — gosd-init computes the effective setting itself.
 	DataFlush bool
 
 	// DataFilesystem is gosd build --data-filesystem's resolved value:
@@ -213,15 +215,6 @@ type Options struct {
 	// FileRanges - the raw material for cmd/gosd's <image>.inject.json
 	// sidecar (see internal/inject.WriteManifest).
 	Placeholders []inject.Placeholder
-
-	// EnvPlaceholderBytes is `gosd build --env-placeholder <size>`: the exact
-	// number of bytes to reserve for gosd.toml's [env] body, so a downloader
-	// can overwrite that region with real settings (see
-	// internal/gosdtoml.RenderWithReservedEnv and docs/image-injection.md).
-	// Its byte ranges join the placeholders' in the image.WriteReport's
-	// FileRanges, keyed by "gosd.toml". Zero reserves nothing, which is every
-	// build that doesn't ask.
-	EnvPlaceholderBytes int
 }
 
 // Assemble runs the full build pipeline for one board: resolve artifacts,
@@ -298,51 +291,33 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 
 	// gosd.toml is common to every board (unlike config.txt/extlinux.conf,
 	// which are board-specific), so it's added here rather than inside any
-	// Board.BootFiles implementation: both boards get it at the FAT root.
-	// The baked env (opts.Config.Env, from `gosd build --env`) is rendered
-	// here too, so the card shows the developer's defaults for the user to
-	// see and override. It's added before the read-and-hash loop below so
-	// it's covered by the image identity like every other FAT-root file.
+	// Board.BootFiles implementation: every board gets it at the FAT root,
+	// before the read-and-hash loop below, so it's covered by the image
+	// identity like every other FAT-root file.
 	//
-	// The hostname line is only baked in uncommented when the developer
-	// explicitly chose it (opts.Config.HostnameExplicit); the default
-	// (sanitized main-package name) renders commented, like [wifi], so an
-	// Imager wizard's cloud-init hostname isn't always shadowed by it (see
-	// bean gosd-4hz1 and gosdtoml.Render's docstring).
-	//
-	// The zero Ingress value below always renders the commented example:
-	// gosd build only ever bakes the cloudflared binary in (config.json's
-	// ingressCloudflared bit), never a real token/hostname/port — that's a
-	// per-device secret nothing at build time could supply — so there's
-	// never a real value to bake here.
-	//
-	// A developer-authored [env] body (gosd build --env-file) is spliced
-	// verbatim; otherwise Config.Env's baked defaults render the plain, sorted
-	// [env] as before (see Options.EnvBody).
-	envSection := gosdtoml.EnvSection{Values: opts.Config.Env, Verbatim: opts.EnvBody}
-
-	reportRanges := make([]image.RangeRequest, 0, len(opts.Placeholders)+1)
-	gosdToml := gosdtoml.Render(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{})
-
-	// --env-placeholder reserves the [env] body itself rather than adding a
-	// file of its own, so an injected value arrives as an ordinary gosd.toml
-	// value: gosd-init merges it with no new precedence rule, and the
-	// provisioning snapshot treats it as the operator's own intent, which is
-	// what lets it survive a later reflash (see provsnapshot and
-	// docs/image-injection.md).
-	if opts.EnvPlaceholderBytes > 0 {
-		reserved, span, err := gosdtoml.RenderWithReservedEnv(opts.Config.Hostname, opts.Config.HostnameExplicit, opts.Config.WifiSSID, opts.Config.WifiPassword, envSection, gosdtoml.Ingress{}, opts.EnvPlaceholderBytes)
-		if err != nil {
-			return image.WriteReport{}, fmt.Errorf("reserving --env-placeholder space in gosd.toml for %s failed: %w; raise --env-placeholder or bake fewer --env values in", opts.Board.Name(), err)
-		}
-		gosdToml = reserved
-		reportRanges = append(reportRanges, image.RangeRequest{
-			Path:        "gosd.toml",
-			OffsetBytes: int64(span.OffsetBytes),
-			LengthBytes: int64(span.LengthBytes),
-		})
-	}
+	// Nothing is baked into it: settings live in the config tree, so it
+	// renders as the commented-out examples a card nobody has edited shows.
+	// Its hostname line stays commented for the reason it always did - so an
+	// Imager wizard's cloud-init hostname isn't shadowed by a default (bean
+	// gosd-4hz1).
+	gosdToml := gosdtoml.Render(opts.Config.Hostname, false, "", "", gosdtoml.EnvSection{}, gosdtoml.Ingress{})
 	bootFiles["gosd.toml"] = bytes.NewReader(gosdToml)
+
+	// The config tree lands at the FAT root next to gosd.toml, one file per
+	// setting, and each of its value files is reported back as an
+	// injectable region: padding is the reservation, so the bytes a
+	// provisioning tool overwrites in the finished .img are exactly the
+	// bytes written here (see internal/configtree). Added before the
+	// read-and-hash loop below so the whole tree is covered by the image
+	// identity, like every other FAT-root file.
+	reportRanges := make([]string, 0, len(opts.ConfigTree.Values)+len(opts.Placeholders))
+	for _, v := range opts.ConfigTree.Values {
+		bootFiles[configtree.Dir+"/"+v.Path] = bytes.NewReader(v.Content)
+		reportRanges = append(reportRanges, configtree.Dir+"/"+v.Path)
+	}
+	for _, d := range opts.ConfigTree.Docs {
+		bootFiles[configtree.Dir+"/"+d.Path] = bytes.NewReader(d.Content)
+	}
 
 	// opts.Placeholders land at the FAT root the same way, right after
 	// gosd.toml and still before the read-and-hash loop below, so they're
@@ -364,7 +339,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 			return image.WriteReport{}, fmt.Errorf("rendering --placeholder %s failed: %w", p.Path, err)
 		}
 		bootFiles[p.Path] = bytes.NewReader(rendered)
-		reportRanges = append(reportRanges, image.RangeRequest{Path: p.Path})
+		reportRanges = append(reportRanges, p.Path)
 	}
 
 	// Read every FAT-root file into memory — both to hash it into the
@@ -424,14 +399,10 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	identity := initcfg.ComputeIdentity(payload)
 
 	configJSON, err := json.Marshal(initcfg.Config{
-		Board:            opts.Board.Name(),
-		BoardDisplayName: opts.Board.DisplayName(),
-		Hostname:         opts.Config.Hostname,
-		Wifi: initcfg.Wifi{
-			SSID:       opts.Config.WifiSSID,
-			Passphrase: opts.Config.WifiPassword,
-		},
-		Env:                    opts.Config.Env,
+		Board:                  opts.Board.Name(),
+		BoardDisplayName:       opts.Board.DisplayName(),
+		Hostname:               opts.Config.Hostname,
+		ConfigDigests:          opts.ConfigTree.Digests(),
 		DataExpand:             opts.DataExpand,
 		DataFlush:              opts.DataFlush,
 		DataFilesystem:         string(opts.DataFilesystem),

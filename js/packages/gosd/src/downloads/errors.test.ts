@@ -6,6 +6,7 @@ const classesByCode: Record<errors.GosdErrorCode, new (message: string) => error
   "manifest-invalid": errors.GosdManifestInvalidError,
   "manifest-hash-mismatch": errors.GosdManifestHashMismatchError,
   "unknown-placeholder": errors.GosdUnknownPlaceholderError,
+  "unknown-config": errors.GosdUnknownConfigError,
   "invalid-env": errors.GosdInvalidEnvError,
   "content-too-large": errors.GosdContentTooLargeError,
   "image-fetch": errors.GosdImageFetchError,

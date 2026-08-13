@@ -87,7 +87,8 @@ copy-paste snippet for your own README.
 ## Baking default app environment variables
 
 If your app reads configuration from the environment, bake per-deployment
-defaults in with repeatable `gosd build --env KEY=VALUE` flags — see
+defaults in from your app's own `config/` directory (`gosd build
+--config-dir`) — see
 [`docs/runtime.md`'s "App environment variables"](runtime.md#app-environment-variables-gosdtoml-env)
 section for the full precedence rules. Each baked default also appears
 pre-filled in the card's `gosd.toml [env]` table, so whoever flashes the

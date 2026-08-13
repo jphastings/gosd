@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
 )
@@ -242,5 +244,78 @@ func TestWriteManifestErrorsOnMissingFileRangesEntry(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "backupist.yaml") {
 		t.Errorf("error = %q, want it to name the placeholder path", err)
+	}
+}
+
+// TestWriteManifestPublishesTheConfigTree pins the other half of the
+// manifest: every config value file is published with its reservation, the
+// digest of the bytes gosd wrote, its ranges, and the value it reads as -
+// the last of which is what lets a provisioning tool show an image's
+// defaults without parsing a FAT filesystem.
+func TestWriteManifestPublishesTheConfigTree(t *testing.T) {
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "app-pi-zero-2w.img")
+	if err := os.WriteFile(imgPath, []byte("pretend image bytes\n"), 0o644); err != nil {
+		t.Fatalf("writing fake image: %v", err)
+	}
+
+	tree := configtree.Tree{Values: []configtree.Value{
+		{Path: "wifi/ssid", Content: []byte("home\n\n\n\n"), Value: "home"},
+	}}
+	fileRanges := map[string][]image.ByteRange{
+		configtree.Dir + "/wifi/ssid": {{OffsetBytes: 17301504, LengthBytes: 8}},
+	}
+
+	manifestPath, err := inject.WriteManifest(imgPath, inject.ManifestSpec{Board: "pi-zero-2w", Config: tree, FileRanges: fileRanges})
+	if err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("reading manifest: %v", err)
+	}
+	var m inject.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+
+	if len(m.Config) != 1 {
+		t.Fatalf("len(config) = %d, want 1", len(m.Config))
+	}
+	got := m.Config[0]
+	want := inject.ConfigInfo{
+		Path:   "wifi/ssid",
+		Size:   8,
+		SHA256: tree.Values[0].SHA256(),
+		Ranges: []inject.Range{{Offset: 17301504, Length: 8}},
+		Value:  "home",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("config[0] = %+v, want %+v", got, want)
+	}
+}
+
+// A config value whose ranges don't cover its whole reservation would have a
+// client write past the region (or short of it), so the manifest refuses to
+// publish it at all.
+func TestWriteManifestErrorsOnConfigRangesThatDontCoverTheReservation(t *testing.T) {
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "app-pi-zero-2w.img")
+	if err := os.WriteFile(imgPath, []byte("bytes\n"), 0o644); err != nil {
+		t.Fatalf("writing fake image: %v", err)
+	}
+
+	tree := configtree.Tree{Values: []configtree.Value{{Path: "hostname", Content: make([]byte, 256)}}}
+	fileRanges := map[string][]image.ByteRange{
+		configtree.Dir + "/hostname": {{OffsetBytes: 100, LengthBytes: 128}},
+	}
+
+	_, err := inject.WriteManifest(imgPath, inject.ManifestSpec{Board: "pi-zero-2w", Config: tree, FileRanges: fileRanges})
+	if err == nil {
+		t.Fatal("WriteManifest() with short config ranges succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "hostname") {
+		t.Errorf("error = %q, want it to name the setting", err)
 	}
 }

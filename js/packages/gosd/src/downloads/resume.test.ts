@@ -46,6 +46,7 @@ function buildFixture(
     board: "test",
     image: { filename: "fixture.img", size: imageSize, sha256: sha256Hex(image) },
     placeholders,
+    config: [],
   };
 
   return { image, manifest };

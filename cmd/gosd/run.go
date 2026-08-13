@@ -14,6 +14,7 @@ import (
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/build"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/naming"
@@ -33,7 +34,7 @@ var (
 	runQemuArgs     []string
 	runKeep         bool
 	runDisplay      bool
-	runHostname     string
+	runConfigDir    string
 	runArtifactsDir string
 	runGosdInitSrc  string
 	runBootSize     string
@@ -72,8 +73,8 @@ place and prints its path instead.`,
 		"keep the built image and temp build directory after qemu exits, instead of deleting them")
 	cmd.Flags().BoolVar(&runDisplay, "display", false,
 		"open qemu's default host display window (Cocoa on macOS, GTK on Linux) showing the guest's virtio-gpu output; serial console stays on this terminal")
-	cmd.Flags().StringVar(&runHostname, "hostname", "",
-		"device hostname (default: sanitized main package name); an explicit value is baked into gosd.toml and always wins, while the default is left commented out (same as gosd build --hostname)")
+	cmd.Flags().StringVar(&runConfigDir, "config-dir", "",
+		fmt.Sprintf("same flag as gosd build's --config-dir: a directory of setting files to overlay onto gosd's own %s/ tree (default: a %s directory beside the app's main package, when one exists)", configtree.Dir, configtree.Dir))
 	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
 		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
 	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
@@ -138,10 +139,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	printPartitionLabels(cmd, "gosd run", labels, dataSizeBytes > 0 || dataExpand)
 
-	hostnameExplicit := runHostname != ""
-	deviceHostname := runHostname
-	if deviceHostname == "" {
-		deviceHostname = appName
+	resolvedConfigDir, err := resolveConfigDir(pkgPath, runConfigDir)
+	if err != nil {
+		return err
+	}
+
+	tree, err := configtree.Build(resolvedConfigDir, ingressFeaturesFor(ingressSelected, b))
+	if err != nil {
+		return fmt.Errorf("assembling the %s configuration for qemu-virt failed: %w", configtree.Dir, err)
 	}
 
 	workDir, err := os.MkdirTemp("", "gosd-run-")
@@ -213,13 +218,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := pipeline.Options{
-		Board:          b,
-		AppBinaryPath:  appBinary,
-		InitBinaryPath: initBinary,
-		Config: boards.BuildConfig{
-			Hostname:         deviceHostname,
-			HostnameExplicit: hostnameExplicit,
-		},
+		Board:                  b,
+		AppBinaryPath:          appBinary,
+		InitBinaryPath:         initBinary,
+		Config:                 boards.BuildConfig{Hostname: appName},
+		ConfigTree:             tree,
 		ArtifactsDir:           runArtifactsDir,
 		CacheDir:               cacheDir,
 		OutputPath:             imgPath,

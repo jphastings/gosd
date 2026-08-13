@@ -43,13 +43,11 @@ type PayloadFile struct {
 // field documented on Config - Config.DataExpand and Config.DataFlush, but
 // also e.g. DataFilesystem, DataLabel, and the report metadata added by
 // bean gosd-my8e (BoardDisplayName, AppName, AppVersion, SupportURL):
-// Board/Hostname/Wifi/Env
-// are also baked into config.json, but they're baked into the rendered
-// gosd.toml template too
-// (a real, hashed FAT-root file — see pipeline.Assemble), so changing
-// --hostname/--wifi-ssid/--wifi-pass/--env still moves Identity via
-// gosd.toml even though config.json's own copies of those values are
-// invisible to it. That's an acceptable trade for what Identity is for:
+// ConfigDigests is the interesting case: config.json's copy of it is
+// invisible to Identity, but the config tree those digests describe is
+// itself a set of real, hashed FAT-root files (see pipeline.Assemble), so
+// changing what `gosd build --config-dir` bakes into a setting still moves
+// Identity - through the tree, never through config.json. That's an acceptable trade for what Identity is for:
 // telling boot *payload* builds apart, not per-device provisioning —
 // provisioning drift is §3's concern, not §4's.
 //

@@ -4,8 +4,7 @@ import {
   GosdImageSizeError,
   GosdPlaceholderNotPristineError,
 } from "./errors.js";
-import type { Manifest } from "./manifest.js";
-import { ENV_REGION_KEY } from "./env.js";
+import { configRegionKey, type Manifest } from "./manifest.js";
 import { Sha256 } from "./sha256.js";
 import {
   createSubstitutionTransform,
@@ -55,6 +54,7 @@ function buildFixture(
       sha256: sha256Hex(image),
     },
     placeholders,
+    config: [],
   };
 
   return { image, manifest };
@@ -382,11 +382,11 @@ describe("primeSubstitutionState + resumeFrom: continuing a download across a se
 });
 
 // The reserved [env] region is a span of gosd.toml rather than a file of its
-// own, but the engine treats it as one more region — these pin that it gets
-// the same substitution and pristine-verification behaviour a placeholder
-// does, since it travels a different manifest key to get here.
-describe("the reserved [env] region", () => {
-  function fixtureWithEnvRegion(): { image: Uint8Array; manifest: Manifest } {
+/// A config tree setting is a value file of its own, not a placeholder, and
+// travels a different manifest key to get here — these pin that it gets the
+// same substitution and pristine-verification behaviour a placeholder does.
+describe("a config tree setting", () => {
+  function fixtureWithSetting(): { image: Uint8Array; manifest: Manifest } {
     const { image, manifest } = buildFixture(4096, [
       { path: "app.yaml", ranges: [{ offset: 0, length: 64 }] },
     ]);
@@ -394,16 +394,23 @@ describe("the reserved [env] region", () => {
     const pristine = image.subarray(1024, 1024 + 128);
     return {
       image,
-      manifest: { ...manifest, env: { size: 128, sha256: sha256Hex(pristine), ranges } },
+      manifest: {
+        ...manifest,
+        config: [{ path: "wifi/ssid", size: 128, sha256: sha256Hex(pristine), ranges, value: "" }],
+      },
     };
   }
 
   it("substitutes its bytes and leaves the rest of the image alone", async () => {
-    const { image, manifest } = fixtureWithEnvRegion();
+    const { image, manifest } = fixtureWithSetting();
     const replacement = new Uint8Array(128).fill(0x41);
 
     const out = await collect(
-      patchStream(readableFrom([image]), manifest, new Map([[ENV_REGION_KEY, replacement]])),
+      patchStream(
+        readableFrom([image]),
+        manifest,
+        new Map([[configRegionKey("wifi/ssid"), replacement]]),
+      ),
     );
 
     expect(out.subarray(1024, 1024 + 128)).toEqual(replacement);
@@ -412,17 +419,20 @@ describe("the reserved [env] region", () => {
   });
 
   it("verifies it is pristine first, naming it in a way a caller can act on", async () => {
-    const { image, manifest } = fixtureWithEnvRegion();
-    const tampered: Manifest = { ...manifest, env: { ...manifest.env!, sha256: "b".repeat(64) } };
+    const { image, manifest } = fixtureWithSetting();
+    const tampered: Manifest = {
+      ...manifest,
+      config: [{ ...manifest.config[0]!, sha256: "b".repeat(64) }],
+    };
 
     await expect(
       collect(
         patchStream(
           readableFrom([image]),
           tampered,
-          new Map([[ENV_REGION_KEY, new Uint8Array(128)]]),
+          new Map([[configRegionKey("wifi/ssid"), new Uint8Array(128)]]),
         ),
       ),
-    ).rejects.toThrow(/reserved \[env\] region is not pristine/);
+    ).rejects.toThrow(/setting "wifi\/ssid" is not pristine/);
   });
 });

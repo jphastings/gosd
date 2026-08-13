@@ -13,6 +13,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/cloudflaredpin"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/fetch"
 	"github.com/jphastings/gosd/internal/staticelf"
 )
@@ -254,6 +255,34 @@ func validateIngressAgent(selected []boards.Board, agent ingressAgent) error {
 			agent.name, strings.Join(capable, ", "), capable[0])
 	}
 	return errors.New(msg)
+}
+
+// ingressFeaturesFor reports which of the selected --ingress agents this
+// particular board's image actually carries: an agent is only baked into a
+// board whose architecture it ships for (cloudflared is arm64-only), so this
+// is the "board capability AND build flags" rule the config tree prunes its
+// per-feature directories by - a card never documents a tunnel the device it
+// came from has no binary for. validateIngress refuses an incapable board up
+// front, so in practice these agree; keeping the capability check here means
+// they cannot drift apart if that ever softens.
+func ingressFeaturesFor(sel ingressSelection, b boards.Board) configtree.Features {
+	var features configtree.Features
+	for _, agent := range ingressAgents {
+		if !sel.has(agent.name) {
+			continue
+		}
+		capable, _ := agent.capableGOARCH(b.Arch().GOARCH)
+		if !capable {
+			continue
+		}
+		switch agent.name {
+		case ingressCloudflaredValue:
+			features.IngressCloudflared = true
+		case ingressTailscaleFunnelValue:
+			features.IngressTailscaleFunnel = true
+		}
+	}
+	return features
 }
 
 // ingressGOARCHes returns the distinct GOARCH values among selected, sorted

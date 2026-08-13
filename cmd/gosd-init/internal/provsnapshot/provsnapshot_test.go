@@ -1,7 +1,6 @@
 package provsnapshot
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -678,75 +677,5 @@ func TestWriteFileDurablyReplacesContentsAndLeavesNoTemporaryFile(t *testing.T) 
 	}
 	if len(entries) != 1 {
 		t.Errorf("directory holds %d entries, want only the file itself", len(entries))
-	}
-}
-
-// renderedCard parses the gosd.toml a --env-placeholder build actually
-// writes, so the tests below reason about the bytes on the card rather than
-// a hand-built Config.
-func renderedCard(t *testing.T, values map[string]string, patch string) gosdtoml.Config {
-	t.Helper()
-
-	const reserved = 4096
-	rendered, span, err := gosdtoml.RenderWithReservedEnv("hello", true, "", "", gosdtoml.EnvSection{Values: values}, gosdtoml.Ingress{}, reserved)
-	if err != nil {
-		t.Fatalf("RenderWithReservedEnv: %v", err)
-	}
-	if patch != "" {
-		body := append([]byte(patch), bytes.Repeat([]byte("\n"), span.LengthBytes-len(patch))...)
-		copy(rendered[span.OffsetBytes:span.OffsetBytes+span.LengthBytes], body)
-	}
-
-	cfg, _, err := gosdtoml.Parse(rendered)
-	if err != nil {
-		t.Fatalf("parsing the rendered card: %v", err)
-	}
-	return cfg
-}
-
-// A pristine reserved region must not read as an operator's own edit: it is
-// the baked defaults plus comment padding, so a plain reflash still gets the
-// operator's values back (bean gosd-dwub).
-func TestReflashRestoresEnvOntoACardWithAPristineReservedRegion(t *testing.T) {
-	baked := map[string]string{"API_URL": "https://example.com"}
-	s := newStore()
-	s.seed(t, Snapshot{
-		Identity:  "old",
-		Effective: Provisioning{Hostname: "hello", Env: map[string]string{"API_URL": "https://mine"}},
-		Baked:     Provisioning{Hostname: "hello", Env: maps.Clone(baked)},
-	})
-
-	res := Run(s.deps(), Input{
-		Identity: "new",
-		Baked:    Provisioning{Hostname: "hello", Env: maps.Clone(baked)},
-		GosdToml: renderedCard(t, baked, ""),
-	})
-
-	if got := res.GosdToml.Env["API_URL"]; got != "https://mine" {
-		t.Errorf("API_URL = %q, want the snapshot's value restored; reserving space must not look like a hand-edit", got)
-	}
-}
-
-// The mirror image: a region a provisioning tool filled in before the card
-// was ever booted is this card's own intent, so the snapshot must leave it
-// alone — otherwise a re-injected value would be shadowed by the previous
-// device's forever.
-func TestReflashKeepsAnInjectedEnvValueOverTheSnapshot(t *testing.T) {
-	baked := map[string]string{"API_URL": "https://example.com"}
-	s := newStore()
-	s.seed(t, Snapshot{
-		Identity:  "old",
-		Effective: Provisioning{Hostname: "hello", Env: map[string]string{"API_URL": "https://mine"}},
-		Baked:     Provisioning{Hostname: "hello", Env: maps.Clone(baked)},
-	})
-
-	res := Run(s.deps(), Input{
-		Identity: "new",
-		Baked:    Provisioning{Hostname: "hello", Env: maps.Clone(baked)},
-		GosdToml: renderedCard(t, baked, "API_URL = \"https://injected\"\n"),
-	})
-
-	if got := res.GosdToml.Env["API_URL"]; got != "https://injected" {
-		t.Errorf("API_URL = %q, want the injected value to stand over the snapshot's", got)
 	}
 }

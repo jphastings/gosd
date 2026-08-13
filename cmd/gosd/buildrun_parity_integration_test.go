@@ -29,13 +29,23 @@ import (
 func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 	disableNetwork(t)
 
+	// Both paths get the same app overlay, so a config tree wired into one
+	// but not the other would show up as a differing initramfs (its
+	// per-value digests are baked into config.json) rather than passing
+	// unnoticed.
+	parityConfigDir := writeConfigOverlay(t, map[string]string{
+		"hostname":                 "parity-test\n",
+		"env/API_TOKEN":            "",
+		"env/API_TOKEN.explain.md": "# API token\n\nThe token the app talks to its server with.\n",
+	})
+
 	buildImg := filepath.Join(t.TempDir(), "hello-qemu-virt.img")
 	buildCmd := newRootCmd()
 	buildCmd.SetArgs([]string{
 		"build", "../../examples/hello",
 		"--board", "qemu-virt",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "parity-test",
+		"--config-dir", parityConfigDir,
 		"--ingress", "cloudflared",
 		"--ingress", "tailscale-funnel",
 		"--data-size", "64MiB",
@@ -54,7 +64,7 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 	runCmd.SetArgs([]string{
 		"run", "../../examples/hello",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "parity-test",
+		"--config-dir", parityConfigDir,
 		"--ingress", "cloudflared",
 		"--ingress", "tailscale-funnel",
 		"--data-size", "64MiB",
