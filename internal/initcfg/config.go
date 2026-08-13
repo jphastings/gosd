@@ -172,7 +172,8 @@ type Config struct {
 	// Identical rebuilds from identical inputs produce the identical
 	// Identity — it is never a timestamp or a random id — which is what
 	// makes it usable both for upgrade-skew detection (does the running
-	// image match what a provisioning snapshot was taken from?) and for
+	// image match the one a device's stored settings were last written
+	// under?) and for
 	// a future self-update's "am I already running this?" check.
 	// Optional: empty for every config.json baked before this field
 	// existed; callers must treat that as "unknown, not comparable"
