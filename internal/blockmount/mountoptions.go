@@ -3,9 +3,9 @@ package blockmount
 // dataFlushEnvVar is the reserved env var gosd-init exports with the
 // effective vfat "flush" mount-option setting for this device: config.json's
 // baked gosd build --data-flush default, overridden per-device by
-// gosd.toml's data_flush key (see cmd/gosd-init/internal/boot/sequence.go's
+// the card's data_flush setting (see cmd/gosd-init/internal/boot/sequence.go's
 // effectiveDataFlush). emmc and disk mount from the app's own process, which
-// has no access to config.json or gosd.toml directly, so this env var is
+// can read neither config.json nor the card's settings directly, so this env var is
 // the only channel between gosd-init's decision and this package's mount
 // call (bean gosd-9m1k).
 const dataFlushEnvVar = "GOSD_DATA_FLUSH"

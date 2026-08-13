@@ -1,9 +1,9 @@
 // Package cloudflared implements gosd-init's supervision of a baked-in
-// cloudflared binary, exposing a device's [ingress.cloudflared]-declared
-// HTTP service to the public internet over a Cloudflare Tunnel with zero
-// app code (see epic gosd-virc). v1 supports only locally-managed tunnels:
-// gosd.toml declares a tunnel token, a public hostname, and a local port,
-// and Run decodes the token, synthesizes cloudflared's own config files
+// cloudflared binary, exposing the HTTP service a device's card declares
+// to the public internet over a Cloudflare Tunnel with zero app code (see
+// epic gosd-virc). v1 supports only locally-managed tunnels: the card names
+// a tunnel token, a public hostname, and a local port, and Run decodes the
+// token, synthesizes cloudflared's own config files
 // under /run/gosd/cloudflared/, and keeps the process alive for the life of
 // the device.
 //
@@ -41,7 +41,6 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
 // logPrefix is prepended to every line of cloudflared's relayed
@@ -52,7 +51,7 @@ const logPrefix = "cloudflared: "
 // (mode 0700) by writeRuntimeFiles before CredentialsPath and ConfigPath
 // (mode 0600) are written into it; both live on the in-memory /run
 // tmpfs, never on persistent storage, since they're fully reconstructible
-// from gosd.toml on every boot.
+// from the card's settings on every boot.
 const (
 	RuntimeDir      = "/run/gosd/cloudflared"
 	CredentialsPath = RuntimeDir + "/credentials.json"
@@ -167,9 +166,9 @@ type Options struct {
 	// "is it baked" bit lives in config.json, not on disk).
 	Baked bool
 
-	// Config is the already-parsed [ingress.cloudflared] section of
-	// gosd.toml.
-	Config gosdtoml.IngressCloudflared
+	// Config is the Cloudflare Tunnel this device's card declares, read
+	// off it as text (see Config).
+	Config Config
 
 	NetworkUpPollInterval  time.Duration
 	TimeSyncedTimeout      time.Duration

@@ -28,7 +28,7 @@ type PayloadFile struct {
 // the FAT boot partition, whether it lands directly at that
 // partition's root (the kernel image, DTB(s), the board's own boot-config
 // file — config.txt/cmdline.txt or extlinux.conf — any USB-gadget overlay,
-// and the rendered gosd.toml template) or gets packed into the initramfs
+// and the config tree it writes) or gets packed into the initramfs
 // archive also shipped there (/init, /app, the static /etc/hosts content —
 // see internal/hostsfile — and everything under /lib/firmware) — with one
 // deliberate exception: config.json itself.
@@ -58,7 +58,7 @@ type PayloadFile struct {
 // differently than Path "a"+Content "bc").
 //
 // Callers key a FAT-root file by its literal boot-partition path (e.g.
-// "kernel8.img" or "gosd.toml" — no leading slash: that's the convention
+// "kernel8.img" or "config/hostname" — no leading slash: that's the convention
 // every board's BootFiles already uses) and an initramfs member by its
 // in-archive path passed through InitramfsPayloadPath (e.g.
 // "initramfs:/init"). The "initramfs:" prefix — disjoint from every

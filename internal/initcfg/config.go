@@ -3,8 +3,8 @@
 // parameters. Both are pure data formats with no syscall dependencies, so
 // this package has no build tags and is fully unit-testable on any OS.
 //
-// Later beans (gosd.toml parsing, provisioning-file consumption) are
-// expected to import this package for the Config type rather than defining
+// Other packages (the config tree's runtime reader, provisioning-file
+// consumption) import this package for the Config type rather than defining
 // their own.
 package initcfg
 
@@ -31,8 +31,8 @@ type Config struct {
 
 	// Env holds developer-set default app environment variables, baked in
 	// at build time (gosd build --env). It's the lowest-precedence layer
-	// in gosd.toml [env]'s locked merge: a hand-edited gosd.toml [env]
-	// entry overrides the same key here. Optional: omitted entirely for
+	// in the app env merge: a file in the card's config/env/ directory
+	// overrides the same name here. Optional: omitted entirely for
 	// every config.json baked before this field existed.
 	Env map[string]string `json:"env,omitempty"`
 
@@ -64,8 +64,8 @@ type Config struct {
 	// (bean gosd-0nk4) — apps that need durability already use the
 	// fsync/rename sequence documented in docs/runtime.md's "Making a
 	// write durable", which behaves identically either way. Overridable
-	// per-device via gosd.toml's data_flush key (absent there means "use
-	// this baked value" — see gosdtoml.Config.DataFlush and
+	// per-device via the card's own data_flush setting (empty there means
+	// "use this baked value" — see
 	// cmd/gosd-init/internal/boot/sequence.go's effectiveDataFlush).
 	// Optional: false for every config.json baked before this field
 	// existed, which is exactly this field's own default.
@@ -74,7 +74,7 @@ type Config struct {
 	// rest of config.json (see ComputeIdentity's docstring): flipping
 	// --data-flush between builds changes nothing else in the boot
 	// payload, so — like DataExpand, and unlike Hostname/Wifi/Env, which
-	// are also baked into the hashed gosd.toml template — it can never
+	// settings are also written into the hashed config tree — it can never
 	// move Identity. Pinned by
 	// TestBuildIdentityUnaffectedByDataFlush (cmd/gosd/build_integration_test.go).
 	DataFlush bool `json:"dataFlush,omitempty"`
@@ -100,7 +100,7 @@ type Config struct {
 	// DataExpand and DataFlush are: config.json is excluded from that
 	// payload in its entirety (see ComputeIdentity's docstring), and this
 	// field never appears anywhere else in the payload the way
-	// Hostname/Wifi/Env do via gosd.toml. That's consistent with
+	// Hostname/Wifi/Env do via the config tree. That's consistent with
 	// Identity's actual job - telling boot *payload* builds apart for
 	// upgrade-skew/self-update checks - rather than a full-disk layout
 	// fingerprint: DataSizeBytes and BootSizeBytes, which change on-card
@@ -146,8 +146,8 @@ type Config struct {
 	// cmd/gosd/ingress.go). This is the entire build->runtime contract for
 	// ingress (epic gosd-virc, locked decision 7): it carries only the
 	// "binary is baked" bit, nothing about whether or how a tunnel is
-	// actually configured - that lives in gosd.toml's [ingress.cloudflared]
-	// section (see gosdtoml.IngressCloudflared), which gosd-init reads
+	// actually configured - that lives in the card's
+	// config/ingress/cloudflared/ settings, which gosd-init reads
 	// separately at boot. gosd-init never probes the filesystem for the
 	// binary itself; this field is the only source of truth for whether
 	// it exists. Optional: absent - including every config.json baked
@@ -161,9 +161,8 @@ type Config struct {
 	// CrossCompileTsfunnel and cmd/gosd/ingress.go). Mirrors
 	// IngressCloudflared's contract exactly: this bit only says the binary
 	// is baked, nothing about whether or how Funnel is actually configured
-	// - that lives in gosd.toml's [ingress.tailscale-funnel] section (see
-	// gosdtoml.IngressTailscaleFunnel), which gosd-init reads separately at
-	// boot. Optional: absent - including every config.json baked before
+	// - that lives in the card's config/ingress/tailscale-funnel/ settings,
+	// which gosd-init reads separately at boot. Optional: absent - including every config.json baked before
 	// this field existed - means no shim binary was baked in.
 	IngressTailscaleFunnel bool `json:"ingressTailscaleFunnel,omitempty"`
 
@@ -173,7 +172,8 @@ type Config struct {
 	// Identical rebuilds from identical inputs produce the identical
 	// Identity — it is never a timestamp or a random id — which is what
 	// makes it usable both for upgrade-skew detection (does the running
-	// image match what a provisioning snapshot was taken from?) and for
+	// image match the one a device's stored settings were last written
+	// under?) and for
 	// a future self-update's "am I already running this?" check.
 	// Optional: empty for every config.json baked before this field
 	// existed; callers must treat that as "unknown, not comparable"
@@ -186,8 +186,8 @@ type Config struct {
 	// than the bare "pi-zero-2w" this struct's Board field carries (bean
 	// gosd-my8e, epic gosd-47z3). Optional: empty for every config.json
 	// baked before this field existed. Developer-set report metadata like
-	// AppName/AppVersion/SupportURL below: config.json only, no gosd.toml
-	// key, no GOSD_* override, excluded from ComputeIdentity's hashed
+	// AppName/AppVersion/SupportURL below: config.json only, no setting on
+	// the card, no GOSD_* override, excluded from ComputeIdentity's hashed
 	// payload (config.json is excluded from that payload in its entirety),
 	// and no part of the data-partition adoption gate - not on-card ABI.
 	//
@@ -213,7 +213,8 @@ type Config struct {
 	// basename of the main package's directory - the same source
 	// --hostname's unset default uses (see cmd/gosd's deriveAppName),
 	// resolved once at build time so it can't drift if --hostname,
-	// gosd.toml, or cloud-init later changes the device's actual hostname.
+	// or the card's own hostname setting, later changes the device's actual
+	// hostname.
 	// It exists for LAST_FATAL_ERROR.md's "image:" line (bean gosd-my8e,
 	// epic gosd-47z3), not for gosd-init's own runtime behavior, which
 	// still uses Hostname throughout. Optional: empty for every config.json
@@ -222,7 +223,7 @@ type Config struct {
 	// device would then report the wrong app name).
 	//
 	// Developer-set, like AppVersion and SupportURL below: config.json only,
-	// no gosd.toml key, no GOSD_* override (see docs/gosd.toml.md). Also
+	// no setting on the card, no GOSD_* override. Also
 	// like them, it's deliberately excluded from ComputeIdentity's hashed
 	// payload (config.json is excluded from that payload in its entirety -
 	// see ComputeIdentity's docstring) and plays no part in the data-

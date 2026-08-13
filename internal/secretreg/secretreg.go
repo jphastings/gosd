@@ -23,7 +23,7 @@
 // process on the device has a reason to read it. The writer must write to
 // Path+".tmp" and rename it into place, the same write-then-rename
 // discipline as every other file in this codebase that must never be read
-// half-written (e.g. cmd/gosd-init/internal/provsnapshot.WriteFileDurably):
+// half-written (e.g. cmd/gosd-init/internal/durable.WriteFile):
 // gosd-init only ever reads Path itself, so a reader can never observe a
 // partial write, only the complete old file or the complete new one.
 //

@@ -15,31 +15,31 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/boot"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cloudflared"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/durable"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultdrop"
 	"github.com/jphastings/gosd/internal/faultreport"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
 )
 
 const (
-	configPath   = "/etc/gosd/config.json"
-	cmdlinePath  = "/proc/cmdline"
-	gosdTomlPath = "/boot/gosd.toml"
-	appPath      = "/app"
-	bootTarget   = "/boot"
-	dataTarget   = "/data"
+	configPath  = "/etc/gosd/config.json"
+	cmdlinePath = "/proc/cmdline"
+	appPath     = "/app"
+	bootTarget  = "/boot"
+	dataTarget  = "/data"
 
 	// cloudflaredBinaryPath is where `gosd build --ingress cloudflared`
 	// bakes the cloudflared binary into the initramfs (see
@@ -112,30 +112,26 @@ func main() {
 		// mounted; boot.Run calls this itself, after the early mounts
 		// (step 1), rather than main reading it up front.
 		ReadCmdline: readCmdline,
-		// ReadGosdToml reads /boot/gosd.toml, which only exists once the
-		// boot partition is mounted; boot.Run calls this itself, after
-		// that mount (step 5), rather than main reading it up front.
-		ReadGosdToml: readGosdToml,
+		// ReadConfigTree reads /boot/config, the settings this device has
+		// been given, which only exists once the boot partition is
+		// mounted; boot.Run calls this itself, after that mount (step 5),
+		// rather than main reading it up front.
+		ReadConfigTree: readConfigTree,
 		// ReadProvisioning reads cloud-init's user-data/network-config,
-		// which — like gosd.toml — only exist once the boot partition is
-		// mounted (step 5); boot.Run calls this itself, right alongside
-		// ReadGosdToml.
-		ReadProvisioning:     readProvisioning,
+		// which — like the config tree — only exist once the boot
+		// partition is mounted (step 5); boot.Run calls this itself, right
+		// alongside ReadConfigTree.
+		ReadProvisioning: readProvisioning,
+		// EditBoot is the only way anything writes to the boot partition
+		// mid-boot: it remounts it read-write for the duration of one
+		// edit, flushes, and puts it back (see boot.Platform's
+		// EditBootPartition).
+		EditBoot: func(edit func(root string) error) error {
+			return platform.EditBootPartition(bootTarget, edit)
+		},
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
-		// ProvisionSnapshot needs both partitions mounted — the snapshot
-		// lives on the data partition and a restore is written back to
-		// the boot partition — so boot.Run calls it only once the data
-		// mount has been attempted.
-		ProvisionSnapshot: func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result {
-			deps := provsnapshot.NewDeps(
-				filepath.Join(dataTarget, provsnapshot.Dir),
-				func(name string, data []byte) error { return platform.WriteBootFile(bootTarget, name, data) },
-				log,
-			)
-			return provsnapshot.Run(deps, in)
-		},
 		WriteHosts: func(hostname string) error {
 			return hostsfile.Write(hostsfile.Path, hostname)
 		},
@@ -164,7 +160,7 @@ func main() {
 		Sleep: time.Sleep,
 		Now:   time.Now,
 		After: time.After,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any)) {
+		StartNetworking: func(cfg initcfg.Config, config cardconfig.Tree, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS
 			// responder below: no change to either package, just an
@@ -224,7 +220,7 @@ func main() {
 				cloudflared.Run(cloudflaredDeps(log, exitCodeOnly(platform.Reaper.Wait)), cloudflared.Options{
 					BinaryPath:             cloudflaredBinaryPath,
 					Baked:                  cfg.IngressCloudflared,
-					Config:                 gosdToml.Ingress.Cloudflared,
+					Config:                 cloudflaredConfig(config),
 					NetworkUpPollInterval:  cloudflared.DefaultNetworkUpPollInterval,
 					TimeSyncedTimeout:      cloudflared.DefaultTimeSyncedTimeout,
 					TimeSyncedPollInterval: cloudflared.DefaultTimeSyncedPollInterval,
@@ -240,7 +236,7 @@ func main() {
 				tsfunnel.Run(tsfunnelDeps(log, exitCodeOnly(platform.Reaper.Wait)), tsfunnel.Options{
 					BinaryPath:             tsfunnelBinaryPath,
 					Baked:                  cfg.IngressTailscaleFunnel,
-					Config:                 gosdToml.Ingress.TailscaleFunnel,
+					Config:                 tsfunnelConfig(config),
 					Hostname:               cfg.Hostname,
 					NetworkUpPollInterval:  tsfunnel.DefaultNetworkUpPollInterval,
 					TimeSyncedTimeout:      tsfunnel.DefaultTimeSyncedTimeout,
@@ -256,7 +252,7 @@ func main() {
 				return
 			}
 			guard.Guard("wifiup", func() {
-				wifiup.Run(wifiupDeps(wifiClient, cfg, gosdToml.Wifi, provisionWifi, log, mdnsChanged, upSet), wifiup.Options{})
+				wifiup.Run(wifiupDeps(wifiClient, cfg, cardWifi(config), log, mdnsChanged, upSet), wifiup.Options{})
 			})
 		},
 	}
@@ -309,29 +305,20 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// readGosdToml reads and parses /boot/gosd.toml, the hand-editable fallback
-// config on the boot partition. The file is entirely optional — a
-// missing file is not logged as a problem at all, since most users will
-// never touch it — but a present-and-unreadable-as-TOML file (a typo from
-// hand-editing) is surfaced as an error for boot.Run to log as a warning;
-// either way, boot never fails over it. gosdtoml.Parse's own warnings
-// (bare-scalar [env] coercions, dropped non-scalar entries) are passed
-// straight through for boot.Run to log.
-func readGosdToml() (gosdtoml.Config, []string, error) {
-	data, err := os.ReadFile(gosdTomlPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return gosdtoml.Config{}, nil, nil
-		}
-		return gosdtoml.Config{}, nil, err
-	}
-	return gosdtoml.Parse(data)
+// readConfigTree reads the config/ tree at the root of the boot partition —
+// every setting this device has been given, one per file (see
+// cmd/gosd-init/internal/cardconfig). Only readable once that partition is
+// mounted, which is why boot.Run calls it at step 5 rather than main
+// reading it up front. It never fails: a tree that isn't there, or can't be
+// read, leaves every setting to the value baked into config.json.
+func readConfigTree(log func(format string, args ...any)) cardconfig.Tree {
+	return cardconfig.Read(filepath.Join(bootTarget, configtree.Dir), log)
 }
 
 // readProvisioning reads cloud-init's user-data/network-config (and checks
 // for firstrun.sh) on the boot partition — see internal/provision.
-// Like readGosdToml, this only becomes readable once that partition is
-// mounted; boot.Run calls it right alongside readGosdToml (step 5).
+// Like readConfigTree, this only becomes readable once that partition is
+// mounted; boot.Run calls it right alongside readConfigTree (step 5).
 // provision.Read is itself best-effort (a missing/malformed file is logged
 // through log and skipped), so there's no error for this wrapper to
 // propagate.
@@ -403,10 +390,10 @@ func clockSynced() bool {
 // boot.MountDataReadOnlyFallback) therefore reports no count at all, which
 // the report renders as "unknown".
 //
-// The write is provsnapshot.WriteFileDurably's write-to-temp-then-rename, so
-// a power cut leaves either the old count or the new one, never a truncated
-// file. A file that doesn't parse is treated as no counter at all and
-// replaced, rather than wedging every future boot on one bad byte.
+// The write is durable.WriteFile's write-to-temp-then-rename, so a power
+// cut leaves either the old count or the new one, never a truncated file. A
+// file that doesn't parse is treated as no counter at all and replaced,
+// rather than wedging every future boot on one bad byte.
 func countBoot() (int, bool) {
 	count := 1
 	if data, err := os.ReadFile(bootCountPath); err == nil {
@@ -415,7 +402,7 @@ func countBoot() (int, bool) {
 		}
 	}
 
-	if err := provsnapshot.WriteFileDurably(bootCountPath, []byte(strconv.Itoa(count)+"\n")); err != nil {
+	if err := durable.WriteFile(bootCountPath, []byte(strconv.Itoa(count)+"\n")); err != nil {
 		return 0, false
 	}
 	return count, true
@@ -500,20 +487,64 @@ func ntpServers(cfg initcfg.Config) []string {
 	return timesync.DefaultServers
 }
 
+// The settings gosd-init's networking modules read, by their paths in the
+// card's config tree. They live here, where those modules are wired,
+// rather than inside each module: a module is handed its own settings,
+// already read, and never the tree itself.
+const (
+	wifiSSIDPath       = "wifi/ssid"
+	wifiPassphrasePath = "wifi/passphrase"
+	cloudflaredDir     = "ingress/cloudflared"
+	tsfunnelDir        = "ingress/tailscale-funnel"
+)
+
+// cardWifi is the wireless network the card names, unset (both fields
+// empty) when nobody has named one — in which case wifiup falls back to
+// whatever config.json was built with (see wifiup.ConfigCredentials).
+func cardWifi(config cardconfig.Tree) wifiup.Wifi {
+	return wifiup.Wifi{
+		SSID:       config.Get(wifiSSIDPath),
+		Passphrase: config.Get(wifiPassphrasePath),
+	}
+}
+
+// cloudflaredConfig is the Cloudflare Tunnel the card declares, as text:
+// every value is whatever somebody typed into the file, and cloudflared's
+// own resolveMode is what decides whether that's usable (see
+// cloudflared.Config).
+func cloudflaredConfig(config cardconfig.Tree) cloudflared.Config {
+	return cloudflared.Config{
+		Token:    config.Get(cloudflaredDir + "/token"),
+		Hostname: config.Get(cloudflaredDir + "/hostname"),
+		Port:     config.Get(cloudflaredDir + "/port"),
+	}
+}
+
+// tsfunnelConfig is the Tailscale Funnel the card declares, on the same
+// terms as cloudflaredConfig above.
+func tsfunnelConfig(config cardconfig.Tree) tsfunnel.Config {
+	return tsfunnel.Config{
+		Authkey:    config.Get(tsfunnelDir + "/authkey"),
+		Hostname:   config.Get(tsfunnelDir + "/hostname"),
+		Port:       config.Get(tsfunnelDir + "/port"),
+		FunnelPort: config.Get(tsfunnelDir + "/funnel_port"),
+	}
+}
+
 // wifiupDeps wires the real, nl80211-backed WiFi implementation (client)
 // together with the same netlink/DHCP building blocks netupDeps uses —
 // DHCP itself doesn't care whether the underlying medium is wired or
-// wireless — and the credential source, in locked precedence order:
-// gosd.toml's hand-edited network, else the first network cloud-init's
-// network-config named (provisionWifi), else config.json's baked-in wifi
-// block. changed and upSet are wired the same way netupDeps wires them
-// (the same *mdnsresponder.Signal and *netup.UpSet instances): see that
-// function's doc.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, gosdWifi gosdtoml.Wifi, provisionWifi []provision.WifiNetwork, log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet) wifiup.Deps {
+// wireless — and the credential source: the network named on the card
+// (which is where an Imager wizard's answers have already been written, see
+// boot's consumeCloudInit), else config.json's baked-in wifi block. changed
+// and upSet are wired the same way netupDeps wires them (the same
+// *mdnsresponder.Signal and *netup.UpSet instances): see that function's
+// doc.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, card wifiup.Wifi, log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
-		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi, GosdToml: gosdWifi, Provision: provisionWifi},
+		Credentials:     wifiup.ConfigCredentials{Wifi: cfg.Wifi, Card: card},
 		Links:           platform.Links,
 		DHCP:            platform.DHCP,
 		Clock:           netup.NewRealClock(),

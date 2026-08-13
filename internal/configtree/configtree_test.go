@@ -267,3 +267,44 @@ func TestTreeBootFilesAndDigests(t *testing.T) {
 		t.Error("a digest doesn't match the bytes written to the card")
 	}
 }
+
+// TestIgnoredNameCoversEveryNameTheBuildRefusesAsJunk pins the two halves
+// of the same rule against each other: `gosd build` refuses these names so
+// an app can never ship one, and the device ignores them because a card is
+// edited by hand on machines that write them unbidden. A name that only one
+// half knows about is a hole - a setting that ships but never takes effect,
+// or a stray file read as one.
+func TestIgnoredNameCoversEveryNameTheBuildRefusesAsJunk(t *testing.T) {
+	refused := []string{
+		"hostname" + NewSuffix,
+		"hostname" + UnusedSuffix,
+		"._hostname",
+		".DS_Store",
+		"Thumbs.db",
+		"thumbs.db",
+		"desktop.ini",
+	}
+	for _, name := range refused {
+		if !IgnoredName(name) {
+			t.Errorf("IgnoredName(%q) = false; the build refuses that name, so the device must read past it", name)
+		}
+		if err := checkName(name, name, "dir"); err == nil {
+			t.Errorf("checkName(%q) = nil; the device ignores that name, so the build must refuse it", name)
+		}
+	}
+
+	// Documentation is the exception: the build writes it and the device
+	// reads past it, since a sidecar explains a setting rather than being
+	// one.
+	for _, name := range []string{GroupDoc, "hostname" + DocSuffix} {
+		if !IgnoredName(name) {
+			t.Errorf("IgnoredName(%q) = false, want documentation read past rather than read as a setting", name)
+		}
+	}
+
+	for _, name := range []string{"hostname", "ssid", "API_TOKEN", "google-service-account.json"} {
+		if IgnoredName(name) {
+			t.Errorf("IgnoredName(%q) = true, want a setting to be read as one", name)
+		}
+	}
+}

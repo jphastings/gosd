@@ -5,20 +5,33 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/consoletail"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultreport"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
 	"github.com/jphastings/gosd/internal/redact"
+)
+
+// The settings gosd-init itself acts on, named by their path in the card's
+// config tree. Everything under envPath belongs to the app rather than to
+// gosd-init, and each ingress agent reads its own group directly (see
+// main.go's StartNetworking wiring).
+const (
+	hostnamePath       = "hostname"
+	wifiSSIDPath       = "wifi/ssid"
+	wifiPassphrasePath = "wifi/passphrase"
+	dataFlushPath      = "data_flush"
+	envPath            = "env"
 )
 
 // Deps bundles every side-effecting dependency the boot sequence needs.
@@ -60,34 +73,48 @@ type Deps struct {
 	// real hardware, where /proc isn't mounted until step 1 runs.
 	ReadCmdline func() (initcfg.CmdlineArgs, error)
 
-	// ReadGosdToml reads and parses /boot/gosd.toml, the hand-editable
-	// fallback config on the boot partition. It's nil-checked (like
-	// StartNetworking) rather than required, so tests that don't care
-	// about gosd.toml can leave it unset. Unlike ReadConfig, this can only
-	// be called after the boot partition is mounted (step 5), which
-	// is why Run calls it right after MountBootPartition succeeds — and
-	// why the hostname it may override has to be re-applied there too,
-	// even though step 4 already applied config.json's value. The
-	// warnings return mirrors gosdtoml.Parse's own (bare-scalar [env]
-	// coercions, dropped non-scalar entries): Run logs each one, since
-	// gosd-init has no interactive surface to surface them any other way.
-	ReadGosdToml func() (gosdtoml.Config, []string, error)
+	// ReadConfigTree reads the config/ tree at the root of the boot
+	// partition: every setting this device has been given, one per file
+	// (see cmd/gosd-init/internal/cardconfig). It is the single source of
+	// truth for those settings — config.json's baked values are only the
+	// fallback for the ones the card leaves unset — and, unlike
+	// ReadConfig, it can only be called once the boot partition is mounted
+	// (step 5), which is why Run calls it right after MountBootPartition
+	// succeeds, and why the hostname it may name has to be re-applied
+	// there even though step 4 already applied config.json's. It never
+	// fails: a tree that can't be read reads as an empty one. Nil-checked
+	// (like StartNetworking) so a test that only cares about baked values
+	// can leave it unset.
+	ReadConfigTree func(log func(format string, args ...any)) cardconfig.Tree
 
 	// ReadProvisioning reads cloud-init's user-data/network-config (and
 	// checks for firstrun.sh) on the just-mounted boot partition —
-	// see internal/provision. Nil-checked like ReadGosdToml; it sits
-	// between config.json and gosd.toml in the locked precedence chain
-	// (gosd.toml > cloud-init > config.json), so Run reads it first and
-	// lets a subsequent gosd.toml value override it. log is passed
-	// through so provision.Read can report per-file problems (missing,
-	// unreadable, malformed) at the point they're found, the same as
-	// every other package in gosd-init that owns multi-step diagnostics.
+	// see internal/provision. Nil-checked like ReadConfigTree. A seed is
+	// consumed rather than consulted: Run deletes it and writes what it
+	// asked for into the config tree (see consumeCloudInit), so a wizard's
+	// answers become ordinary settings instead of a second, competing
+	// source of truth. log is passed through so provision.Read can report
+	// per-file problems (missing, unreadable, malformed) at the point
+	// they're found, the same as every other package in gosd-init that
+	// owns multi-step diagnostics.
 	ReadProvisioning func(log func(format string, args ...any)) provision.Result
+
+	// EditBoot runs edit against the root of the normally read-only boot
+	// partition, with it briefly remounted read-write and everything edit
+	// wrote made durable before the read-only mount is restored. Deleting
+	// a consumed cloud-init seed and writing its values into the config
+	// tree are two separate calls, deliberately: the deletion is durable
+	// before the first value is written (see consumeCloudInit).
+	// Nil-checked like the other optional deps — nil means this device
+	// can't write to its own card, which costs it the seed consumption and
+	// nothing else, since a seed's values still apply to the boot that
+	// found them.
+	EditBoot func(edit func(root string) error) error
 
 	// EnsureDataMountpoint creates the data mount target directory on the
 	// RAM-backed rootfs (the initramfs archive carries no empty
 	// directories, so /data doesn't exist until something makes it).
-	// Nil-checked, like ReadGosdToml: tests that don't exercise the data
+	// Nil-checked, like ReadConfigTree: tests that don't exercise the data
 	// partition leave it unset.
 	EnsureDataMountpoint func() error
 	// EnsureDataMarker creates the .gosd-data marker file on the mounted
@@ -119,22 +146,10 @@ type Deps struct {
 	// failure via FaultReport and halts the device.
 	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error
 
-	// ProvisionSnapshot, if non-nil, is called once the data partition is
-	// mounted and this boot's provisioning has settled: it keeps the
-	// snapshot in /data up to date and, on the first boot after a reflash,
-	// restores the operator's provisioning from it (see
-	// cmd/gosd-init/internal/provsnapshot and docs/design/upgrade-path.md
-	// §3). Everything it does is best-effort — it returns the gosd.toml
-	// config the rest of the boot should use, which is simply the one it
-	// was given whenever there's nothing to restore or anything at all
-	// goes wrong. Nil-checked like the other optional deps.
-	ProvisionSnapshot func(in provsnapshot.Input, log func(format string, args ...any)) provsnapshot.Result
-
 	// WriteHosts appends the device's own hostname to /etc/hosts, once
 	// cfg.Hostname is as settled as it's going to get this boot — after
-	// gosd.toml/cloud-init have had a chance to override it and after any
-	// first-boot-after-reflash restore from the provisioning snapshot, so
-	// it never has to run twice. See internal/hostsfile: the static
+	// the card, and any cloud-init seed consumed into it, have had their
+	// say — so it never has to run twice. See internal/hostsfile: the static
 	// localhost/loopback lines are already baked into the initramfs by
 	// gosd build, and this call regenerates the whole file from scratch
 	// (hostname included) rather than patching it, which is what keeps
@@ -164,17 +179,15 @@ type Deps struct {
 	// StartNetworking, if non-nil, is called in its own goroutine
 	// immediately before /app supervision begins, and is passed the
 	// fully-resolved config (cmdline overrides already applied), the
-	// parsed gosd.toml (zero value if absent, unreadable, or garbage) so
-	// wifiup can prefer its wifi block over cfg's, every WiFi network
-	// cloud-init's network-config named (nil if none/absent — see
-	// internal/provision), and Run's current logger (the console, if
-	// opening it succeeded) so its output goes to the same place as the
-	// rest of gosd-init's. Networking (link up, DHCP, DNS, WiFi) must
-	// never block or delay /app's start, so Run doesn't wait for it and
-	// doesn't know or care what it does beyond that; production wires
-	// this to start both netup.Run (wired) and wifiup.Run (WiFi), tests
-	// leave it nil.
-	StartNetworking func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(format string, args ...any))
+	// card's config tree — with any cloud-init seed already consumed into
+	// it, so wifiup and each ingress agent read one settled source — and
+	// Run's current logger (the console, if opening it succeeded) so its
+	// output goes to the same place as the rest of gosd-init's. Networking
+	// (link up, DHCP, DNS, WiFi) must never block or delay /app's start,
+	// so Run doesn't wait for it and doesn't know or care what it does
+	// beyond that; production wires this to start both netup.Run (wired)
+	// and wifiup.Run (WiFi), tests leave it nil.
+	StartNetworking func(cfg initcfg.Config, config cardconfig.Tree, log func(format string, args ...any))
 }
 
 // Options holds the per-boot paths the sequence acts on.
@@ -238,15 +251,6 @@ func Run(deps Deps, opts Options) error {
 	// two when they still agree — see initcfg.Config.BoardDisplayName and
 	// faultreport.Context.BoardDisplayNameFor.
 	bakedBoard := cfg.Board
-	// The baked defaults, captured before cloud-init or gosd.toml override
-	// anything: what this image would provision the device with on its own,
-	// and so the yardstick the provisioning snapshot measures an operator's
-	// hand-edits against (see provsnapshot).
-	baked := provsnapshot.Provisioning{
-		Hostname: cfg.Hostname,
-		Wifi:     gosdtoml.Wifi{SSID: cfg.Wifi.SSID, Passphrase: cfg.Wifi.Passphrase},
-		Env:      cfg.Env,
-	}
 
 	// Only reachable now that /proc is mounted (mountEarly above), which
 	// is what makes /proc/cmdline readable in the first place.
@@ -297,69 +301,41 @@ func Run(deps Deps, opts Options) error {
 		BoardDisplayNameFor: bakedBoard,
 	})
 
-	// gosd.toml and cloud-init provisioning both live on the just-mounted
-	// boot partition, so neither can be read before now. Precedence
-	// (locked, see docs/provisioning-formats.md) is
-	// gosd.toml > cloud-init > config.json: cloud-init is read first so a
-	// subsequent gosd.toml value can still override it, and either one
-	// overriding the hostname applied at step 4 above means it has to be
-	// re-applied here, before /app starts.
-	var provisionResult provision.Result
+	// The config tree and cloud-init's seed both live on the just-mounted
+	// boot partition, so neither can be read before now. The tree is the
+	// single source of truth for what this device has been told to do;
+	// config.json's baked values are the fallback for each setting the
+	// card leaves unset. A seed is not a second source: it is consumed
+	// into the tree (see consumeCloudInit) before anything below reads a
+	// setting.
+	config := cardconfig.Tree{}
+	if deps.ReadConfigTree != nil {
+		config = deps.ReadConfigTree(log)
+	}
 	if deps.ReadProvisioning != nil {
-		provisionResult = deps.ReadProvisioning(log)
-		if provisionResult.Hostname != "" {
-			if validHostname(provisionResult.Hostname) {
-				cfg.Hostname = provisionResult.Hostname
-				log("hostname from cloud-init user-data")
-			} else {
-				log("hostname %q from cloud-init user-data is invalid (must be 1-%d lowercase letters, digits, and hyphens); keeping %q", provisionResult.Hostname, naming.MaxLength, cfg.Hostname)
-			}
-		}
+		consumeCloudInit(deps, config, deps.ReadProvisioning(log), log)
 	}
 
-	var gosdToml gosdtoml.Config
-	if deps.ReadGosdToml != nil {
-		parsed, warnings, err := deps.ReadGosdToml()
-		if err != nil {
-			log("reading gosd.toml failed, using cloud-init/config.json instead: %v", err)
-		} else {
-			gosdToml = parsed
-			if gosdToml.Hostname != "" {
-				if validHostname(gosdToml.Hostname) {
-					cfg.Hostname = gosdToml.Hostname
-					log("hostname from gosd.toml")
-				} else {
-					log("hostname %q from gosd.toml is invalid (must be 1-%d lowercase letters, digits, and hyphens); keeping %q", gosdToml.Hostname, naming.MaxLength, cfg.Hostname)
-				}
-			}
-		}
-		for _, warning := range warnings {
-			log("%s", warning)
-		}
-
-		applyHostname(deps, log, cfg.Hostname, "gosd.toml")
-	} else if provisionResult.Hostname != "" {
-		applyHostname(deps, log, cfg.Hostname, "cloud-init")
+	// A hostname on the card supersedes the one applied at step 4 above,
+	// so it has to be re-applied here, before /app starts.
+	if hostname, ok := cardHostname(config, cfg.Hostname, log); ok {
+		cfg.Hostname = hostname
+		applyHostname(deps, log, cfg.Hostname, cardconfig.OnCard(hostnamePath))
 	}
 
 	// dataFilesystem is decided once, from config.json's baked
-	// --data-filesystem choice alone: unlike Hostname/Wifi/Env/DataFlush,
-	// nothing on the boot partition (gosd.toml, cloud-init) can
-	// override it — the filesystem a partition holds is fixed for the
-	// life of the card, chosen at build time and baked into the image
-	// gosd build produced. Both the dataexpand call and mountData below
-	// use this one resolved value.
+	// --data-filesystem choice alone: unlike the hostname, WiFi, env and
+	// data_flush settings, nothing on the card can override it — the
+	// filesystem a partition holds is fixed for the life of the card,
+	// chosen at build time and baked into the image gosd build produced.
+	// Both the dataexpand call and mountData below use this one resolved
+	// value.
 	dataFilesystem := resolveDataFilesystem(cfg.DataFilesystem)
 	log("data partition filesystem: %s", dataFilesystem)
 
-	// Computed now, from gosdToml as read straight off the card: /data's
-	// mount below and the GOSD_DATA_FLUSH env var built further down both
-	// have to agree, and a ProvisionSnapshot restore (below) can go on to
-	// reset gosdToml.DataFlush to nil (plan.apply only ever carries
-	// forward Hostname/Wifi/Env — DataFlush isn't part of the provisioning
-	// snapshot, see gosdtoml.Config.DataFlush's doc) — so this value, not
-	// a re-derived one, is what both later steps use.
-	dataFlush, dataFlushSource := effectiveDataFlush(cfg.DataFlush, gosdToml.DataFlush)
+	// Computed once, here: /data's mount below and the GOSD_DATA_FLUSH env
+	// var built further down have to agree with each other.
+	dataFlush, dataFlushSource := effectiveDataFlush(cfg.DataFlush, config.Get(dataFlushPath))
 	if dataFlushSource != "" {
 		log("data partition flush: %t (%s)", dataFlush, dataFlushSource)
 	}
@@ -389,37 +365,10 @@ func Run(deps Deps, opts Options) error {
 		}
 	}
 
-	// Provisioning has settled, and /data — where the snapshot lives — is
-	// as mounted as it's going to get, so this is the first and last moment
-	// a reflash can be healed. It runs before the WiFi/env decisions below
-	// so that anything it restores takes effect on this boot rather than
-	// only the next one.
-	if deps.ProvisionSnapshot != nil {
-		snapshot := deps.ProvisionSnapshot(provsnapshot.Input{
-			Identity:  cfg.Identity,
-			Baked:     baked,
-			CloudInit: provsnapshot.CloudInit{Hostname: provisionResult.Hostname, Wifi: provisionResult.Wifi},
-			GosdToml:  gosdToml,
-		}, log)
-		gosdToml = snapshot.GosdToml
-		if snapshot.HostnameRestored {
-			cfg.Hostname = gosdToml.Hostname
-			if err := deps.Hostname.SetHostname(cfg.Hostname); err != nil {
-				// Best-effort, like everything else the snapshot does: the
-				// device keeps the hostname it already had rather than
-				// failing to boot over a self-heal.
-				log("applying the restored hostname failed, continuing without it: %v", err)
-			} else {
-				log("hostname set to %q (restored from the provisioning snapshot)", cfg.Hostname)
-			}
-		}
-	}
-
-	// cfg.Hostname is now as settled as it's going to get this boot — every
-	// source that can still change it (gosd.toml/cloud-init above, and a
-	// provisioning-snapshot restore just above) has already had its turn —
-	// so this is the one point Run writes the device's 127.0.1.1 line to
-	// /etc/hosts, rather than on every earlier hostname re-resolution.
+	// cfg.Hostname is as settled as it's going to get this boot — the card
+	// and any cloud-init seed have both had their turn above — so this is
+	// the one point Run writes the device's 127.0.1.1 line to /etc/hosts,
+	// rather than on every earlier hostname re-resolution.
 	if deps.WriteHosts != nil {
 		if err := deps.WriteHosts(cfg.Hostname); err != nil {
 			log("writing /etc/hosts failed, %q may not resolve to this device's own address: %v", cfg.Hostname, err)
@@ -427,13 +376,8 @@ func Run(deps Deps, opts Options) error {
 	}
 
 	switch {
-	case gosdToml.Wifi.SSID != "":
-		log("wifi from gosd.toml")
-	case len(provisionResult.Wifi) > 0:
-		log("wifi from cloud-init network-config")
-		if len(provisionResult.Wifi) > 1 {
-			log("cloud-init network-config named %d WiFi networks; gosd-init only ever joins the first (%q)", len(provisionResult.Wifi), provisionResult.Wifi[0].SSID)
-		}
+	case config.Get(wifiSSIDPath) != "":
+		log("wifi from %s", cardconfig.OnCard(wifiSSIDPath))
 	case cfg.Wifi.SSID != "":
 		log("wifi from config.json")
 	}
@@ -444,7 +388,7 @@ func Run(deps Deps, opts Options) error {
 	// constructed long before this point, back when the boot partition
 	// mount succeeded, so its secrets are handed over now through
 	// setSecrets rather than at construction.
-	userEnv := mergeUserEnv(cfg.Env, gosdToml.Env, log)
+	userEnv := mergeUserEnv(cfg.Env, config.Group(envPath), log)
 	report.setSecrets(envRedactionRules(userEnv))
 
 	env := []string{
@@ -457,7 +401,7 @@ func Run(deps Deps, opts Options) error {
 	guard := PanicGuard{Rebooter: deps.Rebooter, Sleep: deps.Sleep, Log: log}
 	if deps.StartNetworking != nil {
 		guard.Go("networking", func() {
-			deps.StartNetworking(cfg, gosdToml, provisionResult.Wifi, log)
+			deps.StartNetworking(cfg, config, log)
 		})
 	}
 
@@ -545,23 +489,128 @@ func resolveDataFilesystem(raw string) diskfmt.FS {
 }
 
 // effectiveDataFlush resolves the vfat "flush" mount option's effective
-// value for this boot: gosd.toml's data_flush key, when the operator set
-// one (override non-nil), else config.json's baked gosd build --data-flush
-// default. It also reports the source, "" when nothing overrode the baked
-// value, purely so Run can log an override without logging every ordinary
-// boot that just uses the baked default (bean gosd-9m1k).
-func effectiveDataFlush(baked bool, override *bool) (flush bool, source string) {
-	if override != nil {
-		return *override, "gosd.toml"
+// value for this boot: the card's data_flush setting when it holds anything
+// at all — "set" means non-empty, so any word a person types into that file
+// turns it on, which is what its explanation on the card tells them to do —
+// else config.json's baked gosd build --data-flush default. It also reports
+// the source, "" when the card had no opinion, purely so Run can log an
+// override without logging every ordinary boot that just uses the baked
+// default (bean gosd-9m1k).
+func effectiveDataFlush(baked bool, card string) (flush bool, source string) {
+	if card != "" {
+		return true, cardconfig.OnCard(dataFlushPath)
 	}
 	return baked, ""
+}
+
+// cardHostname returns the hostname the card's config/hostname names, and
+// whether it named a usable one at all — false leaves the sanitized default
+// config.json baked in (an app's own name) standing, which is what makes an
+// unset hostname file the ordinary case rather than a failure.
+//
+// A value that isn't a valid hostname is never silently rewritten to fit
+// (see validHostname and gosd-jeaw): mangling what somebody typed would
+// only confuse them, so it's refused with a log line naming the file to
+// fix, and current — itself always a value that once passed this check —
+// is kept.
+func cardHostname(config cardconfig.Tree, current string, log func(format string, args ...any)) (string, bool) {
+	name := config.Get(hostnamePath)
+	switch {
+	case name == "":
+		return "", false
+	case !validHostname(name):
+		log("the name in %s (%q) can't be used as a hostname: it must be 1-%d lowercase letters, digits, and hyphens; keeping %q", cardconfig.OnCard(hostnamePath), name, naming.MaxLength, current)
+		return "", false
+	}
+	return name, true
+}
+
+// consumeCloudInit turns the answers somebody gave a flashing tool's wizard
+// into ordinary settings on the card. The seed is DELETED first, durably,
+// and only then are its values written into the config tree (locked, epic
+// gosd-rw6n): a power cut in that gap loses the answers, which can be given
+// again by flashing again, where the reverse order would leave a seed on
+// the card that silently overwrote every later hand-edit, on every boot,
+// for the life of the device.
+//
+// Whatever the seed asked for applies to this boot either way — a card that
+// has gone read-only, or a device with no way to write to its own card at
+// all, shouldn't also lose the network it was just told to join — it simply
+// doesn't survive to the next one.
+func consumeCloudInit(deps Deps, config cardconfig.Tree, result provision.Result, log func(format string, args ...any)) {
+	if len(result.SeedFiles) == 0 {
+		return
+	}
+	values := cloudInitValues(result, log)
+
+	deleted := false
+	if deps.EditBoot == nil {
+		log("cloud-init provisioning found, but this device can't write to its own card; using it for this boot only")
+	} else if err := deps.EditBoot(func(root string) error { return provision.DeleteSeed(root, result.SeedFiles) }); err != nil {
+		log("deleting cloud-init's provisioning from the boot partition failed, so it can't become settings on the card; using it for this boot only: %v", err)
+	} else {
+		deleted = true
+	}
+
+	if !deleted {
+		for path, value := range values {
+			config.Set(path, value)
+		}
+		return
+	}
+	if len(values) == 0 {
+		return
+	}
+
+	if err := deps.EditBoot(func(root string) error {
+		return config.Write(filepath.Join(root, configtree.Dir), values)
+	}); err != nil {
+		log("writing cloud-init's answers into %s/ failed; they still apply to this boot: %v", configtree.Dir, err)
+	}
+	for _, path := range sortedPaths(values) {
+		log("%s set from cloud-init provisioning", cardconfig.OnCard(path))
+	}
+}
+
+// cloudInitValues maps what a cloud-init seed asked for onto the settings
+// that say it. Only the first WiFi network becomes a setting: the tree
+// holds one network, as gosd-init has always joined one.
+//
+// A hostname is written exactly as the wizard gave it, even one cardHostname
+// will go on to refuse: the card is the record of what a device was told,
+// and a value visible in a file somebody can open and correct is worth more
+// than one silently dropped on its way there.
+func cloudInitValues(result provision.Result, log func(format string, args ...any)) map[string]string {
+	values := make(map[string]string, 3)
+	if result.Hostname != "" {
+		values[hostnamePath] = result.Hostname
+	}
+	if len(result.Wifi) > 0 {
+		values[wifiSSIDPath] = result.Wifi[0].SSID
+		values[wifiPassphrasePath] = result.Wifi[0].Password
+		if len(result.Wifi) > 1 {
+			log("cloud-init's network-config named %d WiFi networks; only the first (%q) becomes a setting", len(result.Wifi), result.Wifi[0].SSID)
+		}
+	}
+	return values
+}
+
+// sortedPaths orders a set of settings by path, so what gets logged about
+// them is in the same order every boot.
+func sortedPaths(values map[string]string) []string {
+	paths := make([]string, 0, len(values))
+	for path := range values {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // dataFlushEnvValue formats the effective data-flush setting for
 // GOSD_DATA_FLUSH, the reserved env var blockmount's emmc/disk vfat mounts
 // read it back from (see internal/blockmount's vfatMountOption) since that
-// package mounts from the app's own process, which has no access to
-// config.json or gosd.toml directly.
+// package mounts from the app's own process, which can read neither
+// config.json nor the card's settings directly.
 func dataFlushEnvValue(flush bool) string {
 	if flush {
 		return "1"
@@ -616,28 +665,28 @@ func mountData(deps Deps, opts Options, fs diskfmt.FS, flush bool, log func(form
 }
 
 // reservedEnvPrefix is the namespace gosd-init itself owns (GOSD_BOARD,
-// GOSD_HOSTNAME, and any future GOSD_* var): per gosd.toml
-// [env]'s locked rules, neither baked config.json env nor a hand-edited
-// gosd.toml [env] may override it.
+// GOSD_HOSTNAME, and any future GOSD_* var): neither baked config.json env
+// nor a file somebody puts in config/env/ may override it. The build
+// refuses such a file outright (see internal/configtree); this is what
+// happens when one is created on the card afterwards.
 const reservedEnvPrefix = "GOSD_"
 
-// mergeUserEnv merges the app's user-set environment variables per
-// gosd.toml [env]'s locked precedence — gosd.toml overrides baked
-// config.json env, per key, not as a whole-map replace — drops any key in
-// gosd-init's reserved GOSD_* namespace (logging each rejection so a
-// hand-edited gosd.toml can't silently fail to override GOSD_BOARD etc.),
-// and returns the survivors as sorted NAME=VALUE strings for deterministic
-// env ordering. Only keys and their source are ever logged, never values:
-// they may be secrets.
+// mergeUserEnv merges the app's environment variables: a value set in the
+// card's config/env/ directory overrides the same name baked into
+// config.json, per name rather than as a whole-map replace. Any name in
+// gosd-init's reserved GOSD_* namespace is dropped, with a log line each,
+// so a file created on the card can't silently fail to override GOSD_BOARD
+// and leave its author wondering. The survivors are returned as sorted
+// NAME=VALUE strings, for deterministic env ordering. Only names and where
+// they came from are ever logged, never values: they may be secrets.
 func mergeUserEnv(baked, card map[string]string, log func(format string, args ...any)) []string {
-	source := make(map[string]string, len(baked)+len(card))
+	fromCard := make(map[string]bool, len(card))
 	merged := make(map[string]string, len(baked)+len(card))
 	for key, value := range baked {
-		source[key] = "baked"
 		merged[key] = value
 	}
 	for key, value := range card {
-		source[key] = "gosd.toml"
+		fromCard[key] = true
 		merged[key] = value
 	}
 
@@ -648,25 +697,34 @@ func mergeUserEnv(baked, card map[string]string, log func(format string, args ..
 	sort.Strings(keys)
 
 	var env []string
-	var fromGosdToml, fromBaked []string
+	var cardNames, bakedNames []string
 	for _, key := range keys {
 		if strings.HasPrefix(key, reservedEnvPrefix) {
-			log("ignoring reserved env key %s from %s (gosd-init owns the %s namespace)", key, source[key], reservedEnvPrefix)
+			log("ignoring %s: gosd-init owns the %s namespace, so a setting can't be named that", envSourceOf(key, fromCard[key]), reservedEnvPrefix)
 			continue
 		}
 		env = append(env, key+"="+merged[key])
-		if source[key] == "gosd.toml" {
-			fromGosdToml = append(fromGosdToml, key)
+		if fromCard[key] {
+			cardNames = append(cardNames, key)
 		} else {
-			fromBaked = append(fromBaked, key)
+			bakedNames = append(bakedNames, key)
 		}
 	}
 
-	if len(fromGosdToml) > 0 || len(fromBaked) > 0 {
-		log("app env: %s", describeEnvSources(fromGosdToml, fromBaked))
+	if len(cardNames) > 0 || len(bakedNames) > 0 {
+		log("app env: %s", describeEnvSources(cardNames, bakedNames))
 	}
 
 	return env
+}
+
+// envSourceOf names one rejected environment variable where its author can
+// find it: the file on the card, or the image it was built into.
+func envSourceOf(key string, fromCard bool) string {
+	if fromCard {
+		return cardconfig.OnCard(envPath + "/" + key)
+	}
+	return "the baked-in env value " + key
 }
 
 // envRedactionRules turns the app's own env — mergeUserEnv's output, which
@@ -693,13 +751,16 @@ func envRedactionRules(env []string) []redact.Rule {
 }
 
 // describeEnvSources formats the "app env: ..." summary line, e.g.
-// "app env: API_URL, LOG_LEVEL (gosd.toml); PORT (baked)". Either slice may
-// be empty (but not both, since the caller only invokes this when there's
-// something to report).
-func describeEnvSources(fromGosdToml, fromBaked []string) string {
+// "app env: API_URL, LOG_LEVEL (config/env); PORT (baked)" — which of the
+// app's environment variables somebody set on the card, and which are the
+// image's own. It names the directory rather than each file so the line
+// stays one line however many settings there are. Either slice may be empty
+// (but not both, since the caller only invokes this when there's something
+// to report).
+func describeEnvSources(fromCard, fromBaked []string) string {
 	var parts []string
-	if len(fromGosdToml) > 0 {
-		parts = append(parts, strings.Join(fromGosdToml, ", ")+" (gosd.toml)")
+	if len(fromCard) > 0 {
+		parts = append(parts, strings.Join(fromCard, ", ")+" ("+cardconfig.OnCard(envPath)+")")
 	}
 	if len(fromBaked) > 0 {
 		parts = append(parts, strings.Join(fromBaked, ", ")+" (baked)")
@@ -860,10 +921,9 @@ func fatal(deps Deps, log func(format string, args ...any), report *fatalReporte
 // validHostname reports whether name is safe to hand to SetHostname as-is:
 // non-empty and unchanged by naming.Sanitize, meaning it already satisfies
 // both of Sanitize's constraints — the [a-z0-9-] charset and the
-// naming.MaxLength byte cap that sethostname(2) enforces. A gosd.toml or
-// cloud-init hostname that fails this check is never silently rewritten to
-// fit (see gosd-jeaw): mangling a hand-edited value would only confuse
-// whoever wrote it, so it's rejected outright and the previous hostname —
+// naming.MaxLength byte cap that sethostname(2) enforces. A hostname from
+// the card that fails this check is never silently rewritten to fit (see
+// gosd-jeaw): mangling a value somebody typed would only confuse them, so it's rejected outright and the previous hostname —
 // always itself a value that once passed this same check — is kept.
 func validHostname(name string) bool {
 	return name != "" && naming.Sanitize(name) == name
@@ -872,12 +932,12 @@ func validHostname(name string) bool {
 // applyHostname calls SetHostname and reports the outcome without ever
 // failing boot. Earlier, a SetHostname failure here was treated as fatal
 // (step 8, reboot); but a wrong hostname is cosmetic, while a reboot loop
-// is not — see gosd-jeaw, where a hand-edited gosd.toml hostname long
-// enough to make sethostname(2) return EINVAL turned into a permanent
-// reboot loop with nothing recorded on the card. step names which source is
-// being (re-)applied — "" for the initial config.json apply at step 4,
-// "gosd.toml"/"cloud-init" for the re-apply once the boot partition is
-// mounted — and is folded into both the success and failure log lines.
+// is not — see gosd-jeaw, where a hand-edited hostname long enough to make
+// sethostname(2) return EINVAL turned into a permanent reboot loop with
+// nothing recorded on the card. step names which source is being
+// (re-)applied — "" for the initial config.json apply at step 4, the
+// setting's own path on the card for the re-apply once the boot partition
+// is mounted — and is folded into both the success and failure log lines.
 func applyHostname(deps Deps, log func(format string, args ...any), hostname, step string) {
 	suffix := ""
 	if step != "" {

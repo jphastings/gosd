@@ -27,7 +27,7 @@
 //
 // A board whose eMMC already holds other content (a vendor image, a prior
 // project) needs explicit consent before this app claims it: set the
-// WEBSITE_WIPE_EMMC gosd.toml [env] var (see docs/runtime.md's "App
+// WEBSITE_WIPE_EMMC app setting in config/env/ (see docs/runtime.md's "App
 // environment variables") to "yes" (or "1"/"true"/"on") to let it wipe and
 // reformat that eMMC. Without consent it leaves the eMMC untouched, logs
 // what to do about it, and idles rather than exiting — gosd-init restarts
@@ -61,7 +61,7 @@ const (
 	dataMountpoint = "/data"
 	bootMountpoint = "/boot"
 
-	// wipeConsentEnv is the gosd.toml [env] var (see docs/runtime.md's "App
+	// wipeConsentEnv is the config/env/ setting (see docs/runtime.md's "App
 	// environment variables") a user sets to let usbwebsite claim an eMMC
 	// that already holds other content. Unset, the app only ever formats an
 	// eMMC that's blank or already carries its own label.
@@ -159,7 +159,7 @@ func claimStorage() (storage, bool) {
 		return claimDataPartition()
 	case !destructive && errors.Is(res.Err, emmc.ErrRefusedFormat):
 		fmt.Printf("gosd usbwebsite: %v\n", res.Err)
-		fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, add %s = \"yes\" to the [env] table in gosd.toml on the boot partition, then reboot\n", wipeConsentEnv)
+		fmt.Printf("gosd usbwebsite: to let usbwebsite claim it, write yes into config/env/%s on the boot partition, then reboot\n", wipeConsentEnv)
 		return storage{}, false
 	default:
 		fmt.Fprintf(os.Stderr, "gosd usbwebsite: %v\n", res.Err)
@@ -278,8 +278,8 @@ func wipeConsented() bool {
 	return isAffirmative(os.Getenv(wipeConsentEnv))
 }
 
-// isAffirmative recognizes the usual "yes" spellings for a boolean gosd.toml
-// [env] value, case-insensitively; anything else, including unset or empty,
+// isAffirmative recognizes the usual "yes" spellings for a boolean app
+// setting, case-insensitively; anything else, including unset or empty,
 // means no — the safe default.
 func isAffirmative(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {

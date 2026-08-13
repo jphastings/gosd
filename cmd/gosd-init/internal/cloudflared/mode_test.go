@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
 const (
@@ -116,7 +114,7 @@ func TestResolveModeFailureModes(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		cfg        func(t *testing.T) gosdtoml.IngressCloudflared
+		cfg        func(t *testing.T) Config
 		baked      bool
 		wantRun    bool
 		wantLog    string // substring; "" means "no log line at all"
@@ -124,22 +122,22 @@ func TestResolveModeFailureModes(t *testing.T) {
 	}{
 		{
 			name:    "unconfigured and not baked: silent no-op",
-			cfg:     func(t *testing.T) gosdtoml.IngressCloudflared { return gosdtoml.IngressCloudflared{} },
+			cfg:     func(t *testing.T) Config { return Config{} },
 			baked:   false,
 			wantRun: false,
 			wantLog: "",
 		},
 		{
 			name:    "unconfigured but baked: one quiet line",
-			cfg:     func(t *testing.T) gosdtoml.IngressCloudflared { return gosdtoml.IngressCloudflared{} },
+			cfg:     func(t *testing.T) Config { return Config{} },
 			baked:   true,
 			wantRun: false,
 			wantLog: "nothing to do",
 		},
 		{
 			name: "configured but not baked: points at --ingress",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Hostname: "app.example.com", Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Hostname: "app.example.com", Port: "8080"}
 			},
 			baked:   false,
 			wantRun: false,
@@ -147,8 +145,8 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name: "token only: remote mode not supported yet",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t)}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t)}
 			},
 			baked:      true,
 			wantRun:    false,
@@ -157,36 +155,36 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name: "missing hostname",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Port: "8080"}
 			},
 			baked:      true,
 			wantRun:    false,
-			wantLog:    "missing required key(s): hostname",
+			wantLog:    "missing required setting(s): hostname",
 			notWantLog: testTunnelSecret,
 		},
 		{
 			name: "missing port",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Hostname: "app.example.com"}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Hostname: "app.example.com"}
 			},
 			baked:   true,
 			wantRun: false,
-			wantLog: "missing required key(s): port",
+			wantLog: "missing required setting(s): port",
 		},
 		{
 			name: "missing token",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Hostname: "app.example.com", Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Hostname: "app.example.com", Port: "8080"}
 			},
 			baked:   true,
 			wantRun: false,
-			wantLog: "missing required key(s): token",
+			wantLog: "missing required setting(s): token",
 		},
 		{
 			name: "bad token",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: "not-a-real-token", Hostname: "app.example.com", Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: "not-a-real-token", Hostname: "app.example.com", Port: "8080"}
 			},
 			baked:   true,
 			wantRun: false,
@@ -194,8 +192,8 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name: "invalid hostname format",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Hostname: "not a hostname", Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Hostname: "not a hostname", Port: "8080"}
 			},
 			baked:      true,
 			wantRun:    false,
@@ -204,8 +202,8 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name: "port out of range",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Hostname: "app.example.com", Port: 70000}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Hostname: "app.example.com", Port: "70000"}
 			},
 			baked:   true,
 			wantRun: false,
@@ -213,8 +211,8 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name: "fully valid: runs, no log line",
-			cfg: func(t *testing.T) gosdtoml.IngressCloudflared {
-				return gosdtoml.IngressCloudflared{Token: validToken(t), Hostname: "app.example.com", Port: 8080}
+			cfg: func(t *testing.T) Config {
+				return Config{Token: validToken(t), Hostname: "app.example.com", Port: "8080"}
 			},
 			baked:   true,
 			wantRun: true,
@@ -243,7 +241,7 @@ func TestResolveModeFailureModes(t *testing.T) {
 }
 
 func TestResolveModeValidConfigPopulatesDecodedFields(t *testing.T) {
-	cfg := gosdtoml.IngressCloudflared{Token: mustToken(t), Hostname: "app.example.com", Port: 8080}
+	cfg := Config{Token: mustToken(t), Hostname: "app.example.com", Port: "8080"}
 	m := resolveMode(cfg, true)
 
 	if !m.run {

@@ -116,8 +116,8 @@ func TestReadDetectsFirstrunShWithoutParsingIt(t *testing.T) {
 	if result.Hostname != "" {
 		t.Errorf("Hostname = %q, want empty — firstrun.sh must never be parsed", result.Hostname)
 	}
-	if !containsSubstring(logs, "gosd.toml") {
-		t.Errorf("logs = %v, want a line pointing the user at gosd.toml", logs)
+	if !containsSubstring(logs, "config/") {
+		t.Errorf("logs = %v, want a line pointing the user at the config tree", logs)
 	}
 }
 
@@ -265,6 +265,50 @@ func TestParseNetworkConfigRejectsMalformedYAML(t *testing.T) {
 	_, err := parseNetworkConfig([]byte("network: [this is not closed\n"))
 	if err == nil {
 		t.Fatal("parseNetworkConfig() error = nil, want an error for malformed YAML")
+	}
+}
+
+func TestReadNamesTheWholeSeedItFound(t *testing.T) {
+	// The seed is consumed as a whole, meta-data included: nothing reads
+	// that file, but leaving a third of a seed behind leaves a card that
+	// still looks provisioned to anything else that reads it.
+	result := Read(fixtureDir("wifi-hostname"), collectLog(new([]string)))
+
+	want := []string{"user-data", "network-config", "meta-data"}
+	for i, name := range want {
+		if i >= len(result.SeedFiles) || result.SeedFiles[i] != name {
+			t.Fatalf("SeedFiles = %v, want %v", result.SeedFiles, want)
+		}
+	}
+}
+
+func TestReadNamesNoSeedFilesOnACardWithoutOne(t *testing.T) {
+	// Every boot after the first: nothing to consume, so nothing is
+	// deleted and the boot partition is never remounted read-write.
+	result := Read(t.TempDir(), collectLog(new([]string)))
+
+	if len(result.SeedFiles) != 0 {
+		t.Errorf("SeedFiles = %v, want none", result.SeedFiles)
+	}
+}
+
+func TestDeleteSeedRemovesTheFilesAndToleratesAMissingOne(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "user-data", "hostname: fixture\n")
+	writeFile(t, dir, "meta-data", "instance-id: fixture\n")
+
+	// network-config is named but isn't there: consuming a seed races
+	// nothing, so a file already gone is not a failure.
+	if err := DeleteSeed(dir, []string{"user-data", "network-config", "meta-data"}); err != nil {
+		t.Fatalf("DeleteSeed() = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("listing the boot partition: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("boot partition still holds %d seed file(s), want none", len(entries))
 	}
 }
 

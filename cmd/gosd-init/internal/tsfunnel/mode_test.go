@@ -3,8 +3,6 @@ package tsfunnel
 import (
 	"strings"
 	"testing"
-
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
 const testAuthkey = "tskey-auth-super-secret-value-do-not-log-me"
@@ -12,7 +10,7 @@ const testAuthkey = "tskey-auth-super-secret-value-do-not-log-me"
 func TestResolveModeFailureModes(t *testing.T) {
 	tests := []struct {
 		name           string
-		cfg            gosdtoml.IngressTailscaleFunnel
+		cfg            Config
 		baked          bool
 		deviceHostname string
 		wantRun        bool
@@ -21,50 +19,50 @@ func TestResolveModeFailureModes(t *testing.T) {
 	}{
 		{
 			name:    "unconfigured and not baked: silent no-op",
-			cfg:     gosdtoml.IngressTailscaleFunnel{},
+			cfg:     Config{},
 			baked:   false,
 			wantRun: false,
 			wantLog: "",
 		},
 		{
 			name:    "unconfigured but baked: one quiet line",
-			cfg:     gosdtoml.IngressTailscaleFunnel{},
+			cfg:     Config{},
 			baked:   true,
 			wantRun: false,
 			wantLog: "nothing to do",
 		},
 		{
 			name:    "configured but not baked: points at --ingress",
-			cfg:     gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Port: 8080},
+			cfg:     Config{Authkey: testAuthkey, Port: "8080"},
 			baked:   false,
 			wantRun: false,
 			wantLog: "--ingress tailscale-funnel",
 		},
 		{
 			name:       "missing port",
-			cfg:        gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Hostname: "device-name"},
+			cfg:        Config{Authkey: testAuthkey, Hostname: "device-name"},
 			baked:      true,
 			wantRun:    false,
-			wantLog:    "missing required key: port",
+			wantLog:    "missing required setting: port",
 			notWantLog: testAuthkey,
 		},
 		{
 			name:    "port out of range low",
-			cfg:     gosdtoml.IngressTailscaleFunnel{Port: -1},
+			cfg:     Config{Port: "-1"},
 			baked:   true,
 			wantRun: false,
 			wantLog: "out of range",
 		},
 		{
 			name:    "port out of range high",
-			cfg:     gosdtoml.IngressTailscaleFunnel{Port: 70000},
+			cfg:     Config{Port: "70000"},
 			baked:   true,
 			wantRun: false,
 			wantLog: "out of range",
 		},
 		{
 			name:       "funnel_port outside the allowed set",
-			cfg:        gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Port: 8080, FunnelPort: 9999},
+			cfg:        Config{Authkey: testAuthkey, Port: "8080", FunnelPort: "9999"},
 			baked:      true,
 			wantRun:    false,
 			wantLog:    "not one of the supported values (443, 8443, 10000)",
@@ -72,14 +70,14 @@ func TestResolveModeFailureModes(t *testing.T) {
 		},
 		{
 			name:    "port only: no authkey needed once state exists",
-			cfg:     gosdtoml.IngressTailscaleFunnel{Port: 8080},
+			cfg:     Config{Port: "8080"},
 			baked:   true,
 			wantRun: true,
 			wantLog: "",
 		},
 		{
 			name:    "fully valid: runs, no log line",
-			cfg:     gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Hostname: "my-device", Port: 8080, FunnelPort: 8443},
+			cfg:     Config{Authkey: testAuthkey, Hostname: "my-device", Port: "8080", FunnelPort: "8443"},
 			baked:   true,
 			wantRun: true,
 			wantLog: "",
@@ -107,7 +105,7 @@ func TestResolveModeFailureModes(t *testing.T) {
 }
 
 func TestResolveModeDefaultsFunnelPortTo443(t *testing.T) {
-	m := resolveMode(gosdtoml.IngressTailscaleFunnel{Port: 8080}, true, "device-name")
+	m := resolveMode(Config{Port: "8080"}, true, "device-name")
 	if !m.run {
 		t.Fatalf("run = false, want true (log: %q)", m.log)
 	}
@@ -117,7 +115,7 @@ func TestResolveModeDefaultsFunnelPortTo443(t *testing.T) {
 }
 
 func TestResolveModeHostnameDefaultsToDeviceHostname(t *testing.T) {
-	m := resolveMode(gosdtoml.IngressTailscaleFunnel{Port: 8080}, true, "my-device")
+	m := resolveMode(Config{Port: "8080"}, true, "my-device")
 	if !m.run {
 		t.Fatalf("run = false, want true (log: %q)", m.log)
 	}
@@ -127,7 +125,7 @@ func TestResolveModeHostnameDefaultsToDeviceHostname(t *testing.T) {
 }
 
 func TestResolveModeExplicitHostnameOverridesDeviceHostname(t *testing.T) {
-	m := resolveMode(gosdtoml.IngressTailscaleFunnel{Hostname: "custom", Port: 8080}, true, "my-device")
+	m := resolveMode(Config{Hostname: "custom", Port: "8080"}, true, "my-device")
 	if !m.run {
 		t.Fatalf("run = false, want true (log: %q)", m.log)
 	}
@@ -137,7 +135,7 @@ func TestResolveModeExplicitHostnameOverridesDeviceHostname(t *testing.T) {
 }
 
 func TestResolveModeValidConfigPopulatesFields(t *testing.T) {
-	cfg := gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Hostname: "my-device", Port: 8080, FunnelPort: 8443}
+	cfg := Config{Authkey: testAuthkey, Hostname: "my-device", Port: "8080", FunnelPort: "8443"}
 	m := resolveMode(cfg, true, "fallback-hostname")
 
 	if !m.run {

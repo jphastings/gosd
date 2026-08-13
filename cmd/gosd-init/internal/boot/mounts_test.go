@@ -73,7 +73,7 @@ func TestMountBootPartitionTriesEachDeviceInOrder(t *testing.T) {
 
 func TestMountBootPartitionAcceptsSingleCandidateWithSentinelPresent(t *testing.T) {
 	// The normal, no-eMMC path: one candidate, it mounts as FAT, and it
-	// carries gosd.toml — must be accepted without any unmount/retry.
+	// carries the sentinel — must be accepted without any unmount/retry.
 	m := &fakeMounter{}
 	clock := newFakeClock(time.Unix(0, 0))
 
@@ -101,7 +101,7 @@ func TestMountBootPartitionSkipsCandidateMissingGosdBootSentinel(t *testing.T) {
 	checks := 0
 	pathExists := func(string) bool {
 		checks++
-		return checks == 2 // only the second (SD card) candidate carries gosd.toml
+		return checks == 2 // only the second (SD card) candidate carries a config tree
 	}
 	clock := newFakeClock(time.Unix(0, 0))
 

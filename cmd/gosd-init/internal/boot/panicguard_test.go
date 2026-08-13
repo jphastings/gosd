@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jphastings/gosd/internal/gosdtoml"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/internal/initcfg"
-	"github.com/jphastings/gosd/internal/provision"
 )
 
 func TestGuardTurnsAPanicIntoAStackTraceAndAReboot(t *testing.T) {
@@ -80,7 +79,7 @@ func TestRunRebootsWhenNetworkingPanics(t *testing.T) {
 	stop := make(chan struct{})
 
 	deps := testDeps(rebooter, clock, stop)
-	deps.StartNetworking = func(initcfg.Config, gosdtoml.Config, []provision.WifiNetwork, func(string, ...any)) {
+	deps.StartNetworking = func(initcfg.Config, cardconfig.Tree, func(string, ...any)) {
 		panic("malformed multicast packet")
 	}
 	opts := testOptions()

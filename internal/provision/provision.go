@@ -8,10 +8,14 @@
 // custom-repository catalog flow with init_format: "cloudinit", so this
 // package only ever needs to understand cloud-init's YAML — never
 // firstrun.sh (the systemd/legacy mechanism), which gosd-init deliberately
-// never parses or executes. gosd.toml (see internal/gosdtoml) is parsed
-// separately and always wins over anything found here; this package only
-// produces the cloud-init tier of that precedence chain
-// (gosd.toml > cloud-init > baked config.json).
+// never parses or executes.
+//
+// There is no precedence chain to place this in: a seed is CONSUMED, not
+// consulted. gosd-init deletes it and writes what it asked for into the
+// card's config/ tree (see internal/configtree and
+// cmd/gosd-init/internal/cardconfig), so a wizard's answers become ordinary
+// settings — visible in the same files a person edits by hand, and carried
+// across a reflash by the same mechanism.
 //
 // Every parse here is best-effort: a missing, unreadable, or malformed file
 // is logged and skipped, never returned as an error, because a bad
@@ -20,9 +24,13 @@
 package provision
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jphastings/gosd/internal/configtree"
 )
 
 // Result is what gosd-init consumes from cloud-init provisioning found on
@@ -41,8 +49,18 @@ type Result struct {
 	// FirstrunPresent is true when a firstrun.sh file was found on the
 	// boot partition. Per the locked flashing-path decision, gosd-init
 	// never parses or executes it; this only lets the caller log one line
-	// pointing the user at gosd.toml instead.
+	// pointing the user at the config tree instead.
 	FirstrunPresent bool
+
+	// SeedFiles names the cloud-init seed files actually found on the boot
+	// partition, in the fixed order below. The caller consumes a seed by
+	// DELETING it — and making that deletion durable — before writing what
+	// it asked for into the card's config tree, so a wizard's answers
+	// become ordinary settings that survive a reflash instead of a file
+	// that re-applies itself over every later hand-edit (locked, epic
+	// gosd-rw6n). Empty for the overwhelmingly common case of a card with
+	// no seed on it at all: every boot after the first.
+	SeedFiles []string
 }
 
 // WifiNetwork is a single access point named under network-config's
@@ -69,6 +87,7 @@ type WifiNetwork struct {
 const (
 	userDataFile      = "user-data"
 	networkConfigFile = "network-config"
+	metaDataFile      = "meta-data"
 	firstrunFile      = "firstrun.sh"
 )
 
@@ -86,6 +105,8 @@ const (
 // docs/provisioning-formats.md.
 func Read(bootDir string, log func(format string, args ...any)) Result {
 	var result Result
+
+	result.SeedFiles = seedFiles(bootDir)
 
 	if data, ok := readOptional(filepath.Join(bootDir, userDataFile), userDataFile, log); ok {
 		hostname, ignored, err := parseUserData(data)
@@ -110,10 +131,46 @@ func Read(bootDir string, log func(format string, args ...any)) Result {
 
 	if _, err := os.Stat(filepath.Join(bootDir, firstrunFile)); err == nil {
 		result.FirstrunPresent = true
-		log("%s found on the boot partition; gosd-init never parses or executes it — use gosd.toml to configure this device instead", firstrunFile)
+		log("%s found on the boot partition; gosd-init never parses or executes it — edit the files in %s/ to configure this device instead", firstrunFile, configtree.Dir)
 	}
 
 	return result
+}
+
+// seedFiles lists which of cloud-init's NoCloud seed files this card
+// actually carries. meta-data is included even though nothing ever reads it
+// (it holds only cloud-init's own instance-id bookkeeping): the seed is
+// consumed as a whole, and leaving a third of it behind would leave a card
+// that still looks provisioned to anything else that reads it.
+func seedFiles(bootDir string) []string {
+	var found []string
+	for _, name := range []string{userDataFile, networkConfigFile, metaDataFile} {
+		if _, err := os.Stat(filepath.Join(bootDir, name)); err == nil {
+			found = append(found, name)
+		}
+	}
+	return found
+}
+
+// DeleteSeed removes the named cloud-init seed files from bootDir. It is
+// how a seed is consumed: the caller deletes it, makes that deletion
+// durable, and only then writes what the seed asked for into the config
+// tree. A power cut in the gap loses the wizard's answers — which can be
+// given again by flashing again — where the reverse order would leave a
+// seed that silently overwrites every later hand-edit, on every boot, for
+// the life of the card (locked, epic gosd-rw6n).
+//
+// A file that has already gone is not an error: this runs on the first boot
+// after a flash, and racing the very thing it is trying to remove is not
+// worth failing over.
+func DeleteSeed(bootDir string, names []string) error {
+	var errs []error
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(bootDir, name)); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("deleting cloud-init's %s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // readOptional reads path, treating a missing file as a silent, expected

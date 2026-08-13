@@ -3,7 +3,7 @@
 // build) reads to layer custom Kconfig fragments, device-tree patches, and
 // runtime firmware onto a board's kernelspec.KernelSpec.
 //
-// Parsing is strict (bean gosd-hkp7): unlike gosd.toml, this is a
+// Parsing is strict (bean gosd-hkp7): unlike a setting on a card, this is a
 // developer-authored build input, so any key Parse doesn't recognize -
 // anywhere in the file - is an error naming the offending key, not silently
 // ignored.

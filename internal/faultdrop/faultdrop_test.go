@@ -14,7 +14,7 @@ func TestADroppedReportSurvivesTheHandoffUnchanged(t *testing.T) {
 		Code:    "NO-API-KEY",
 		Doing:   "fetching today's forecast",
 		Problem: "the weather service rejected our API key",
-		Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+		Fix:     "add WEATHER_API_KEY to config/env/ on this card",
 		Detail:  "get \"https://api.example\": 401 unauthorized",
 	}
 

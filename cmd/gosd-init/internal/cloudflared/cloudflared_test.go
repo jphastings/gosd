@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
-func validConfig(t *testing.T) gosdtoml.IngressCloudflared {
-	return gosdtoml.IngressCloudflared{Token: mustToken(t), Hostname: "app.example.com", Port: 8080}
+func validConfig(t *testing.T) Config {
+	return Config{Token: mustToken(t), Hostname: "app.example.com", Port: "8080"}
 }
 
 func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
@@ -77,7 +76,7 @@ func baseTestDeps(clock *fakeClock, log *testLog) Deps {
 	}
 }
 
-func baseTestOptions(cfg gosdtoml.IngressCloudflared, stop <-chan struct{}) Options {
+func baseTestOptions(cfg Config, stop <-chan struct{}) Options {
 	return Options{
 		BinaryPath:             "/usr/bin/cloudflared",
 		Baked:                  true,
@@ -104,7 +103,7 @@ func TestRunDoesNothingWhenNotConfiguredAndNotBaked(t *testing.T) {
 		return false, nil
 	}
 
-	opts := baseTestOptions(gosdtoml.IngressCloudflared{}, nil)
+	opts := baseTestOptions(Config{}, nil)
 	opts.Baked = false
 
 	Run(deps, opts)
@@ -126,7 +125,7 @@ func TestRunLogsOneQuietLineWhenBakedButNotConfigured(t *testing.T) {
 		return false, nil
 	}
 
-	opts := baseTestOptions(gosdtoml.IngressCloudflared{}, nil)
+	opts := baseTestOptions(Config{}, nil)
 
 	Run(deps, opts)
 
@@ -430,15 +429,15 @@ func TestTokenNeverAppearsInAnyLogOutput(t *testing.T) {
 	token := mustToken(t)
 	var allLines []string
 
-	configs := []gosdtoml.IngressCloudflared{
+	configs := []Config{
 		{},
 		{Token: token},
 		{Token: token, Hostname: "app.example.com"},
-		{Token: token, Port: 8080},
-		{Hostname: "app.example.com", Port: 8080},
-		{Token: "garbage", Hostname: "app.example.com", Port: 8080},
-		{Token: token, Hostname: "not a hostname", Port: 8080},
-		{Token: token, Hostname: "app.example.com", Port: 99999},
+		{Token: token, Port: "8080"},
+		{Hostname: "app.example.com", Port: "8080"},
+		{Token: "garbage", Hostname: "app.example.com", Port: "8080"},
+		{Token: token, Hostname: "not a hostname", Port: "8080"},
+		{Token: token, Hostname: "app.example.com", Port: "99999"},
 		validConfig(t),
 	}
 	for _, cfg := range configs {

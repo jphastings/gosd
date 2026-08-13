@@ -142,10 +142,6 @@ func TestAssembleBuildsInitramfsBeforeCallingBootFiles(t *testing.T) {
 			t.Errorf("config.json = %s, want it to contain %q", config, want)
 		}
 	}
-
-	if _, err := fs.ReadFile("gosd.toml"); err != nil {
-		t.Errorf("reading gosd.toml back from the FAT root: %v", err)
-	}
 }
 
 // TestAssembleBakesStaticHostsIntoInitramfs is the acceptance test for
@@ -628,16 +624,28 @@ func TestAssembleBakesBuildTimestampIntoConfigJSON(t *testing.T) {
 	}
 }
 
-func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
+// TestAssembleBakesTheDefaultHostnameIntoConfigJSONNotTheCard is the core
+// regression test for bean gosd-4hz1: the app's own name must land in
+// config.json as the baked fallback, and the card's hostname setting must
+// ship EMPTY - anything else would shadow an answer given to a flashing
+// tool's wizard, which is written into that very file.
+func TestAssembleBakesTheDefaultHostnameIntoConfigJSONNotTheCard(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")
 	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	tree, err := configtree.Build("", configtree.Features{})
+	if err != nil {
+		t.Fatalf("building the config tree: %v", err)
+	}
 
 	b := &fakeBoard{name: "fake-board"}
 	imgPath := filepath.Join(dir, "out.img")
 	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
 		Labels: testLabels,
 		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
+		Config:     boards.BuildConfig{Hostname: "sanitized-default"},
+		ConfigTree: tree,
 	}); err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -653,56 +661,12 @@ func TestAssembleWritesCommentedGosdTomlWhenConfigUnset(t *testing.T) {
 		t.Fatalf("GetFilesystem(1): %v", err)
 	}
 
-	gosdToml, err := fs.ReadFile("gosd.toml")
+	hostname, err := fs.ReadFile("config/hostname")
 	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
+		t.Fatalf("reading config/hostname back from the FAT root: %v", err)
 	}
-	if !strings.Contains(string(gosdToml), `# hostname = "my-device"`) {
-		t.Errorf("gosd.toml = %s, want a commented-out hostname example when unset", gosdToml)
-	}
-}
-
-// TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault is the
-// core regression test for bean gosd-4hz1: the app's own name must land in
-// config.json as the baked fallback, but must NOT be baked uncommented into
-// gosd.toml - otherwise it always shadows an Imager wizard's cloud-init
-// hostname, since gosd.toml outranks cloud-init in the locked precedence
-// chain.
-func TestAssembleWritesCommentedGosdTomlHostnameForNonExplicitDefault(t *testing.T) {
-	dir := t.TempDir()
-	appPath := writeTempFile(t, dir, "app", "app")
-	initPath := writeTempFile(t, dir, "gosd-init", "init")
-
-	b := &fakeBoard{name: "fake-board"}
-	imgPath := filepath.Join(dir, "out.img")
-	if _, err := pipeline.Assemble(context.Background(), pipeline.Options{
-		Labels: testLabels,
-		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath, OutputPath: imgPath,
-		Config: boards.BuildConfig{Hostname: "sanitized-default"},
-	}); err != nil {
-		t.Fatalf("Assemble: %v", err)
-	}
-
-	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
-	if err != nil {
-		t.Fatalf("reopening the image: %v", err)
-	}
-	defer func() { _ = d.Close() }()
-
-	fs, err := d.GetFilesystem(1)
-	if err != nil {
-		t.Fatalf("GetFilesystem(1): %v", err)
-	}
-
-	gosdToml, err := fs.ReadFile("gosd.toml")
-	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
-	}
-	if !strings.Contains(string(gosdToml), `# hostname = "sanitized-default"`) {
-		t.Errorf("gosd.toml = %s, want the default hostname shown as a commented-out example", gosdToml)
-	}
-	if strings.Contains(string(gosdToml), "\nhostname = ") {
-		t.Errorf("gosd.toml = %s, want no uncommented hostname line for a non-explicit default hostname", gosdToml)
+	if got := configtree.TrimValue(hostname); got != "" {
+		t.Errorf("config/hostname = %q, want it shipped unset so a wizard's answer isn't shadowed", got)
 	}
 
 	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
@@ -800,7 +764,7 @@ func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 
 // TestAssembleRendersPlaceholdersAndReportsTheirRanges is the acceptance
 // test for the pipeline half of the image-injection contract (gosd-49it):
-// a --placeholder lands at the FAT root alongside gosd.toml, renders with
+// a --placeholder lands at the FAT root alongside the config tree, renders with
 // the documented header, and comes back in image.WriteReport.FileRanges
 // summing to exactly its SizeBytes.
 func TestAssembleRendersPlaceholdersAndReportsTheirRanges(t *testing.T) {
@@ -878,25 +842,31 @@ func TestAssembleRejectsPlaceholderCollidingWithABoardBootFile(t *testing.T) {
 	}
 }
 
-// TestAssembleRejectsPlaceholderCollidingWithGosdTomlCaseInsensitively
-// confirms the FAT-case-insensitivity rule extends to gosd.toml, the one
-// FAT-root file the pipeline itself adds rather than a board.
-func TestAssembleRejectsPlaceholderCollidingWithGosdTomlCaseInsensitively(t *testing.T) {
+// TestAssembleRejectsPlaceholderCollidingWithAConfigTreeFileCaseInsensitively
+// confirms the FAT-case-insensitivity rule extends to the config tree, the
+// FAT-root content the pipeline itself adds rather than a board.
+func TestAssembleRejectsPlaceholderCollidingWithAConfigTreeFileCaseInsensitively(t *testing.T) {
 	dir := t.TempDir()
 	appPath := writeTempFile(t, dir, "app", "app")
 	initPath := writeTempFile(t, dir, "gosd-init", "init")
 
+	tree, err := configtree.Build("", configtree.Features{})
+	if err != nil {
+		t.Fatalf("building the config tree: %v", err)
+	}
+
 	b := &fakeBoard{name: "fake-board"}
-	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+	_, err = pipeline.Assemble(context.Background(), pipeline.Options{
 		Labels: testLabels,
 		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
 		OutputPath:   filepath.Join(dir, "out.img"),
-		Placeholders: []inject.Placeholder{{Path: "GOSD.TOML", SizeBytes: 4096}},
+		ConfigTree:   tree,
+		Placeholders: []inject.Placeholder{{Path: "CONFIG/HOSTNAME", SizeBytes: 4096}},
 	})
 	if err == nil {
-		t.Fatal("Assemble() with a placeholder differing from gosd.toml only by case succeeded, want an error")
+		t.Fatal("Assemble() with a placeholder differing from a config tree file only by case succeeded, want an error")
 	}
-	if !strings.Contains(err.Error(), "GOSD.TOML") {
+	if !strings.Contains(err.Error(), "CONFIG/HOSTNAME") {
 		t.Errorf("error = %q, want it to name the offending placeholder path", err)
 	}
 }

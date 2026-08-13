@@ -207,7 +207,7 @@ func (r *fatalReporter) setBootCount(count int) {
 // environment (sequence.go's envRedactionRules) for every report written
 // from here on. Like setBootCount, this exists because the reporter is
 // constructed well before the app env is assembled — mergeUserEnv only
-// runs after gosd.toml/cloud-init have had their say — so there is no
+// runs once the card's settings have been read — so there is no
 // single moment before both are ready. Rules registered through
 // fault.RegisterSecretString are NOT set this way: those are read fresh at
 // every record() call (see headerNow), since a registration made moments

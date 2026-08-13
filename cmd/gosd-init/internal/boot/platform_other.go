@@ -31,7 +31,7 @@ func NewPlatform() *Platform {
 		IgnoreShutdownSignals: func() {},
 		WriteFatalReport:      func(string, string) error { return errUnsupportedPlatform },
 		RemoveBootFiles:       func(string, []string) error { return errUnsupportedPlatform },
-		WriteBootFile:         func(string, string, []byte) error { return errUnsupportedPlatform },
+		EditBootPartition:     func(string, func(string) error) error { return errUnsupportedPlatform },
 		DeviceModel:           func() string { return "" },
 		Uptime:                func() (time.Duration, bool) { return 0, false },
 		RegisteredSecrets:     func() []redact.Rule { return nil },

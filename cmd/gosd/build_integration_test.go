@@ -1164,7 +1164,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 // gosd-2v40: an explicit `gosd build --board=qemu-virt`, using
 // --artifacts-dir to supply a fake kernel image, produces an image whose
 // boot partition contains exactly the kernel (Image), the initramfs, and
-// gosd.toml (added by the pipeline for every board) - no config.txt or
+// the config tree (added by the pipeline for every board) - no config.txt or
 // extlinux.conf, since qemu boots -kernel/-initrd directly (see
 // internal/boards/qemuvirt).
 func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
@@ -1199,7 +1199,7 @@ func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
 		t.Fatalf("GetFilesystem(1) failed: %v", err)
 	}
 
-	for _, want := range []string{"Image", "initramfs.cpio.zst", "gosd.toml"} {
+	for _, want := range []string{"Image", "initramfs.cpio.zst", "config/explain.md", "config/hostname"} {
 		if _, err := fs.ReadFile(want); err != nil {
 			t.Errorf("boot partition is missing %q: %v", want, err)
 		}
@@ -2183,7 +2183,7 @@ func TestBuildIdentityChangesWithBootPayloadContent(t *testing.T) {
 // TestBuildIdentityUnaffectedByDataExpand confirms the one genuine
 // exception ComputeIdentity's docstring documents: --data-size=expand only
 // sets config.json's DataExpand field (config.json is entirely excluded
-// from the hashed payload, and DataExpand has no footprint in gosd.toml or
+// from the hashed payload, and DataExpand has no footprint in the config tree or
 // anywhere else in the payload, unlike Hostname/Wifi/Env), so it's the one
 // build flag that changes config.json without moving Identity.
 func TestBuildIdentityUnaffectedByDataExpand(t *testing.T) {
@@ -2205,7 +2205,7 @@ func TestBuildIdentityUnaffectedByDataExpand(t *testing.T) {
 // TestBuildIdentityUnaffectedByDataFlush is TestBuildIdentityUnaffectedByData
 // Expand's counterpart for gosd-9m1k's --data-flush flag: it only sets
 // config.json's DataFlush field (config.json is entirely excluded from the
-// hashed payload, and DataFlush has no footprint in gosd.toml or anywhere
+// hashed payload, and DataFlush has no footprint in the config tree or anywhere
 // else in the payload, unlike Hostname/Wifi/Env), so it's another build flag
 // that changes config.json without moving Identity.
 func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
@@ -2233,7 +2233,8 @@ func TestBuildIdentityUnaffectedByDataFlush(t *testing.T) {
 // initcfg.Config.DataFilesystem's docstring for the full rationale), but
 // config.json is still excluded from ComputeIdentity's hashed payload in its
 // entirety, and DataFilesystem has no footprint anywhere else in that
-// payload (no gosd.toml presence, unlike Hostname/Wifi/Env) - so two builds
+// payload (nothing in the config tree, unlike a hostname or WiFi network) -
+// so two builds
 // differing only by --data-filesystem must still produce the same identity.
 // Built for qemu-virt rather than pi-zero-2w (the other identity tests'
 // board) purely via buildQemuVirtConfigJSON - see that helper's doc comment
@@ -2370,7 +2371,8 @@ func TestBuildRefusesAnInvalidSupportURL(t *testing.T) {
 // ByLabelPrefix's counterpart for --app-version/--support-url: both reach
 // config.json alone, config.json is excluded from ComputeIdentity's hashed
 // payload in its entirety, and neither flag has any footprint elsewhere in
-// that payload (no gosd.toml presence, unlike Hostname/Wifi/Env) - so two
+// that payload (nothing in the config tree, unlike a hostname or WiFi
+// network) - so two
 // builds differing only by these flags must still produce the same
 // identity. This is also the concrete proof behind the bean's "not on-card
 // ABI" requirement: docs/design/upgrade-path.md's adoption gate never even
@@ -2395,7 +2397,7 @@ func TestBuildIdentityUnaffectedByReportMetadata(t *testing.T) {
 // reproducibility proof: config.json's buildTimestamp (timesync's clock
 // floor - see internal/initcfg.Config.BuildTime) necessarily differs on
 // every build, by design, and unlike --data-size=expand's DataExpand it
-// deliberately has no footprint in gosd.toml or anywhere else in the
+// deliberately has no footprint in the config tree or anywhere else in the
 // hashed payload either (see ComputeIdentity's docstring and
 // BuildTimestamp's own doc). Identity staying equal here, alongside a
 // buildTimestamp that provably moved, is the strongest evidence that

@@ -14,7 +14,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
 	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/redact"
 	"github.com/jphastings/gosd/internal/secretreg"
@@ -33,7 +32,7 @@ func NewPlatform() *Platform {
 		IgnoreShutdownSignals: ignoreShutdownSignals,
 		WriteFatalReport:      writeFatalReport,
 		RemoveBootFiles:       removeBootFiles,
-		WriteBootFile:         writeBootFile,
+		EditBootPartition:     editBootPartition,
 		DeviceModel:           deviceModel,
 		Uptime:                uptime,
 		RegisteredSecrets:     registeredSecrets,
@@ -134,7 +133,7 @@ func writeFatalReport(target, body string) error {
 // removeBootFiles deletes names from the root of the boot partition mounted
 // at target, briefly remounting it read-write. Unlike writeFatalReport this
 // runs on a device that carries on booting — it's how a recovered device
-// stops looking broken — so, like writeBootFile, failing to restore the
+// stops looking broken — so, like editBootPartition, failing to restore the
 // read-only mount is reported rather than swallowed: leaving the boot
 // partition writable under a live app is exactly the exposure the read-only
 // mount exists to prevent.
@@ -226,28 +225,34 @@ func registeredSecrets() []redact.Rule {
 	return secretreg.Parse(data)
 }
 
-// writeBootFile durably writes name at the root of the read-only boot
-// partition mounted at target: remount read-write, write through the
-// four-step durable sequence FAT needs (see provsnapshot.WriteFileDurably),
-// then remount read-only again. The device keeps running afterwards — this
-// is the provisioning self-heal's write-back, not a last gasp — so failing
-// to restore the read-only mount is reported rather than swallowed: leaving
-// the boot partition writable under a live app is exactly the exposure the read-only
-// mount exists to prevent.
-func writeBootFile(target, name string, data []byte) error {
+// editBootPartition opens the one window in which the normally read-only
+// boot partition can be changed: remount read-write, run edit against the
+// mountpoint, flush what it wrote to the card, then remount read-only
+// again. The device keeps running afterwards — this is how a consumed
+// cloud-init seed becomes settings on the card, not a last gasp — so
+// failing to restore the read-only mount is reported rather than swallowed:
+// leaving the boot partition writable under a live app is exactly the
+// exposure the read-only mount exists to prevent.
+//
+// Each caller's own writes are already durable in themselves (see
+// durable.WriteFile); the syncfs here covers the deletions, which have no
+// file left to fsync, and is what makes the ordering between two separate
+// calls to this function something a power cut can't reorder.
+func editBootPartition(target string, edit func(root string) error) error {
 	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_NOSUID, ""); err != nil {
 		return fmt.Errorf("remounting %s read-write: %w", target, err)
 	}
 
-	writeErr := provsnapshot.WriteFileDurably(filepath.Join(target, name), data)
+	editErr := edit(target)
+	syncFS(target)
 
 	if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID, ""); err != nil {
-		if writeErr != nil {
-			return fmt.Errorf("writing %s: %w (and remounting %s read-only afterwards also failed: %v)", name, writeErr, target, err)
+		if editErr != nil {
+			return fmt.Errorf("%w (and remounting %s read-only afterwards also failed: %v)", editErr, target, err)
 		}
-		return fmt.Errorf("remounting %s read-only after writing %s: %w", target, name, err)
+		return fmt.Errorf("remounting %s read-only after writing to it: %w", target, err)
 	}
-	return writeErr
+	return editErr
 }
 
 func openConsole() (io.WriteCloser, error) {

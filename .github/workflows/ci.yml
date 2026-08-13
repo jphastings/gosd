@@ -305,8 +305,8 @@ jobs:
           fi
           echo "PL031 read path OK: kernel HCTOSYS seeded the boot clock to $year, straight from the host-seeded RTC"
 
-      # gosd-66ax: with --ingress cloudflared baked in but no
-      # [ingress.cloudflared] section in gosd.toml, cloudflared's resolveMode
+      # gosd-66ax: with --ingress cloudflared baked in but nothing set in
+      # the card's config/ingress/cloudflared/, cloudflared's resolveMode
       # must log its one actionable "baked but not configured" line and
       # nothing else - never start the binary, never loop. A dummy-token
       # supervisor-loop assertion (auth failure against the real Cloudflare
@@ -320,7 +320,7 @@ jobs:
           mkdir -p dist
           go build -o dist/gosd-cli ./cmd/gosd
 
-          expected="cloudflared: binary is baked into this image, but [ingress.cloudflared] isn't configured in gosd.toml; nothing to do"
+          expected="cloudflared: binary is baked into this image, but nothing is set in config/ingress/cloudflared; nothing to do"
           ./dist/gosd-cli run ./examples/hello --ingress cloudflared > cloudflared.log 2>&1 &
           run_pid=$!
 
@@ -349,8 +349,8 @@ jobs:
             exit 1
           fi
 
-      # gosd-o68e: with --ingress tailscale-funnel baked in but no
-      # [ingress.tailscale-funnel] section in gosd.toml, tsfunnel's own
+      # gosd-o68e: with --ingress tailscale-funnel baked in but nothing set
+      # in the card's config/ingress/tailscale-funnel/, tsfunnel's own
       # resolveMode must log its one actionable "baked but not configured"
       # line and nothing else - never start the shim, never loop. --data-size
       # is required here: tailscale-funnel refuses to build with no data
@@ -361,17 +361,17 @@ jobs:
       # gosd-66ax gave for cloudflared's equivalent case above (a genuine
       # network expectation beyond what this job otherwise needs, and an
       # upstream error-wording detail this repo doesn't control) plus a
-      # stronger one specific to this agent: gosd.toml's ingress secrets are
-      # never baked at build/run time by design
-      # (internal/pipeline/pipeline.go's "never a real value to bake here"),
-      # so reaching that code path at all would need new image-editing
-      # tooling this bean doesn't add. Real invalid-authkey behavior (error
+      # stronger one specific to this agent: an ingress secret is never
+      # baked at build/run time by design - the card's
+      # config/ingress/tailscale-funnel/authkey ships empty - so reaching
+      # that code path at all would need new image-editing tooling this bean
+      # doesn't add. Real invalid-authkey behavior (error
       # vs hang, bounded by --register-timeout) is uncharacterized until TS-8
       # (bean gosd-79v8) - real tunnel establishment is bench-only, same as
       # cloudflared's.
       - name: "gosd run --ingress tailscale-funnel: baked-but-not-configured logs exactly once"
         run: |
-          expected="tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do"
+          expected="tailscale-funnel: binary is baked into this image, but nothing is set in config/ingress/tailscale-funnel; nothing to do"
           ./dist/gosd-cli run ./examples/hello --ingress tailscale-funnel --data-size 64MiB > tsfunnel.log 2>&1 &
           run_pid=$!
 
@@ -439,10 +439,11 @@ jobs:
           # The image is 272MiB; a real card is bigger. truncate models
           # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
           truncate -s +1G dist/hello-qemu-virt.img
-      # The provisioning snapshot (docs/design/upgrade-path.md §3) is written
-      # to the data partition as soon as there is one, so this boot is also
-      # the proof it reaches a real FAT filesystem rather than only the fakes
-      # in provsnapshot's unit tests.
+      # Nothing is asserted here about settings surviving a reflash: the
+      # config store that carries them across one is bean gosd-87ip, and it
+      # brings its own assertion to this job when it lands. Until then this
+      # job proves the partition itself - created, formatted, adopted after
+      # a reflash, and refused when corrupt.
       - name: "First boot: creates, formats and mounts the data partition"
         run: |
           # "as FAT32 labelled hello-data" is the end-to-end proof that
@@ -451,8 +452,7 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
             "data partition created, filling the card" \
             "as FAT32 labelled hello-data" \
-            "data partition mounted read-write at /data" \
-            "provisioning snapshot saved"
+            "data partition mounted read-write at /data"
       # boots=2 is the durability assertion (bean gosd-0nk4): the first
       # boot's counter write was seconds old when qemu was killed, so it
       # only reads back here if hello's write-fsync-rename really reached
@@ -462,7 +462,6 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
             "data partition already present" \
             "data partition mounted read-write at /data" \
-            "provisioning snapshot unchanged" \
             "boots=2"
       # An upgrade, as an operator performs it: Imager writes the image over
       # the front of the card and stops at its end, so the MBR loses

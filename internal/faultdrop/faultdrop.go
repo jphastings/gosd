@@ -20,7 +20,7 @@
 //	  "code": "NO-API-KEY",
 //	  "doing": "fetching today's forecast",
 //	  "problem": "the weather service rejected our API key",
-//	  "fix": "add WEATHER_API_KEY to gosd.toml on this card",
+//	  "fix": "add WEATHER_API_KEY to config/env/ on this card",
 //	  "detail": "get \"https://api.example\": 401 unauthorized"
 //	}
 //

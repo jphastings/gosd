@@ -7,7 +7,7 @@
 // that explains why that file picker can't be used instead).
 //
 // Every entry gosd emits declares init_format "cloudinit": gosd-init only
-// ever parses cloud-init files and gosd.toml (never firstrun.sh - see
+// ever parses cloud-init files (never firstrun.sh - see
 // docs/provisioning-formats.md), so "cloudinit" is the only format that
 // makes sense to advertise.
 //

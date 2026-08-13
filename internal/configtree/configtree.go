@@ -59,6 +59,18 @@ const (
 	// "wifi/ssid" is documented by "wifi/ssid.explain.md".
 	DocSuffix = ".explain.md"
 
+	// NewSuffix marks a copy of a setting's current default, written onto
+	// the card beside a value the device restored from its own store, so
+	// whoever holds the card can see what they are overriding. Reserved:
+	// the build refuses a setting named this way and the device never
+	// reads one back as a value.
+	NewSuffix = ".new"
+
+	// UnusedSuffix marks a value the device kept but this image has no
+	// setting for any more, written onto the card so it can be retrieved
+	// before it's dropped. Reserved on the same terms as NewSuffix.
+	UnusedSuffix = ".unused"
+
 	// envDir is the directory whose value names are app environment
 	// variables rather than free-form setting names, so they're held to a
 	// POSIX environment name's shape and to gosd's GOSD_* reservation.
@@ -264,6 +276,37 @@ var nameShape = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // directory a developer curates by hand.
 var junkNames = []string{"thumbs.db", "desktop.ini"}
 
+// IgnoredName reports whether a name in a config tree is something the
+// DEVICE reads past rather than reads as a setting: a documentation
+// sidecar, one of the .new/.unused files the device writes onto the card
+// itself, a dot-file (macOS AppleDouble companions included), or an
+// operating system's own metadata. It is the runtime half of checkName,
+// which refuses every one of these outright — so an app can never ship one
+// — while the device merely ignores them, because a card is edited by hand
+// on machines that write such files unbidden.
+func IgnoredName(name string) bool {
+	switch {
+	case name == GroupDoc, strings.HasSuffix(name, DocSuffix):
+		return true
+	case strings.HasPrefix(name, "."):
+		return true
+	case strings.HasSuffix(name, NewSuffix), strings.HasSuffix(name, UnusedSuffix):
+		return true
+	}
+	return isJunkName(name)
+}
+
+// isJunkName reports whether name is one of the operating-system metadata
+// files junkNames lists, matched the way a FAT card compares names.
+func isJunkName(name string) bool {
+	for _, junk := range junkNames {
+		if strings.EqualFold(name, junk) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkName refuses a reserved or unusable file/directory name. rel is the
 // entry's path within the tree and dir the --config-dir it came from, both
 // only used to make the refusal name a real file on disk.
@@ -273,13 +316,11 @@ func checkName(name, rel, dir string) error {
 		return fmt.Errorf("%s/%s is a macOS AppleDouble file (a \"._\" companion macOS writes for every file it touches on a FAT card); delete it, and consider copying the directory with a tool that doesn't create them", dir, rel)
 	case strings.HasPrefix(name, "."):
 		return fmt.Errorf("%s/%s starts with a period, which gosd reserves: the device ignores dot-files on the card, so a setting named this way would silently never take effect; rename or delete it", dir, rel)
-	case strings.HasSuffix(name, ".new"), strings.HasSuffix(name, ".unused"):
-		return fmt.Errorf("%s/%s ends with a reserved suffix: the device writes \"<name>.new\" and \"<name>.unused\" files onto the card itself, so a setting can't be named that; rename it", dir, rel)
+	case strings.HasSuffix(name, NewSuffix), strings.HasSuffix(name, UnusedSuffix):
+		return fmt.Errorf("%s/%s ends with a reserved suffix: the device writes \"<name>%s\" and \"<name>%s\" files onto the card itself, so a setting can't be named that; rename it", dir, rel, NewSuffix, UnusedSuffix)
 	}
-	for _, junk := range junkNames {
-		if strings.EqualFold(name, junk) {
-			return fmt.Errorf("%s/%s is an operating-system metadata file, not a setting; delete it before building", dir, rel)
-		}
+	if isJunkName(name) {
+		return fmt.Errorf("%s/%s is an operating-system metadata file, not a setting; delete it before building", dir, rel)
 	}
 	if !nameShape.MatchString(name) {
 		return fmt.Errorf("%s/%s has an invalid name %q; use only letters, digits, periods, hyphens and underscores, so the name survives a FAT card and a provisioning manifest unchanged", dir, rel, name)
