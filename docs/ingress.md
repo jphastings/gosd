@@ -3,10 +3,10 @@
 `gosd build --ingress <agent>` bakes a client into the image that exposes an
 app on the device to the public internet with zero app code: no port
 forwarding, no public IP address, and (depending on the agent) no account on
-the device itself beyond a token or key you paste into `gosd.toml`.
-`gosd-init` supervises the client for the life of the device — there is
-still no shell, no SSH, and no listener gosd-init itself adds; the agent's
-own outbound connection is the only new thing on the wire.
+the device itself beyond a token or key you paste into [the config
+tree](config.md). `gosd-init` supervises the client for the life of the
+device — there is still no shell, no SSH, and no listener gosd-init itself
+adds; the agent's own outbound connection is the only new thing on the wire.
 
 ## Choosing an ingress
 
@@ -46,16 +46,16 @@ Every agent shares the same shape, whichever one you pick:
   key from that account; the device itself never logs in anywhere
   interactively (it has no interactive surface at all — see
   `docs/runtime.md`).
-- **Declared entirely through `gosd.toml`**, under `[ingress.<agent>]` — the
-  ingress rule (hostname, local port, and whatever else that agent needs)
-  is a runtime setting, never baked into the image itself, so the same image
-  works for any tunnel you later create.
+- **Declared entirely through the config tree**, under `config/ingress/<agent>/`
+  — the ingress rule (hostname, local port, and whatever else that agent
+  needs) is a runtime setting, never baked into the image itself, so the
+  same image works for any tunnel you later create.
 - **Survives a reflash** the same way a hand-edited WiFi passphrase does —
   see each agent's own "Surviving a reflash" section for the details.
   Tailscale Funnel goes one step further: its node identity lives on
-  `/data` rather than in `gosd.toml` at all, so it survives a reflash with
-  no re-authentication whatsoever — see that section for what this means in
-  practice.
+  `/data` rather than in the config tree at all, so it survives a reflash
+  with no re-authentication whatsoever — see that section for what this
+  means in practice.
 
 Per-agent sections follow below: Cloudflare Tunnel first, then Tailscale
 Funnel.
@@ -68,7 +68,7 @@ client into the image. `gosd-init` supervises it for the life of the device
 and it carries traffic for one public hostname to one local port on your
 app — no port forwarding, no public IP address, and no app code at all. v1
 is deliberately narrow: one locally-managed tunnel, declared entirely
-through `gosd.toml`, with the ingress rule fixed at build-time-independent
+through the config tree, with the ingress rule fixed at build-time-independent
 runtime resolution (there's no `--ingress-token` build flag — nothing here
 is baked into the image itself).
 
@@ -106,18 +106,18 @@ resulting token.
    never uses that file. Only the token string matters — see "No
    credentials file" below.)
 
-4. **Paste the token, hostname, and port into `gosd.toml`** on the
-   boot partition (or hand-edit the commented-out example the image
-   already ships, per `docs/provisioning-formats.md`):
+4. **Fill in `token`, `hostname`, and `port` under `config/ingress/cloudflared/`**
+   on the boot partition (each file has its own `.explain.md` sidecar
+   explaining what to type into it — see [the config tree
+   guide](config.md)):
 
-   ```toml
-   [ingress.cloudflared]
-   token = "eyJhIjoiPGFjY291bnQ+IiwidCI6IjxpZD4iLCJzIjoiPHNlY3JldD4ifQ=="
-   hostname = "my-device.example.com"
-   port = 8080
+   ```
+   config/ingress/cloudflared/token      -> eyJhIjoiPGFjY291bnQ+IiwidCI6IjxpZD4iLCJzIjoiPHNlY3JldD4ifQ==
+   config/ingress/cloudflared/hostname   -> my-device.example.com
+   config/ingress/cloudflared/port       -> 8080
    ```
 
-   All three keys are required. Restart the device (or power it on for the
+   All three files are required. Restart the device (or power it on for the
    first time) for the change to take effect.
 
 5. **Point DNS at the tunnel:**
@@ -137,7 +137,7 @@ Only tunnels created with the `cloudflared` CLI (steps 2-3 above) are
 supported. A tunnel created from the Cloudflare Zero Trust dashboard
 instead is **remote-managed**: its ingress rules live at Cloudflare's edge,
 and cloudflared fetches them from there rather than reading a local config
-file — which would make the `[ingress.cloudflared]` hostname/port GoSD
+file — which would make the `config/ingress/cloudflared/` hostname/port GoSD
 writes into `config.yml` on the device pointless, or worse, silently
 ignored in favor of whatever the dashboard says. GoSD v1 only ever writes a
 local, locally-managed `config.yml` (see "What gets written on the device"
@@ -153,9 +153,9 @@ refused with an actionable log line rather than silently attempted — see
 ### What gets written on the device
 
 Nothing about the tunnel lives on the boot partition except what you typed into
-`gosd.toml`. At boot, once the network is up, `gosd-init` decodes the token
-and synthesizes cloudflared's own two config files fresh, in RAM, under
-`/run/gosd/cloudflared/` (mode `0700` directory, `0600` files):
+`config/ingress/cloudflared/`. At boot, once the network is up, `gosd-init`
+decodes the token and synthesizes cloudflared's own two config files fresh,
+in RAM, under `/run/gosd/cloudflared/` (mode `0700` directory, `0600` files):
 
 - `credentials.json` — the token's three decoded fields (`AccountTag`,
   `TunnelSecret`, `TunnelID`), under the same field names
@@ -171,8 +171,8 @@ and synthesizes cloudflared's own two config files fresh, in RAM, under
     - service: http_status:404
   ```
 
-Both files are rebuilt from `gosd.toml` on every boot — never read back,
-never persisted outside `/run`'s tmpfs. `cloudflared` runs as
+Both files are rebuilt from `config/ingress/cloudflared/` on every boot —
+never read back, never persisted outside `/run`'s tmpfs. `cloudflared` runs as
 `tunnel --no-autoupdate --loglevel warn --config /run/gosd/cloudflared/config.yml run`,
 with `HOME=/run/gosd/cloudflared` so its own `~/.cloudflared` probing
 resolves somewhere writable instead of a nonexistent home directory.
@@ -182,21 +182,21 @@ resolves somewhere writable instead of a nonexistent home directory.
 A Cloudflare Tunnel is normally authorized by a credentials JSON file
 (`{"AccountTag", "TunnelSecret", "TunnelID"}`) sitting next to
 `config.yml`. GoSD never ships one: the tunnel token you pasted into
-`gosd.toml` **is** that same triple, base64-encoded — `gosd-init` decodes
-it itself at boot and writes the credentials file into RAM, not onto the
-card. There is nothing to distribute, back up, or leak from the boot
-partition beyond the token already sitting in `gosd.toml`.
+`config/ingress/cloudflared/token` **is** that same triple, base64-encoded —
+`gosd-init` decodes it itself at boot and writes the credentials file into
+RAM, not onto the card. There is nothing to distribute, back up, or leak
+from the boot partition beyond the token already sitting on the card.
 
 ### Secrets on a FAT partition
 
-The tunnel token sits in `gosd.toml` in plain text on the boot partition, a FAT32
-partition readable by anyone with the card in a computer — the same trust
-level the WiFi passphrase already has there today. Treat it accordingly:
-anyone who can read the card can read the token (and, with it, take over
-the tunnel), the same way anyone who can read the card today can read your
-WiFi password. This is a deliberate consequence of the "no credentials
-file, hand-editable `gosd.toml`" design (epic `gosd-virc`, decision 3), not
-an oversight.
+The tunnel token sits in `config/ingress/cloudflared/token` in plain text on
+the boot partition, a FAT32 partition readable by anyone with the card in a
+computer — the same trust level the WiFi passphrase already has there
+today. Treat it accordingly: anyone who can read the card can read the
+token (and, with it, take over the tunnel), the same way anyone who can
+read the card today can read your WiFi password. This is a deliberate
+consequence of the "no credentials file, hand-editable config" design
+(epic `gosd-virc`, decision 3), not an oversight.
 
 ### Clock and TLS
 
@@ -257,30 +257,25 @@ one `http://localhost:<port>` your app declared.
 
 ### Surviving a reflash
 
-Reflashing rewrites the whole of the boot partition, `gosd.toml` included. Like
-the hostname, WiFi network, and `[env]` values, a hand-edited
-`[ingress.cloudflared]` section is protected by the [provisioning
-snapshot](runtime.md#the-provisioning-snapshot-surviving-a-reflash): once
-it settles on a successful boot, `gosd-init` snapshots it to `/data`, and
-restores it into the freshly flashed card's `gosd.toml` on the first boot
-after a reflash, provided the new card doesn't already declare its own
-ingress section (which always wins, as fresh operator intent).
+Reflashing rewrites the whole of the boot partition, the config tree
+included. Like the hostname, WiFi network, and `env/` values, a hand-edited
+`config/ingress/cloudflared/` value is protected by [the config
+store](runtime.md#keeping-settings-across-a-reflash-the-config-store): once
+a boot reconciles cleanly, `gosd-init` keeps whatever differs from this
+image's own shipped values on `/data`, and restores it onto a freshly
+flashed card's config tree on the first boot under a different image —
+provided the new card doesn't already declare its own values (which always
+win, as fresh operator intent).
 
-Unlike hostname/WiFi/`[env]`, which are restored field-by-field or
-key-by-key, `[ingress.cloudflared]` is restored as a whole section — there
-being no baked default to compare individual fields against (config.json
-only ever records *whether* the binary is baked, never a real token), any
-snapshotted section at all counts as the operator's own intent. Because
-there's no credentials file to lose, this works exactly like the WiFi
-passphrase already does: the token round-trips through `/data` and the
+Because there's no credentials file to lose, this works exactly like the
+WiFi passphrase already does: the token round-trips through `/data` and the
 tunnel reconnects on the next boot without you touching the card at all.
 This needs `--data-size=expand` (or any non-zero `--data-size`) — a card
-with no data partition has nothing to snapshot to, same as every other
-provisioning value.
+with no data partition has nothing to keep, same as every other setting.
 
 ### Troubleshooting
 
-`gosd-init` validates `[ingress.cloudflared]` once, at boot, and logs
+`gosd-init` validates `config/ingress/cloudflared/` once, at boot, and logs
 exactly one line (prefixed `cloudflared: `) if something's wrong — it
 never re-checks or self-heals a bad value later in the same boot. These
 are the actual messages, verbatim, from
@@ -288,13 +283,13 @@ are the actual messages, verbatim, from
 
 | Situation | Log line |
 |---|---|
-| Binary baked, nothing configured | `cloudflared: binary is baked into this image, but [ingress.cloudflared] isn't configured in gosd.toml; nothing to do` |
-| Configured, binary not baked | `cloudflared: [ingress.cloudflared] is configured in gosd.toml, but this image wasn't built with --ingress cloudflared; rebuild with that flag to bake the binary in` |
-| Token present, hostname/port missing (a dashboard-style token) | `cloudflared: [ingress.cloudflared] has a token but no hostname/port; remote mode not supported yet — add hostname and port to gosd.toml to run it locally-managed` |
-| Any other missing key(s) | `cloudflared: [ingress.cloudflared] is missing required key(s): <list>` |
-| Token doesn't decode | `` cloudflared: [ingress.cloudflared] token is not a valid Cloudflare Tunnel token (<error>); generate a fresh one with `cloudflared tunnel token <name>` or copy it from the Cloudflare dashboard — if this token used to work, a gosd update may be needed to support a new token format `` |
-| Hostname isn't a valid FQDN | `cloudflared: [ingress.cloudflared] hostname "<hostname>" is not a valid fully-qualified hostname` |
-| Port out of range | `cloudflared: [ingress.cloudflared] port <port> is out of range (must be 1-65535)` |
+| Binary baked, nothing configured | `cloudflared: binary is baked into this image, but nothing is set in config/ingress/cloudflared; nothing to do` |
+| Configured, binary not baked | `cloudflared: config/ingress/cloudflared is set on the card, but this image wasn't built with --ingress cloudflared; rebuild with that flag to bake the binary in` |
+| Token present, hostname/port missing (a dashboard-style token) | `cloudflared: config/ingress/cloudflared has a token but no hostname/port; remote mode not supported yet — fill in hostname and port to run it locally-managed` |
+| Any other missing setting(s) | `cloudflared: config/ingress/cloudflared is missing required setting(s): <list>` |
+| Token doesn't decode | `` cloudflared: config/ingress/cloudflared/token is not a valid Cloudflare Tunnel token (<error>); generate a fresh one with `cloudflared tunnel token <name>` or copy it from the Cloudflare dashboard — if this token used to work, a gosd update may be needed to support a new token format `` |
+| Hostname isn't a valid FQDN | `cloudflared: config/ingress/cloudflared/hostname "<hostname>" is not a valid fully-qualified hostname` |
+| Port out of range | `cloudflared: config/ingress/cloudflared/port <port> is out of range (must be 1-65535)` |
 
 Nothing here is fatal to boot — your app still starts normally either way.
 Check the serial console (115200 baud unless `--console-baud` says
@@ -371,9 +366,6 @@ actionable error at boot if they're missing (see "Troubleshooting" below):
    Swap `tag:gosd-device` for whatever tag you actually use — it just has to
    match the tag on the auth key from the runbook below.
 
-None of this is a GoSD setting; it lives entirely in your Tailscale account
-and has nothing to do with which image you build.
-
 ### Runbook
 
 1. **Build the image with the shim baked in, and a data partition** — the
@@ -404,33 +396,32 @@ and has nothing to do with which image you build.
      registered, so a device built today with a key generated today keeps
      working long after that key has expired.
 
-4. **Paste the auth key and port into `gosd.toml`** on the boot
-   partition (or hand-edit the commented-out example the image already
-   ships, per `docs/provisioning-formats.md`):
+4. **Fill in `authkey` and `port` under `config/ingress/tailscale-funnel/`**
+   on the boot partition (each file has its own `.explain.md` sidecar — see
+   [the config tree guide](config.md)):
 
-   ```toml
-   [ingress.tailscale-funnel]
-   authkey = "tskey-auth-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   port = 8080
+   ```
+   config/ingress/tailscale-funnel/authkey -> tskey-auth-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   config/ingress/tailscale-funnel/port    -> 8080
    ```
 
-   `port` is the only required key. Restart the device (or power it on for
-   the first time) for the change to take effect.
+   `port` is the only required setting. Restart the device (or power it on
+   for the first time) for the change to take effect.
 
-5. **Delete the auth key from `gosd.toml`, if you like**, once the device
-   has appeared in your tailnet's device list — see "Secrets on a FAT
-   partition" below for why that's safe.
+5. **Empty `config/ingress/tailscale-funnel/authkey`, if you like**, once
+   the device has appeared in your tailnet's device list — see "Secrets on
+   a FAT partition" below for why that's safe.
 
 Once the device boots with a network connection, `gosd-init` starts
 `gosd-tsfunnel`, which registers with your tailnet (if it hasn't already),
 opens a Funnel listener, and starts proxying to `http://localhost:8080`.
 The device is reachable at `https://<hostname>.<tailnet>.ts.net`.
 
-### `gosd.toml` keys
+### `config/ingress/tailscale-funnel/` settings
 
-| Key | Required | Default | Notes |
+| Setting | Required | Default | Notes |
 |---|---|---|---|
-| `authkey` | Only for first registration | — | A tagged, reusable auth key (see "Runbook" above). Safe to delete once the device has registered. Never logged. |
+| `authkey` | Only for first registration | — | A tagged, reusable auth key (see "Runbook" above). Safe to empty once the device has registered. Never logged. |
 | `port` | Yes | — | The local port your app listens on. |
 | `hostname` | No | The device's own hostname | Becomes the `<hostname>` in `https://<hostname>.<tailnet>.ts.net`. |
 | `funnel_port` | No | `443` | Which of Tailscale Funnel's three supported ports to listen on: `443`, `8443`, or `10000`. |
@@ -461,8 +452,8 @@ with nowhere durable to keep its identity — see "Troubleshooting" below.
 
 There's no config file, unlike cloudflared's `config.yml`. Every per-boot
 value `gosd-tsfunnel` needs travels as a command-line argument or an
-environment variable, built fresh by `gosd-init` on every boot from
-`gosd.toml`, and never read back:
+environment variable, built fresh by `gosd-init` on every boot from the
+card's `config/ingress/tailscale-funnel/` settings, and never read back:
 
 - `--statedir /data/.gosd/tailscale` (created mode `0700` before the shim
   ever starts, since it holds private key material)
@@ -480,13 +471,14 @@ private key, its tailnet registration, its ACME certificate — inside
 
 ### Secrets on a FAT partition
 
-Like the WiFi passphrase and Cloudflare Tunnel's token, the auth key sits in
-`gosd.toml` in plain text on the boot partition, a FAT32 partition readable by
-anyone with the card in a computer. Treat it accordingly. Unlike those two,
-though, this secret is genuinely disposable: once the device has registered
-(check your tailnet's device list), delete the `authkey` line from
-`gosd.toml` entirely — `gosd-tsfunnel` never needs it again, since tsnet
-ignores `TS_AUTHKEY` once state already exists at `--statedir`.
+Like the WiFi passphrase and Cloudflare Tunnel's token, the auth key sits
+in `config/ingress/tailscale-funnel/authkey` in plain text on the boot
+partition, a FAT32 partition readable by anyone with the card in a
+computer. Treat it accordingly. Unlike those two, though, this secret is
+genuinely disposable: once the device has registered (check your tailnet's
+device list), empty the `authkey` file entirely — `gosd-tsfunnel` never
+needs it again, since tsnet ignores `TS_AUTHKEY` once state already exists
+at `--statedir`.
 
 ### Clock and TLS, and the restart backoff
 
@@ -510,9 +502,10 @@ for no reason.
 
 ### Surviving a reflash
 
-Reflashing rewrites the whole of the boot partition, `gosd.toml` included, but
-**not** the data partition — and Tailscale Funnel's node identity is what makes
-this agent's reflash story strictly better than Cloudflare Tunnel's:
+Reflashing rewrites the whole of the boot partition, the config tree
+included, but **not** the data partition — and Tailscale Funnel's node
+identity is what makes this agent's reflash story strictly better than
+Cloudflare Tunnel's:
 
 - **The tailnet identity itself never moves.** It lives at
   `/data/.gosd/tailscale`, which a plain Raspberry Pi Imager reflash never
@@ -521,15 +514,15 @@ this agent's reflash story strictly better than Cloudflare Tunnel's:
   node, at the *same* `https://<hostname>.<tailnet>.ts.net` URL, with
   **zero re-authentication** — you don't even need the auth key anymore,
   let alone a fresh one.
-- **A hand-edited `[ingress.tailscale-funnel]` section** is separately
-  protected by the [provisioning
-  snapshot](runtime.md#the-provisioning-snapshot-surviving-a-reflash), the
-  same way `[ingress.cloudflared]` is: restored as a whole section on the
-  first boot after a reflash, provided the freshly flashed card doesn't
-  already declare its own `[ingress.tailscale-funnel]` (which always wins,
-  as fresh operator intent). This also needs `--data-size=expand` (or any
-  non-zero `--data-size`) on the new image — a card with no data partition
-  has nothing to snapshot to or restore from.
+- **A hand-edited `config/ingress/tailscale-funnel/` value** is separately
+  protected by [the config
+  store](runtime.md#keeping-settings-across-a-reflash-the-config-store), the
+  same way `config/ingress/cloudflared/` is: restored onto the card on the
+  first boot under a different image, provided the freshly flashed card
+  doesn't already declare its own value (which always wins, as fresh
+  operator intent). This also needs `--data-size=expand` (or any non-zero
+  `--data-size`) on the new image — a card with no data partition has
+  nothing to keep or restore.
 
 **If you ever do lose `/data`** — a card swap that doesn't carry the old
 data partition over, a `--data-size=0` rebuild, or a from-scratch reformat
@@ -538,26 +531,26 @@ won't hand out a name that's already taken: if `<hostname>` is already
 registered, the new node is renamed `<hostname>-1`, and its public URL
 changes to match. To recover the original name and URL: delete the stale
 node from your tailnet's device list, then supply a live tagged auth key in
-`gosd.toml` (a fresh one from the same tag works just as well as the
-original, even if that one has since expired) so the device can
-re-register under the name it used to have.
+`config/ingress/tailscale-funnel/authkey` (a fresh one from the same tag
+works just as well as the original, even if that one has since expired) so
+the device can re-register under the name it used to have.
 
 ### Troubleshooting
 
-`gosd-init` validates `[ingress.tailscale-funnel]` once, at boot, and logs
-exactly one line (prefixed `tailscale-funnel: `) if something's wrong — it
-never re-checks or self-heals a bad value later in the same boot. These are
-the actual messages, verbatim, from
+`gosd-init` validates `config/ingress/tailscale-funnel/` once, at boot, and
+logs exactly one line (prefixed `tailscale-funnel: `) if something's wrong
+— it never re-checks or self-heals a bad value later in the same boot.
+These are the actual messages, verbatim, from
 `cmd/gosd-init/internal/tsfunnel/mode.go` and
 `cmd/gosd-init/internal/tsfunnel/tsfunnel.go`:
 
 | Situation | Log line |
 |---|---|
-| Binary baked, nothing configured | `tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do` |
-| Configured, binary not baked | `tailscale-funnel: [ingress.tailscale-funnel] is configured in gosd.toml, but this image wasn't built with --ingress tailscale-funnel; rebuild with that flag to bake the binary in` |
-| `port` missing | `tailscale-funnel: [ingress.tailscale-funnel] is missing required key: port` |
-| `port` out of range | `` tailscale-funnel: [ingress.tailscale-funnel] port <port> is out of range (must be 1-65535) `` |
-| `funnel_port` isn't 443/8443/10000 | `` tailscale-funnel: [ingress.tailscale-funnel] funnel_port <port> is not one of the supported values (443, 8443, 10000) `` |
+| Binary baked, nothing configured | `tailscale-funnel: binary is baked into this image, but nothing is set in config/ingress/tailscale-funnel; nothing to do` |
+| Configured, binary not baked | `tailscale-funnel: config/ingress/tailscale-funnel is set on the card, but this image wasn't built with --ingress tailscale-funnel; rebuild with that flag to bake the binary in` |
+| `port` missing | `tailscale-funnel: config/ingress/tailscale-funnel is missing required setting: port` |
+| `port` out of range | `` tailscale-funnel: config/ingress/tailscale-funnel/port <port> is out of range (must be 1-65535) `` |
+| `funnel_port` isn't 443/8443/10000 | `` tailscale-funnel: config/ingress/tailscale-funnel/funnel_port <port> is not one of the supported values (443, 8443, 10000) `` |
 | No data partition, or `/data` read-only | `` tailscale-funnel: /data/.gosd/tailscale is not writable (<error>); tailscale-funnel needs a data partition; rebuild with --data-size `` |
 
 Nothing here is fatal to boot — your app still starts normally either way.
@@ -583,7 +576,7 @@ the restart backoff (see "Clock and TLS, and the restart backoff" above)
 tries again — useful when
 the fix is on the tailnet side (an ACL edit propagates without a reboot),
 less useful for a genuinely expired key, which needs a fresh one written
-into `gosd.toml` and the device restarted.
+into `config/ingress/tailscale-funnel/authkey` and the device restarted.
 
 ### What's not supported yet, and other caveats
 
@@ -596,14 +589,14 @@ into `gosd.toml` and the device restarted.
   `ListenFunnel`, reachable from both the public internet and your tailnet
   directly — useful as a debugging path while you're still fixing a
   misconfigured `funnel` nodeAttr. A tailnet-only-vs-public toggle may
-  become a `gosd.toml` key later, but isn't one today.
+  become a config-tree setting later, but isn't one today.
 - **Memory footprint.** The shim is initramfs-resident (RAM, not the SD
   card) for as long as the device runs. Baking both `cloudflared` and
   `tailscale-funnel` into the same image at once costs roughly an extra
   40-60MB of RAM combined — most devices only need one agent, but nothing
   stops building with both.
 - **Not yet hardware-verified.** Every piece of this — the build, the
-  `gosd.toml` schema, the runtime module, the supervisor wiring — is
+  config tree's schema, the runtime module, the supervisor wiring — is
   unit-tested and exercised under QEMU, but hasn't yet been run against a
   real tailnet on real hardware. That's epic `gosd-65uy`'s bench bean
   `gosd-79v8`; see `COMPATIBILITY.md` for current per-board status.

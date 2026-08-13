@@ -161,7 +161,7 @@ if cfg.APIKey == "" {
         Code:    "NO-API-KEY",
         Doing:   "fetching today's forecast",
         Problem: "no API key is set, so the weather service refuses us",
-        Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+        Fix:     "set config/env/WEATHER_API_KEY on this card",
         Detail:  err,
     })
 }
@@ -217,17 +217,18 @@ does — not a probe for `/run`, which any Linux machine running as root would
 pass. A binary you built yourself never writes to `/run`, however
 device-shaped its filesystem looks.
 
-`examples/hello` has this wired up behind an environment variable: set
-`HELLO_FATAL` in `gosd.toml`'s `[env]` table, reboot, and the device writes a
-report and stays down — the whole path, on real hardware, without writing any
-code.
+`examples/hello` has this wired up behind an environment variable: create
+`config/env/HELLO_FATAL` on the card with any non-empty value, reboot, and
+the device writes a report and stays down — the whole path, on real
+hardware, without writing any code.
 
 ## Secrets
 
 A report invites its reader to forward the whole file to you, so the renderer
 scrubs it first. Every value in your app's own environment — anything baked
-into `config.json` or set through [gosd.toml's `[env]` table](gosd.toml.md) —
-is replaced with `{$ITS_NAME}` automatically, no code changes required.
+into `config.json` or set through [the config tree's `env/`
+files](config.md) — is replaced with `{$ITS_NAME}` automatically, no code
+changes required.
 gosd-init's own reserved `GOSD_*` variables are never swept this way:
 `GOSD_DATA_FLUSH` is `0` or `1`, and redacting it would blank every digit in
 the technical detail.
@@ -280,7 +281,7 @@ identifies the build by content hash alone. Your app's name and the board's
 are baked automatically.
 
 Both are developer settings baked into the image, deliberately not
-overridable through [the operator-facing card config](gosd.toml.md) or the
+overridable through [the operator-facing card config](config.md) or the
 environment. Neither affects the image's identity, so changing them cannot
 disturb [the data partition's upgrade path](runtime.md).
 

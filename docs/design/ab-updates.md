@@ -714,9 +714,9 @@ rather than re-researched from scratch.
   the end of §4 now or only if torn writes prove to be a real-world problem
   — left open, leaning toward "not yet" to keep v0.4's scope tight.
 - Whether `gosd push`'s per-image key should be regenerable/rotatable
-  post-flash (e.g. via `gosd.toml`, bean `gosd-tds2`, once that lands) or is
-  genuinely fixed for the image's lifetime — carried over unresolved from
-  the rejected design, unaffected by this revision.
+  post-flash (e.g. via a hand-edited setting in the config tree, which
+  already exists) or is genuinely fixed for the image's lifetime — carried
+  over unresolved from the rejected design, unaffected by this revision.
 
 ## Acceptance
 

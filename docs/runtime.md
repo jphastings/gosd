@@ -66,7 +66,7 @@ starts `/app` and supervises it for the rest of the device's life:
 |---|---|
 | `GOSD_BOARD` | The board ID the image was built for (e.g. `pi-zero-2w`), from `config.json` — overridable at boot via the `gosd.board=` kernel command-line parameter. |
 | `GOSD_HOSTNAME` | The hostname `gosd-init` just applied via `sethostname(2)`. |
-| `GOSD_DATA_FLUSH` | `1` if `/data` (and any `emmc`/`disk` vfat mount your app makes) uses the vfat `flush` mount option, `0` otherwise — `gosd build --data-flush`'s baked default, overridden by `gosd.toml`'s `data_flush` key when the card sets one. The `emmc`/`disk` packages read this themselves (see "Storage" below); most apps never need to. |
+| `GOSD_DATA_FLUSH` | `1` if `/data` (and any `emmc`/`disk` vfat mount your app makes) uses the vfat `flush` mount option, `0` otherwise — `gosd build --data-flush`'s baked default, overridden by the card's `config/data_flush` file when it's set to anything. The `emmc`/`disk` packages read this themselves (see "Storage" below); most apps never need to. |
 
 There's deliberately no `GOSD_DATA`: persistent storage always lives at
 the fixed path `/data` (see "Storage" below), so there's nothing to
@@ -77,7 +77,7 @@ If your app needs its own address, discover it at runtime with
 `net.InterfaceAddrs()` / `net.Interfaces()` rather than expecting it to
 be handed to you.
 
-## App environment variables (`gosd.toml [env]`)
+## App environment variables
 
 Beyond the `GOSD_*` vars above, your app can also receive whatever plain
 key/value settings its deployment needs — read them the normal way, with
@@ -85,14 +85,16 @@ key/value settings its deployment needs — read them the normal way, with
 GoSD-specific part is where the values come from. `examples/hello` reads
 an optional `GREETING` var this way (see its `main.go`).
 
-`gosd-init` merges two sources **per key** (not as a whole-map replace)
-before starting `/app` — see `mergeUserEnv` in
+Each one is its own file under `config/env/` in [the config
+tree](config.md) — a file named `GREETING` holding `Hello!` sets the
+`GREETING` variable to `Hello!`. `gosd-init` merges two sources **per key**
+(not as a whole-map replace) before starting `/app` — see `mergeUserEnv` in
 `cmd/gosd-init/internal/boot/sequence.go`:
 
 | Source | Wins per key? | Where it lives |
 |---|---|---|
-| `gosd.toml`'s `[env]` table | Yes | Hand-editable fallback on the boot partition (see "Provisioning" below). |
-| Baked defaults | No | Recorded in `config.json` inside the image. |
+| `config/env/<NAME>` | Yes | Hand-editable fallback on the boot partition (see "Provisioning" below). |
+| Baked defaults | No | Recorded in `config.json` inside the image, from your app's own `--config-dir` overlay. |
 
 Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
 `API_URL`, and a baked default set both, your app gets the card's
@@ -109,29 +111,22 @@ Your app's environment is otherwise a clean slate: it gets exactly the
 
 **Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace
 (`GOSD_BOARD`, `GOSD_HOSTNAME`, `GOSD_DATA_FLUSH`, and any future `GOSD_*`
-var) can never be set this way. `gosd build` refuses a `GOSD_*` setting
-outright, with an actionable error, before it ever reaches an image. A
-`GOSD_*` key hand-written into a card's `gosd.toml [env]` is logged and
-ignored at boot instead — your app always gets `gosd-init`'s real value for those,
-never whatever a card tried to override them with.
+var) can never be set this way. `gosd build` refuses a `config/env/GOSD_*`
+file outright, with an actionable error, before it ever reaches an image. A
+`GOSD_*` file hand-written into a card's `config/env/` is logged and
+ignored at boot instead — your app always gets `gosd-init`'s real value for
+those, never whatever a card tried to override them with.
 
-**Missing or empty is fine.** No baked defaults and no
-`[env]` table on the card is a normal, unremarkable boot: your app just
-gets none of these vars (plus the `GOSD_*` ones above), and nothing
-errors either way.
+**Missing or empty is fine.** No baked defaults and nothing set under
+`config/env/` on the card is a normal, unremarkable boot: your app just
+gets none of these vars (plus the `GOSD_*` ones above), and nothing errors
+either way.
 
-**Quote your values.** Write `gosd.toml [env]` entries as quoted TOML
-strings, e.g. `PORT = "8080"`. A bare scalar (`PORT = 8080`, `DEBUG =
-true`) is coerced to its string form and still applied, but logs a
-one-line warning at boot; an array, inline table, or datetime under
-`[env]` is dropped entirely (also warned, never silently). Quoting up
-front avoids relying on that coercion.
-
-**Security note.** Like the WiFi passphrase stored in the same file,
-`gosd.toml [env]` values sit in plaintext on the boot FAT
-partition — anyone with physical access to the card, or who mounts the
-image, can read them. There's no encryption today; don't put anything
-there you wouldn't want exposed to whoever holds the card.
+**Security note.** Like the WiFi passphrase stored in the same tree, an
+`env/` value sits in plaintext on the boot FAT partition — anyone with
+physical access to the card, or who mounts the image, can read them.
+There's no encryption today; don't put anything there you wouldn't want
+exposed to whoever holds the card.
 
 ## Networking comes up after your app does
 
@@ -165,14 +160,15 @@ has WiFi hardware, associates to a single WPA2-PSK or open network (see
 way. WPA3/EAP networks are out of scope through v0.x; `gosd-init` logs
 clearly and skips WiFi bring-up rather than attempting to join one.
 
-The network to join comes from whichever of these sources is present, in
-this precedence order (highest wins):
+The network to join comes from whichever of these sources names one:
 
-1. **`gosd.toml`**'s `[wifi]` table — the hand-editable fallback on the
-   boot partition (see "Provisioning" below).
-2. **Cloud-init provisioning** written by Raspberry Pi Imager — also
-   below.
-3. **`config.json`**, baked at build time.
+1. **`config/wifi/ssid` and `config/wifi/passphrase`** — the hand-editable
+   fallback on the boot partition (see "Provisioning" below). A Raspberry Pi
+   Imager wizard's answer reaches this tier too, as an ordinary setting
+   written into the tree once its cloud-init seed is consumed — there's no
+   separate, competing tier for it.
+2. **`config.json`**, baked at build time — used only when the card names
+   no network at all.
 
 ### HTTPS calls and the CA bundle
 
@@ -203,8 +199,8 @@ periods won't check out either — see "Clock" for that gotcha.
 ### Ingress: reaching your app from the internet (`--ingress`)
 
 An image built with `gosd build --ingress cloudflared` or
-`--ingress tailscale-funnel`, plus a matching `[ingress.<agent>]` section
-filled in on `gosd.toml`, gets a public URL: `gosd-init` supervises a
+`--ingress tailscale-funnel`, plus a matching `config/ingress/<agent>/`
+group filled in on the boot partition, gets a public URL: `gosd-init` supervises a
 baked-in binary that carries traffic for one hostname to one local port on
 your app — no port forwarding, no public IP address, and no app code
 required. Cloudflare Tunnel needs a Cloudflare account and only runs on
@@ -221,15 +217,23 @@ reflash.
 
 ## Provisioning: hostname and WiFi from Raspberry Pi Imager
 
-Beyond `config.json` baked in at build time and `gosd.toml` hand-edited
-on the card, `gosd-init` also reads whatever Raspberry Pi Imager's
-customization wizard wrote to the boot partition — cloud-init's
-`user-data` (hostname) and `network-config` (WiFi access points) — see
-`internal/provision` and `docs/provisioning-formats.md` for the full
-field mapping and precedence rationale. This is the flagship end-user
-flashing path: publish a custom-repository catalog entry for your image
+Beyond `config.json` baked in at build time and [the config
+tree](config.md) hand-edited on the card, `gosd-init` also reads whatever
+Raspberry Pi Imager's customization wizard wrote to the boot partition —
+cloud-init's `user-data` (hostname) and `network-config` (WiFi access
+points) — see `internal/provision` and `docs/provisioning-formats.md` for
+the full field mapping. This is the flagship end-user flashing path:
+publish a custom-repository catalog entry for your image
 (`init_format: "cloudinit"`) and Imager's full WiFi/hostname wizard
 becomes available for anyone flashing it.
+
+The wizard's answers don't compete with the card at runtime — they become
+the card. `gosd-init` deletes the cloud-init files, durably, and only then
+writes what they asked for into `config/hostname` and `config/wifi/*` (see
+[how the wizard's answers land in the tree](config.md#how-the-imager-wizards-answers-land-here)),
+so from that point on a wizard-provisioned value is indistinguishable from
+one somebody typed in by hand — including surviving a reflash the same way
+(see "Keeping settings across a reflash" below).
 
 Practical notes:
 
@@ -239,10 +243,9 @@ Practical notes:
   `gosd-init` has no shell or user accounts to apply them to.
 - `firstrun.sh` (Imager's older, non-cloud-init mechanism) is **never**
   parsed or executed — if one is found on the boot partition, `gosd-init`
-  logs a line pointing you at `gosd.toml` instead.
+  logs a line pointing you at the config tree instead.
 - A malformed or partially-written provisioning file is logged and
-  skipped, falling back to the next-lower-precedence source; it never
-  blocks boot.
+  skipped; it never blocks boot.
 
 ## Clock: starts at 1970 until SNTP syncs
 
@@ -483,9 +486,9 @@ Rules of engagement:
   never enough for durability on its own anyway — a `rename` involves no
   `close`, so it doesn't touch the gap "Making a write durable" below
   closes. Turning it on trades write throughput for prompter (but still
-  not durable by itself) writeback; a hand-edited `gosd.toml`'s top-level
-  `data_flush = true`/`false` overrides the baked default per device,
-  absent meaning "use the baked value" (see the `GOSD_DATA_FLUSH` env var
+  not durable by itself) writeback; setting the card's `config/data_flush`
+  file to anything overrides the baked default per device, empty meaning
+  "use the baked value" (see the `GOSD_DATA_FLUSH` env var
   above, which is how `emmc`/`disk` — mounting from your app's own
   process — learn the effective setting). `flush` has no ext4 equivalent
   and no effect on an ext4 data partition — `gosd build` refuses
@@ -496,10 +499,10 @@ Rules of engagement:
   surprised by it when listing `/data`. An `expand` image's partition
   root also carries `gosd-data-established` (not a dotfile — deliberately,
   see the reflash bullet above) once its first-boot format completes, and
-  `/data/.gosd/` is reserved for `gosd-init`'s own bookkeeping — the
-  provisioning snapshot (below) and, on an image built with `--ingress
-  tailscale-funnel`, the shim's tsnet state under `/data/.gosd/tailscale`
-  (see [docs/ingress.md](ingress.md)). Leave all three alone; none of them
+  `/data/.gosd/` is reserved for `gosd-init`'s own bookkeeping — the config
+  store (below) and, on an image built with `--ingress tailscale-funnel`,
+  the shim's tsnet state under `/data/.gosd/tailscale` (see
+  [docs/ingress.md](ingress.md)). Leave all three alone; none of them
   is meant for your app to read, and an app deleting one is never treated
   as corruption.
 - **Reflashing wipes `/data` for a fixed-size `--data-size` image, every
@@ -514,71 +517,72 @@ Rules of engagement:
   it lands, over-the-network app updates leave the data partition intact
   regardless of `--data-size` mode.
 
-### The provisioning snapshot: surviving a reflash
+### Keeping settings across a reflash: the config store
 
-Reflashing rewrites the whole of the boot partition, `gosd.toml` included — so
-without more than the above, every hand-edited `[env]` value and every
-wizard-provided hostname/WiFi credential would be replaced by the new
-image's baked defaults on every upgrade. On a `--data-size=expand` image,
-`gosd-init` closes that gap the same way it protects `/data` itself: once
-provisioning has settled on a successful boot, it writes a snapshot to
-`/data/.gosd/provision-snapshot/` — the effective `gosd.toml` this boot
-settled on, the baked defaults it was compared against, and the image's
-own identity (a content-derived digest `gosd build` bakes into
-`config.json`, logged at boot as `image identity: <short digest>`). No
-data partition means no snapshot and no self-heal — one more reason to
-build with `expand` for anything you expect to update.
+Reflashing rewrites the whole of the boot partition, [the config
+tree](config.md) included — so without more than the above, every
+hand-edited `env/` value and every wizard-provided hostname/WiFi credential
+would be replaced by the new image's baked defaults on every upgrade. On a
+`--data-size=expand` image (or any image with a non-zero `--data-size`),
+`gosd-init` closes that gap the same way it protects `/data` itself: every
+boot, it records — on `/data`, under `/data/.gosd/config` — every setting
+whose card file differs, byte for byte, from the value this image shipped
+it with. No data partition means nothing is kept, and nothing self-heals —
+one more reason to build with `expand` for anything you expect to update.
 
-On the first boot after a reflash — detected by the running image's
-identity differing from the one the snapshot was taken under — `gosd-init`
-restores what the operator actually chose, freshest intent first:
+Restoring only ever runs on the first boot under a *different* image than
+the one the kept copy was last reconciled against (a genuine reflash to a
+new build), detected the same way as everywhere else: the image's own
+identity, a content-derived digest `gosd build` bakes into `config.json`,
+logged at boot as `image identity: <short digest>`. Flashing the *same*
+image back over a card doesn't trigger a restore at all — every setting
+already reads exactly as that image ships it, which is indistinguishable
+from someone having reverted every value by hand.
 
-1. **Whatever this exact boot already provides wins outright.** A
-   hostname or WiFi network entered through the Imager wizard, or a
-   hand-edit already sitting in the new card's `gosd.toml`, is applied as
-   normal — and also refreshes the snapshot, since it's the most recent
-   statement of the operator's intent.
-2. **Failing that, the snapshot restores anything it can prove was a
-   hand-edit**: a hostname, a WiFi ssid/passphrase pair, an individual
-   `[env]` key whose snapshotted value differed from the baked default it
-   was compared against at the time, or the whole `[ingress.cloudflared]`
-   or `[ingress.tailscale-funnel]` section — restored as a unit, never
-   field-by-field, since there is no baked default for either to differ
-   from (`config.json` only ever records *whether* the agent's binary is
-   baked in, never a real token or auth key), so any snapshotted section at
-   all counts as the operator's own intent. A value that only ever matched
-   the old image's default is never restored — if a new release changes
-   that default, the new default wins, because the operator never actually
-   chose the old one.
-3. **Failing that, the newly-flashed image's own baked defaults apply**,
-   exactly as on a first flash.
+Per setting, on that first boot:
 
-The practical effect: an operator who reflashes a device the same way
-they flashed it the first time — including skipping the Imager wizard
-entirely, via "Use custom image" — gets their hostname and WiFi back and
-rejoins the network on its own, any hand-edited `gosd.toml [env]` value
-survives too, restored (re-rendered from GoSD's own template) into the new
-card's `gosd.toml` so it's still visible and editable there, and a
-configured [Cloudflare Tunnel](ingress.md) resumes the same way — with no
-credentials file to lose, since the tunnel token round-trips through
-`/data` exactly like a WiFi passphrase does. A configured [Tailscale
-Funnel](ingress.md) does even better: its tailnet identity lives on `/data`
-independently of this snapshot mechanism, so it reconnects under the same
-public URL with no re-authentication at all — the snapshot here only
-carries the remaining `hostname`/`port`/`funnel_port` (and the auth key, if
-one is still sitting in `gosd.toml`) back into the new card's file.
+1. **Whatever the freshly flashed card already says, if it differs from
+   what this image shipped, wins outright.** An injected value, or a
+   hand-edit (including one an Imager wizard just wrote in) already sitting
+   on the new card, is the freshest statement of intent there is.
+2. **Otherwise, the kept value is written back onto the card** — restoring
+   what the previous image's card held. If this image's own default for
+   that setting differs and isn't empty, it also appears beside the
+   restored value as `<name>.new`, purely informational (the device never
+   reads it back). A kept value the new image has no file for at all is
+   handed back as `<name>.unused` and then forgotten — one reflash to
+   retrieve it — except under `config/env/`, a customer's own namespace,
+   which is never treated as an orphan.
+3. **Anything neither kept nor present on the freshly flashed card** is
+   whatever this image's own defaults name, exactly as on a first flash.
 
-What does **not** come back: anything outside
-hostname/WiFi/`[env]`/`[ingress.cloudflared]`/`[ingress.tailscale-funnel]`
-— the Imager wizard's other,
-RPi-OS-specific settings were never applied in the first place (see
+The practical effect: an operator who reflashes a device the same way they
+flashed it the first time — including skipping the Imager wizard entirely,
+via "Use custom image" — gets their hostname and WiFi back and rejoins the
+network on its own, any hand-edited `env/` value survives too, restored
+directly into the same file it was set in, and a configured [Cloudflare
+Tunnel](ingress.md) resumes the same way — with no credentials file to
+lose, since the tunnel token round-trips through `/data` exactly like a
+WiFi passphrase does. A configured [Tailscale Funnel](ingress.md) does even
+better: its tailnet identity lives on `/data` independently of the config
+store, so it reconnects under the same public URL with no re-authentication
+at all — the store here only carries back the remaining
+`hostname`/`port`/`funnel_port` (and the auth key, if one is still sitting
+on the card).
+
+See [the config tree's guide to this
+mechanism](config.md#keeping-your-settings-across-a-reflash) for the full
+per-setting rules, including how to deliberately put a value back to its
+default and how to unset a kept `env/` value.
+
+What does **not** come back: anything outside the config tree itself — the
+Imager wizard's other, RPi-OS-specific settings were never applied in the
+first place (see
 "Provisioning" above) — nor the schema or contents of your app's own
 `/data` files across versions, which remains the app's
-concern like any other update. A hand-written *comment* in a card's
-`gosd.toml` isn't preserved either, since a restore re-renders the file
-from the template: values come back, prose around them doesn't. Every
-step here is best-effort: a missing, torn, or unreadable snapshot, or a
-read-only/absent `/data`, is logged and skipped — never a boot failure.
+concern like any other update. Every step here is best-effort: a store
+entry that's missing, torn, or unreadable, or a read-only/absent `/data`,
+is logged and skipped — never a boot failure.
 
 ### Making a write durable
 
@@ -891,7 +895,7 @@ Three things are worth knowing about the FAT-family options:
   unix permissions, ownership, symlinks or hard links, and not
   power-loss-robust without the fsync sequence above. A FAT32 volume
   also honors the same `GOSD_DATA_FLUSH` setting as `/data` (`gosd build
-  --data-flush`/`gosd.toml`'s `data_flush`); exFAT never took the
+  --data-flush`/the card's `config/data_flush`); exFAT never took the
   `flush` mount option and is unaffected either way.
 - **Not every board's kernel can mount exFAT.** `CONFIG_EXFAT_FS` is
   required, and `COMPATIBILITY.md`'s "exFAT on attached disks" row says
@@ -1134,8 +1138,8 @@ applications, reach for `go-gpiocdev` directly (as the example does) or
 
 Every board image `gosd build` produces has one I2C bus enabled and
 ready as a `/dev/i2c-N` character device by the time your app starts —
-no build flag needed, and there's no opt-out flag today (a `gosd.toml`
-knob to disable it may come later if a real use case needs the pins
+no build flag needed, and there's no opt-out flag today (a config-tree
+setting to disable it may come later if a real use case needs the pins
 back for plain GPIO). The kernel driver has always been built in on
 every board (`CONFIG_I2C_BCM2835`/`CONFIG_I2C_RK3X` plus
 `CONFIG_I2C_CHARDEV`); what this adds is the device-tree/`config.txt`
