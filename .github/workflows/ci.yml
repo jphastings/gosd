@@ -406,12 +406,26 @@ jobs:
   # gains a data partition on first boot, and the second boot finds it
   # and leaves it alone. Killing qemu after the first boot doubles as a
   # power-cut: everything the second boot depends on must already be durable.
-  # The third boot follows a re-flash of the very same image over the front
-  # of the card, and must re-adopt the partition the flash orphaned rather
-  # than reformat it (docs/design/upgrade-path.md §2).
+  # The third boot follows a re-flash over the front of the card, and must
+  # re-adopt the partition the flash orphaned rather than reformat it
+  # (docs/design/upgrade-path.md §2).
+  #
+  # It also proves what that surviving partition is for (bean gosd-87ip):
+  # the settings somebody put on the card come back after a re-flash, a
+  # value injected into the new image beats the kept copy, and a setting put
+  # back to what its image ships stops being kept at all. Every card edit
+  # below is made with mtools between boots — the same thing a person does
+  # with the card in a reader, and the same file a provisioning tool
+  # overwrites in a downloaded .img.
   qemu-expand-data:
     name: qemu first-boot data-partition expansion
     runs-on: ubuntu-latest
+    env:
+      # The image's FAT boot partition starts at 16MiB (internal/image), and
+      # MTOOLS_SKIP_CHECK stops mtools refusing a geometry go-diskfs wrote
+      # and Linux mounts perfectly happily.
+      CARD: dist/hello-qemu-virt.img@@16777216
+      MTOOLS_SKIP_CHECK: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -423,10 +437,10 @@ jobs:
         with:
           path: ~/.cache/gosd/artifacts
           key: gosd-artifacts-${{ hashFiles('internal/artifacts/artifacts.go') }}
-      - name: Install qemu
+      - name: Install qemu and mtools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm mtools
       - name: gosd build ./examples/hello --data-size=expand, onto a bigger "card"
         run: |
           mkdir -p dist
@@ -434,25 +448,44 @@ jobs:
             --board=qemu-virt \
             --data-size=expand \
             -o dist/hello-qemu-virt.img
-          # Kept aside as the flasher's copy, for the re-flash step below.
+          # Kept aside as the flasher's copy, for the re-flash steps below.
           cp dist/hello-qemu-virt.img dist/flashable.img
+          # The same app, built with one setting shipped differently. A
+          # config tree is part of the boot payload gosd hashes into an
+          # image's identity, so this is a different build as far as the
+          # store is concerned — which is what tells "this card was just
+          # re-flashed" from "somebody put a setting back by hand", since
+          # per file the two are byte-identical (epic gosd-rw6n).
+          go run ./cmd/gosd build ./examples/hello \
+            --board=qemu-virt \
+            --data-size=expand \
+            --config-dir .github/testdata/reflash-config \
+            -o dist/reflashed.img
           # The image is 272MiB; a real card is bigger. truncate models
           # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
           truncate -s +1G dist/hello-qemu-virt.img
-      # Nothing is asserted here about settings surviving a reflash: the
-      # config store that carries them across one is bean gosd-87ip, and it
-      # brings its own assertion to this job when it lands. Until then this
-      # job proves the partition itself - created, formatted, adopted after
-      # a reflash, and refused when corrupt.
+      - name: "Settings put on the card before it ever boots"
+        run: |
+          # config/hostname is a setting this image ships (empty: unset);
+          # config/env/GREETING is one nobody ships, created here the way a
+          # customer creates an app environment variable of their own.
+          printf 'edited-host\n' > hostname.txt
+          printf 'hello\n' > greeting.txt
+          mcopy -i "$CARD" -o hostname.txt ::/config/hostname
+          mcopy -i "$CARD" -o greeting.txt ::/config/env/GREETING
       - name: "First boot: creates, formats and mounts the data partition"
         run: |
           # "as FAT32 labelled hello-data" is the end-to-end proof that
           # config.json's dataLabel (bean gosd-lo7k's per-app labels)
           # reaches a real on-device format, not just the unit-test fakes.
+          # host= and greeting= prove the card's own settings are what the
+          # app actually runs with.
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img first.log \
             "data partition created, filling the card" \
             "as FAT32 labelled hello-data" \
-            "data partition mounted read-write at /data"
+            "data partition mounted read-write at /data" \
+            "host=edited-host" \
+            'greeting="hello"'
       # boots=2 is the durability assertion (bean gosd-0nk4): the first
       # boot's counter write was seconds old when qemu was killed, so it
       # only reads back here if hello's write-fsync-rename really reached
@@ -462,19 +495,62 @@ jobs:
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img second.log \
             "data partition already present" \
             "data partition mounted read-write at /data" \
-            "boots=2"
+            "boots=2" \
+            "host=edited-host"
       # An upgrade, as an operator performs it: Imager writes the image over
       # the front of the card and stops at its end, so the MBR loses
       # partition 2's entry while the data region beyond it is never
       # touched. boots=3 is the proof the app's data came back — a reformat
       # would have restarted the counter at 1.
-      - name: "Re-flash: the orphaned data partition is re-adopted, not reformatted"
+      #
+      # It is also the upgrade the config store exists for. The new image
+      # ships a hostname of its own and knows nothing of GREETING, and the
+      # card carries neither setting any more — except the one injected
+      # into it below, before it boots.
+      - name: "Re-flash: the data partition is re-adopted, and the card's settings come back"
         run: |
-          dd if=dist/flashable.img of=dist/hello-qemu-virt.img conv=notrunc
+          dd if=dist/reflashed.img of=dist/hello-qemu-virt.img conv=notrunc
+          printf 'injected-greeting\n' > greeting.txt
+          mcopy -i "$CARD" -o greeting.txt ::/config/env/GREETING
+          # host= is the hostname put back off the data partition, over the
+          # top of the one this new image ships; greeting= is the injected
+          # value winning over the kept one, because a card changed since it
+          # was flashed is the freshest intent there is.
           ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img reflash.log \
             "data partition re-adopted" \
             "data partition mounted read-write at /data" \
-            "boots=3"
+            "boots=3" \
+            "config/hostname restored from the copy kept on the data partition" \
+            "host=edited-host" \
+            'greeting="injected-greeting"'
+          # The values are on the card itself, not just in the boot that
+          # restored them: the file its owner edits, and beside it the value
+          # this image would have used (Debian conffile semantics).
+          mtype -i "$CARD" ::/config/hostname | grep -qx "edited-host"
+          mtype -i "$CARD" ::/config/hostname.new | grep -qx "reflashed-default"
+      # Re-flashing the very same image is byte-for-byte what putting every
+      # setting back by hand looks like, so it is treated as exactly that:
+      # the kept hostname is forgotten and the image's own value stands.
+      - name: "Re-flashed again: a setting back at its default stops being kept"
+        run: |
+          dd if=dist/reflashed.img of=dist/hello-qemu-virt.img conv=notrunc
+          ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img revert.log \
+            "boots=4" \
+            "host=reflashed-default"
+          if grep -q "config/hostname restored" revert.log; then
+            echo "the same image re-flashed restored a setting; nothing distinguishes that card from a hand-reverted one" >&2
+            exit 1
+          fi
+      # Back to the original image: the hostname somebody gave up on stays
+      # given up on, while the environment variable they created — which no
+      # image ever shipped, so no image can retire it — is still theirs.
+      - name: "Re-flashed once more: the forgotten setting stays forgotten"
+        run: |
+          dd if=dist/flashable.img of=dist/hello-qemu-virt.img conv=notrunc
+          ./scripts/boot-and-grep.sh dist/hello-qemu-virt.img default.log \
+            "boots=5" \
+            "host=hello" \
+            'greeting="injected-greeting"'
       - name: "Corrupted established partition: halts instead of repairing"
         run: |
           # Zero the filesystem out from under the established partition

@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/configstore"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/consoletail"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/configtree"
@@ -207,6 +209,14 @@ type Options struct {
 	DataDevices []string
 	DataTimeout time.Duration
 
+	// ConfigStoreDir is where this device's own settings are kept on the
+	// mounted data partition, so that re-flashing the card doesn't lose
+	// them (see cmd/gosd-init/internal/configstore). Empty skips the store
+	// entirely, exactly as an empty DataTarget skips the data mount: an
+	// image with no data partition keeps nothing across a re-flash, and a
+	// test that doesn't care about the store doesn't have to wire one up.
+	ConfigStoreDir string
+
 	// Stop, if non-nil, ends app supervision when closed. Production
 	// leaves this nil so supervision runs forever, as PID 1 must; tests
 	// set it to bound the otherwise-infinite supervise loop.
@@ -353,6 +363,27 @@ func Run(deps Deps, opts Options) error {
 		}
 	}
 	mountData(deps, opts, dataFilesystem, dataFlush, log)
+
+	// The settings that survive a re-flash are kept on the data partition,
+	// so this is the earliest point they can be reached — and the last
+	// point that is any use, since everything below acts on a setting.
+	//
+	// The one setting already acted on above is data_flush, which decides
+	// how /data is mounted and so cannot wait for /data to be mounted. A
+	// restored data_flush therefore takes effect from the boot after the
+	// re-flash rather than during it, which costs that boot ordinary
+	// writeback behaviour and nothing else: durability comes from the
+	// fsync sequence in docs/runtime.md, never from that mount option
+	// (locked, bean gosd-9m1k).
+	if restored := reconcileConfigStore(deps, opts, config, cfg, log); slices.Contains(restored, hostnamePath) {
+		// The hostname applied above was read off a card that hadn't yet
+		// had its kept settings put back on it; this is the one the device
+		// is actually called, and /app hasn't started yet.
+		if hostname, ok := cardHostname(config, cfg.Hostname, log); ok {
+			cfg.Hostname = hostname
+			applyHostname(deps, log, cfg.Hostname, cardconfig.OnCard(hostnamePath))
+		}
+	}
 
 	// The boot counter is durable state, so it lives on the data partition
 	// and can only be reached now — which is why the data-corruption halt
@@ -570,6 +601,31 @@ func consumeCloudInit(deps Deps, config cardconfig.Tree, result provision.Result
 	for _, path := range sortedPaths(values) {
 		log("%s set from cloud-init provisioning", cardconfig.OnCard(path))
 	}
+}
+
+// reconcileConfigStore keeps the copy of this device's own settings on the
+// data partition up to date and, on the first boot under an image that copy
+// wasn't written under — the boot after a re-flash — puts them back onto the
+// card. It returns the settings it restored, so the caller can resolve again
+// anything it has already acted on.
+//
+// It is deliberately called after the cloud-init seed has been consumed into
+// the tree (locked, epic gosd-rw6n): a wizard's answers are ordinary card
+// edits by then, which is what makes them survive the re-flash after this
+// one rather than being a second, competing source of truth.
+func reconcileConfigStore(deps Deps, opts Options, config cardconfig.Tree, cfg initcfg.Config, log func(format string, args ...any)) []string {
+	if opts.ConfigStoreDir == "" {
+		return nil
+	}
+	// cfg.Identity, never cfg.Board: the identity is the one field a
+	// hand-edited cmdline.txt can't overwrite (see initcfg.Config.Board),
+	// and mistaking one image for another here would either resurrect a
+	// setting somebody deleted or forget one they set.
+	return configstore.Reconcile(configstore.Deps{
+		Dir:      opts.ConfigStoreDir,
+		EditBoot: deps.EditBoot,
+		Log:      log,
+	}, config, configstore.Options{Identity: cfg.Identity, Baked: cfg.ConfigDigests}).Restored
 }
 
 // cloudInitValues maps what a cloud-init seed asked for onto the settings

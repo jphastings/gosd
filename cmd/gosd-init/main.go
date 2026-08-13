@@ -18,6 +18,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cloudflared"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/configstore"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/durable"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
@@ -264,6 +265,10 @@ func main() {
 		DataTarget:  dataTarget,
 		DataDevices: dataDevices,
 		DataTimeout: dataMountTimeout,
+		// Where this device's own settings are kept so that re-flashing
+		// the card doesn't lose them; on the data partition, because that
+		// is the only part of the card a re-flash leaves alone.
+		ConfigStoreDir: filepath.Join(dataTarget, configstore.Dir),
 	}
 
 	// RunAndReboot only returns once a reboot has been requested — by the
