@@ -36,12 +36,13 @@ type Platform struct {
 	// FaultReportDeps.Exists).
 	RemoveBootFiles func(target string, names []string) error
 
-	// WriteBootFile durably writes name at the root of the boot
-	// partition mounted (read-only) at target, briefly remounting it
-	// read-write, and restores the read-only mount afterwards. Unlike
-	// WriteFatalReport this happens on a device that carries on booting,
-	// so the restoring remount is part of the result, not best-effort.
-	WriteBootFile func(target, name string, data []byte) error
+	// EditBootPartition runs edit against the root of the boot partition
+	// mounted (read-only) at target, with it briefly remounted read-write
+	// and everything edit wrote flushed to the card before the read-only
+	// mount is restored. Unlike WriteFatalReport this happens on a device
+	// that carries on booting, so the restoring remount is part of the
+	// result, not best-effort.
+	EditBootPartition func(target string, edit func(root string) error) error
 
 	// DeviceModel returns the hardware's own self-description from the
 	// device tree, or "" when it isn't readable.

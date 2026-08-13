@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 )
 
@@ -60,11 +61,13 @@ func mountEarly(m Mounter) error {
 // bootSentinelFile is the file MountBootPartition requires at the root of a
 // freshly-mounted candidate before accepting it as a GoSD boot partition,
 // rather than accepting the first candidate the kernel is willing to mount
-// as FAT (see gosd-pcwl). internal/pipeline.Assemble writes gosd.toml onto
-// every board's boot partition unconditionally — unlike config.txt
-// (Pi-only) or extlinux.conf (Rockchip-only) — which is what makes it safe
-// to key off across the whole board matrix.
-const bootSentinelFile = "gosd.toml"
+// as FAT (see gosd-pcwl). It's the config tree's own explanation file:
+// internal/pipeline.Assemble writes the tree onto every board's boot
+// partition unconditionally — unlike config.txt (Pi-only) or extlinux.conf
+// (Rockchip-only) — and this one file of it is never pruned by which
+// features an image carries, which is what makes it safe to key off across
+// the whole board matrix.
+var bootSentinelFile = path.Join(configtree.Dir, configtree.GroupDoc)
 
 // MountBootPartition mounts the FAT boot partition read-only at
 // target, trying each candidate device in turn, and returns the device it
@@ -74,10 +77,10 @@ const bootSentinelFile = "gosd.toml"
 //
 // Unlike MountDataPartition, this mount is never given the vfat "flush"
 // option — deliberately out of gosd-9m1k's data-flush scope, and unaffected
-// by --data-flush/gosd.toml's data_flush either way: it's read-only, so
-// close(2)-triggered writeback is moot, and its own write traffic (the
-// provisioning-snapshot restore, LAST_FATAL_ERROR.md) is already bracketed
-// with its own syncs where it matters.
+// by --data-flush or the card's own data_flush setting either way: it's
+// read-only, so close(2)-triggered writeback is moot, and its own write
+// traffic (a consumed cloud-init seed, LAST_FATAL_ERROR.md) is already
+// bracketed with its own syncs where it matters.
 //
 // A candidate that mounts as valid FAT is not accepted on that basis alone:
 // with an eMMC fitted, its first partition can sort before the SD card's in
@@ -91,7 +94,7 @@ const bootSentinelFile = "gosd.toml"
 //
 // This only rules out non-GoSD FAT content; it cannot distinguish between
 // two actual GoSD boot partitions (e.g. an eMMC that itself carries a
-// stale, previously-flashed GoSD image also has gosd.toml at its root and
+// stale, previously-flashed GoSD image also carries that file and
 // still wins by device-name order). When the bootloader can name the disk
 // it actually booted from (gosd.bootdev, see gosd-vzk2), the caller closes
 // that gap by narrowing devices with FilterBootDevices first.
@@ -190,7 +193,7 @@ var ErrDataPartitionMissing = errors.New("no data partition device exists")
 
 // dataMountOption maps the data partition's filesystem and the effective
 // data-flush setting (config.json's baked gosd build --data-flush default,
-// overridable per-device via gosd.toml's data_flush key — see sequence.go's
+// overridable per-device via the card's data_flush setting — see sequence.go's
 // effectiveDataFlush) to the mount(2) option string MountDataPartition
 // passes for /data. "flush" is a vfat-only option: mount(2) rejects an
 // option its filesystem driver doesn't recognise, so it must never be

@@ -21,7 +21,7 @@ The configured sensor isn't one this build supports.
 
 ## The fix
 
-Set sensor = "bme280" in gosd.toml on this card.
+Write bme280 into config/env/SENSOR on this card.
 
 ## What to send
 

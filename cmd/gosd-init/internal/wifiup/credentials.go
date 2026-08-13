@@ -1,9 +1,7 @@
 package wifiup
 
 import (
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
-	"github.com/jphastings/gosd/internal/provision"
 )
 
 // Credentials describes the single network wifiup should join.
@@ -18,17 +16,6 @@ type Credentials struct {
 	// Open is true.
 	PSK [32]byte
 
-	// Hidden is true when the network doesn't broadcast its SSID, so it
-	// will never show up in a passive scan. Only internal/provision's
-	// schema (Raspberry Pi Imager's "hidden: true" flag) can currently
-	// express this — config.json's initcfg.Wifi and gosd.toml's
-	// gosdtoml.Wifi schemas are both locked and have no such field —
-	// so this is always false unless the effective network came from
-	// Provision. wifiup.Run joins by issuing nl80211 CONNECT with the
-	// SSID directly regardless of Hidden (see associate); Hidden only
-	// changes what gets logged while the join is pending.
-	Hidden bool
-
 	// Unsupported, if non-empty, names a security mode config.json (or a
 	// future CredentialSource) requested that gosd-init cannot join —
 	// WPA3 and 802.1X/EAP are out of scope through v0.x (locked
@@ -38,65 +25,53 @@ type Credentials struct {
 	Unsupported string
 }
 
-// ConfigCredentials adapts config.json's initcfg.Wifi block into a
-// CredentialSource — gosd-init's v0.1 credential source — later extended
-// (gosd-pctc) with the two higher-precedence sources the locked precedence
-// chain adds on top of it (see docs/provisioning-formats.md):
-//
-//	gosd.toml  >  cloud-init (Imager provisioning)  >  config.json
-//
-// GosdToml, if set (non-empty SSID), always wins. Otherwise Provision, if
-// it named at least one network, wins over the baked-in Wifi. Both are
-// zero by default, so callers that only have config.json — including
-// existing tests — don't need to change.
-type ConfigCredentials struct {
-	Wifi     initcfg.Wifi
-	GosdToml gosdtoml.Wifi
-
-	// Provision holds every WiFi network cloud-init's network-config
-	// named, in file order (see internal/provision). Only the first is
-	// ever joined — gosd-init supports one active WiFi network at a
-	// time — the rest exist only so a caller can log what else was
-	// found; a nil/empty slice means no cloud-init network-config was
-	// found (or it named no WiFi at all).
-	Provision []provision.WifiNetwork
+// Wifi is the wireless network named on the card: the wifi/ssid and
+// wifi/passphrase settings of its config tree, read as they are. Both
+// fields empty means the card names no network, which is the ordinary case
+// for a device that reaches its network over Ethernet or was built with
+// credentials baked in.
+type Wifi struct {
+	SSID       string
+	Passphrase string
 }
 
-// Credentials resolves the effective ssid/passphrase pair — from GosdToml
-// if it names a network, else the first entry of Provision if there is
-// one, else Wifi (config.json) — into a Credentials value.
+// ConfigCredentials is gosd-init's CredentialSource: the network named on
+// the card, and the one baked into config.json as the fallback for a card
+// that names none. There is no third tier — an Imager wizard's answers
+// reach this as ordinary card settings, written into the config tree when
+// their seed was consumed (see boot's consumeCloudInit) — and no priority
+// list to remember: Card, if it names a network, is the network.
+type ConfigCredentials struct {
+	Wifi initcfg.Wifi
+	Card Wifi
+}
+
+// Credentials resolves the effective ssid/passphrase pair — the card's if
+// it names a network, else config.json's — into a Credentials value.
 //
 // The passphrase does double duty, distinguished by shape rather than a
-// separate schema field (initcfg.Wifi's, gosdtoml.Wifi's, and
-// provision.WifiNetwork's schemas are all locked): a 64-hex-character
-// value is treated as a pre-hashed PSK — the form Raspberry Pi Imager's
-// cloud-init provisioning always writes, so a plaintext password never has
-// to be baked onto the image — and anything else is treated as a
-// plaintext passphrase, run through DerivePSK. An empty passphrase with a
-// non-empty SSID means an open network.
+// separate field: a 64-hex-character value is treated as a pre-hashed PSK —
+// the form Raspberry Pi Imager's cloud-init provisioning always writes, so
+// a plaintext password never has to be baked onto the image — and anything
+// else is treated as a plaintext passphrase, run through DerivePSK. An
+// empty passphrase with a non-empty SSID means an open network.
 //
-// None of the three schemas has a field to express WPA3/EAP (nor any
-// other security mode) at all, so there is currently no input that
-// reaches the Unsupported path below; it exists so that if any of them
-// grows a security mode field later, there's an obvious place to reject
-// it clearly instead of misinterpreting it as PSK or open.
+// Neither source has a field to express WPA3/EAP (nor any other security
+// mode) at all, so there is currently no input that reaches the Unsupported
+// path below; it exists so that if either grows a security mode field
+// later, there's an obvious place to reject it clearly instead of
+// misinterpreting it as PSK or open.
 func (c ConfigCredentials) Credentials() (Credentials, bool, error) {
 	wifi := c.Wifi
-	var hidden bool
-	if len(c.Provision) > 0 {
-		wifi = initcfg.Wifi{SSID: c.Provision[0].SSID, Passphrase: c.Provision[0].Password}
-		hidden = c.Provision[0].Hidden
-	}
-	if c.GosdToml.SSID != "" {
-		wifi = initcfg.Wifi{SSID: c.GosdToml.SSID, Passphrase: c.GosdToml.Passphrase}
-		hidden = false
+	if c.Card.SSID != "" {
+		wifi = initcfg.Wifi{SSID: c.Card.SSID, Passphrase: c.Card.Passphrase}
 	}
 
 	if wifi.SSID == "" {
 		return Credentials{}, false, nil
 	}
 	if wifi.Passphrase == "" {
-		return Credentials{SSID: wifi.SSID, Open: true, Hidden: hidden}, true, nil
+		return Credentials{SSID: wifi.SSID, Open: true}, true, nil
 	}
 
 	var (
@@ -111,5 +86,5 @@ func (c ConfigCredentials) Credentials() (Credentials, bool, error) {
 	if err != nil {
 		return Credentials{}, false, err
 	}
-	return Credentials{SSID: wifi.SSID, PSK: psk, Hidden: hidden}, true, nil
+	return Credentials{SSID: wifi.SSID, PSK: psk}, true, nil
 }

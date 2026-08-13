@@ -49,7 +49,7 @@ func TestFatalPrintsTheReportAndExitsWithoutReturning(t *testing.T) {
 			Code:    "NO-API-KEY",
 			Doing:   "fetching today's forecast",
 			Problem: "the weather service rejected " + longSecret,
-			Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+			Fix:     "add WEATHER_API_KEY to config/env/ on this card",
 			Detail:  errors.New("401 unauthorized"),
 		})
 		t.Fatal("Fatal returned; it must never return")
@@ -72,7 +72,7 @@ func TestFatalPrintsTheReportAndExitsWithoutReturning(t *testing.T) {
 		"error_code: NO-API-KEY",
 		"## The problem",
 		"the weather service rejected {secret: api-token}",
-		"add WEATHER_API_KEY to gosd.toml on this card",
+		"add WEATHER_API_KEY to config/env/ on this card",
 		"401 unauthorized",
 		"isn't a GoSD device",
 	} {
@@ -227,7 +227,7 @@ func TestTheReportPrintedOffDeviceIsTheWholeDocument(t *testing.T) {
 		Code:    "SENSOR-UNSUPPORTED",
 		Doing:   "reading the greenhouse sensor",
 		Problem: "this build has no driver for a BME280",
-		Fix:     "set sensor = \"dht22\" in gosd.toml on this card",
+		Fix:     "write dht22 into config/env/SENSOR on this card",
 		Detail:  errors.New("open /dev/i2c-1: no such device"),
 	})
 
@@ -236,7 +236,7 @@ func TestTheReportPrintedOffDeviceIsTheWholeDocument(t *testing.T) {
 		"crash report\n",
 		"stopped while reading the greenhouse sensor",
 		"## The problem\n\nthis build has no driver for a BME280",
-		"## The fix\n\nset sensor = \"dht22\" in gosd.toml on this card",
+		"## The fix\n\nwrite dht22 into config/env/SENSOR on this card",
 		"## What to send",
 		"## Technical detail\n\n    open /dev/i2c-1: no such device",
 	} {

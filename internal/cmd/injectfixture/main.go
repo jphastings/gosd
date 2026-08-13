@@ -20,14 +20,13 @@ import (
 	"path/filepath"
 
 	"github.com/jphastings/gosd/internal/configtree"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
 	"github.com/jphastings/gosd/internal/naming"
 )
 
-// bootSizeBytes is enough for gosd.toml, the two placeholders below, and a
-// full config tree - each of whose files costs a FAT cluster of its own.
+// bootSizeBytes is enough for the two placeholders below and a full config
+// tree - each of whose files costs a FAT cluster of its own.
 const bootSizeBytes = 16 * 1024 * 1024
 
 // fixtureAppName stands in for the app a real `gosd build` would be given,
@@ -76,11 +75,7 @@ func run(args []string) error {
 		{Path: "net.cfg", SizeBytes: 2048},
 	}
 
-	gosdToml := gosdtoml.Render(fixtureAppName, true, "", "", gosdtoml.EnvSection{}, gosdtoml.Ingress{})
-
-	bootFiles := map[string]io.Reader{
-		"gosd.toml": bytes.NewReader(gosdToml),
-	}
+	bootFiles := make(map[string]io.Reader)
 	reportRanges := make([]string, 0, len(placeholders)+len(tree.Values))
 	for path, content := range tree.BootFiles() {
 		bootFiles[path] = bytes.NewReader(content)

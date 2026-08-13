@@ -86,7 +86,7 @@ func TestRender(t *testing.T) {
 		{
 			// A declared fault with nothing technical behind it at all.
 			name:   "no-technical-detail",
-			report: Report{Code: "NO-SENSOR", Doing: "reading the temperature", Problem: "The configured sensor isn't one this build supports.", Fix: "Set sensor = \"bme280\" in gosd.toml on this card."},
+			report: Report{Code: "NO-SENSOR", Doing: "reading the temperature", Problem: "The configured sensor isn't one this build supports.", Fix: "Write bme280 into config/env/SENSOR on this card."},
 			ctx:    pi(),
 		},
 		{
@@ -162,7 +162,7 @@ func TestRenderScrubsSecretsFromEveryPartOfTheBody(t *testing.T) {
 		Code:    "GOSD-APP-CRASH",
 		Doing:   "publishing with " + secret,
 		Problem: "the broker rejected " + secret,
-		Fix:     "replace " + secret + " in gosd.toml",
+		Fix:     "replace " + secret + " in config/env/API_TOKEN",
 		Detail:  "auth failed for " + secret,
 	}, ctx)
 
@@ -203,7 +203,7 @@ func TestFoldConsoleTailKeepsTheAppsOwnWordsAndTheTailBoth(t *testing.T) {
 		Code:    "NO-API-KEY",
 		Doing:   "fetching the forecast",
 		Problem: "the weather service rejected our API key",
-		Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+		Fix:     "add WEATHER_API_KEY to config/env/ on this card",
 		Detail:  "401 unauthorized",
 	}
 

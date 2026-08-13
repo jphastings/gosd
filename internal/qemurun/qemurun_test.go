@@ -94,7 +94,7 @@ func TestExtractBootFilesCopiesEveryBootPartitionFile(t *testing.T) {
 		BootFiles: map[string]io.Reader{
 			"Image":              strings.NewReader("fake kernel bytes"),
 			"initramfs.cpio.zst": strings.NewReader("fake initramfs bytes"),
-			"gosd.toml":          strings.NewReader("hostname = \"test\"\n"),
+			"cmdline.txt":        strings.NewReader("console=ttyAMA0\n"),
 		},
 	}); err != nil {
 		t.Fatalf("image.Write: %v", err)
@@ -108,7 +108,7 @@ func TestExtractBootFilesCopiesEveryBootPartitionFile(t *testing.T) {
 	for name, want := range map[string]string{
 		"Image":              "fake kernel bytes",
 		"initramfs.cpio.zst": "fake initramfs bytes",
-		"gosd.toml":          "hostname = \"test\"\n",
+		"cmdline.txt":        "console=ttyAMA0\n",
 	} {
 		got, err := os.ReadFile(filepath.Join(destDir, name))
 		if err != nil {
@@ -145,7 +145,7 @@ func TestRunOnANonQemuVirtImageFailsActionably(t *testing.T) {
 		BootLabel: "test-boot",
 		DataLabel: "test-data",
 		BootFiles: map[string]io.Reader{
-			"gosd.toml": strings.NewReader("hostname = \"test\"\n"),
+			"cmdline.txt": strings.NewReader("console=ttyAMA0\n"),
 		},
 	}); err != nil {
 		t.Fatalf("image.Write: %v", err)

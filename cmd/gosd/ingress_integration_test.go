@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jphastings/gosd/internal/configtree"
 )
 
 // TestBuildIngressCloudflaredEmbedsBinaryAndFlagsConfig is the acceptance
@@ -56,13 +58,18 @@ func TestBuildIngressCloudflaredEmbedsBinaryAndFlagsConfig(t *testing.T) {
 		t.Errorf("config.json = %s, want it to contain %q", configJSON, `"ingressCloudflared":true`)
 	}
 
-	// gosd.toml's [ingress.cloudflared] commented example (bean gosd-7upw)
-	// ships on every image regardless of --ingress - it's the on-device
-	// declaration surface, orthogonal to whether the binary is baked - so
-	// it must still be present here too.
-	gosdToml := string(readBootFile(t, imgPath, "gosd.toml"))
-	if !strings.Contains(gosdToml, "[ingress.cloudflared]") {
-		t.Errorf("gosd.toml = %s, want it to contain the [ingress.cloudflared] example", gosdToml)
+	// The tunnel's own settings ship in the config tree - the on-device
+	// declaration surface - and only for an image that actually carries the
+	// binary, so a card never documents a tunnel its device could not run.
+	token := readBootFile(t, imgPath, "config/ingress/cloudflared/token")
+	if len(token) < configtree.MinValueBytes {
+		t.Errorf("config/ingress/cloudflared/token is %d bytes, want at least its %d-byte reservation", len(token), configtree.MinValueBytes)
+	}
+	if got := configtree.TrimValue(token); got != "" {
+		t.Errorf("config/ingress/cloudflared/token = %q, want it shipped unset", got)
+	}
+	if doc := readBootFile(t, imgPath, "config/ingress/cloudflared/token.explain.md"); len(doc) == 0 {
+		t.Error("config/ingress/cloudflared/token.explain.md is empty; it is the only documentation a card's owner gets")
 	}
 }
 
@@ -151,9 +158,12 @@ func TestBuildIngressTailscaleFunnelEmbedsBinaryAndFlagsConfig(t *testing.T) {
 		t.Errorf("config.json = %s, want it to contain %q", configJSON, `"ingressTailscaleFunnel":true`)
 	}
 
-	gosdToml := string(readBootFile(t, imgPath, "gosd.toml"))
-	if !strings.Contains(gosdToml, "[ingress.tailscale-funnel]") {
-		t.Errorf("gosd.toml = %s, want it to contain the [ingress.tailscale-funnel] example", gosdToml)
+	authkey := readBootFile(t, imgPath, "config/ingress/tailscale-funnel/authkey")
+	if got := configtree.TrimValue(authkey); got != "" {
+		t.Errorf("config/ingress/tailscale-funnel/authkey = %q, want it shipped unset", got)
+	}
+	if doc := readBootFile(t, imgPath, "config/ingress/tailscale-funnel/authkey.explain.md"); len(doc) == 0 {
+		t.Error("config/ingress/tailscale-funnel/authkey.explain.md is empty; it is the only documentation a card's owner gets")
 	}
 }
 

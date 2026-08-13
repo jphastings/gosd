@@ -1,16 +1,17 @@
 // Package tsfunnel implements gosd-init's supervision of a baked-in
 // gosd-tsfunnel shim binary (cmd/gosd-tsfunnel, see epic gosd-65uy),
-// exposing a device's [ingress.tailscale-funnel]-declared HTTP service to
-// the public internet over Tailscale Funnel with zero app code. The shim
+// exposing the HTTP service a device's card declares to the public
+// internet over Tailscale Funnel with zero app code. The shim
 // itself is a tiny tsnet-based process: it holds the tailnet node identity,
 // configures Funnel, and reverse-proxies to the local port this package's
-// caller resolved from gosd.toml. This package's own job stops at deciding
+// caller read off the card. This package's own job stops at deciding
 // whether the shim should run at all, gating its start on network/time
 // readiness, preflighting its state directory, and keeping it running.
 //
 // The node's whole tailnet identity — private key, tailnet membership, the
 // public *.ts.net hostname it was assigned — lives at StateDir, on the data
-// partition (epic decision 3), not in gosd.toml and not in this package.
+// partition (epic decision 3), not on the boot partition and not in this
+// package.
 // Losing that directory means a new node identity and a new public URL, so
 // StateDir must exist and be writable before the shim ever starts; Run
 // preflights it explicitly (see the state-dir preflight step below) so a
@@ -48,14 +49,14 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
 // logPrefix is prepended to every line this package logs, including the
 // shim's relayed stdout/stderr (see runOnce) — the gosd-o68e wiring bean's
 // locked choice, matching the "tailscale-funnel" name used everywhere else
-// this feature is user-facing (the --ingress flag value, the gosd.toml
-// section name), rather than the shorter "tsfunnel" package/binary name.
+// this feature is user-facing (the --ingress flag value, the card's own
+// settings directory), rather than the shorter "tsfunnel" package/binary
+// name.
 const logPrefix = "tailscale-funnel: "
 
 // StateDir is where the shim's tsnet state — including the node's private
@@ -167,12 +168,12 @@ type Options struct {
 	// baked" bit lives in config.json, not on disk).
 	Baked bool
 
-	// Config is the already-parsed [ingress.tailscale-funnel] section of
-	// gosd.toml.
-	Config gosdtoml.IngressTailscaleFunnel
+	// Config is the Tailscale Funnel this device's card declares, read off
+	// it as text (see Config).
+	Config Config
 
-	// Hostname is the device's own effective hostname (gosdtoml.Config's
-	// top-level Hostname, as resolved elsewhere at boot — the same value
+	// Hostname is the device's own effective hostname (the card's own
+	// hostname setting, as resolved elsewhere at boot — the same value
 	// mdnsresponder.Options.Hostname is wired from). resolveMode uses it
 	// as the default public hostname when Config.Hostname is empty (the
 	// locked "hostname defaults to the device hostname" decision).

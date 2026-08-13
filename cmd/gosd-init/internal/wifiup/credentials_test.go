@@ -5,9 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
-	"github.com/jphastings/gosd/internal/provision"
 )
 
 func TestConfigCredentialsNoSSIDMeansNotConfigured(t *testing.T) {
@@ -72,22 +70,22 @@ func TestConfigCredentialsPreHashedHexPSKIsUsedDirectly(t *testing.T) {
 	}
 }
 
-func TestConfigCredentialsGosdTomlTakesPrecedenceOverConfigJSON(t *testing.T) {
+func TestConfigCredentialsCardTakesPrecedenceOverConfigJSON(t *testing.T) {
 	src := ConfigCredentials{
-		Wifi:     initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
-		GosdToml: gosdtoml.Wifi{SSID: "hand-edited-network", Passphrase: "hand-edited-password"},
+		Wifi: initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
+		Card: Wifi{SSID: "card-network", Passphrase: "card-password"},
 	}
 	creds, ok, err := src.Credentials()
 	if err != nil {
 		t.Fatalf("Credentials() error = %v", err)
 	}
-	want, _ := DerivePSK("hand-edited-password", "hand-edited-network")
-	if !ok || creds.SSID != "hand-edited-network" || creds.PSK != want {
-		t.Errorf("Credentials() = %+v, ok=%v, want the gosd.toml network to win", creds, ok)
+	want, _ := DerivePSK("card-password", "card-network")
+	if !ok || creds.SSID != "card-network" || creds.PSK != want {
+		t.Errorf("Credentials() = %+v, ok=%v, want the network named on the card to win", creds, ok)
 	}
 }
 
-func TestConfigCredentialsFallsBackToConfigJSONWhenGosdTomlHasNoSSID(t *testing.T) {
+func TestConfigCredentialsFallsBackToConfigJSONWhenTheCardNamesNoNetwork(t *testing.T) {
 	src := ConfigCredentials{
 		Wifi: initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
 	}
@@ -101,60 +99,8 @@ func TestConfigCredentialsFallsBackToConfigJSONWhenGosdTomlHasNoSSID(t *testing.
 	}
 }
 
-func TestConfigCredentialsProvisionTakesPrecedenceOverConfigJSON(t *testing.T) {
-	src := ConfigCredentials{
-		Wifi:      initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
-		Provision: []provision.WifiNetwork{{SSID: "cloud-init-network", Password: "cloud-init-password"}},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	want, _ := DerivePSK("cloud-init-password", "cloud-init-network")
-	if !ok || creds.SSID != "cloud-init-network" || creds.PSK != want {
-		t.Errorf("Credentials() = %+v, ok=%v, want the cloud-init network to win over config.json", creds, ok)
-	}
-}
-
-func TestConfigCredentialsGosdTomlTakesPrecedenceOverProvision(t *testing.T) {
-	src := ConfigCredentials{
-		Wifi:      initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"},
-		Provision: []provision.WifiNetwork{{SSID: "cloud-init-network", Password: "cloud-init-password"}},
-		GosdToml:  gosdtoml.Wifi{SSID: "hand-edited-network", Passphrase: "hand-edited-password"},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	want, _ := DerivePSK("hand-edited-password", "hand-edited-network")
-	if !ok || creds.SSID != "hand-edited-network" || creds.PSK != want {
-		t.Errorf("Credentials() = %+v, ok=%v, want the gosd.toml network to win over cloud-init", creds, ok)
-	}
-}
-
-func TestConfigCredentialsProvisionOnlyUsesFirstNetwork(t *testing.T) {
-	// gosd-init only ever joins one WiFi network; a network-config naming
-	// several access points must not be treated as an error, but only the
-	// first is ever used.
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{
-			{SSID: "first-network", Password: "first-password"},
-			{SSID: "second-network", Password: "second-password"},
-		},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	if !ok || creds.SSID != "first-network" {
-		t.Errorf("Credentials().SSID = %q, ok=%v, want %q (the first entry)", creds.SSID, ok, "first-network")
-	}
-}
-
-func TestConfigCredentialsProvisionOpenNetworkHasNoPassword(t *testing.T) {
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{{SSID: "open-guest-network"}},
-	}
+func TestConfigCredentialsCardOpenNetworkHasNoPassword(t *testing.T) {
+	src := ConfigCredentials{Card: Wifi{SSID: "open-guest-network"}}
 	creds, ok, err := src.Credentials()
 	if err != nil {
 		t.Fatalf("Credentials() error = %v", err)
@@ -164,79 +110,21 @@ func TestConfigCredentialsProvisionOpenNetworkHasNoPassword(t *testing.T) {
 	}
 }
 
-func TestConfigCredentialsProvisionPreHashedHexPSKIsUsedDirectly(t *testing.T) {
+func TestConfigCredentialsCardPreHashedHexPSKIsUsedDirectly(t *testing.T) {
 	// This is the shape Raspberry Pi Imager always writes (see
-	// docs/provisioning-formats.md §2) — proving it's accepted directly,
-	// not re-derived, is what lets internal/provision pass the value
-	// through unexamined rather than duplicating this detection.
+	// docs/provisioning-formats.md §2), and its wizard's answers reach the
+	// card as ordinary settings — so a pre-hashed key must be accepted
+	// as-is here, not re-derived, wherever the card got it from.
 	derived, _ := DerivePSK("some-passphrase-nobody-should-see-again", "office")
 	pskHex := hex.EncodeToString(derived[:])
 
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{{SSID: "office", Password: pskHex}},
-	}
+	src := ConfigCredentials{Card: Wifi{SSID: "office", Passphrase: pskHex}}
 	creds, ok, err := src.Credentials()
 	if err != nil {
 		t.Fatalf("Credentials() error = %v", err)
 	}
 	if !ok || creds.Open || creds.PSK != derived {
 		t.Errorf("Credentials() = %+v, ok=%v, want the pre-hashed PSK used as-is", creds, ok)
-	}
-}
-
-func TestConfigCredentialsProvisionHiddenNetworkSetsHidden(t *testing.T) {
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{{SSID: "shy-network", Password: "shy-password", Hidden: true}},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	if !ok || !creds.Hidden || creds.SSID != "shy-network" {
-		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=true for %q", creds, ok, "shy-network")
-	}
-}
-
-func TestConfigCredentialsProvisionNonHiddenNetworkLeavesHiddenFalse(t *testing.T) {
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{{SSID: "visible-network", Password: "visible-password"}},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	if !ok || creds.Hidden {
-		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=false", creds, ok)
-	}
-}
-
-func TestConfigCredentialsGosdTomlOverridingHiddenProvisionClearsHidden(t *testing.T) {
-	// gosd.toml's schema has no hidden field (locked), and it takes
-	// precedence over cloud-init provisioning — so once it wins, the
-	// hidden-ness of the network it replaced must not leak through.
-	src := ConfigCredentials{
-		Provision: []provision.WifiNetwork{{SSID: "shy-network", Password: "shy-password", Hidden: true}},
-		GosdToml:  gosdtoml.Wifi{SSID: "hand-edited-network", Passphrase: "hand-edited-password"},
-	}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	if !ok || creds.SSID != "hand-edited-network" || creds.Hidden {
-		t.Errorf("Credentials() = %+v, ok=%v, want the gosd.toml network with Hidden=false", creds, ok)
-	}
-}
-
-func TestConfigCredentialsConfigJSONNeverHidden(t *testing.T) {
-	// initcfg.Wifi's schema has no hidden field (locked): config.json can
-	// never mark a network hidden, regardless of what else is set.
-	src := ConfigCredentials{Wifi: initcfg.Wifi{SSID: "baked-in-network", Passphrase: "baked-in-password"}}
-	creds, ok, err := src.Credentials()
-	if err != nil {
-		t.Fatalf("Credentials() error = %v", err)
-	}
-	if !ok || creds.Hidden {
-		t.Errorf("Credentials() = %+v, ok=%v, want Hidden=false", creds, ok)
 	}
 }
 

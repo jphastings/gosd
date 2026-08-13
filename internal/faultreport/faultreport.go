@@ -27,7 +27,7 @@ import (
 
 // FileName is the report's name at the root of the boot partition. It is
 // deliberately loud and sorts near the top of a FAT root otherwise full of
-// kernel8.img / config.txt / gosd.toml.
+// kernel8.img / config.txt / config/.
 const FileName = "LAST_FATAL_ERROR.md"
 
 // LegacyFileName is what this file was called before gosd-pun9, when it was
@@ -67,7 +67,7 @@ type Report struct {
 	// Problem is a short human explanation of what went wrong.
 	Problem string
 	// Fix is a concrete instruction the owner can act on ("add
-	// WEATHER_API_KEY to gosd.toml on this card"). Empty is a legitimate
+	// WEATHER_API_KEY to config/env/ on this card"). Empty is a legitimate
 	// answer — the report then points at Context.SupportURL, or says
 	// plainly that there is nowhere to point.
 	Fix string

@@ -53,7 +53,7 @@ var blueMarbleJPEG []byte
 var blackMarbleJPEG []byte
 
 // defaultNoradID is the satellite tracked when SATTRACK_NORAD_ID isn't
-// set (via the environment or gosd.toml's [env] table).
+// set (via the environment or the card's config/env/ directory).
 const defaultNoradID = "68498"
 
 // clockPlausibleAfter guards SGP4 propagation against the epoch clock a

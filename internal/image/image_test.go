@@ -31,7 +31,7 @@ const (
 func TestWriteProducesAReadableImage(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
 
-	topLevel := []byte("gosd.toml contents\n")
+	topLevel := []byte("cmdline.txt contents\n")
 	nested := []byte("nested boot script contents\n")
 	raw := []byte("raw-bootloader-payload")
 
@@ -39,7 +39,7 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 		BootLabel: testBootLabel,
 		DataLabel: testDataLabel,
 		BootFiles: map[string]io.Reader{
-			"gosd.toml":           bytes.NewReader(topLevel),
+			"cmdline.txt":         bytes.NewReader(topLevel),
 			"nested/dir/boot.scr": bytes.NewReader(nested),
 		},
 		RawWrites: []image.RawWrite{
@@ -78,12 +78,12 @@ func TestWriteProducesAReadableImage(t *testing.T) {
 		t.Errorf("boot partition label = %q, want %q (Spec.BootLabel, verbatim)", label, testBootLabel)
 	}
 
-	gotTop, err := fs.ReadFile("gosd.toml")
+	gotTop, err := fs.ReadFile("cmdline.txt")
 	if err != nil {
-		t.Fatalf("reading gosd.toml back failed: %v", err)
+		t.Fatalf("reading cmdline.txt back failed: %v", err)
 	}
 	if !bytes.Equal(gotTop, topLevel) {
-		t.Errorf("gosd.toml contents = %q, want %q", gotTop, topLevel)
+		t.Errorf("cmdline.txt contents = %q, want %q", gotTop, topLevel)
 	}
 
 	gotNested, err := fs.ReadFile("nested/dir/boot.scr")
@@ -118,7 +118,7 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 	_, err := image.Write(imgPath, image.Spec{
 		BootLabel:     testBootLabel,
 		DataLabel:     testDataLabel,
-		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
+		BootFiles:     map[string]io.Reader{"cmdline.txt": bytes.NewReader([]byte("contents\n"))},
 		DataSizeBytes: dataSizeBytes,
 	})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestWriteWithDataSizeAddsASecondFat32Partition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFilesystem(1) failed: %v", err)
 	}
-	if got, err := fs1.ReadFile("gosd.toml"); err != nil || string(got) != "contents\n" {
+	if got, err := fs1.ReadFile("cmdline.txt"); err != nil || string(got) != "contents\n" {
 		t.Errorf("boot partition contents = (%q, %v), want (\"contents\\n\", nil)", got, err)
 	}
 }
@@ -444,7 +444,7 @@ func TestWriteWithBootSizeMovesTheDataPartitionOffset(t *testing.T) {
 	report, err := image.Write(imgPath, image.Spec{
 		BootLabel:     testBootLabel,
 		DataLabel:     testDataLabel,
-		BootFiles:     map[string]io.Reader{"gosd.toml": bytes.NewReader([]byte("contents\n"))},
+		BootFiles:     map[string]io.Reader{"cmdline.txt": bytes.NewReader([]byte("contents\n"))},
 		BootSizeBytes: bootSizeBytes,
 		DataSizeBytes: dataSizeBytes,
 	})
@@ -498,10 +498,10 @@ func TestWriteReportsExactAbsoluteFileRanges(t *testing.T) {
 		BootLabel: testBootLabel,
 		DataLabel: testDataLabel,
 		BootFiles: map[string]io.Reader{
-			"gosd.toml":     strings.NewReader("hostname = \"x\"\n"),
+			"cmdline.txt":   strings.NewReader("console=ttyAMA0\n"),
 			placeholderName: bytes.NewReader(original),
 		},
-		ReportRanges: []string{placeholderName, "gosd.toml"},
+		ReportRanges: []string{placeholderName, "cmdline.txt"},
 	})
 	if err != nil {
 		t.Fatalf("Write() failed: %v", err)
@@ -516,12 +516,12 @@ func TestWriteReportsExactAbsoluteFileRanges(t *testing.T) {
 	}
 
 	// Two files can never share clusters on a consistent FAT volume, so
-	// the placeholder's reported ranges must be disjoint from gosd.toml's
+	// the placeholder's reported ranges must be disjoint from cmdline.txt's
 	// - the injection splice must not be able to clobber a neighbor.
 	for _, pr := range ranges {
-		for _, gr := range report.FileRanges["gosd.toml"] {
+		for _, gr := range report.FileRanges["cmdline.txt"] {
 			if pr.OffsetBytes < gr.OffsetBytes+gr.LengthBytes && gr.OffsetBytes < pr.OffsetBytes+pr.LengthBytes {
-				t.Errorf("placeholder range [%d, %d) overlaps gosd.toml's range [%d, %d)",
+				t.Errorf("placeholder range [%d, %d) overlaps cmdline.txt's range [%d, %d)",
 					pr.OffsetBytes, pr.OffsetBytes+pr.LengthBytes, gr.OffsetBytes, gr.OffsetBytes+gr.LengthBytes)
 			}
 		}
@@ -594,7 +594,7 @@ func TestWriteRejectsReportRangesPathNotInBootFiles(t *testing.T) {
 	_, err := image.Write(imgPath, image.Spec{
 		BootLabel:    testBootLabel,
 		DataLabel:    testDataLabel,
-		BootFiles:    map[string]io.Reader{"gosd.toml": strings.NewReader("hostname = \"x\"\n")},
+		BootFiles:    map[string]io.Reader{"cmdline.txt": strings.NewReader("console=ttyAMA0\n")},
 		ReportRanges: []string{"not-a-boot-file.yaml"},
 	})
 	if err == nil {

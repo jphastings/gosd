@@ -5,7 +5,7 @@
 // consumes it.
 //
 // Parsing mirrors internal/kernelconfig's strictness idiom (bean gosd-hkp7):
-// this is a developer-authored build input, not gosd.toml, so any key
+// this is a developer-authored build input, not a setting on a card, so any key
 // Parse doesn't recognize - anywhere in the file - is an error naming the
 // offending key, not silently ignored.
 package extconfig

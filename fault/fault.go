@@ -89,7 +89,7 @@ type Report struct {
 	// weather service rejected our API key".
 	Problem string
 	// Fix is a concrete instruction its reader can act on: "add
-	// WEATHER_API_KEY to gosd.toml on this card". Leave it empty when
+	// WEATHER_API_KEY to config/env/ on this card". Leave it empty when
 	// there genuinely isn't one — the report then points at the
 	// --support-url baked into the image instead of inventing advice.
 	Fix string

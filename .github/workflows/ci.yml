@@ -305,8 +305,8 @@ jobs:
           fi
           echo "PL031 read path OK: kernel HCTOSYS seeded the boot clock to $year, straight from the host-seeded RTC"
 
-      # gosd-66ax: with --ingress cloudflared baked in but no
-      # [ingress.cloudflared] section in gosd.toml, cloudflared's resolveMode
+      # gosd-66ax: with --ingress cloudflared baked in but nothing set in
+      # the card's config/ingress/cloudflared/, cloudflared's resolveMode
       # must log its one actionable "baked but not configured" line and
       # nothing else - never start the binary, never loop. A dummy-token
       # supervisor-loop assertion (auth failure against the real Cloudflare
@@ -320,7 +320,7 @@ jobs:
           mkdir -p dist
           go build -o dist/gosd-cli ./cmd/gosd
 
-          expected="cloudflared: binary is baked into this image, but [ingress.cloudflared] isn't configured in gosd.toml; nothing to do"
+          expected="cloudflared: binary is baked into this image, but nothing is set in config/ingress/cloudflared; nothing to do"
           ./dist/gosd-cli run ./examples/hello --ingress cloudflared > cloudflared.log 2>&1 &
           run_pid=$!
 
@@ -349,8 +349,8 @@ jobs:
             exit 1
           fi
 
-      # gosd-o68e: with --ingress tailscale-funnel baked in but no
-      # [ingress.tailscale-funnel] section in gosd.toml, tsfunnel's own
+      # gosd-o68e: with --ingress tailscale-funnel baked in but nothing set
+      # in the card's config/ingress/tailscale-funnel/, tsfunnel's own
       # resolveMode must log its one actionable "baked but not configured"
       # line and nothing else - never start the shim, never loop. --data-size
       # is required here: tailscale-funnel refuses to build with no data
@@ -361,17 +361,17 @@ jobs:
       # gosd-66ax gave for cloudflared's equivalent case above (a genuine
       # network expectation beyond what this job otherwise needs, and an
       # upstream error-wording detail this repo doesn't control) plus a
-      # stronger one specific to this agent: gosd.toml's ingress secrets are
-      # never baked at build/run time by design
-      # (internal/pipeline/pipeline.go's "never a real value to bake here"),
-      # so reaching that code path at all would need new image-editing
-      # tooling this bean doesn't add. Real invalid-authkey behavior (error
+      # stronger one specific to this agent: an ingress secret is never
+      # baked at build/run time by design - the card's
+      # config/ingress/tailscale-funnel/authkey ships empty - so reaching
+      # that code path at all would need new image-editing tooling this bean
+      # doesn't add. Real invalid-authkey behavior (error
       # vs hang, bounded by --register-timeout) is uncharacterized until TS-8
       # (bean gosd-79v8) - real tunnel establishment is bench-only, same as
       # cloudflared's.
       - name: "gosd run --ingress tailscale-funnel: baked-but-not-configured logs exactly once"
         run: |
-          expected="tailscale-funnel: binary is baked into this image, but [ingress.tailscale-funnel] isn't configured in gosd.toml; nothing to do"
+          expected="tailscale-funnel: binary is baked into this image, but nothing is set in config/ingress/tailscale-funnel; nothing to do"
           ./dist/gosd-cli run ./examples/hello --ingress tailscale-funnel --data-size 64MiB > tsfunnel.log 2>&1 &
           run_pid=$!
 

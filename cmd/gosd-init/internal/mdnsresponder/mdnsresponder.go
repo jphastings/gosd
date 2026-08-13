@@ -70,7 +70,7 @@ type Deps struct {
 // Options holds the per-boot behavior knobs for the mDNS responder.
 type Options struct {
 	// Hostname is the device's resolved hostname (config.json, cmdline,
-	// and gosd.toml overrides already applied) — Run answers for
+	// and the card's own hostname setting already applied) — Run answers for
 	// Hostname+".local".
 	Hostname string
 

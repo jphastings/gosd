@@ -56,7 +56,7 @@ var ErrNoDisk = errors.New("no usable disk found")
 // volume with a different label, or a filesystem GoSD cannot read — and
 // destructive was false, so FormatAndMount left it untouched instead of wiping
 // it. Callers that want to offer the user a way to consent (e.g. an app-env var
-// read from gosd.toml's [env] table) can match this with errors.Is and retry
+// read from the card's config/env/ settings) can match this with errors.Is and retry
 // with destructive=true once they have it.
 var ErrRefusedFormat = blockmount.ErrRefusedFormat
 

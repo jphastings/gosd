@@ -4,7 +4,7 @@
 // the request's remote address, and — when the image has a data
 // partition — a boot counter persisted across reboots.
 //
-// It also demonstrates gosd.toml's [env] app environment variables (see
+// It also demonstrates the card's config/env/ app environment variables (see
 // docs/runtime.md's "App environment variables" section): an optional
 // GREETING var, read with a plain os.Getenv, is included in the startup
 // log and the HTTP response when set, and HELLO_FATAL raises a deliberate
@@ -67,7 +67,7 @@ func main() {
 
 // demonstrateCrashReport raises a deliberate fatal fault so the whole
 // crash-report path can be exercised on real hardware without writing any
-// code: add HELLO_FATAL to gosd.toml's [env] table on the card, power the
+// code: create config/env/HELLO_FATAL on the card, power the
 // device on, and it writes LAST_FATAL_ERROR.md to the boot partition and
 // stays down until it is power-cycled. Off a device (go run ./examples/hello
 // with HELLO_FATAL set) the same report is printed to stderr instead.
@@ -80,14 +80,14 @@ func demonstrateCrashReport(reason string) {
 		Code:    "HELLO-DEMO-FATAL",
 		Doing:   "showing what a crash report looks like",
 		Problem: "Nothing is actually wrong. This device was asked to demonstrate the report a GoSD app writes when it hits a problem only a person can fix.",
-		Fix:     "Delete the HELLO_FATAL line from gosd.toml on this card, then turn the device off and on again.",
+		Fix:     "Empty the config/env/HELLO_FATAL file on this card, then turn the device off and on again.",
 		Detail:  fmt.Errorf("HELLO_FATAL=%q", reason),
 	})
 }
 
 // greetingSuffix turns the optional GREETING env var into a log/response
-// suffix: empty (the var unset, per gosd.toml [env]'s "missing is fine"
-// rule) yields "", so hello's output is byte-for-byte unchanged from
+// suffix: empty (the var unset, which an empty or absent config/env/GREETING
+// file means) yields "", so hello's output is byte-for-byte unchanged from
 // before GREETING existed unless someone sets it.
 func greetingSuffix(greeting string) string {
 	if greeting == "" {

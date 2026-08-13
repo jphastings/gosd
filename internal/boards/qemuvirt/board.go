@@ -9,9 +9,9 @@
 // on-disk bootloader to hand off to: the runner invokes qemu with
 // -kernel/-initrd directly, so this board needs no config.txt or
 // extlinux.conf. The FAT boot partition still carries the kernel image,
-// initramfs, and gosd.toml (added by the build pipeline for every board), so
-// the same provisioning story (gosd.toml, cloud-init files) stays testable
-// under qemu exactly as it works on real hardware.
+// initramfs, and the config tree (added by the build pipeline for every
+// board), so the same provisioning story (settings on the card, cloud-init
+// files) stays testable under qemu exactly as it works on real hardware.
 //
 // SD-card access on this machine is virtio-blk, which the kernel exposes as
 // /dev/vda rather than /dev/mmcblkN; see gosd-init's boot-partition and
@@ -78,8 +78,8 @@ func (board) Artifacts() []boards.ArtifactRef {
 // build pipeline has already built into art.Initramfs. No config.txt or
 // extlinux.conf - qemu is invoked with -kernel/-initrd directly, so there's
 // no on-device bootloader to configure (see the package doc comment).
-// gosd.toml is added by the build pipeline for every board, so it still
-// lands at the FAT root here too.
+// The config tree is added by the build pipeline for every board, so it
+// still lands at the FAT root here too.
 func (board) BootFiles(_ boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 2)
 

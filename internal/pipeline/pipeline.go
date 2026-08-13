@@ -21,7 +21,6 @@ import (
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -147,9 +146,9 @@ type Options struct {
 	// config.json's DataFlush field: whether the data partition (and any
 	// emmc/disk vfat mount) uses the vfat "flush" mount option by default.
 	// Default false (see internal/initcfg.Config.DataFlush and gosd-9m1k);
-	// overridable per-device via gosd.toml's data_flush key at boot, which
-	// is why this is a plain baked default rather than anything the card
-	// renders — gosd-init computes the effective setting itself.
+	// overridable per-device via the card's own data_flush setting at boot,
+	// which is why this is a plain baked default — gosd-init computes the
+	// effective setting itself.
 	DataFlush bool
 
 	// DataFilesystem is gosd build --data-filesystem's resolved value:
@@ -209,7 +208,7 @@ type Options struct {
 
 	// Placeholders are `gosd build --placeholder <path>=<size>` entries:
 	// rendered deterministically (see inject.Render), they land at the
-	// FAT root of the boot partition alongside gosd.toml, are covered by
+	// FAT root of the boot partition alongside the config tree, are covered by
 	// the image identity exactly like every other FAT-root file, and their
 	// content byte ranges are reported back in the image.WriteReport's
 	// FileRanges - the raw material for cmd/gosd's <image>.inject.json
@@ -289,23 +288,11 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	}
 	defer closeReaders(bootFiles)
 
-	// gosd.toml is common to every board (unlike config.txt/extlinux.conf,
-	// which are board-specific), so it's added here rather than inside any
-	// Board.BootFiles implementation: every board gets it at the FAT root,
-	// before the read-and-hash loop below, so it's covered by the image
-	// identity like every other FAT-root file.
-	//
-	// Nothing is baked into it: settings live in the config tree, so it
-	// renders as the commented-out examples a card nobody has edited shows.
-	// Its hostname line stays commented for the reason it always did - so an
-	// Imager wizard's cloud-init hostname isn't shadowed by a default (bean
-	// gosd-4hz1).
-	gosdToml := gosdtoml.Render(opts.Config.Hostname, false, "", "", gosdtoml.EnvSection{}, gosdtoml.Ingress{})
-	bootFiles["gosd.toml"] = bytes.NewReader(gosdToml)
-
-	// The config tree lands at the FAT root next to gosd.toml, one file per
-	// setting, and each of its value files is reported back as an
-	// injectable region: padding is the reservation, so the bytes a
+	// The config tree is common to every board (unlike
+	// config.txt/extlinux.conf, which are board-specific), so it's added
+	// here rather than inside any Board.BootFiles implementation: one file
+	// per setting at the FAT root, each value file reported back as an
+	// injectable region, since padding is the reservation and the bytes a
 	// provisioning tool overwrites in the finished .img are exactly the
 	// bytes written here (see internal/configtree). Added before the
 	// read-and-hash loop below so the whole tree is covered by the image
@@ -319,11 +306,11 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		bootFiles[configtree.Dir+"/"+d.Path] = bytes.NewReader(d.Content)
 	}
 
-	// opts.Placeholders land at the FAT root the same way, right after
-	// gosd.toml and still before the read-and-hash loop below, so they're
+	// opts.Placeholders land at the FAT root the same way, right after the
+	// config tree and still before the read-and-hash loop below, so they're
 	// covered by the image identity exactly like every other FAT-root
 	// file. FAT is case-insensitive, so a placeholder path colliding with
-	// any existing boot file (gosd.toml included) or an earlier
+	// any existing boot file (a config tree one included) or an earlier
 	// placeholder is refused case-insensitively — two directory entries
 	// differing only by case can't coexist on the card anyway. Checking
 	// against bootFiles itself (mutated as the loop adds each rendered
@@ -432,8 +419,8 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		// The static localhost/loopback lines only; gosd-init appends its
 		// own 127.0.1.1 <hostname> line once the hostname settles at boot
 		// (see hostsfile.Write and cmd/gosd-init/internal/boot/sequence.go)
-		// — the hostname isn't known here, and gosd.toml/cloud-init can
-		// still change it after this image is built.
+		// — the hostname isn't known here, and the card's own hostname
+		// setting can still change it after this image is built.
 		initramfs.File{Path: hostsfile.Path, Content: strings.NewReader(hostsfile.Static()), Mode: hostsFileMode},
 	)
 	for name, data := range firmwareBytes {

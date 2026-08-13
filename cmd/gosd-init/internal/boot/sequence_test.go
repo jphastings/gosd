@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
-	"github.com/jphastings/gosd/cmd/gosd-init/internal/provsnapshot"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultreport"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
@@ -199,7 +201,7 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d); clock.Sleep(d) },
 		Now:         clock.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
+		StartNetworking: func(cfg initcfg.Config, config cardconfig.Tree, log func(string, ...any)) {
 			close(networkingStarted)
 		},
 	}
@@ -219,7 +221,7 @@ func TestRunStartsNetworkingWithoutBlockingAppStart(t *testing.T) {
 
 func TestRunProbesOnlyTheBootdevDiskForGosdBoot(t *testing.T) {
 	// The gosd-vzk2 repro: a stale GoSD image on eMMC (mmcblk0) and a fresh
-	// one on SD (mmcblk1) both mount as FAT and both carry gosd.toml, so
+	// one on SD (mmcblk1) both mount as FAT and both carry a config tree, so
 	// device-name order alone would pick the stale eMMC. With gosd.bootdev
 	// naming the booted SD disk, only its partition may ever be probed.
 	mounter := &fakeMounter{}
@@ -306,9 +308,9 @@ func TestRunProbesAllCandidatesWhenBootdevMatchesNothing(t *testing.T) {
 	}
 }
 
-func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
-	// gosd.toml's hostname must win over config.json's, and take effect
-	// via a second SetHostname call, since gosd.toml can only be read
+func TestRunReappliesHostnameFromTheCardAfterBootMount(t *testing.T) {
+	// A hostname on the card must win over config.json's, and take effect
+	// via a second SetHostname call, since the config tree can only be read
 	// after the boot partition is mounted (step 5) — after step 4 already
 	// applied config.json's hostname.
 	mounter := &fakeMounter{}
@@ -333,12 +335,10 @@ func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"hostname": "hand-edited-name"}),
+		Sleep:          func(d time.Duration) { clock.Sleep(d) },
+		Now:            clock.Now,
 	}
 	opts := testOptions()
 	opts.Stop = stop
@@ -351,15 +351,14 @@ func TestRunReappliesHostnameFromGosdTomlAfterBootMount(t *testing.T) {
 	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
 		t.Errorf("SetHostname calls = %v, want %v", hostname.set, wantCalls)
 	}
-	if !strings.Contains(console.String(), "gosd.toml applied") {
-		t.Errorf("console output missing gosd.toml re-apply log line: %q", console.String())
+	if !strings.Contains(console.String(), "config/hostname applied") {
+		t.Errorf("console output missing the config/hostname re-apply log line: %q", console.String())
 	}
 }
-
-func TestRunFallsBackToConfigJSONWhenGosdTomlFailsToParse(t *testing.T) {
-	// A hand-editing typo in gosd.toml must never crash boot: Run logs a
-	// warning and keeps config.json's hostname.
-	console := &bytes.Buffer{}
+func TestRunKeepsTheBakedHostnameWhenTheCardNamesNone(t *testing.T) {
+	// An empty hostname file is the ordinary state of a card nobody has
+	// edited: the name the image was built with stands, and nothing is
+	// re-applied over it.
 	hostname := &fakeHostname{}
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
@@ -375,36 +374,31 @@ func TestRunFallsBackToConfigJSONWhenGosdTomlFailsToParse(t *testing.T) {
 		AppStarter:  appStarter,
 		Reaper:      fakeReaper{},
 		Rebooter:    &fakeRebooter{},
-		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
 		FallbackLog: func(string, ...any) {},
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) { return gosdtoml.Config{}, nil, errors.New("garbage TOML") },
-		Sleep:        func(d time.Duration) { clock.Sleep(d) },
-		Now:          clock.Now,
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"hostname": ""}),
+		Sleep:          func(d time.Duration) { clock.Sleep(d) },
+		Now:            clock.Now,
 	}
 	opts := testOptions()
 	opts.Stop = stop
 
 	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil (a broken gosd.toml is not fatal)", err)
+		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantCalls := []string{"baked-in-name", "baked-in-name"}
-	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
-		t.Errorf("SetHostname calls = %v, want %v (falls back to config.json both times)", hostname.set, wantCalls)
-	}
-	if !strings.Contains(console.String(), "reading gosd.toml failed") {
-		t.Errorf("console output missing gosd.toml warning log line: %q", console.String())
+	if want := []string{"baked-in-name"}; !slices.Equal(hostname.set, want) {
+		t.Errorf("SetHostname calls = %v, want %v (config.json's name, applied once)", hostname.set, want)
 	}
 }
-
-func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
+func TestRunPassesTheCardsSettingsToStartNetworking(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
-	gosdTomlReceived := make(chan gosdtoml.Config, 1)
+	configReceived := make(chan cardconfig.Tree, 1)
 
 	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
 		close(stop)
@@ -412,22 +406,20 @@ func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
 	})
 
 	deps := Deps{
-		Mounter:     &fakeMounter{},
-		Hostname:    &fakeHostname{},
-		AppStarter:  appStarter,
-		Reaper:      fakeReaper{},
-		Rebooter:    &fakeRebooter{},
-		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog: func(string, ...any) {},
-		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{Wifi: gosdtoml.Wifi{SSID: "hand-edited"}}, nil, nil
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
-			gosdTomlReceived <- gosdToml
+		Mounter:        &fakeMounter{},
+		Hostname:       &fakeHostname{},
+		AppStarter:     appStarter,
+		Reaper:         fakeReaper{},
+		Rebooter:       &fakeRebooter{},
+		OpenConsole:    func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:    func(string, ...any) {},
+		ReadConfig:     func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"wifi/ssid": "hand-edited"}),
+		Sleep:          func(d time.Duration) { clock.Sleep(d) },
+		Now:            clock.Now,
+		StartNetworking: func(cfg initcfg.Config, config cardconfig.Tree, log func(string, ...any)) {
+			configReceived <- config
 		},
 	}
 	opts := testOptions()
@@ -438,19 +430,23 @@ func TestRunPassesGosdTomlToStartNetworking(t *testing.T) {
 	}
 
 	select {
-	case gotGosdToml := <-gosdTomlReceived:
-		if gotGosdToml.Wifi.SSID != "hand-edited" {
-			t.Errorf("StartNetworking got gosdToml.Wifi.SSID = %q, want %q", gotGosdToml.Wifi.SSID, "hand-edited")
+	case got := <-configReceived:
+		if got.Get("wifi/ssid") != "hand-edited" {
+			t.Errorf("StartNetworking got wifi/ssid = %q, want %q", got.Get("wifi/ssid"), "hand-edited")
 		}
 	case <-time.After(time.Second):
 		t.Error("StartNetworking was never called")
 	}
 }
+func TestRunConsumesACloudInitSeedIntoTheConfigTree(t *testing.T) {
+	// The locked ordering (epic gosd-rw6n): the seed is deleted, durably,
+	// BEFORE its values are written into the tree. The two read-write
+	// windows below are the two points a power cut can freeze the card at,
+	// so what each one leaves behind is the whole behaviour: never a card
+	// that still holds a seed and has already been written to.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "user-data"), "hostname: cloud-init-name\n")
 
-func TestRunAppliesCloudInitHostnameWhenGosdTomlHasNone(t *testing.T) {
-	// Precedence: gosd.toml > cloud-init > config.json. With no gosd.toml
-	// hostname (here: no gosd.toml at all), cloud-init's user-data must
-	// still win over the baked-in config.json value.
 	hostname := &fakeHostname{}
 	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
@@ -461,6 +457,7 @@ func TestRunAppliesCloudInitHostnameWhenGosdTomlHasNone(t *testing.T) {
 		return 1, nil
 	})
 
+	var windows []string
 	deps := Deps{
 		Mounter:     &fakeMounter{},
 		Hostname:    hostname,
@@ -472,9 +469,15 @@ func TestRunAppliesCloudInitHostnameWhenGosdTomlHasNone(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(nil),
 		ReadProvisioning: func(log func(string, ...any)) provision.Result {
-			return provision.Result{Hostname: "cloud-init-name"}
+			return provision.Result{Hostname: "cloud-init-name", SeedFiles: []string{"user-data"}}
+		},
+		EditBoot: func(edit func(root string) error) error {
+			err := edit(root)
+			windows = append(windows, cardState(t, root))
+			return err
 		},
 		Sleep: func(d time.Duration) { clock.Sleep(d) },
 		Now:   clock.Now,
@@ -486,16 +489,87 @@ func TestRunAppliesCloudInitHostnameWhenGosdTomlHasNone(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantCalls := []string{"baked-in-name", "cloud-init-name"}
-	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
-		t.Errorf("SetHostname calls = %v, want %v", hostname.set, wantCalls)
+	wantWindows := []string{"seed absent, hostname unwritten", "seed absent, hostname=cloud-init-name"}
+	if !slices.Equal(windows, wantWindows) {
+		t.Errorf("card after each read-write window = %v, want %v (the seed goes first, durably)", windows, wantWindows)
 	}
-	if !strings.Contains(console.String(), "hostname from cloud-init user-data") {
-		t.Errorf("console output missing cloud-init hostname source log line: %q", console.String())
+	wantCalls := []string{"baked-in-name", "cloud-init-name"}
+	if !slices.Equal(hostname.set, wantCalls) {
+		t.Errorf("SetHostname calls = %v, want %v (the wizard's answer applies to this boot too)", hostname.set, wantCalls)
+	}
+	if !strings.Contains(console.String(), "config/hostname set from cloud-init provisioning") {
+		t.Errorf("console output missing the setting-written log line: %q", console.String())
 	}
 }
 
-func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
+func TestRunAppliesACloudInitSeedItCannotWriteToTheCard(t *testing.T) {
+	// A card that has gone read-only costs the device the wizard's answers
+	// on the NEXT boot, never on this one: what was asked for still takes
+	// effect, and nothing is written to a card whose seed couldn't be
+	// deleted first.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "user-data"), "hostname: cloud-init-name\n")
+
+	hostname := &fakeHostname{}
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		close(stop)
+		return 1, nil
+	})
+
+	edits := 0
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    hostname,
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "baked-in-name"}, nil
+		},
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(nil),
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{Hostname: "cloud-init-name", SeedFiles: []string{"user-data"}}
+		},
+		EditBoot: func(edit func(root string) error) error {
+			edits++
+			return errors.New("read-only filesystem")
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (an unwritable card is not fatal)", err)
+	}
+
+	if edits != 1 {
+		t.Errorf("EditBoot called %d times, want 1 (nothing is written once the seed couldn't be deleted)", edits)
+	}
+	if got := cardState(t, root); got != "seed present, hostname unwritten" {
+		t.Errorf("card = %q, want the seed left alone and nothing written", got)
+	}
+	if want := []string{"baked-in-name", "cloud-init-name"}; !slices.Equal(hostname.set, want) {
+		t.Errorf("SetHostname calls = %v, want %v (the answer still applies to this boot)", hostname.set, want)
+	}
+}
+func TestRunCloudInitOverwritesASettingAlreadyOnTheCard(t *testing.T) {
+	// Somebody ran the flashing tool's wizard after this image was built,
+	// which makes their answer the most recent statement of intent there
+	// is — including over a value the image (or an earlier edit) put in the
+	// tree. This is what keeps a wizard's hostname from being shadowed by a
+	// default, the bug gosd-4hz1 fixed.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "user-data"), "hostname: cloud-init-name\n")
+
 	hostname := &fakeHostname{}
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
@@ -516,15 +590,14 @@ func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"hostname": "already-on-the-card"}),
 		ReadProvisioning: func(log func(string, ...any)) provision.Result {
-			return provision.Result{Hostname: "cloud-init-name"}
+			return provision.Result{Hostname: "cloud-init-name", SeedFiles: []string{"user-data"}}
 		},
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
+		EditBoot: func(edit func(root string) error) error { return edit(root) },
+		Sleep:    func(d time.Duration) { clock.Sleep(d) },
+		Now:      clock.Now,
 	}
 	opts := testOptions()
 	opts.Stop = stop
@@ -533,16 +606,14 @@ func TestRunGosdTomlHostnameTakesPrecedenceOverCloudInit(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	wantCalls := []string{"baked-in-name", "hand-edited-name"}
-	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
-		t.Errorf("SetHostname calls = %v, want %v (gosd.toml wins over cloud-init)", hostname.set, wantCalls)
+	wantCalls := []string{"baked-in-name", "cloud-init-name"}
+	if !slices.Equal(hostname.set, wantCalls) {
+		t.Errorf("SetHostname calls = %v, want %v (the wizard's answer wins)", hostname.set, wantCalls)
+	}
+	if got := cardState(t, root); got != "seed absent, hostname=cloud-init-name" {
+		t.Errorf("card = %q, want the wizard's answer written over the old setting", got)
 	}
 }
-
-// TestRunWritesEtcHostsOnceWithTheFinalSettledHostname is the acceptance
-// test for gosd-e3xi part 2: gosd-init writes /etc/hosts exactly once per
-// boot, and only after gosd.toml has had its say — not with config.json's
-// earlier, since-overridden value.
 func TestRunWritesEtcHostsOnceWithTheFinalSettledHostname(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
@@ -564,10 +635,8 @@ func TestRunWritesEtcHostsOnceWithTheFinalSettledHostname(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{Hostname: "hand-edited-name"}, nil, nil
-		},
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"hostname": "hand-edited-name"}),
 		WriteHosts: func(hostname string) error {
 			gotHostnames = append(gotHostnames, hostname)
 			return nil
@@ -582,15 +651,10 @@ func TestRunWritesEtcHostsOnceWithTheFinalSettledHostname(t *testing.T) {
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 
-	if want := []string{"hand-edited-name"}; len(gotHostnames) != len(want) || gotHostnames[0] != want[0] {
-		t.Errorf("WriteHosts calls = %v, want %v (called once, with the final gosd.toml hostname)", gotHostnames, want)
+	if want := []string{"hand-edited-name"}; !slices.Equal(gotHostnames, want) {
+		t.Errorf("WriteHosts calls = %v, want %v (called once, with the name the card gave)", gotHostnames, want)
 	}
 }
-
-// TestRunWriteHostsFailureIsNotFatal mirrors
-// TestRunSetHostnameFailureIsNotFatal: a broken /etc/hosts write is
-// cosmetic (DNS still resolves whatever it was going to), not worth a
-// reboot loop over.
 func TestRunWriteHostsFailureIsNotFatal(t *testing.T) {
 	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
@@ -630,16 +694,16 @@ func TestRunWriteHostsFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestRunWritesEtcHostsWithProvisioningSnapshotRestoredHostname confirms
-// /etc/hosts reflects a hostname restored by the first-boot-after-reflash
-// self-heal (provsnapshot), which settles even later than gosd.toml/
-// cloud-init: without this, a reflashed board's kernel hostname
-// (sethostname(2)) and its /etc/hosts entry would disagree until the next
-// reboot.
-func TestRunWritesEtcHostsWithProvisioningSnapshotRestoredHostname(t *testing.T) {
+func TestRunPassesACloudInitWifiNetworkToStartNetworkingAsACardSetting(t *testing.T) {
+	// A wizard's WiFi answers reach wifiup the same way a hand-edit does:
+	// as settings in the tree, consumed from the seed before anything reads
+	// them.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "network-config"), "version: 2\n")
+
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
-	var gotHostnames []string
+	configReceived := make(chan cardconfig.Tree, 1)
 
 	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
 		close(stop)
@@ -647,70 +711,27 @@ func TestRunWritesEtcHostsWithProvisioningSnapshotRestoredHostname(t *testing.T)
 	})
 
 	deps := Deps{
-		Mounter:              &fakeMounter{},
-		Hostname:             &fakeHostname{},
-		AppStarter:           appStarter,
-		Reaper:               fakeReaper{},
-		Rebooter:             &fakeRebooter{},
-		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog:          func(string, ...any) {},
-		EnsureDataMountpoint: func() error { return nil },
-		ReadConfig: func() (initcfg.Config, error) {
-			return initcfg.Config{Hostname: "baked-in-name", Identity: "new"}, nil
-		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ProvisionSnapshot: func(in provsnapshot.Input, log func(string, ...any)) provsnapshot.Result {
-			return provsnapshot.Result{
-				GosdToml:         gosdtoml.Config{Hostname: "restored-from-snapshot"},
-				HostnameRestored: true,
+		Mounter:        &fakeMounter{},
+		Hostname:       &fakeHostname{},
+		AppStarter:     appStarter,
+		Reaper:         fakeReaper{},
+		Rebooter:       &fakeRebooter{},
+		OpenConsole:    func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:    func(string, ...any) {},
+		ReadConfig:     func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(nil),
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{
+				Wifi:      []provision.WifiNetwork{{SSID: "cloud-init-ssid", Password: "cloud-init-password"}},
+				SeedFiles: []string{"network-config"},
 			}
 		},
-		WriteHosts: func(hostname string) error {
-			gotHostnames = append(gotHostnames, hostname)
-			return nil
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
-	}
-	opts := testDataOptions()
-	opts.Stop = stop
-
-	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil", err)
-	}
-
-	if want := []string{"restored-from-snapshot"}; len(gotHostnames) != len(want) || gotHostnames[0] != want[0] {
-		t.Errorf("WriteHosts calls = %v, want %v (the snapshot-restored hostname, not the earlier baked one)", gotHostnames, want)
-	}
-}
-
-func TestRunPassesCloudInitWifiToStartNetworking(t *testing.T) {
-	clock := newFakeClock(time.Unix(0, 0))
-	stop := make(chan struct{})
-	wifiReceived := make(chan []provision.WifiNetwork, 1)
-
-	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
-		close(stop)
-		return 1, nil
-	})
-
-	deps := Deps{
-		Mounter:     &fakeMounter{},
-		Hostname:    &fakeHostname{},
-		AppStarter:  appStarter,
-		Reaper:      fakeReaper{},
-		Rebooter:    &fakeRebooter{},
-		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog: func(string, ...any) {},
-		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadProvisioning: func(log func(string, ...any)) provision.Result {
-			return provision.Result{Wifi: []provision.WifiNetwork{{SSID: "cloud-init-ssid"}}}
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
-		StartNetworking: func(cfg initcfg.Config, gosdToml gosdtoml.Config, provisionWifi []provision.WifiNetwork, log func(string, ...any)) {
-			wifiReceived <- provisionWifi
+		EditBoot: func(edit func(root string) error) error { return edit(root) },
+		Sleep:    func(d time.Duration) { clock.Sleep(d) },
+		Now:      clock.Now,
+		StartNetworking: func(cfg initcfg.Config, config cardconfig.Tree, log func(string, ...any)) {
+			configReceived <- config
 		},
 	}
 	opts := testOptions()
@@ -721,15 +742,19 @@ func TestRunPassesCloudInitWifiToStartNetworking(t *testing.T) {
 	}
 
 	select {
-	case got := <-wifiReceived:
-		if len(got) != 1 || got[0].SSID != "cloud-init-ssid" {
-			t.Errorf("StartNetworking got provisionWifi = %+v, want one network %q", got, "cloud-init-ssid")
+	case got := <-configReceived:
+		if got.Get("wifi/ssid") != "cloud-init-ssid" || got.Get("wifi/passphrase") != "cloud-init-password" {
+			t.Errorf("StartNetworking got wifi/ssid=%q wifi/passphrase set=%v, want the network the seed named", got.Get("wifi/ssid"), got.Get("wifi/passphrase") != "")
 		}
 	case <-time.After(time.Second):
 		t.Error("StartNetworking was never called")
 	}
-}
 
+	onCard := readCardValue(t, root, "wifi/ssid")
+	if onCard != "cloud-init-ssid" {
+		t.Errorf("config/wifi/ssid on the card = %q, want it written from the seed so it survives a reflash", onCard)
+	}
+}
 func TestRunLogsFirstrunShDetectionButDoesNotUseIt(t *testing.T) {
 	hostname := &fakeHostname{}
 	console := &bytes.Buffer{}
@@ -754,7 +779,7 @@ func TestRunLogsFirstrunShDetectionButDoesNotUseIt(t *testing.T) {
 		},
 		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		ReadProvisioning: func(log func(string, ...any)) provision.Result {
-			log("firstrun.sh found on the boot partition; gosd-init never parses or executes it — use gosd.toml to configure this device instead")
+			log("firstrun.sh found on the boot partition; gosd-init never parses or executes it — edit the files in config/ to configure this device instead")
 			return provision.Result{FirstrunPresent: true}
 		},
 		Sleep: func(d time.Duration) { clock.Sleep(d) },
@@ -963,11 +988,10 @@ func TestRunSetHostnameFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-func TestRunRejectsOverlongGosdTomlHostname(t *testing.T) {
-	// A hand-edited gosd.toml hostname over naming.MaxLength bytes must
-	// never reach SetHostname: it's rejected, logged, and the previous
-	// (baked-in) hostname is kept for both the initial and re-applied
-	// SetHostname calls (gosd-jeaw).
+func TestRunRejectsAnOverlongHostnameOnTheCard(t *testing.T) {
+	// A hostname typed onto the card over naming.MaxLength bytes must never
+	// reach SetHostname: it's rejected, logged against the file to fix, and
+	// the previous (baked-in) hostname is kept (gosd-jeaw).
 	tooLong := strings.Repeat("a", naming.MaxLength+2)
 	mounter := &fakeMounter{}
 	hostname := &fakeHostname{}
@@ -992,36 +1016,36 @@ func TestRunRejectsOverlongGosdTomlHostname(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{Hostname: tooLong}, nil, nil
-		},
-		Sleep: clock.Sleep,
-		Now:   clock.Now,
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{"hostname": tooLong}),
+		Sleep:          clock.Sleep,
+		Now:            clock.Now,
 	}
 	opts := testOptions()
 	opts.Stop = stop
 
 	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil (an invalid gosd.toml hostname is not fatal)", err)
+		t.Fatalf("Run() = %v, want nil (an unusable hostname is not fatal)", err)
 	}
 	if rebooter.rebooted {
-		t.Error("Run() rebooted over an invalid gosd.toml hostname")
+		t.Error("Run() rebooted over an unusable hostname on the card")
 	}
 
-	wantCalls := []string{"baked-in-name", "baked-in-name"}
-	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
-		t.Errorf("SetHostname calls = %v, want %v (invalid hostname rejected, previous kept)", hostname.set, wantCalls)
+	if want := []string{"baked-in-name"}; !slices.Equal(hostname.set, want) {
+		t.Errorf("SetHostname calls = %v, want %v (unusable hostname rejected, previous kept)", hostname.set, want)
 	}
-	if !strings.Contains(console.String(), "invalid") || !strings.Contains(console.String(), "gosd.toml") {
+	if !strings.Contains(console.String(), "config/hostname") || !strings.Contains(console.String(), "can't be used as a hostname") {
 		t.Errorf("console output missing the hostname rejection log line: %q", console.String())
 	}
 }
-
-func TestRunRejectsInvalidCharsetCloudInitHostname(t *testing.T) {
+func TestRunRejectsAnInvalidCharsetHostnameFromCloudInit(t *testing.T) {
 	// Charset validation shares the same naming.Sanitize semantics as the
-	// length cap, and applies to cloud-init's hostname too, not just
-	// gosd.toml's.
+	// length cap, and applies to a wizard's answer too: it lands in the
+	// tree, where its author can see and correct it, but never reaches
+	// SetHostname.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "user-data"), "hostname: Not A Valid Host!\n")
+
 	hostname := &fakeHostname{}
 	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
@@ -1043,29 +1067,32 @@ func TestRunRejectsInvalidCharsetCloudInitHostname(t *testing.T) {
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Hostname: "baked-in-name"}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(nil),
 		ReadProvisioning: func(log func(string, ...any)) provision.Result {
-			return provision.Result{Hostname: "Not A Valid Host!"}
+			return provision.Result{Hostname: "Not A Valid Host!", SeedFiles: []string{"user-data"}}
 		},
-		Sleep: clock.Sleep,
-		Now:   clock.Now,
+		EditBoot: func(edit func(root string) error) error { return edit(root) },
+		Sleep:    clock.Sleep,
+		Now:      clock.Now,
 	}
 	opts := testOptions()
 	opts.Stop = stop
 
 	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil (an invalid cloud-init hostname is not fatal)", err)
+		t.Fatalf("Run() = %v, want nil (an unusable hostname is not fatal)", err)
 	}
 
-	wantCalls := []string{"baked-in-name", "baked-in-name"}
-	if len(hostname.set) != len(wantCalls) || hostname.set[0] != wantCalls[0] || hostname.set[1] != wantCalls[1] {
-		t.Errorf("SetHostname calls = %v, want %v (invalid hostname rejected, previous kept)", hostname.set, wantCalls)
+	if want := []string{"baked-in-name"}; !slices.Equal(hostname.set, want) {
+		t.Errorf("SetHostname calls = %v, want %v (unusable hostname rejected, previous kept)", hostname.set, want)
 	}
-	if !strings.Contains(console.String(), "invalid") || !strings.Contains(console.String(), "cloud-init") {
+	if got := readCardValue(t, root, "hostname"); got != "Not A Valid Host!" {
+		t.Errorf("config/hostname on the card = %q, want what was asked for, visible for its author to correct", got)
+	}
+	if !strings.Contains(console.String(), "can't be used as a hostname") {
 		t.Errorf("console output missing the hostname rejection log line: %q", console.String())
 	}
 }
-
 func TestRunFatalPathOnBootPartitionMountTimeout(t *testing.T) {
 	mounter := &fakeMounter{fn: func(c mountCall) error {
 		if c.target == "/boot" {
@@ -1577,9 +1604,9 @@ func TestRunMountsReadOnlyDataWhenPartitionIsMissing(t *testing.T) {
 }
 
 // dataFlushTestDeps builds the Deps needed to exercise the data-flush
-// override: a baked config.json DataFlush value, and, if override is
-// non-nil, a gosd.toml carrying a data_flush key.
-func dataFlushTestDeps(mounter *fakeMounter, console *bytes.Buffer, clock *fakeClock, stop chan struct{}, baked bool, override *bool, gotEnv *[]string) Deps {
+// setting: a baked config.json DataFlush value, and a card whose
+// data_flush file holds card (empty for a card nobody has edited).
+func dataFlushTestDeps(mounter *fakeMounter, console *bytes.Buffer, clock *fakeClock, stop chan struct{}, baked bool, card string, gotEnv *[]string) Deps {
 	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
 		*gotEnv = env
 		close(stop)
@@ -1597,19 +1624,15 @@ func dataFlushTestDeps(mounter *fakeMounter, console *bytes.Buffer, clock *fakeC
 		ReadConfig:           func() (initcfg.Config, error) { return initcfg.Config{DataFlush: baked}, nil },
 		ReadCmdline:          func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
 		EnsureDataMountpoint: func() error { return nil },
+		ReadConfigTree:       readsCard(map[string]string{"data_flush": card}),
 		Sleep:                func(d time.Duration) { clock.Sleep(d) },
 		Now:                  clock.Now,
-	}
-	if override != nil {
-		deps.ReadGosdToml = func() (gosdtoml.Config, []string, error) {
-			return gosdtoml.Config{DataFlush: override}, nil, nil
-		}
 	}
 	return deps
 }
 
 // TestRunDataFlushDefaultsToNoFlush covers gosd-9m1k's locked default: with
-// no --data-flush baked in and no gosd.toml override, /data is mounted
+// no --data-flush baked in and an empty data_flush file, /data is mounted
 // without the vfat "flush" option, and the app sees GOSD_DATA_FLUSH=0.
 func TestRunDataFlushDefaultsToNoFlush(t *testing.T) {
 	mounter := &fakeMounter{}
@@ -1618,7 +1641,7 @@ func TestRunDataFlushDefaultsToNoFlush(t *testing.T) {
 	stop := make(chan struct{})
 	var gotEnv []string
 
-	deps := dataFlushTestDeps(mounter, console, clock, stop, false, nil, &gotEnv)
+	deps := dataFlushTestDeps(mounter, console, clock, stop, false, "", &gotEnv)
 	opts := testDataOptions()
 	opts.Stop = stop
 
@@ -1639,7 +1662,7 @@ func TestRunDataFlushDefaultsToNoFlush(t *testing.T) {
 }
 
 // TestRunDataFlushBakedTrueAppliesToMountAndEnv covers a build made with
-// --data-flush: the baked default alone, with no gosd.toml override, must
+// --data-flush: the baked default alone, with nothing on the card, must
 // reach both the /data mount and GOSD_DATA_FLUSH.
 func TestRunDataFlushBakedTrueAppliesToMountAndEnv(t *testing.T) {
 	mounter := &fakeMounter{}
@@ -1648,7 +1671,7 @@ func TestRunDataFlushBakedTrueAppliesToMountAndEnv(t *testing.T) {
 	stop := make(chan struct{})
 	var gotEnv []string
 
-	deps := dataFlushTestDeps(mounter, console, clock, stop, true, nil, &gotEnv)
+	deps := dataFlushTestDeps(mounter, console, clock, stop, true, "", &gotEnv)
 	opts := testDataOptions()
 	opts.Stop = stop
 
@@ -1665,18 +1688,18 @@ func TestRunDataFlushBakedTrueAppliesToMountAndEnv(t *testing.T) {
 	}
 }
 
-// TestRunGosdTomlDataFlushOverridesBakedDefault covers the card-editable
-// override turning flush ON despite a baked default of false, and reaching
-// both the /data mount and the app's environment.
-func TestRunGosdTomlDataFlushOverridesBakedDefault(t *testing.T) {
+// TestRunCardDataFlushOverridesBakedDefault covers the card-editable
+// setting turning flush ON despite a baked default of false, and reaching
+// both the /data mount and the app's environment. Any word at all turns it
+// on, which is what the file's own explanation on the card asks for.
+func TestRunCardDataFlushOverridesBakedDefault(t *testing.T) {
 	mounter := &fakeMounter{}
 	console := &bytes.Buffer{}
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
 	var gotEnv []string
-	override := true
 
-	deps := dataFlushTestDeps(mounter, console, clock, stop, false, &override, &gotEnv)
+	deps := dataFlushTestDeps(mounter, console, clock, stop, false, "yes", &gotEnv)
 	opts := testDataOptions()
 	opts.Stop = stop
 
@@ -1686,52 +1709,21 @@ func TestRunGosdTomlDataFlushOverridesBakedDefault(t *testing.T) {
 
 	calls := mounter.recordedCalls("/data")
 	if len(calls) == 0 || calls[len(calls)-1].data != "flush" {
-		t.Errorf("/data mount options = %+v, want the flush option (gosd.toml override)", calls)
+		t.Errorf("/data mount options = %+v, want the flush option (the card asked for it)", calls)
 	}
 	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=1") {
 		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=1", gotEnv)
 	}
-	if !strings.Contains(console.String(), "data partition flush: true (gosd.toml)") {
-		t.Errorf("console output missing the data-flush override log line: %q", console.String())
-	}
-}
-
-// TestRunGosdTomlDataFlushOverridesBakedTrueToDisable is the reverse of the
-// above: gosd.toml can turn flush back OFF even when --data-flush baked it
-// in.
-func TestRunGosdTomlDataFlushOverridesBakedTrueToDisable(t *testing.T) {
-	mounter := &fakeMounter{}
-	console := &bytes.Buffer{}
-	clock := newFakeClock(time.Unix(0, 0))
-	stop := make(chan struct{})
-	var gotEnv []string
-	override := false
-
-	deps := dataFlushTestDeps(mounter, console, clock, stop, true, &override, &gotEnv)
-	opts := testDataOptions()
-	opts.Stop = stop
-
-	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil", err)
-	}
-
-	calls := mounter.recordedCalls("/data")
-	if len(calls) == 0 || calls[len(calls)-1].data != "" {
-		t.Errorf("/data mount options = %+v, want no flush option (gosd.toml disabled it)", calls)
-	}
-	if !slices.Contains(gotEnv, "GOSD_DATA_FLUSH=0") {
-		t.Errorf("app env = %v, want GOSD_DATA_FLUSH=0", gotEnv)
-	}
-	if !strings.Contains(console.String(), "data partition flush: false (gosd.toml)") {
+	if !strings.Contains(console.String(), "data partition flush: true (config/data_flush)") {
 		t.Errorf("console output missing the data-flush override log line: %q", console.String())
 	}
 }
 
 // envDeps builds the minimal Deps needed to exercise app-env merging: a
-// baked config.json (with the given Env), and, if gosdToml is non-nil, a
-// gosd.toml with the given Env/warnings. gotEnv is populated with whatever
-// env slice the AppStarter receives.
-func envDeps(bakedEnv map[string]string, gosdToml *gosdtoml.Config, warnings []string, console *bytes.Buffer, gotEnv *[]string) (Deps, chan struct{}) {
+// baked config.json (with the given Env) and a card whose config/env/
+// directory holds cardEnv. gotEnv is populated with whatever env slice the
+// AppStarter receives.
+func envDeps(bakedEnv, cardEnv map[string]string, console *bytes.Buffer, gotEnv *[]string) (Deps, chan struct{}) {
 	clock := newFakeClock(time.Unix(0, 0))
 	stop := make(chan struct{})
 	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
@@ -1740,7 +1732,12 @@ func envDeps(bakedEnv map[string]string, gosdToml *gosdtoml.Config, warnings []s
 		return 1, nil
 	})
 
-	deps := Deps{
+	card := make(map[string]string, len(cardEnv))
+	for name, value := range cardEnv {
+		card["env/"+name] = value
+	}
+
+	return Deps{
 		Mounter:     &fakeMounter{},
 		Hostname:    &fakeHostname{},
 		AppStarter:  appStarter,
@@ -1751,20 +1748,16 @@ func envDeps(bakedEnv map[string]string, gosdToml *gosdtoml.Config, warnings []s
 		ReadConfig: func() (initcfg.Config, error) {
 			return initcfg.Config{Board: "pi-zero-2w", Hostname: "my-device", Env: bakedEnv}, nil
 		},
-		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		Sleep:       func(d time.Duration) { clock.Sleep(d) },
-		Now:         clock.Now,
-	}
-	if gosdToml != nil {
-		deps.ReadGosdToml = func() (gosdtoml.Config, []string, error) { return *gosdToml, warnings, nil }
-	}
-	return deps, stop
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(card),
+		Sleep:          func(d time.Duration) { clock.Sleep(d) },
+		Now:            clock.Now,
+	}, stop
 }
-
-func TestRunInjectsBakedEnvWhenNoGosdTomlOverride(t *testing.T) {
+func TestRunInjectsBakedEnvWhenTheCardSetsNone(t *testing.T) {
 	console := &bytes.Buffer{}
 	var gotEnv []string
-	deps, stop := envDeps(map[string]string{"FOO": "baked-foo"}, nil, nil, console, &gotEnv)
+	deps, stop := envDeps(map[string]string{"FOO": "baked-foo"}, nil, console, &gotEnv)
 	opts := testOptions()
 	opts.Stop = stop
 
@@ -1780,12 +1773,10 @@ func TestRunInjectsBakedEnvWhenNoGosdTomlOverride(t *testing.T) {
 		t.Errorf("console output missing baked env summary line: %q", console.String())
 	}
 }
-
-func TestRunInjectsGosdTomlEnvWhenNoBakedDefaults(t *testing.T) {
+func TestRunInjectsTheCardsEnvWhenNoneIsBaked(t *testing.T) {
 	console := &bytes.Buffer{}
 	var gotEnv []string
-	gosdToml := &gosdtoml.Config{Env: map[string]string{"FOO": "card-foo"}}
-	deps, stop := envDeps(nil, gosdToml, nil, console, &gotEnv)
+	deps, stop := envDeps(nil, map[string]string{"FOO": "card-foo"}, console, &gotEnv)
 	opts := testOptions()
 	opts.Stop = stop
 
@@ -1797,19 +1788,37 @@ func TestRunInjectsGosdTomlEnvWhenNoBakedDefaults(t *testing.T) {
 	if !equalEnv(gotEnv, wantEnv) {
 		t.Errorf("app env = %v, want %v", gotEnv, wantEnv)
 	}
-	if !strings.Contains(console.String(), "app env: FOO (gosd.toml)") {
-		t.Errorf("console output missing gosd.toml env summary line: %q", console.String())
+	if !strings.Contains(console.String(), "app env: FOO (config/env)") {
+		t.Errorf("console output missing the card's env summary line: %q", console.String())
 	}
 }
 
-func TestRunGosdTomlEnvOverridesBakedPerKey(t *testing.T) {
-	// FOO only baked, BAR overridden by gosd.toml, BAZ only in gosd.toml:
-	// the merge is per-key, not a whole-map replace.
+func TestRunTreatsAnEmptyEnvFileAsUnset(t *testing.T) {
+	// An empty file is how a card says "not set", so it falls back to the
+	// baked value rather than handing the app an empty string.
+	console := &bytes.Buffer{}
+	var gotEnv []string
+	deps, stop := envDeps(map[string]string{"FOO": "baked-foo"}, map[string]string{"FOO": ""}, console, &gotEnv)
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "FOO=baked-foo"}
+	if !equalEnv(gotEnv, wantEnv) {
+		t.Errorf("app env = %v, want %v (an empty setting file is unset, not empty)", gotEnv, wantEnv)
+	}
+}
+func TestRunCardEnvOverridesBakedPerName(t *testing.T) {
+	// FOO only baked, BAR overridden on the card, BAZ only on the card:
+	// the merge is per-name, not a whole-map replace.
 	console := &bytes.Buffer{}
 	var gotEnv []string
 	baked := map[string]string{"FOO": "baked-foo", "BAR": "baked-bar"}
-	gosdToml := &gosdtoml.Config{Env: map[string]string{"BAR": "card-bar", "BAZ": "card-baz"}}
-	deps, stop := envDeps(baked, gosdToml, nil, console, &gotEnv)
+	card := map[string]string{"BAR": "card-bar", "BAZ": "card-baz"}
+	deps, stop := envDeps(baked, card, console, &gotEnv)
 	opts := testOptions()
 	opts.Stop = stop
 
@@ -1819,23 +1828,23 @@ func TestRunGosdTomlEnvOverridesBakedPerKey(t *testing.T) {
 
 	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "BAR=card-bar", "BAZ=card-baz", "FOO=baked-foo"}
 	if !equalEnv(gotEnv, wantEnv) {
-		t.Errorf("app env = %v, want %v (gosd.toml wins per-key over baked)", gotEnv, wantEnv)
+		t.Errorf("app env = %v, want %v (the card wins per-name over baked)", gotEnv, wantEnv)
 	}
 }
-
-func TestRunRejectsReservedEnvKeysFromGosdToml(t *testing.T) {
+func TestRunRejectsReservedEnvNamesFromTheCard(t *testing.T) {
 	// A card can't override the GOSD_* namespace gosd-init itself owns,
-	// nor smuggle in an unrelated GOSD_-prefixed var; both are dropped,
-	// and the real GOSD_BOARD/GOSD_HOSTNAME stay exactly as gosd-init set
-	// them.
+	// nor smuggle in an unrelated GOSD_-prefixed var; both are dropped —
+	// named by the file to delete, since `gosd build` would have refused
+	// them and only a hand-created file can get here — and the real
+	// GOSD_BOARD/GOSD_HOSTNAME stay exactly as gosd-init set them.
 	console := &bytes.Buffer{}
 	var gotEnv []string
-	gosdToml := &gosdtoml.Config{Env: map[string]string{
+	card := map[string]string{
 		"GOSD_BOARD": "attacker-board",
 		"GOSD_X":     "should-be-dropped",
 		"SAFE":       "card-safe",
-	}}
-	deps, stop := envDeps(nil, gosdToml, nil, console, &gotEnv)
+	}
+	deps, stop := envDeps(nil, card, console, &gotEnv)
 	opts := testOptions()
 	opts.Stop = stop
 
@@ -1845,38 +1854,19 @@ func TestRunRejectsReservedEnvKeysFromGosdToml(t *testing.T) {
 
 	wantEnv := []string{"GOSD_BOARD=pi-zero-2w", "GOSD_HOSTNAME=my-device", "GOSD_DATA_FLUSH=0", "SAFE=card-safe"}
 	if !equalEnv(gotEnv, wantEnv) {
-		t.Errorf("app env = %v, want %v (reserved keys dropped, real GOSD_* intact)", gotEnv, wantEnv)
+		t.Errorf("app env = %v, want %v (reserved names dropped, real GOSD_* intact)", gotEnv, wantEnv)
 	}
-	if !strings.Contains(console.String(), "ignoring reserved env key GOSD_BOARD") {
+	if !strings.Contains(console.String(), "ignoring config/env/GOSD_BOARD") {
 		t.Errorf("console output missing GOSD_BOARD rejection log line: %q", console.String())
 	}
-	if !strings.Contains(console.String(), "ignoring reserved env key GOSD_X") {
+	if !strings.Contains(console.String(), "ignoring config/env/GOSD_X") {
 		t.Errorf("console output missing GOSD_X rejection log line: %q", console.String())
 	}
 }
-
-func TestRunLogsGosdTomlParseWarnings(t *testing.T) {
-	console := &bytes.Buffer{}
-	var gotEnv []string
-	gosdToml := &gosdtoml.Config{Env: map[string]string{"PORT": "8080"}}
-	warnings := []string{`gosd.toml [env] PORT is a bare number, not a quoted string; using "8080" — add quotes to silence this warning`}
-	deps, stop := envDeps(nil, gosdToml, warnings, console, &gotEnv)
-	opts := testOptions()
-	opts.Stop = stop
-
-	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil", err)
-	}
-
-	if !strings.Contains(console.String(), "PORT is a bare number") {
-		t.Errorf("console output missing the gosd.toml [env] coercion warning: %q", console.String())
-	}
-}
-
 func TestRunAppEnvIsUnchangedWhenNoUserEnvIsSet(t *testing.T) {
 	console := &bytes.Buffer{}
 	var gotEnv []string
-	deps, stop := envDeps(nil, nil, nil, console, &gotEnv)
+	deps, stop := envDeps(nil, nil, console, &gotEnv)
 	opts := testOptions()
 	opts.Stop = stop
 
@@ -2307,79 +2297,6 @@ func testOptions() Options {
 	}
 }
 
-// TestRunAppliesProvisioningRestoredFromTheSnapshot covers the boot
-// sequence's half of the reflash self-heal (bean gosd-ry3b): whatever
-// provsnapshot restores has to reach the running device on this boot, not
-// just the card, so the hostname is re-applied and the app's environment is
-// built from the restored gosd.toml.
-func TestRunAppliesProvisioningRestoredFromTheSnapshot(t *testing.T) {
-	hostname := &fakeHostname{}
-	clock := newFakeClock(time.Unix(0, 0))
-	stop := make(chan struct{})
-	var gotEnv []string
-	var dataMountedFirst bool
-
-	mounter := &fakeMounter{}
-	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
-		gotEnv = env
-		close(stop)
-		return 1, nil
-	})
-
-	var gotInput provsnapshot.Input
-	deps := Deps{
-		Mounter:              mounter,
-		Hostname:             hostname,
-		AppStarter:           appStarter,
-		Reaper:               fakeReaper{},
-		Rebooter:             &fakeRebooter{},
-		OpenConsole:          func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
-		FallbackLog:          func(string, ...any) {},
-		EnsureDataMountpoint: func() error { return nil },
-		ReadConfig: func() (initcfg.Config, error) {
-			return initcfg.Config{
-				Board:    "qemu-virt",
-				Hostname: "hello",
-				Identity: "new",
-				Env:      map[string]string{"API_URL": "https://example.com"},
-			}, nil
-		},
-		ReadCmdline:  func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
-		ReadGosdToml: func() (gosdtoml.Config, []string, error) { return gosdtoml.Config{Hostname: "hello"}, nil, nil },
-		ProvisionSnapshot: func(in provsnapshot.Input, log func(string, ...any)) provsnapshot.Result {
-			gotInput = in
-			dataMountedFirst = mounter.callsFor("/data") > 0
-			return provsnapshot.Result{
-				GosdToml:         gosdtoml.Config{Hostname: "kitchen-pi", Env: map[string]string{"API_URL": "https://mine"}},
-				HostnameRestored: true,
-			}
-		},
-		Sleep: func(d time.Duration) { clock.Sleep(d) },
-		Now:   clock.Now,
-	}
-	opts := testDataOptions()
-	opts.Stop = stop
-
-	if err := Run(deps, opts); err != nil {
-		t.Fatalf("Run() = %v, want nil", err)
-	}
-
-	if !dataMountedFirst {
-		t.Error("the snapshot ran before the data partition it lives on was mounted")
-	}
-	if gotInput.Baked.Hostname != "hello" || gotInput.Baked.Env["API_URL"] != "https://example.com" {
-		t.Errorf("snapshot input baked defaults = %+v, want config.json's, captured before any override", gotInput.Baked)
-	}
-	if last := hostname.set[len(hostname.set)-1]; last != "kitchen-pi" {
-		t.Errorf("final SetHostname = %q, want the restored hostname applied to this boot", last)
-	}
-	for _, want := range []string{"API_URL=https://mine", "GOSD_HOSTNAME=kitchen-pi"} {
-		if !slices.Contains(gotEnv, want) {
-			t.Errorf("app env = %v, missing %q", gotEnv, want)
-		}
-	}
-}
-
 func assertFatalPathTriggered(t *testing.T, rebooter *fakeRebooter, sleeps []time.Duration) {
 	t.Helper()
 	if rebooter.syncCalls == 0 {
@@ -2431,7 +2348,7 @@ func TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault(t *testing.T) {
 		return faultreport.Report{
 			Code:    "NO-API-KEY",
 			Problem: "the weather service rejected our API key",
-			Fix:     "add WEATHER_API_KEY to gosd.toml on this card",
+			Fix:     "add WEATHER_API_KEY to config/env/ on this card",
 		}, true
 	}
 
@@ -2470,7 +2387,7 @@ func TestRunHaltsWithTheAppsOwnReportWhenItDeclaresAFault(t *testing.T) {
 		t.Fatalf("wrote %d reports for one exit, want 1", reports.writeCount())
 	}
 	written := reports.written()
-	for _, want := range []string{"NO-API-KEY", "add WEATHER_API_KEY to gosd.toml on this card", "panic: nil map write"} {
+	for _, want := range []string{"NO-API-KEY", "add WEATHER_API_KEY to config/env/ on this card", "panic: nil map write"} {
 		if !strings.Contains(written, want) {
 			t.Errorf("LAST_FATAL_ERROR.md content %q missing %q", written, want)
 		}
@@ -2543,4 +2460,52 @@ func TestGosdInitsOwnConsoleLinesNeverReachTheCardReport(t *testing.T) {
 	if strings.Contains(written, "[gosd] ") {
 		t.Errorf("LAST_FATAL_ERROR.md contains a gosd-init console line:\n%s\nwant only /app's own output folded in as technical detail", written)
 	}
+}
+
+// readsCard wires Deps.ReadConfigTree to hand Run a config tree holding
+// values, keyed by tree path ("wifi/ssid", "env/API_TOKEN") — a card
+// somebody has edited, or (nil) one nobody has.
+func readsCard(values map[string]string) func(func(string, ...any)) cardconfig.Tree {
+	tree := cardconfig.Tree{}
+	for path, value := range values {
+		tree.Set(path, value)
+	}
+	return func(func(string, ...any)) cardconfig.Tree { return tree }
+}
+
+// writeFile puts a file on a fake boot partition (a temp directory), for
+// the tests that let Run really delete a cloud-init seed and really write
+// settings.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+}
+
+// cardState summarises what a fake boot partition holds, so a test can
+// assert what was durable at the end of each read-write window — the points
+// a power cut could freeze the card at.
+func cardState(t *testing.T, root string) string {
+	t.Helper()
+	state := "seed absent"
+	if _, err := os.Stat(filepath.Join(root, "user-data")); err == nil {
+		state = "seed present"
+	}
+	content, err := os.ReadFile(filepath.Join(root, configtree.Dir, "hostname"))
+	if err != nil {
+		return state + ", hostname unwritten"
+	}
+	return state + ", hostname=" + configtree.TrimValue(content)
+}
+
+// readCardValue reads one setting back off a fake boot partition, the way
+// the device would.
+func readCardValue(t *testing.T, root, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(root, configtree.Dir, filepath.FromSlash(path)))
+	if err != nil {
+		t.Fatalf("reading %s off the card: %v", cardconfig.OnCard(path), err)
+	}
+	return configtree.TrimValue(content)
 }

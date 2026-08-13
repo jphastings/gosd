@@ -9,15 +9,14 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 )
 
 const testDeviceHostname = "app.example.com"
 
-// validConfig returns a fully-valid [ingress.tailscale-funnel] section for
+// validConfig returns a fully-valid set of card settings for
 // tests that need the shim to actually run.
-func validConfig() gosdtoml.IngressTailscaleFunnel {
-	return gosdtoml.IngressTailscaleFunnel{Authkey: testAuthkey, Hostname: testDeviceHostname, Port: 8080, FunnelPort: 443}
+func validConfig() Config {
+	return Config{Authkey: testAuthkey, Hostname: testDeviceHostname, Port: "8080", FunnelPort: "443"}
 }
 
 // baseTestDeps wires every Deps field to an inert default; individual tests
@@ -35,7 +34,7 @@ func baseTestDeps(clock *fakeClock, log *testLog) Deps {
 	}
 }
 
-func baseTestOptions(cfg gosdtoml.IngressTailscaleFunnel, stop <-chan struct{}) Options {
+func baseTestOptions(cfg Config, stop <-chan struct{}) Options {
 	return Options{
 		BinaryPath:             "/usr/bin/gosd-tsfunnel",
 		Baked:                  true,
@@ -63,7 +62,7 @@ func TestRunDoesNothingWhenNotConfiguredAndNotBaked(t *testing.T) {
 		return false, nil
 	}
 
-	opts := baseTestOptions(gosdtoml.IngressTailscaleFunnel{}, nil)
+	opts := baseTestOptions(Config{}, nil)
 	opts.Baked = false
 
 	Run(deps, opts)
@@ -85,7 +84,7 @@ func TestRunLogsOneQuietLineWhenBakedButNotConfigured(t *testing.T) {
 		return false, nil
 	}
 
-	opts := baseTestOptions(gosdtoml.IngressTailscaleFunnel{}, nil)
+	opts := baseTestOptions(Config{}, nil)
 
 	Run(deps, opts)
 
@@ -306,7 +305,7 @@ func TestSuperviseArgvOmitsAuthkeyOnceStateAlreadyExists(t *testing.T) {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	cfg := gosdtoml.IngressTailscaleFunnel{Port: 8080} // no authkey: fine once tsnet state exists
+	cfg := Config{Port: "8080"} // no authkey: fine once tsnet state exists
 	opts := baseTestOptions(cfg, stop)
 	m := resolveMode(cfg, opts.Baked, opts.Hostname)
 
@@ -477,13 +476,13 @@ func TestSuperviseRegatesNetworkUpBeforeEachRestart(t *testing.T) {
 func TestAuthkeyNeverAppearsInAnyLogOutput(t *testing.T) {
 	var allLines []string
 
-	configs := []gosdtoml.IngressTailscaleFunnel{
+	configs := []Config{
 		{},
 		{Authkey: testAuthkey},
-		{Authkey: testAuthkey, Port: 8080},
-		{Authkey: testAuthkey, Port: 8080, FunnelPort: 9999},
-		{Port: -1},
-		{Port: 70000},
+		{Authkey: testAuthkey, Port: "8080"},
+		{Authkey: testAuthkey, Port: "8080", FunnelPort: "9999"},
+		{Port: "-1"},
+		{Port: "70000"},
 		validConfig(),
 	}
 	for _, cfg := range configs {
