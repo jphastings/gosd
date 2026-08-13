@@ -58,6 +58,7 @@ function fixture(): {
     board: "test",
     image: { filename: "app.img", size: 10, sha256 },
     placeholders: [],
+    config: [],
   };
   return { image, manifestJSON: JSON.stringify(manifest), manifest };
 }

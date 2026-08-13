@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/rock4se"
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
@@ -66,9 +66,7 @@ func init() {
 var (
 	boardIDs       []string
 	output         string
-	hostname       string
-	wifiSSID       string
-	wifiPass       string
+	configDir      string
 	artifactsDir   string
 	gosdInitSrc    string
 	dataSize       string
@@ -76,8 +74,6 @@ var (
 	catalogFlag    bool
 	publishBaseURL string
 	usbGadget      bool
-	envFlags       []string
-	envFile        string
 	kernelCfgPath  string
 	withExternal   []string
 	consoleBaud    int
@@ -85,7 +81,6 @@ var (
 	dataFilesystem string
 	labelPrefix    string
 	placeholders   []string
-	envPlaceholder string
 	ingressFlags   []string
 	supportURL     string
 	appVersion     string
@@ -132,10 +127,9 @@ not touch the cache at all.`,
 		fmt.Sprintf("board to build for (repeatable); omit to build all boards: %s", strings.Join(boards.IDs(), ", ")))
 	cmd.Flags().StringVarP(&output, "output", "o", "",
 		"output .img file when building one board, or output directory when building several")
-	cmd.Flags().StringVar(&hostname, "hostname", "",
-		"device hostname (default: sanitized main package name); an explicit value is baked into gosd.toml and always wins, while the default is left commented out so an Imager wizard hostname can take effect instead")
-	cmd.Flags().StringVar(&wifiSSID, "wifi-ssid", "", "WiFi SSID to bake into the image")
-	cmd.Flags().StringVar(&wifiPass, "wifi-pass", "", "WiFi password to bake into the image (WPA2-PSK or open networks only)")
+	cmd.Flags().StringVar(&configDir, "config-dir", "",
+		fmt.Sprintf("directory of setting files to overlay onto gosd's own %s/ tree: one value per file, each documented by a <name>%s sidecar (its own, or gosd's when the file only overrides a value); the merged tree is written to the boot partition, so a card's owner can edit it in any text editor (default: a %s directory beside the app's main package, when one exists)",
+			configtree.Dir, configtree.DocSuffix, configtree.Dir))
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
 		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
 	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
@@ -150,10 +144,6 @@ not touch the cache at all.`,
 		"base URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog")
 	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
-	cmd.Flags().StringArrayVar(&envFlags, "env", nil,
-		"default app environment variable KEY=VALUE to bake into the image (repeatable); a hand-edited gosd.toml [env] entry on the card overrides the same key; use --env-file instead to write the whole [env] section yourself with comments and commented-out suggestions")
-	cmd.Flags().StringVar(&envFile, "env-file", "",
-		"path to a TOML file whose contents become the card's gosd.toml [env] section verbatim - KEY = \"value\" lines and comments exactly as you write them, no [env] header or other sections (see docs/gosd.toml.md); active entries are also baked into config.json; cannot be combined with --env")
 	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
 		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
 	cmd.Flags().StringArrayVar(&withExternal, "with-external", nil,
@@ -169,8 +159,6 @@ not touch the cache at all.`,
 			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
 		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
-	cmd.Flags().StringVar(&envPlaceholder, "env-placeholder", "",
-		"reserve <size> bytes (e.g. --env-placeholder 8KiB) for gosd.toml's [env] section, and record that region's byte ranges in the <image>.inject.json manifest, so a provisioning tool can write per-device settings into a downloaded .img the same way --placeholder works; what it writes arrives as an ordinary gosd.toml [env] value, so the device needs no app code for it and the provisioning snapshot carries it across a later reflash; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device via gosd.toml's [ingress.<value>] section - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
 	cmd.Flags().StringVar(&supportURL, "support-url", "",
@@ -186,28 +174,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	if catalogFlag && publishBaseURL == "" {
 		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
-	}
-
-	if len(envFlags) > 0 && envFile != "" {
-		return fmt.Errorf("--env and --env-file can't be combined; put every default in the --env-file (it is the whole [env] section, comments and all), or use --env alone")
-	}
-	// env is the active KEY->VALUE map baked into config.json; envBody is a
-	// developer-authored [env] section spliced verbatim into gosd.toml. With
-	// --env-file both come from the file; with --env only env is set and the
-	// [env] section is rendered plainly from it.
-	env, err := parseEnvFlags(envFlags)
-	if err != nil {
-		return err
-	}
-	envBody, fileEnv, envWarnings, err := parseEnvFile(envFile)
-	if err != nil {
-		return err
-	}
-	if envFile != "" {
-		env = fileEnv
-		for _, w := range envWarnings {
-			cmd.PrintErrf("gosd build: --env-file %s: %s\n", envFile, w)
-		}
 	}
 
 	externalSpecs, err := parseWithExternalFlags(withExternal)
@@ -240,11 +206,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	placeholderSpecs, err := parsePlaceholderFlags(placeholders)
-	if err != nil {
-		return err
-	}
-
-	envPlaceholderBytes, err := parseEnvPlaceholderFlag(envPlaceholder)
 	if err != nil {
 		return err
 	}
@@ -300,10 +261,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 	printPartitionLabels(cmd, "gosd build", labels, dataSizeBytes > 0 || dataExpand)
 
-	hostnameExplicit := hostname != ""
-	deviceHostname := hostname
-	if deviceHostname == "" {
-		deviceHostname = appName
+	resolvedConfigDir, err := resolveConfigDir(pkgPath, configDir)
+	if err != nil {
+		return err
 	}
 
 	outputs, err := resolveOutputs(selected, appName, output)
@@ -381,20 +341,21 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			extraExecutables[ingressTailscaleFunnelDest] = tf
 		}
 
+		tree, err := configtree.Build(resolvedConfigDir, ingressFeaturesFor(ingressSelected, b))
+		if err != nil {
+			return fmt.Errorf("assembling the %s configuration for %s failed: %w", configtree.Dir, b.Name(), err)
+		}
+
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
 			InitBinaryPath: bin.initPath,
 			Config: boards.BuildConfig{
-				Hostname:         deviceHostname,
-				HostnameExplicit: hostnameExplicit,
-				WifiSSID:         wifiSSID,
-				WifiPassword:     wifiPass,
-				UsbGadget:        usbGadget,
-				Env:              env,
-				ConsoleBaud:      consoleBaud,
+				Hostname:    appName,
+				UsbGadget:   usbGadget,
+				ConsoleBaud: consoleBaud,
 			},
-			EnvBody:                envBody,
+			ConfigTree:             tree,
 			ArtifactsDir:           artifactsDir,
 			CacheDir:               cacheDir,
 			OutputPath:             outputs[b.Name()],
@@ -408,7 +369,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			ExtraExecutables:       extraExecutables,
 			ExtraFiles:             extraFiles,
 			Placeholders:           placeholderSpecs,
-			EnvPlaceholderBytes:    envPlaceholderBytes,
 			IngressCloudflared:     ingressSelected.Cloudflared,
 			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
 			AppName:                appName,
@@ -424,18 +384,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 		printBootVolumeUsage(cmd, b.Name(), report)
 
-		if len(placeholderSpecs) > 0 || envPlaceholderBytes > 0 {
-			manifestPath, err := inject.WriteManifest(outputs[b.Name()], inject.ManifestSpec{
-				Board:            b.Name(),
-				Placeholders:     placeholderSpecs,
-				EnvReservedBytes: int64(envPlaceholderBytes),
-				FileRanges:       report.FileRanges,
-			})
-			if err != nil {
-				return fmt.Errorf("writing the injection manifest for %s (%s) failed: %w", appName, b.Name(), err)
-			}
-			cmd.PrintErrf("gosd build: %s inject manifest: %s\n", b.Name(), manifestPath)
+		manifestPath, err := inject.WriteManifest(outputs[b.Name()], inject.ManifestSpec{
+			Board:        b.Name(),
+			Placeholders: placeholderSpecs,
+			Config:       tree,
+			FileRanges:   report.FileRanges,
+		})
+		if err != nil {
+			return fmt.Errorf("writing the injection manifest for %s (%s) failed: %w", appName, b.Name(), err)
 		}
+		cmd.PrintErrf("gosd build: %s inject manifest: %s\n", b.Name(), manifestPath)
 	}
 
 	pruneDownloadCaches(cmd, artifactsDir)
@@ -450,7 +408,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 }
 
 // deriveAppName computes the default app name gosd uses for the device
-// hostname and output filenames: the sanitized basename of pkgPath's
+// hostname (config.json's baked fallback, used whenever the card's
+// config/hostname is left unset) and output filenames: the sanitized basename of pkgPath's
 // directory. pkgPath is resolved to an absolute path first so that "." (the
 // README quickstart's canonical `gosd build .` invocation) yields the
 // working directory's name rather than filepath.Base(".") == ".", which
@@ -461,6 +420,40 @@ func deriveAppName(pkgPath string) (string, error) {
 		return "", fmt.Errorf("resolving %q to an absolute path failed: %w; check the path exists and is accessible", pkgPath, err)
 	}
 	return naming.Sanitize(filepath.Base(abs)), nil
+}
+
+// defaultConfigDirName is the directory `gosd build` picks up as the app's
+// config overlay with no --config-dir: a config/ directory beside the app's
+// main package, which is where an app's settings naturally live in its own
+// repository.
+const defaultConfigDirName = configtree.Dir
+
+// resolveConfigDir decides which directory (if any) overlays gosd's own
+// config defaults. An explicit --config-dir must exist - a typo'd path
+// silently building gosd's bare defaults would ship an image missing every
+// setting the app actually needs - while the default beside the main package
+// is only used when it happens to be there.
+func resolveConfigDir(pkgPath, flag string) (string, error) {
+	if flag != "" {
+		info, err := os.Stat(flag)
+		if err != nil {
+			return "", fmt.Errorf("--config-dir %s can't be read: %w; point it at a directory holding one file per setting, or drop the flag to build with gosd's own defaults", flag, err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("--config-dir %s is a file, not a directory; it takes a directory holding one file per setting", flag)
+		}
+		return flag, nil
+	}
+
+	abs, err := filepath.Abs(pkgPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving %q to an absolute path failed: %w; check the path exists and is accessible", pkgPath, err)
+	}
+	candidate := filepath.Join(abs, defaultConfigDirName)
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate, nil
+	}
+	return "", nil
 }
 
 // binarySizeUnits are the size suffixes --data-size and --boot-size both
@@ -674,46 +667,15 @@ func parseBootSize(s string) (int64, error) {
 	return size, nil
 }
 
-// maxEnvPlaceholderBytes is the largest region --env-placeholder will
-// reserve. [env] holds settings a person can read on the card, not payloads;
-// a value this far past that is a units slip (bytes where MiB was meant),
-// and refusing it here beats reserving it and failing later with a full boot
-// partition.
-const maxEnvPlaceholderBytes = 1 << 20
-
-// parseEnvPlaceholderFlag turns --env-placeholder <size> into a byte count,
-// zero when the flag wasn't given. Sizes are checked before compilation
-// starts, so a bad value fails fast; a region too small for the values this
-// build bakes in can only be caught once they're rendered, and pipeline
-// reports that.
-func parseEnvPlaceholderFlag(flag string) (int, error) {
-	if flag == "" {
-		return 0, nil
-	}
-
-	size, err := parseSizeBytes("--env-placeholder", flag)
-	if err != nil {
-		return 0, err
-	}
-	if size <= 0 {
-		return 0, fmt.Errorf("--env-placeholder %q reserves nothing; give a size like 8KiB, or leave the flag off entirely", flag)
-	}
-	if size > maxEnvPlaceholderBytes {
-		return 0, fmt.Errorf("--env-placeholder %q reserves %s of gosd.toml, more than the %s ceiling; [env] holds settings, not payloads, so check the units", flag, humanizeBinaryBytes(size), humanizeBinaryBytes(maxEnvPlaceholderBytes))
-	}
-	return int(size), nil
-}
-
 // parsePlaceholderFlags turns the repeated --placeholder <path>=<size> flag
 // values into inject.Placeholder specs. Each is split on the FIRST '=' (a
-// size can't contain one; splitting on the first keeps this consistent with
-// --env's strings.Cut), sized via parseSizeBytes (the same binary-unit
+// size can't contain one), sized via parseSizeBytes (the same binary-unit
 // parser --data-size/--boot-size share), and validated (path shape,
 // minimum/maximum size - see inject.Placeholder.Validate) before any
 // compilation starts, so a bad --placeholder fails fast. A path given more
 // than once, case-insensitively (FAT paths are case-insensitive), is
-// rejected outright - the same "duplicate is more likely a mistake than
-// intent" call parseEnvFlags makes for --env.
+// rejected outright: a duplicate is far more likely a mistake than an
+// intentional override, and the intentional case still has a clear fix.
 func parsePlaceholderFlags(flags []string) ([]inject.Placeholder, error) {
 	if len(flags) == 0 {
 		return nil, nil
@@ -787,45 +749,6 @@ func printBootVolumeUsage(cmd *cobra.Command, boardName string, report image.Wri
 	}
 	cmd.PrintErrf("gosd build: %s boot volume: %s / %s used (%.1f%%)\n",
 		boardName, humanizeBinaryBytes(report.BootPartitionPayloadBytes), humanizeBinaryBytes(report.BootPartitionSizeBytes), percent)
-}
-
-// envKeyPattern is the shape a --env KEY must match: a POSIX-ish environment
-// variable name, the same rules gosd-init and any shell/exec environment
-// already expect.
-var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// parseEnvFlags turns the repeated --env KEY=VALUE flag values into the map
-// baked into config.json and rendered into gosd.toml [env] (see
-// boards.BuildConfig.Env). Only the first "=" splits key from value, so
-// VALUE may be empty and may itself contain "=". A KEY given more than once
-// across repeated --env flags is rejected outright, rather than letting the
-// last one silently win — a mistaken duplicate is far more likely than an
-// intentional override, and the intentional case still has a clear fix
-// (remove one of the flags).
-func parseEnvFlags(flags []string) (map[string]string, error) {
-	if len(flags) == 0 {
-		return nil, nil
-	}
-
-	env := make(map[string]string, len(flags))
-	for _, flag := range flags {
-		key, value, ok := strings.Cut(flag, "=")
-		if !ok {
-			return nil, fmt.Errorf("--env needs KEY=VALUE; got %q", flag)
-		}
-
-		if !envKeyPattern.MatchString(key) {
-			return nil, fmt.Errorf("--env key %q is invalid because it doesn't match [A-Za-z_][A-Za-z0-9_]*; try renaming it to use only letters, digits and underscores, and not start with a digit", key)
-		}
-		if strings.HasPrefix(key, "GOSD_") {
-			return nil, fmt.Errorf("--env %s is invalid because GOSD_* names are reserved by gosd; rename %s", key, key)
-		}
-		if _, dup := env[key]; dup {
-			return nil, fmt.Errorf("--env %s was passed more than once; remove the duplicate --env flag or pick a different key for one of them", key)
-		}
-		env[key] = value
-	}
-	return env, nil
 }
 
 // writeCatalog builds and writes the Raspberry Pi Imager custom-repository

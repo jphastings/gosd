@@ -175,30 +175,16 @@ type Spec struct {
 	// clusters less) - the same trim DataSizeBytes gets.
 	BootSizeBytes int64
 
-	// ReportRanges lists the boot-file content whose on-disk byte ranges the
-	// caller wants reported back in WriteReport.FileRanges - e.g. so a
+	// ReportRanges lists the boot files whose on-disk byte ranges the
+	// caller wants reported back in WriteReport.FileRanges - so a
 	// provisioning tool can splice same-length replacement bytes into a
-	// placeholder file, or into gosd.toml's reserved [env] region, without
-	// any FAT tooling (see internal/inject and docs/image-injection.md).
-	// Every entry must name a key of BootFiles, and no path may appear
-	// twice; Write checks both up front, before any image bytes exist.
-	ReportRanges []RangeRequest
-}
-
-// RangeRequest asks Write to report where a span of one boot file's content
-// ended up in the finished image.
-type RangeRequest struct {
-	// Path is the boot file, as keyed in Spec.BootFiles (FAT-root,
-	// forward-slash separated).
-	Path string
-
-	// OffsetBytes is where the span starts within that file's content, and
-	// LengthBytes how long it is. The zero value of both asks for the whole
-	// file, which is what a --placeholder wants; gosd.toml's reserved [env]
-	// region is the case that needs a span, since the region is a slice of
-	// a file whose other bytes must not be touched.
-	OffsetBytes int64
-	LengthBytes int64
+	// placeholder file, or into one of the config tree's value files,
+	// without any FAT tooling (see internal/inject and
+	// docs/image-injection.md). Each entry is a whole file, keyed as in
+	// BootFiles; every entry must name a key of BootFiles, and no path may
+	// appear twice; Write checks both up front, before any image bytes
+	// exist.
+	ReportRanges []string
 }
 
 // WriteReport summarizes what a Write call actually wrote, so a caller can
@@ -481,20 +467,16 @@ func validateDataFilesystem(fs diskfmt.FS) (diskfmt.FS, error) {
 // a second request would silently replace the first), before any image bytes
 // exist (computeLayout, diskfs.Create, ...), so a typo'd --placeholder path
 // fails cheaply instead of after a full build.
-func validateReportRanges(reportRanges []RangeRequest, bootFiles map[string]io.Reader) error {
+func validateReportRanges(reportRanges []string, bootFiles map[string]io.Reader) error {
 	seen := make(map[string]bool, len(reportRanges))
-	for _, r := range reportRanges {
-		if _, ok := bootFiles[r.Path]; !ok {
-			return fmt.Errorf("Spec.ReportRanges names %q, which is not a Spec.BootFiles key; report only paths the boot files actually contain", r.Path)
+	for _, p := range reportRanges {
+		if _, ok := bootFiles[p]; !ok {
+			return fmt.Errorf("Spec.ReportRanges names %q, which is not a Spec.BootFiles key; report only paths the boot files actually contain", p)
 		}
-		if seen[r.Path] {
-			return fmt.Errorf("Spec.ReportRanges names %q twice; WriteReport.FileRanges is keyed by path, so ask for one span per file", r.Path)
+		if seen[p] {
+			return fmt.Errorf("Spec.ReportRanges names %q twice; WriteReport.FileRanges is keyed by path, so ask for each file once", p)
 		}
-		seen[r.Path] = true
-
-		if r.OffsetBytes < 0 || r.LengthBytes < 0 {
-			return fmt.Errorf("Spec.ReportRanges asks for %q at offset %d length %d; neither may be negative", r.Path, r.OffsetBytes, r.LengthBytes)
-		}
+		seen[p] = true
 	}
 	return nil
 }
@@ -577,10 +559,9 @@ type fileRanger interface {
 // WriteReport.FileRanges). sizes holds each path's written byte count, from
 // writeBootFiles; lay describes the partition layout every range must fall
 // inside.
-func collectFileRanges(fs filesystem.FileSystem, requests []RangeRequest, sizes map[string]int64, lay layout) (map[string][]ByteRange, error) {
-	result := make(map[string][]ByteRange, len(requests))
-	for _, req := range requests {
-		p := req.Path
+func collectFileRanges(fs filesystem.FileSystem, paths []string, sizes map[string]int64, lay layout) (map[string][]ByteRange, error) {
+	result := make(map[string][]ByteRange, len(paths))
+	for _, p := range paths {
 		f, err := fs.OpenFile(p, 0)
 		if err != nil {
 			return nil, fmt.Errorf("reopening boot file %q to report its disk ranges failed: %w", p, err)
@@ -602,42 +583,9 @@ func collectFileRanges(fs filesystem.FileSystem, requests []RangeRequest, sizes 
 		if err != nil {
 			return nil, fmt.Errorf("boot file %q: %w", p, err)
 		}
-
-		ranges, err = spanOfRanges(ranges, req, sizes[p])
-		if err != nil {
-			return nil, fmt.Errorf("boot file %q: %w", p, err)
-		}
 		result[p] = ranges
 	}
 	return result, nil
-}
-
-// spanOfRanges narrows a file's whole-content ranges to the span req asks
-// for. A zero-length request means the whole file, which is every
-// --placeholder; gosd.toml's reserved [env] region is a real span, and
-// getting it wrong would have a downloader overwrite bytes outside the
-// region, so the bounds are checked against the file's written size rather
-// than trusted.
-func spanOfRanges(ranges []ByteRange, req RangeRequest, contentSize int64) ([]ByteRange, error) {
-	if req.OffsetBytes == 0 && req.LengthBytes == 0 {
-		return ranges, nil
-	}
-	if req.OffsetBytes+req.LengthBytes > contentSize {
-		return nil, fmt.Errorf("a span of %d bytes at offset %d runs past the file's %d written bytes", req.LengthBytes, req.OffsetBytes, contentSize)
-	}
-
-	span := make([]ByteRange, 0, len(ranges))
-	var consumed int64
-	for _, r := range ranges {
-		start := max(req.OffsetBytes-consumed, 0)
-		end := min(req.OffsetBytes+req.LengthBytes-consumed, r.LengthBytes)
-		consumed += r.LengthBytes
-		if start >= end {
-			continue
-		}
-		span = append(span, ByteRange{OffsetBytes: r.OffsetBytes + start, LengthBytes: end - start})
-	}
-	return span, nil
 }
 
 // absoluteContentRanges converts diskRanges - partition-relative, whole

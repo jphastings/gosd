@@ -97,29 +97,6 @@ const envCommentedOut = `
 # NAME = "value"
 `
 
-// envReservedMarker is the first line of a reserved (--env-placeholder)
-// [env] body: the fixed sentinel a provisioning tool looks for to prove the
-// region is still pristine, followed by an explanation for whoever opens the
-// card and wonders what the padding is. Comments don't parse, so a pristine
-// region's effective [env] is exactly the baked defaults rendered beneath
-// it — which is what keeps a plain reflash free of "fresh intent" and lets
-// the provisioning snapshot restore the operator's own values (see
-// docs/image-injection.md).
-const envReservedMarker = `# GOSD-INJECTABLE v1 env
-# The settings below sit in reserved space, so a provisioning tool can fill
-# them in when this image is downloaded. You can edit them by hand here too;
-# a hand-edit always wins. The "#" padding underneath is only there to hold
-# the space open.
-`
-
-// envPaddingLine is one full line of reserved-region padding: 79 '#'
-// characters and a newline, i.e. exactly envPaddingLineBytes long.
-var envPaddingLine = strings.Repeat("#", envPaddingLineBytes-1) + "\n"
-
-// envPaddingLineBytes is envPaddingLine's length; a remainder smaller than
-// this is filled with one shorter comment line instead.
-const envPaddingLineBytes = 80
-
 // envHeader introduces the [env] table when there's at least one value to
 // show, baked-in or otherwise — the per-line settings themselves are
 // appended by Render.
@@ -247,48 +224,6 @@ funnel_port = %d
 // block is appended after Cloudflared's, in the order the providers were
 // added.
 func Render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env EnvSection, ingress Ingress) []byte {
-	out, _, err := render(hostname, bakeHostname, wifiSSID, wifiPassphrase, env, ingress, 0)
-	if err != nil {
-		// render only fails on a reserveBytes too small to hold the body,
-		// and no space is reserved here.
-		panic(err)
-	}
-	return out
-}
-
-// Span locates a region inside a rendered file: LengthBytes bytes starting
-// OffsetBytes from the file's first byte.
-type Span struct {
-	OffsetBytes int
-	LengthBytes int
-}
-
-// RenderWithReservedEnv renders the same file as Render, with the [env]
-// section's body padded out to exactly reserveBytes and its span reported so
-// the caller can record where it landed (gosd build --env-placeholder, whose
-// .inject.json manifest lets a downloader overwrite exactly those bytes; see
-// docs/image-injection.md).
-//
-// The reserved region is the WHOLE body of [env], never a padded block
-// appended below the rendered defaults: TOML rejects a duplicate key in one
-// table rather than letting the later line win, so a tool filling the region
-// in has to be able to restate every key. Its pristine content is what Render
-// would have written, preceded by envReservedMarker's comment block and
-// followed by '#' padding — all of it comment, so the values the region
-// parses to are the baked defaults exactly as before, and the card carries no
-// "fresh intent" the provisioning snapshot has to defer to.
-//
-// Unlike Render, a real "[env]" header is written even when there's nothing
-// to put under it: injected KEY = "value" lines beneath the commented-out
-// example would land in the root table instead of [env].
-//
-// An error is returned when reserveBytes is too small for the body it has to
-// hold; reserveBytes of 0 is Render, span zero.
-func RenderWithReservedEnv(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env EnvSection, ingress Ingress, reserveBytes int) ([]byte, Span, error) {
-	return render(hostname, bakeHostname, wifiSSID, wifiPassphrase, env, ingress, reserveBytes)
-}
-
-func render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string, env EnvSection, ingress Ingress, reserveBytes int) ([]byte, Span, error) {
 	out := header
 
 	if hostname != "" && bakeHostname {
@@ -307,16 +242,7 @@ func render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		out += fmt.Sprintf(wifiTemplate, wifiSSID, wifiPassphrase)
 	}
 
-	var envSpan Span
 	switch {
-	case reserveBytes > 0:
-		out += envHeader
-		body, err := reservedEnvBody(env, reserveBytes)
-		if err != nil {
-			return nil, Span{}, err
-		}
-		envSpan = Span{OffsetBytes: len(out), LengthBytes: len(body)}
-		out += body
 	case env.Verbatim != "":
 		out += "\n[env]\n" + strings.Trim(env.Verbatim, "\r\n") + "\n"
 	case len(env.Values) > 0:
@@ -342,7 +268,7 @@ func render(hostname string, bakeHostname bool, wifiSSID, wifiPassphrase string,
 		out += ingressTailscaleFunnelCommentedOut
 	}
 
-	return []byte(out), envSpan, nil
+	return []byte(out)
 }
 
 // renderedEnvValues is the plain, sorted KEY = "value" body Render has always
@@ -359,31 +285,4 @@ func renderedEnvValues(values map[string]string) string {
 		fmt.Fprintf(&out, "%s = %q\n", key, values[key])
 	}
 	return out.String()
-}
-
-// reservedEnvBody renders the [env] body for a --env-placeholder build:
-// the marker comment, the values this build would have written anyway, then
-// '#' padding to exactly reserveBytes. Every line it adds around the values
-// is a comment, so the body parses to exactly what an unreserved build's
-// would.
-func reservedEnvBody(env EnvSection, reserveBytes int) (string, error) {
-	body := envReservedMarker
-	switch {
-	case env.Verbatim != "":
-		body += strings.Trim(env.Verbatim, "\r\n") + "\n"
-	case len(env.Values) > 0:
-		body += renderedEnvValues(env.Values)
-	}
-
-	if len(body) > reserveBytes {
-		return "", fmt.Errorf("the [env] section needs at least %d bytes to hold the values this build bakes in, but only %d bytes were reserved", len(body), reserveBytes)
-	}
-
-	for reserveBytes-len(body) >= envPaddingLineBytes {
-		body += envPaddingLine
-	}
-	if remainder := reserveBytes - len(body); remainder > 0 {
-		body += strings.Repeat("#", remainder-1) + "\n"
-	}
-	return body, nil
 }

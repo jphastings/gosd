@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,8 +22,8 @@ import (
 	"github.com/u-root/u-root/pkg/cpio"
 
 	"github.com/jphastings/gosd/internal/cacerts"
+	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
-	"github.com/jphastings/gosd/internal/gosdtoml"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/inject"
@@ -93,9 +92,6 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
-		"--wifi-ssid", "test-network",
-		"--wifi-pass", "test-passphrase",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -178,7 +174,9 @@ func TestBuildProducesABootableImageFromFakeArtifacts(t *testing.T) {
 	}
 
 	configJSON := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"board":"pi-zero-2w"`, `"hostname":"integration-test"`, `"ssid":"test-network"`, `"passphrase":"test-passphrase"`} {
+	// The hostname is the app's own name: it's the per-field fallback the
+	// device uses whenever the card's config/hostname is left unset.
+	for _, want := range []string{`"board":"pi-zero-2w"`, `"hostname":"hello"`, `"configDigests"`} {
 		if !strings.Contains(string(configJSON), want) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
@@ -671,7 +669,6 @@ func TestBuildProducesABootableImageForRadxaZero3EFromFakeArtifacts(t *testing.T
 		"build", "../../examples/hello",
 		"--board", "radxa-zero-3e",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -913,7 +910,6 @@ func TestBuildProducesABootableImageForNanopiZero2FromFakeArtifacts(t *testing.T
 		"build", "../../examples/hello",
 		"--board", "nanopi-zero2",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -986,9 +982,6 @@ func TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
-		"--wifi-ssid", "test-network",
-		"--wifi-pass", "test-passphrase",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -1059,7 +1052,7 @@ func TestBuildProducesABootableImageForPiZeroWFromFakeArtifacts(t *testing.T) {
 	}
 
 	configJSON := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"board":"pi-zero-w"`, `"hostname":"integration-test"`, `"ssid":"test-network"`, `"passphrase":"test-passphrase"`} {
+	for _, want := range []string{`"board":"pi-zero-w"`, `"hostname":"hello"`, `"configDigests"`} {
 		if !strings.Contains(string(configJSON), want) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
@@ -1189,7 +1182,6 @@ func TestBuildProducesAQemuVirtImageFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "qemu-virt",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -1434,9 +1426,6 @@ func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-3b",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
-		"--wifi-ssid", "test-network",
-		"--wifi-pass", "test-passphrase",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -1511,7 +1500,7 @@ func TestBuildProducesABootableImageForPi3BFromFakeArtifacts(t *testing.T) {
 	}
 
 	configJSON := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"board":"pi-3b"`, `"hostname":"integration-test"`, `"ssid":"test-network"`, `"passphrase":"test-passphrase"`} {
+	for _, want := range []string{`"board":"pi-3b"`, `"hostname":"hello"`, `"configDigests"`} {
 		if !strings.Contains(string(configJSON), want) {
 			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
 		}
@@ -1633,7 +1622,6 @@ func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "rock-4se",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -1830,7 +1818,6 @@ func TestBuildProducesABootableImageForCubieA5EFromFakeArtifacts(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "cubie-a5e",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "integration-test",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
@@ -2039,151 +2026,6 @@ func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
 	}
 }
 
-// TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml is the acceptance test for
-// gosd-yejj: repeatable `gosd build --env KEY=VALUE` flags land in both the
-// image's baked /etc/gosd/config.json (the developer default that survives
-// even if the user deletes gosd.toml) and the rendered gosd.toml [env]
-// section on the card (so the user sees the defaults and can override them).
-func TestBuildBakesEnvFlagsIntoConfigJSONAndGosdToml(t *testing.T) {
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
-		return nil, errors.New("network access is disabled in this test")
-	})
-	t.Cleanup(func() { http.DefaultTransport = origTransport })
-
-	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
-
-	cmd := newRootCmd()
-	cmd.SetArgs([]string{
-		"build", "../../examples/hello",
-		"--board", "pi-zero-2w",
-		"--artifacts-dir", "testdata/fake-artifacts",
-		"--env", "API_URL=https://example.com",
-		"--env", "LOG_LEVEL=debug",
-		"-o", imgPath,
-	})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --env failed: %v", err)
-	}
-
-	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
-	if err != nil {
-		t.Fatalf("reopening the built image failed: %v", err)
-	}
-	defer func() { _ = d.Close() }()
-
-	fs, err := d.GetFilesystem(1)
-	if err != nil {
-		t.Fatalf("GetFilesystem(1) failed: %v", err)
-	}
-
-	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
-	if err != nil {
-		t.Fatalf("reading initramfs.cpio.zst: %v", err)
-	}
-	records := decodeInitramfs(t, initramfsBytes)
-
-	configJSON := recordContent(t, records, "etc/gosd/config.json")
-	for _, want := range []string{`"API_URL":"https://example.com"`, `"LOG_LEVEL":"debug"`} {
-		if !strings.Contains(string(configJSON), want) {
-			t.Errorf("config.json = %q, want it to contain %q", configJSON, want)
-		}
-	}
-
-	gosdToml, err := fs.ReadFile("gosd.toml")
-	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
-	}
-	if !strings.Contains(string(gosdToml), "[env]") {
-		t.Errorf("gosd.toml = %s, want it to contain an [env] section", gosdToml)
-	}
-	for _, want := range []string{`API_URL = "https://example.com"`, `LOG_LEVEL = "debug"`} {
-		if !strings.Contains(string(gosdToml), want) {
-			t.Errorf("gosd.toml = %s, want it to contain %q", gosdToml, want)
-		}
-	}
-}
-
-// TestBuildEnvFileDocumentsAndSuggestsInGosdToml is the acceptance test for
-// gosd-zj13: `gosd build --env-file` splices a developer-authored [env] body
-// verbatim into the card's gosd.toml — comments and a commented-out "suggested"
-// entry included — while baking only the active entries into config.json (a
-// suggested entry is off until the user uncomments it, so it must not become a
-// runtime default).
-func TestBuildEnvFileDocumentsAndSuggestsInGosdToml(t *testing.T) {
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
-		return nil, errors.New("network access is disabled in this test")
-	})
-	t.Cleanup(func() { http.DefaultTransport = origTransport })
-
-	envFilePath := writeEnvFile(t, `# uncomment this if you want the demo to run
-# RUN_DEMO = true
-
-# Where telemetry is posted; leave blank to disable
-API_URL = "https://example.com"
-`)
-
-	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
-
-	cmd := newRootCmd()
-	cmd.SetArgs([]string{
-		"build", "../../examples/hello",
-		"--board", "pi-zero-2w",
-		"--artifacts-dir", "testdata/fake-artifacts",
-		"--env-file", envFilePath,
-		"-o", imgPath,
-	})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --env-file failed: %v", err)
-	}
-
-	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
-	if err != nil {
-		t.Fatalf("reopening the built image failed: %v", err)
-	}
-	defer func() { _ = d.Close() }()
-
-	fs, err := d.GetFilesystem(1)
-	if err != nil {
-		t.Fatalf("GetFilesystem(1) failed: %v", err)
-	}
-
-	initramfsBytes, err := fs.ReadFile("initramfs.cpio.zst")
-	if err != nil {
-		t.Fatalf("reading initramfs.cpio.zst: %v", err)
-	}
-	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
-	if !strings.Contains(string(configJSON), `"API_URL":"https://example.com"`) {
-		t.Errorf("config.json = %q, want the active API_URL baked in", configJSON)
-	}
-	if strings.Contains(string(configJSON), "RUN_DEMO") {
-		t.Errorf("config.json = %q, want the suggested RUN_DEMO left OUT of baked defaults", configJSON)
-	}
-
-	gosdToml, err := fs.ReadFile("gosd.toml")
-	if err != nil {
-		t.Fatalf("reading gosd.toml back from the FAT root: %v", err)
-	}
-	for _, want := range []string{
-		"[env]",
-		"# uncomment this if you want the demo to run",
-		"# RUN_DEMO = true", // spliced verbatim, exactly as authored (unquoted)
-		"# Where telemetry is posted; leave blank to disable",
-		`API_URL = "https://example.com"`,
-	} {
-		if !strings.Contains(string(gosdToml), want) {
-			t.Errorf("gosd.toml = %s\nwant it to contain %q", gosdToml, want)
-		}
-	}
-	// The suggested line must be commented out, not active.
-	if strings.Contains(string(gosdToml), "\nRUN_DEMO = ") {
-		t.Errorf("gosd.toml = %s\nwant RUN_DEMO commented out, not active", gosdToml)
-	}
-}
-
 // buildConfigJSON runs `gosd build` for pi-zero-2w with extraArgs appended
 // to the fixture flags every other build_integration_test.go test shares
 // (no network, fake artifacts), and returns the resulting config.json,
@@ -2220,6 +2062,19 @@ func buildConfigJSON(t *testing.T, imgPath string, extraArgs ...string) initcfg.
 	}
 	configJSON := recordContent(t, decodeInitramfs(t, initramfsBytes), "etc/gosd/config.json")
 
+	var cfg initcfg.Config
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
+	}
+	return cfg
+}
+
+// readConfigJSON parses the /etc/gosd/config.json baked into an image that
+// has already been built.
+func readConfigJSON(t *testing.T, imgPath string) initcfg.Config {
+	t.Helper()
+
+	configJSON := recordContent(t, readImageInitramfs(t, imgPath), "etc/gosd/config.json")
 	var cfg initcfg.Config
 	if err := json.Unmarshal(configJSON, &cfg); err != nil {
 		t.Fatalf("config.json = %s is not valid JSON: %v", configJSON, err)
@@ -2322,26 +2177,6 @@ func TestBuildIdentityChangesWithBootPayloadContent(t *testing.T) {
 
 	if defaultBaud.Identity == overriddenBaud.Identity {
 		t.Errorf("identity stayed %q after --console-baud changed cmdline.txt's content, want it to change", defaultBaud.Identity)
-	}
-}
-
-// TestBuildIdentityChangesWithHostnameAndWifiViaGosdToml confirms
-// --hostname/--wifi-ssid/--wifi-pass still move the identity despite
-// config.json being excluded from the hashed payload (see
-// ComputeIdentity's docstring): those values are also baked into the
-// rendered gosd.toml template, a real hashed FAT-root file, so they're not
-// actually invisible to Identity end to end - only their config.json copies
-// are.
-func TestBuildIdentityChangesWithHostnameAndWifiViaGosdToml(t *testing.T) {
-	dir := t.TempDir()
-	deviceA := buildConfigJSON(t, filepath.Join(dir, "device-a.img"), "--hostname", "device-a", "--wifi-ssid", "network-a", "--wifi-pass", "passphrase-a")
-	deviceB := buildConfigJSON(t, filepath.Join(dir, "device-b.img"), "--hostname", "device-b", "--wifi-ssid", "network-b", "--wifi-pass", "passphrase-b")
-
-	if deviceA.Identity == "" {
-		t.Fatal("device A's identity is empty")
-	}
-	if deviceA.Identity == deviceB.Identity {
-		t.Errorf("identity stayed %q across builds with different --hostname/--wifi-*, want it to change (they change gosd.toml's content)", deviceA.Identity)
 	}
 }
 
@@ -2579,27 +2414,6 @@ func TestBuildTimestampVariesButIdentityDoesNotAcrossRebuilds(t *testing.T) {
 	}
 	if cfg1.Identity != cfg2.Identity {
 		t.Errorf("identity differed across rebuilds that only differed by buildTimestamp: %q vs %q", cfg1.Identity, cfg2.Identity)
-	}
-}
-
-// TestBuildRejectsReservedEnvKeyActionably confirms `gosd build --env
-// GOSD_FOO=bar` fails fast with an actionable error naming the reserved
-// namespace, rather than silently baking a key gosd-init would ignore.
-func TestBuildRejectsReservedEnvKeyActionably(t *testing.T) {
-	cmd := newRootCmd()
-	cmd.SetArgs([]string{
-		"build", "../../examples/hello",
-		"--board", "pi-zero-2w",
-		"--artifacts-dir", "testdata/fake-artifacts",
-		"--env", "GOSD_FOO=bar",
-		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
-	})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("gosd build --env GOSD_FOO=bar succeeded, want an error")
-	}
-	if !strings.Contains(err.Error(), "GOSD_") {
-		t.Errorf("error = %q, want it to mention the reserved GOSD_ namespace", err.Error())
 	}
 }
 
@@ -2928,37 +2742,148 @@ func recordContent(t *testing.T, records []cpio.Record, name string) []byte {
 	return nil
 }
 
-// TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion is the acceptance
-// test for injectable app settings (gosd-dwub): `gosd build
-// --env-placeholder` reserves gosd.toml's [env] body, publishes its byte
-// ranges, and a plain os.WriteAt of same-length TOML into those ranges
-// changes what the device's [env] parses to - without disturbing the rest of
-// gosd.toml, and with the pristine region parsing to exactly the baked
-// --env defaults, which is what keeps a plain reflash restorable from the
-// provisioning snapshot.
-func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
-		return nil, errors.New("network access is disabled in this test")
-	})
-	t.Cleanup(func() { http.DefaultTransport = origTransport })
+// TestBuildWritesTheConfigTreeOntoTheBootPartition is the acceptance test
+// for epic gosd-rw6n's build half: every image carries gosd's config tree
+// at the FAT root, one setting per file, each padded to its reservation and
+// each documented by a sidecar the card's owner can read - and nothing
+// documents a feature this image doesn't carry.
+func TestBuildWritesTheConfigTreeOntoTheBootPartition(t *testing.T) {
+	noNetworkTransport(t)
 
-	const reserved = 8 * 1024
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
-
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "injected-device",
-		"--env", "API_URL=https://example.com",
-		"--env-placeholder", "8KiB",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	ssid, err := fs.ReadFile("config/wifi/ssid")
+	if err != nil {
+		t.Fatalf("reading config/wifi/ssid off the card: %v", err)
+	}
+	if len(ssid) != configtree.MinValueBytes {
+		t.Errorf("config/wifi/ssid is %d bytes, want the %d-byte reservation", len(ssid), configtree.MinValueBytes)
+	}
+	if got := configtree.TrimValue(ssid); got != "" {
+		t.Errorf("config/wifi/ssid reads as %q, want unset", got)
+	}
+
+	for _, doc := range []string{"config/explain.md", "config/wifi/ssid.explain.md", "config/env/explain.md"} {
+		content, err := fs.ReadFile(doc)
+		if err != nil {
+			t.Errorf("reading %s off the card: %v", doc, err)
+			continue
+		}
+		if !bytes.HasPrefix(content, []byte("# ")) {
+			t.Errorf("%s doesn't start with a markdown heading; it is the only documentation a card's owner gets", doc)
+		}
+	}
+
+	// No --ingress, so nothing on the card may offer to configure one.
+	if _, err := fs.ReadFile("config/ingress/cloudflared/token"); err == nil {
+		t.Error("a build with no --ingress still wrote config/ingress/cloudflared/token")
+	}
+}
+
+// TestBuildIngressWritesOnlyTheSelectedAgentsSettings pins the pruning rule
+// the other way round: the agent baked into the image gets its settings
+// directory, and the one that wasn't selected gets nothing.
+func TestBuildIngressWritesOnlyTheSelectedAgentsSettings(t *testing.T) {
+	noNetworkTransport(t)
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--ingress", "cloudflared",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --ingress cloudflared failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	token, err := fs.ReadFile("config/ingress/cloudflared/token")
+	if err != nil {
+		t.Fatalf("reading config/ingress/cloudflared/token off the card: %v", err)
+	}
+	if len(token) <= configtree.MinValueBytes {
+		t.Errorf("the tunnel token reserves only %d bytes; a real Cloudflare token needs more room than the minimum", len(token))
+	}
+	if _, err := fs.ReadFile("config/ingress/tailscale-funnel/authkey"); err == nil {
+		t.Error("--ingress cloudflared also wrote tailscale-funnel's settings")
+	}
+}
+
+// writeConfigOverlay creates an app-side --config-dir with the given
+// tree-relative files.
+func writeConfigOverlay(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for p, content := range files {
+		full := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestBuildConfigDirIsInjectableAndBakedIntoConfigJSON is the acceptance
+// test for the injection half: an app's own setting reaches the card, is
+// published in the .inject.json manifest with its pristine bytes and value,
+// can be overwritten with a plain os.WriteAt in the downloaded .img, reads
+// back patched at the FAT level, and is digested in config.json so the
+// device can tell a filled-in setting from a shipped one.
+func TestBuildConfigDirIsInjectableAndBakedIntoConfigJSON(t *testing.T) {
+	noNetworkTransport(t)
+
+	overlay := writeConfigOverlay(t, map[string]string{
+		"env/API_TOKEN":            "",
+		"env/API_TOKEN.explain.md": "# API token\n\nThe token this app talks to its server with.\n",
+		"hostname":                 "kitchen-clock\n",
+	})
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--config-dir", overlay,
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --config-dir failed: %v", err)
 	}
 
 	manifestData, err := os.ReadFile(inject.ManifestPath(imgPath))
@@ -2969,18 +2894,28 @@ func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("manifest is not valid JSON: %v", err)
 	}
-	if manifest.Env == nil {
-		t.Fatal("manifest has no env region; --env-placeholder must publish one")
+
+	byPath := make(map[string]inject.ConfigInfo, len(manifest.Config))
+	for _, c := range manifest.Config {
+		byPath[c.Path] = c
 	}
-	if manifest.Env.Size != reserved {
-		t.Errorf("env.size = %d, want the reserved %d", manifest.Env.Size, reserved)
+	if got := byPath["hostname"].Value; got != "kitchen-clock" {
+		t.Errorf("manifest publishes hostname's value as %q, want the app's own default", got)
 	}
-	var total int64
-	for _, r := range manifest.Env.Ranges {
-		total += r.Length
+	token, ok := byPath["env/API_TOKEN"]
+	if !ok {
+		t.Fatalf("manifest has no env/API_TOKEN entry; it lists %v", manifest.Config)
 	}
-	if total != reserved {
-		t.Errorf("env ranges total %d bytes, want exactly the reserved %d", total, reserved)
+	if token.Value != "" {
+		t.Errorf("env/API_TOKEN ships set to %q, want unset", token.Value)
+	}
+
+	// config.json's digests must describe exactly the bytes the manifest
+	// publishes - that pairing is what lets the device recognize an
+	// injected value at boot.
+	config := readConfigJSON(t, imgPath)
+	if got := config.ConfigDigests["env/API_TOKEN"]; got != token.SHA256 {
+		t.Errorf("config.json digests env/API_TOKEN as %q, but the manifest publishes %q", got, token.SHA256)
 	}
 
 	imgFile, err := os.OpenFile(imgPath, os.O_RDWR, 0)
@@ -2989,43 +2924,76 @@ func TestBuildWithEnvPlaceholderWritesAPatchableEnvRegion(t *testing.T) {
 	}
 	defer func() { _ = imgFile.Close() }()
 
-	pristine := readRangesAt(t, imgFile, manifest.Env.Ranges)
+	pristine := readRangesAt(t, imgFile, token.Ranges)
 	gotSum := sha256.Sum256(pristine)
-	if hex.EncodeToString(gotSum[:]) != manifest.Env.SHA256 {
-		t.Errorf("the env region hashes to %x, want its manifest sha256 %s", gotSum, manifest.Env.SHA256)
-	}
-	if before := envOf(t, readBootFile(t, imgPath, "gosd.toml")); before["API_URL"] != "https://example.com" {
-		t.Errorf("pristine [env] = %+v, want it to carry the baked --env default so a reflash has no hand-edit to defer to", before)
+	if hex.EncodeToString(gotSum[:]) != token.SHA256 {
+		t.Errorf("env/API_TOKEN's bytes at its published ranges hash to %x, want the manifest's %s", gotSum, token.SHA256)
 	}
 
-	body := []byte("API_URL = \"https://injected.example\"\nAPI_TOKEN = \"s3cret\"\n")
-	writeRangesAt(t, imgFile, manifest.Env.Ranges, append(body, bytes.Repeat([]byte("\n"), reserved-len(body))...))
+	injected := append([]byte("s3cret-token"), bytes.Repeat([]byte("\n"), int(token.Size)-len("s3cret-token"))...)
+	writeRangesAt(t, imgFile, token.Ranges, injected)
 	if err := imgFile.Close(); err != nil {
 		t.Fatalf("closing the image after patching: %v", err)
 	}
 
-	patched := readBootFile(t, imgPath, "gosd.toml")
-	got := envOf(t, patched)
-	want := map[string]string{"API_URL": "https://injected.example", "API_TOKEN": "s3cret"}
-	if !maps.Equal(got, want) {
-		t.Errorf("[env] after the splice = %+v, want %+v", got, want)
-	}
-
-	cfg, _, err := gosdtoml.Parse(patched)
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
 	if err != nil {
-		t.Fatalf("patched gosd.toml no longer parses: %v", err)
+		t.Fatalf("reopening the patched image failed: %v", err)
 	}
-	if cfg.Hostname != "injected-device" {
-		t.Errorf("hostname after the splice = %q, want the built-in %q: the splice must not disturb the rest of the file", cfg.Hostname, "injected-device")
+	defer func() { _ = d.Close() }()
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+	patched, err := fs.ReadFile("config/env/API_TOKEN")
+	if err != nil {
+		t.Fatalf("reading the patched setting back at the FAT level: %v", err)
+	}
+	if got := configtree.TrimValue(patched); got != "s3cret-token" {
+		t.Errorf("config/env/API_TOKEN reads as %q at the FAT level, want the injected value", got)
 	}
 }
 
-// envOf parses a gosd.toml and returns its [env] table.
-func envOf(t *testing.T, gosdToml []byte) map[string]string {
-	t.Helper()
-	cfg, _, err := gosdtoml.Parse(gosdToml)
-	if err != nil {
-		t.Fatalf("parsing gosd.toml: %v", err)
+// TestBuildRefusesAnUndocumentedSetting: the explain.md gate is a build
+// refusal, since a setting nobody can explain is worse than no setting.
+func TestBuildRefusesAnUndocumentedSetting(t *testing.T) {
+	noNetworkTransport(t)
+
+	overlay := writeConfigOverlay(t, map[string]string{"env/API_TOKEN": ""})
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--config-dir", overlay,
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build with an undocumented setting succeeded, want a refusal")
 	}
-	return cfg.Env
+	if !strings.Contains(err.Error(), "explain.md") {
+		t.Errorf("error = %q, want it to name the missing explain.md sidecar", err)
+	}
+}
+
+// TestBuildIdentityChangesWithConfigTreeContent confirms the config tree is
+// part of the hashed boot payload: two images differing only in a setting's
+// baked value are genuinely different images, even though config.json
+// itself is excluded from the payload (see ComputeIdentity's docstring).
+func TestBuildIdentityChangesWithConfigTreeContent(t *testing.T) {
+	dir := t.TempDir()
+	overlayA := writeConfigOverlay(t, map[string]string{"hostname": "device-a\n"})
+	overlayB := writeConfigOverlay(t, map[string]string{"hostname": "device-b\n"})
+
+	deviceA := buildConfigJSON(t, filepath.Join(dir, "device-a.img"), "--config-dir", overlayA)
+	deviceB := buildConfigJSON(t, filepath.Join(dir, "device-b.img"), "--config-dir", overlayB)
+
+	if deviceA.Identity == "" {
+		t.Fatal("device A's identity is empty")
+	}
+	if deviceA.Identity == deviceB.Identity {
+		t.Errorf("identity stayed %q across builds whose config trees differ, want it to change", deviceA.Identity)
+	}
 }

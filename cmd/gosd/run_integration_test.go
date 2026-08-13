@@ -82,7 +82,6 @@ func TestRunBuildsAQemuVirtImageAndInvokesQemu(t *testing.T) {
 	cmd.SetArgs([]string{
 		"run", "../../examples/hello",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--hostname", "run-integration-test",
 		"--port", "9191",
 		"--memory", "256",
 	})

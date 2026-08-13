@@ -13,7 +13,6 @@ import {
   GosdManifestHashMismatchError,
   GosdManifestInvalidError,
 } from "./errors.js";
-import { ENV_REGION_KEY } from "./env.js";
 import { Sha256 } from "./sha256.js";
 
 export interface ByteRange {
@@ -34,14 +33,20 @@ export interface ImageInfo {
   sha256: string;
 }
 
-/** The reserved `[env]` region inside gosd.toml (`gosd build
- * --env-placeholder`), when the build reserved one. Same three fields as a
- * placeholder, but no path: it's a span of gosd.toml, not a file, so its
- * `size` bytes must go to its `ranges` and nowhere else. */
-export interface EnvInfo {
+/** One value file in the image's `config/` tree: a setting a card's owner
+ * can edit by hand, and a provisioning tool can fill in as the image
+ * downloads. Same shape as a placeholder, plus the value the file currently
+ * reads as. */
+export interface ConfigInfo {
+  /** The setting's path within the tree, with no leading `config/`:
+   * `"wifi/ssid"`, `"env/API_TOKEN"`. */
+  path: string;
+  /** The file's reservation in bytes — what a replacement is padded to. */
   size: number;
   sha256: string;
   ranges: ByteRange[];
+  /** What the file reads as today, newline-trimmed; `""` means unset. */
+  value: string;
 }
 
 export interface Manifest {
@@ -49,25 +54,37 @@ export interface Manifest {
   board: string;
   image: ImageInfo;
   placeholders: PlaceholderInfo[];
-  /** Absent on an image built without `--env-placeholder`, and on every
-   * manifest written before gosd learned to reserve one. */
-  env?: EnvInfo;
+  /** Every setting in the image's config tree; empty for an image built
+   * without one. */
+  config: ConfigInfo[];
 }
 
-/** One patchable, hash-verified span of the image: a placeholder file, or
- * the reserved [env] region. Everything downstream of the manifest —
- * padding, substitution, resume — works in these terms, so the [env] region
- * gets the same verification and resume behaviour as a placeholder without
- * a second code path. */
+/** One patchable, hash-verified span of the image: a placeholder file, or a
+ * config tree value file. Everything downstream of the manifest — padding,
+ * substitution, resume — works in these terms, so a setting gets the same
+ * verification and resume behaviour as a placeholder without a second code
+ * path. */
 export interface RegionInfo {
   /** How this region is keyed in the padded-content and captured-pristine
-   * maps: a placeholder's FAT path, or ENV_REGION_KEY. */
+   * maps: a placeholder's FAT path, or a setting's path on the card
+   * (`configRegionKey`). */
   key: string;
   /** How the region is named in an error message. */
   label: string;
   size: number;
   sha256: string;
   ranges: ByteRange[];
+}
+
+/** The directory the config tree occupies at the root of the card's boot
+ * partition — mirrors gosd's own `configtree.Dir`. */
+export const CONFIG_DIR = "config";
+
+/** How a setting is keyed in the padded-content and captured-pristine maps:
+ * its real path on the card, which no placeholder can also claim (gosd
+ * refuses a `--placeholder` colliding with a file the image already has). */
+export function configRegionKey(path: string): string {
+  return `${CONFIG_DIR}/${path}`;
 }
 
 /** Every injectable region of `manifest`, placeholders first. */
@@ -79,13 +96,13 @@ export function injectableRegions(manifest: Manifest): RegionInfo[] {
     sha256: p.sha256,
     ranges: p.ranges,
   }));
-  if (manifest.env) {
+  for (const c of manifest.config) {
     regions.push({
-      key: ENV_REGION_KEY,
-      label: "the reserved [env] region",
-      size: manifest.env.size,
-      sha256: manifest.env.sha256,
-      ranges: manifest.env.ranges,
+      key: configRegionKey(c.path),
+      label: `setting "${c.path}"`,
+      size: c.size,
+      sha256: c.sha256,
+      ranges: c.ranges,
     });
   }
   return regions;
@@ -185,20 +202,28 @@ export function parseManifest(data: unknown): Manifest {
   const placeholders = expectArray(obj.placeholders, "manifest.placeholders").map((p, i) =>
     parsePlaceholderInfo(p, `manifest.placeholders[${i}]`, image.size),
   );
-  const env = obj.env === undefined ? undefined : parseEnvInfo(obj.env, "manifest.env", image.size);
+  // An image with no config tree at all publishes no key rather than an
+  // empty array, so a missing one is "nothing to inject", not a malformed
+  // manifest.
+  const config =
+    obj.config === undefined
+      ? []
+      : expectArray(obj.config, "manifest.config").map((c, i) =>
+          parseConfigInfo(c, `manifest.config[${i}]`, image.size),
+        );
 
   const manifest: Manifest = {
     gosd_inject: expectLiteral(obj.gosd_inject, 1, "manifest.gosd_inject"),
     board: expectString(obj.board, "manifest.board"),
     image,
     placeholders,
-    ...(env ? { env } : {}),
+    config,
   };
   checkNoOverlaps(manifest);
   return manifest;
 }
 
-function parseEnvInfo(value: unknown, at: string, imageSize: number): EnvInfo {
+function parseConfigInfo(value: unknown, at: string, imageSize: number): ConfigInfo {
   const obj = expectRecord(value, at);
   const size = expectNonNegativeInt(obj.size, `${at}.size`);
   const ranges = expectArray(obj.ranges, `${at}.ranges`).map((r, i) =>
@@ -211,7 +236,13 @@ function parseEnvInfo(value: unknown, at: string, imageSize: number): EnvInfo {
   if (total !== size) {
     throw new GosdManifestInvalidError(`${at}: ranges sum to ${total} bytes but size is ${size}`);
   }
-  return { size, sha256: expectSha256Hex(obj.sha256, `${at}.sha256`), ranges };
+  return {
+    path: expectString(obj.path, `${at}.path`),
+    size,
+    sha256: expectSha256Hex(obj.sha256, `${at}.sha256`),
+    ranges,
+    value: expectString(obj.value, `${at}.value`),
+  };
 }
 
 function parseImageInfo(obj: Record<string, unknown>): ImageInfo {
@@ -256,10 +287,8 @@ function parseByteRange(value: unknown, at: string, imageSize: number): ByteRang
 }
 
 /** Every region's ranges, pooled across the whole manifest, must be
- * disjoint — two regions can't claim the same image byte. The [env] region
- * is included: it lives inside gosd.toml, so a manifest that also reported
- * gosd.toml as a whole placeholder would have them overlap, and patching
- * both would produce whichever won by range order. */
+ * disjoint — two regions can't claim the same image byte, so patching one
+ * can never partly overwrite another. */
 function checkNoOverlaps(manifest: Manifest): void {
   const intervals = injectableRegions(manifest)
     .flatMap((region) =>

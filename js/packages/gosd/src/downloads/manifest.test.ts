@@ -186,7 +186,7 @@ describe("fetchManifest", () => {
   });
 });
 
-describe("the optional env key", () => {
+describe("the config array", () => {
   const base = {
     gosd_inject: 1,
     board: "pi-zero-2w",
@@ -194,45 +194,73 @@ describe("the optional env key", () => {
     placeholders: [],
   };
 
-  it("is absent on a manifest that has none, so older images still parse", () => {
-    expect(parseManifest(base).env).toBeUndefined();
+  it("is empty on an image that ships no settings", () => {
+    expect(parseManifest(base).config).toEqual([]);
   });
 
-  it("parses into the same shape a placeholder has, minus the path", () => {
+  it("parses into a placeholder's shape plus the value the file reads as", () => {
     const parsed = parseManifest({
       ...base,
-      env: { size: 8192, sha256: "b".repeat(64), ranges: [{ offset: 4096, length: 8192 }] },
+      config: [
+        {
+          path: "wifi/ssid",
+          size: 256,
+          sha256: "b".repeat(64),
+          ranges: [{ offset: 4096, length: 256 }],
+          value: "",
+        },
+      ],
     });
-    expect(parsed.env).toEqual({
-      size: 8192,
-      sha256: "b".repeat(64),
-      ranges: [{ offset: 4096, length: 8192 }],
-    });
+    expect(parsed.config).toEqual([
+      {
+        path: "wifi/ssid",
+        size: 256,
+        sha256: "b".repeat(64),
+        ranges: [{ offset: 4096, length: 256 }],
+        value: "",
+      },
+    ]);
   });
 
   it("refuses ranges that don't sum to its size, which would truncate a splice", () => {
     expect(() =>
       parseManifest({
         ...base,
-        env: { size: 8192, sha256: "b".repeat(64), ranges: [{ offset: 4096, length: 4096 }] },
+        config: [
+          {
+            path: "wifi/ssid",
+            size: 256,
+            sha256: "b".repeat(64),
+            ranges: [{ offset: 4096, length: 128 }],
+            value: "",
+          },
+        ],
       }),
-    ).toThrow(/manifest.env: ranges sum to 4096 bytes but size is 8192/);
+    ).toThrow(GosdManifestInvalidError);
   });
 
-  it("refuses ranges that overlap a placeholder's, since one splice would clobber the other", () => {
+  it("refuses a setting whose ranges overlap a placeholder's", () => {
     expect(() =>
       parseManifest({
         ...base,
         placeholders: [
           {
             path: "app.yaml",
-            size: 4096,
+            size: 256,
             sha256: "c".repeat(64),
-            ranges: [{ offset: 4096, length: 4096 }],
+            ranges: [{ offset: 4096, length: 256 }],
           },
         ],
-        env: { size: 4096, sha256: "b".repeat(64), ranges: [{ offset: 6144, length: 4096 }] },
+        config: [
+          {
+            path: "wifi/ssid",
+            size: 256,
+            sha256: "b".repeat(64),
+            ranges: [{ offset: 4200, length: 256 }],
+            value: "",
+          },
+        ],
       }),
-    ).toThrow(/overlaps/);
+    ).toThrow(GosdManifestInvalidError);
   });
 });

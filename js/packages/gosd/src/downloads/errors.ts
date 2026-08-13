@@ -9,6 +9,7 @@ export type GosdErrorCode =
   | "manifest-invalid"
   | "manifest-hash-mismatch"
   | "unknown-placeholder"
+  | "unknown-config"
   | "invalid-env"
   | "content-too-large"
   | "image-fetch"
@@ -61,7 +62,17 @@ export class GosdUnknownPlaceholderError extends GosdError {
   }
 }
 
-/** An `env` entry can't be rendered into the reserved [env] region. */
+/** A `config` key names no setting in this image's config tree — or the
+ * image has no config tree at all. */
+export class GosdUnknownConfigError extends GosdError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("unknown-config", message, options);
+    this.name = "GosdUnknownConfigError";
+  }
+}
+
+/** A setting under `env/` can't be written: a reserved `GOSD_*` name, a name
+ * no environment can carry, or a non-string value. */
 export class GosdInvalidEnvError extends GosdError {
   constructor(message: string, options?: { cause?: unknown }) {
     super("invalid-env", message, options);

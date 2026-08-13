@@ -36,6 +36,17 @@ type Config struct {
 	// every config.json baked before this field existed.
 	Env map[string]string `json:"env,omitempty"`
 
+	// ConfigDigests is the SHA-256 (hex) of every value file in this
+	// image's config/ tree, keyed by its path within that tree
+	// ("wifi/ssid", "env/API_TOKEN") - the bytes gosd baked in, padding
+	// included, not the trimmed value they read as (see
+	// internal/configtree.Value.SHA256). It is how the device tells a value
+	// somebody changed - by hand on the card, or by a provisioning tool
+	// injecting into the downloaded .img - from the one this image shipped
+	// with, without keeping a second copy of every default anywhere.
+	// Optional: absent when the image carries no config tree at all.
+	ConfigDigests map[string]string `json:"configDigests,omitempty"`
+
 	// DataExpand marks an image built with --data-size=expand: it ships
 	// with no data partition, and gosd-init creates and formats one
 	// filling the rest of the card on first boot (see

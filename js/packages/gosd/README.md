@@ -39,34 +39,44 @@ than its placeholder is padded to the exact reserved size with trailing newlines
 harmless to the text formats placeholders carry — and content that doesn't fit fails before
 anything downloads.
 
-## App settings (`options.env`)
+## Device settings (`options.config`)
 
-An image built with `gosd build --env-placeholder <size>` reserves space for the body of its
-`gosd.toml` `[env]` table, and `options.env` fills it in:
+Every gosd-built image carries a `config/` directory on its boot partition: one setting per
+file, which the person holding the card can edit in any text editor. `options.config` fills
+those same files in as the image downloads, keyed by their path within that directory:
 
 ```ts
 await withPlaceholders(
   imageURL,
   {},
   {
-    env: { API_TOKEN: token, API_URL: "https://api.example.com" },
+    config: {
+      "wifi/ssid": ssid,
+      "wifi/passphrase": passphrase,
+      "env/API_TOKEN": token,
+    },
   },
 );
 ```
 
-Unlike `files` this isn't keyed by path, because the region is a span of `gosd.toml` rather
-than a file of its own. The entries are rendered as sorted `KEY = "value"` TOML lines, escaped,
-and padded to the reserved size — and what lands there behaves on the device exactly like a
-setting typed onto the card by hand: the app reads it with `os.Getenv`, crash reports redact
-it, and it survives a later reflash through gosd's provisioning snapshot. An injected file
-could do none of those things.
+What lands there is exactly what someone would have typed into that file by hand, so the
+device treats it as its own setting — and, because the setting lives on the card rather than
+inside the app, it survives a later reflash. Which settings an image has is up to the app it
+was built from; `manifest.config` lists them, each with the value it currently ships with
+(`""` means unset) and the size it reserves.
 
-Refused before anything downloads: an image that reserved no region, a key that isn't a valid
-environment variable name, a key in the `GOSD_*` namespace gosd-init reserves for itself (the
-device would ignore it), a non-string value, and settings too long for the region.
+A value is padded to that reservation with trailing newlines, exactly as gosd pads the
+pristine file. The reservation is fixed at build time and can never grow afterwards, so
+anything that must accept a long value (an API token, a tunnel token) ships with the room
+already held open.
 
-`files` and `env` compose freely — an image can carry both, and each region is hash-verified
-whether or not you fill it in.
+Refused before anything downloads: an image with no settings at all, a path this image
+doesn't have (the error lists the ones it does), a value longer than its reservation, a
+non-string value, and an `env/` name that is unusable or in the `GOSD_*` namespace gosd
+reserves for itself (the device would ignore it).
+
+`files` and `config` compose freely — an image can carry both, and every region is
+hash-verified whether or not you fill it in.
 
 ## Threat model
 
@@ -163,21 +173,22 @@ hold in memory twice.
 
 Every failure is a `GosdError` subclass with a stable, machine-readable `code`:
 
-| Class                             | `code`                     | When                                                                                                                                 |
-| --------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `GosdManifestFetchError`          | `manifest-fetch`           | The `.inject.json` request failed or returned a non-2xx status.                                                                      |
-| `GosdManifestInvalidError`        | `manifest-invalid`         | The manifest doesn't parse as JSON, or fails structural validation (a bad field is named by its JSON path).                          |
-| `GosdManifestHashMismatchError`   | `manifest-hash-mismatch`   | The manifest's bytes don't match a caller-pinned `options.manifestSha256`.                                                           |
-| `GosdUnknownPlaceholderError`     | `unknown-placeholder`      | A key in `files` doesn't name a placeholder in the manifest, or `env` was given for an image that reserved no region.                |
-| `GosdInvalidEnvError`             | `invalid-env`              | An `env` key isn't a valid environment variable name, is in the reserved `GOSD_*` namespace, or its value isn't a string.            |
-| `GosdContentTooLargeError`        | `content-too-large`        | A value in `files` doesn't fit its placeholder's reserved size, or the rendered `env` settings don't fit theirs.                     |
-| `GosdImageFetchError`             | `image-fetch`              | The image request failed, returned a non-2xx status, or had no body.                                                                 |
-| `GosdImagePreconditionError`      | `image-precondition`       | The response's `ETag` or `Content-Length` disagrees with the manifest, before any body byte was read.                                |
-| `GosdPlaceholderNotPristineError` | `placeholder-not-pristine` | A placeholder's — or the `[env]` region's — current bytes don't hash to the manifest's recorded value: tampered, or already patched. |
-| `GosdImageHashMismatchError`      | `image-hash-mismatch`      | The whole streamed image's SHA-256 doesn't match `manifest.image.sha256`.                                                            |
-| `GosdImageSizeError`              | `image-size`               | The stream ended short of, or ran past, `manifest.image.size`.                                                                       |
-| `GosdSaveFailedError`             | `save-failed`              | The chosen save tier itself failed (e.g. no active service worker, no DOM for the memory tier).                                      |
-| `GosdCancelledError`              | `cancelled`                | The user dismissed the fs-access save picker. Nothing had been fetched yet.                                                          |
+| Class                             | `code`                     | When                                                                                                                                  |
+| --------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `GosdManifestFetchError`          | `manifest-fetch`           | The `.inject.json` request failed or returned a non-2xx status.                                                                       |
+| `GosdManifestInvalidError`        | `manifest-invalid`         | The manifest doesn't parse as JSON, or fails structural validation (a bad field is named by its JSON path).                           |
+| `GosdManifestHashMismatchError`   | `manifest-hash-mismatch`   | The manifest's bytes don't match a caller-pinned `options.manifestSha256`.                                                            |
+| `GosdUnknownPlaceholderError`     | `unknown-placeholder`      | A key in `files` doesn't name a placeholder in the manifest.                                                                          |
+| `GosdUnknownConfigError`          | `unknown-config`           | A key in `config` doesn't name a setting in this image, or the image has no settings at all.                                          |
+| `GosdInvalidEnvError`             | `invalid-env`              | An `env/` setting's name isn't a valid environment variable name, is in the reserved `GOSD_*` namespace, or its value isn't a string. |
+| `GosdContentTooLargeError`        | `content-too-large`        | A value in `files` or `config` doesn't fit the size its region reserves.                                                              |
+| `GosdImageFetchError`             | `image-fetch`              | The image request failed, returned a non-2xx status, or had no body.                                                                  |
+| `GosdImagePreconditionError`      | `image-precondition`       | The response's `ETag` or `Content-Length` disagrees with the manifest, before any body byte was read.                                 |
+| `GosdPlaceholderNotPristineError` | `placeholder-not-pristine` | A placeholder's — or a setting's — current bytes don't hash to the manifest's recorded value: tampered, or already patched.           |
+| `GosdImageHashMismatchError`      | `image-hash-mismatch`      | The whole streamed image's SHA-256 doesn't match `manifest.image.sha256`.                                                             |
+| `GosdImageSizeError`              | `image-size`               | The stream ended short of, or ran past, `manifest.image.size`.                                                                        |
+| `GosdSaveFailedError`             | `save-failed`              | The chosen save tier itself failed (e.g. no active service worker, no DOM for the memory tier).                                       |
+| `GosdCancelledError`              | `cancelled`                | The user dismissed the fs-access save picker. Nothing had been fetched yet.                                                           |
 
 ```ts
 import { GosdError } from "@jphastings/gosd/downloads";

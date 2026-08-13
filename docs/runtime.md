@@ -92,24 +92,16 @@ before starting `/app` — see `mergeUserEnv` in
 | Source | Wins per key? | Where it lives |
 |---|---|---|
 | `gosd.toml`'s `[env]` table | Yes | Hand-editable fallback on the boot partition (see "Provisioning" below). |
-| Baked defaults (`gosd build --env KEY=VALUE`, repeatable) | No | Recorded in `config.json`, and also pre-filled into the card's `gosd.toml [env]` section at build time, so whoever holds the card can see the developer's defaults and override any of them without needing to know the rest. |
+| Baked defaults | No | Recorded in `config.json` inside the image. |
 
 Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
 `API_URL`, and a baked default set both, your app gets the card's
 `LOG_LEVEL` alongside the baked `API_URL` — not one source or the other
 in its entirety.
 
-To *document* those baked defaults for whoever holds the card — per-key
-comments, and commented-out "suggested" settings a user opts into — build
-with `gosd build --env-file`; see [`docs/gosd.toml.md`](gosd.toml.md).
-
 To give each device *different* values without building it a different
-image — a per-user API token spliced in as the image downloads, say — build
-with `gosd build --env-placeholder <size>`, which reserves space in the
-card's `[env]` table for a downloader to fill in. What lands there is an
-ordinary `gosd.toml` value, so everything on this page applies to it
-unchanged; see
-[injecting environment variables](image-injection.md#injecting-environment-variables).
+image — a per-user API token spliced in as the image downloads, say — see
+[injecting settings](image-injection.md#injecting-settings).
 
 Your app's environment is otherwise a clean slate: it gets exactly the
 `GOSD_*` vars above plus this merged user env, not a copy of
@@ -117,13 +109,13 @@ Your app's environment is otherwise a clean slate: it gets exactly the
 
 **Reserved names.** Keys in `gosd-init`'s own `GOSD_*` namespace
 (`GOSD_BOARD`, `GOSD_HOSTNAME`, `GOSD_DATA_FLUSH`, and any future `GOSD_*`
-var) can never be set this way. `gosd build --env` refuses a `GOSD_*` key outright, with an
-actionable error, before it ever reaches an image. A `GOSD_*` key
-hand-written into a card's `gosd.toml [env]` is logged and ignored at
-boot instead — your app always gets `gosd-init`'s real value for those,
+var) can never be set this way. `gosd build` refuses a `GOSD_*` setting
+outright, with an actionable error, before it ever reaches an image. A
+`GOSD_*` key hand-written into a card's `gosd.toml [env]` is logged and
+ignored at boot instead — your app always gets `gosd-init`'s real value for those,
 never whatever a card tried to override them with.
 
-**Missing or empty is fine.** No `--env` flags at build time and no
+**Missing or empty is fine.** No baked defaults and no
 `[env]` table on the card is a normal, unremarkable boot: your app just
 gets none of these vars (plus the `GOSD_*` ones above), and nothing
 errors either way.
@@ -180,8 +172,7 @@ this precedence order (highest wins):
    boot partition (see "Provisioning" below).
 2. **Cloud-init provisioning** written by Raspberry Pi Imager — also
    below.
-3. **`config.json`**, baked at build time by `gosd build --wifi-ssid` /
-   `--wifi-pass`.
+3. **`config.json`**, baked at build time.
 
 ### HTTPS calls and the CA bundle
 

@@ -26,9 +26,9 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   via a Cloudflare Tunnel (`--ingress cloudflared`; arm64 boards only) or a
   Tailscale Funnel (`--ingress tailscale-funnel`; every board, needs a
   `--data-size` data partition).
-- Reserves placeholder files, and space in the card's `[env]` settings, for
-  [post-build config injection](docs/image-injection.md) (`--placeholder`,
-  `--env-placeholder`).
+- Publishes every setting on the card, and any reserved placeholder file, for
+  [post-build config injection](docs/image-injection.md) (`--config-dir`,
+  `--placeholder`).
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
   stock kernels omit (`gosd build-kernel`).
 - Enables I2C, SPI and GPIO by default ([pinouts](docs/runtime.md)) —

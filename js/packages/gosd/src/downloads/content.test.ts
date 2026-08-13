@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { padContents, padEnv } from "./content.js";
-import { ENV_REGION_KEY } from "./env.js";
-import { GosdContentTooLargeError, GosdUnknownPlaceholderError } from "./errors.js";
-import type { Manifest } from "./manifest.js";
+import { padConfig, padContents } from "./content.js";
+import {
+  GosdContentTooLargeError,
+  GosdInvalidEnvError,
+  GosdUnknownConfigError,
+  GosdUnknownPlaceholderError,
+} from "./errors.js";
+import { configRegionKey, type Manifest } from "./manifest.js";
 
 function manifestWith(placeholders: { path: string; size: number }[]): Manifest {
   return {
@@ -14,6 +18,23 @@ function manifestWith(placeholders: { path: string; size: number }[]): Manifest 
       size: p.size,
       sha256: "b".repeat(64),
       ranges: [{ offset: 0, length: p.size }],
+    })),
+    config: [],
+  };
+}
+
+function manifestWithSettings(settings: { path: string; size: number }[]): Manifest {
+  return {
+    gosd_inject: 1,
+    board: "pi-zero-2w",
+    image: { filename: "app.img", size: 1000, sha256: "a".repeat(64) },
+    placeholders: [],
+    config: settings.map((c, i) => ({
+      path: c.path,
+      size: c.size,
+      sha256: "b".repeat(64),
+      ranges: [{ offset: i * 100, length: c.size }],
+      value: "",
     })),
   };
 }
@@ -98,47 +119,52 @@ describe("padContents", () => {
   });
 });
 
-describe("padEnv", () => {
-  const withEnvRegion = (size: number): Manifest => ({
-    gosd_inject: 1,
-    board: "test",
-    image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
-    placeholders: [],
-    env: { size, sha256: "0".repeat(64), ranges: [{ offset: 0, length: size }] },
+describe("padConfig", () => {
+  it("pads a setting's value to its reservation with trailing newlines", () => {
+    const manifest = manifestWithSettings([{ path: "wifi/ssid", size: 8 }]);
+    const padded = padConfig({ "wifi/ssid": "home" }, manifest);
+    const out = padded.get(configRegionKey("wifi/ssid"))!;
+    expect(new TextDecoder().decode(out)).toBe("home\n\n\n\n");
   });
 
-  it("renders the settings and pads to the reserved size with newlines", () => {
-    const padded = padEnv({ API_URL: "https://example.com" }, withEnvRegion(64));
-    expect(padded.length).toBe(64);
-    expect(new TextDecoder().decode(padded)).toBe(
-      'API_URL = "https://example.com"\n' +
-        "\n".repeat(64 - 'API_URL = "https://example.com"\n'.length),
+  it("lists the image's settings when the path isn't one of them", () => {
+    const manifest = manifestWithSettings([
+      { path: "wifi/ssid", size: 8 },
+      { path: "hostname", size: 8 },
+    ]);
+    expect(() => padConfig({ "wifi/sid": "home" }, manifest)).toThrow(GosdUnknownConfigError);
+    expect(() => padConfig({ "wifi/sid": "home" }, manifest)).toThrow(/wifi\/ssid, hostname/);
+  });
+
+  it("refuses an image with no settings at all", () => {
+    expect(() => padConfig({ "wifi/ssid": "home" }, manifestWithSettings([]))).toThrow(
+      GosdUnknownConfigError,
     );
   });
 
-  it("refuses an image that reserved no region, naming the flag that would", () => {
-    const manifest = withEnvRegion(64);
-    delete manifest.env;
-    expect(() => padEnv({ A: "b" }, manifest)).toThrow(/--env-placeholder/);
-  });
-
-  it("refuses settings too large for the region, naming both sizes", () => {
-    expect(() => padEnv({ API_URL: "https://example.com" }, withEnvRegion(8))).toThrow(
+  it("refuses a value longer than the setting's reservation", () => {
+    const manifest = manifestWithSettings([{ path: "wifi/ssid", size: 4 }]);
+    expect(() => padConfig({ "wifi/ssid": "a-long-network-name" }, manifest)).toThrow(
       GosdContentTooLargeError,
     );
   });
+
+  it("refuses a GOSD_* environment variable the device would ignore", () => {
+    const manifest = manifestWithSettings([{ path: "env/GOSD_BOARD", size: 32 }]);
+    expect(() => padConfig({ "env/GOSD_BOARD": "pi-zero-2w" }, manifest)).toThrow(
+      GosdInvalidEnvError,
+    );
+  });
+
+  it("refuses an environment variable name no environment could carry", () => {
+    const manifest = manifestWithSettings([{ path: "env/2FAST", size: 32 }]);
+    expect(() => padConfig({ "env/2FAST": "x" }, manifest)).toThrow(GosdInvalidEnvError);
+  });
 });
 
-describe("padContents with the env region's key", () => {
-  it("points at the env option rather than treating it as a missing placeholder", () => {
-    const manifest: Manifest = {
-      gosd_inject: 1,
-      board: "test",
-      image: { filename: "f.img", size: 4096, sha256: "0".repeat(64) },
-      placeholders: [],
-    };
-    expect(() => padContents({ [ENV_REGION_KEY]: 'API_URL = "x"' }, manifest)).toThrow(
-      /env` option/,
-    );
+describe("padContents given a setting's path", () => {
+  it("points at the config option rather than just calling it unknown", () => {
+    const manifest = manifestWithSettings([{ path: "wifi/ssid", size: 8 }]);
+    expect(() => padContents({ "wifi/ssid": "home" }, manifest)).toThrow(/`config` option/);
   });
 });

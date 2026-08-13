@@ -154,7 +154,7 @@ is a line in the log rather than something to deduce from silence.
 | `CHIME_OUTPUT` | `hdmi` | Which output to prefer: `hdmi`, `analog` or `any` |
 
 Set them at build time via `gosd.toml`'s `[env]` table or
-`gosd build --env CHIME_EVERY=5m`.
+a `CHIME_EVERY` file in the app's `config/env/` directory.
 
 ## No audio device?
 

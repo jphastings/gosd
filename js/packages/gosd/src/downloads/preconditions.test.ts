@@ -9,6 +9,7 @@ function manifest(size = 1000, sha256 = "a".repeat(64)): Manifest {
     board: "test",
     image: { filename: "app.img", size, sha256 },
     placeholders: [],
+    config: [],
   };
 }
 

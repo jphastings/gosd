@@ -799,82 +799,41 @@ func TestEnsureOutputDirEmptySingleBoardOutputIsNoop(t *testing.T) {
 	}
 }
 
-func TestParseEnvFlagsNil(t *testing.T) {
-	got, err := parseEnvFlags(nil)
+// resolveConfigDir's default: a config/ directory beside the app's main
+// package is picked up with no flag at all, so an app that keeps its
+// settings where they belong needs no ceremony to ship them.
+func TestResolveConfigDirDefaultsToTheDirectoryBesideTheMainPackage(t *testing.T) {
+	pkgDir := t.TempDir()
+	configDir := filepath.Join(pkgDir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveConfigDir(pkgDir, "")
 	if err != nil {
-		t.Fatalf("parseEnvFlags(nil): %v", err)
+		t.Fatalf("resolveConfigDir: %v", err)
 	}
-	if got != nil {
-		t.Errorf("parseEnvFlags(nil) = %v, want nil", got)
+	if got != configDir {
+		t.Errorf("resolveConfigDir = %q, want %q", got, configDir)
 	}
 }
 
-func TestParseEnvFlagsValid(t *testing.T) {
-	got, err := parseEnvFlags([]string{"API_URL=https://example.com", "LOG_LEVEL=debug"})
+func TestResolveConfigDirWithoutOneIsEmpty(t *testing.T) {
+	got, err := resolveConfigDir(t.TempDir(), "")
 	if err != nil {
-		t.Fatalf("parseEnvFlags: %v", err)
+		t.Fatalf("resolveConfigDir: %v", err)
 	}
-	want := map[string]string{"API_URL": "https://example.com", "LOG_LEVEL": "debug"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseEnvFlags = %v, want %v", got, want)
-	}
-}
-
-func TestParseEnvFlagsEmptyValueIsOK(t *testing.T) {
-	got, err := parseEnvFlags([]string{"FOO="})
-	if err != nil {
-		t.Fatalf("parseEnvFlags: %v", err)
-	}
-	if v, ok := got["FOO"]; !ok || v != "" {
-		t.Errorf(`parseEnvFlags(["FOO="]) = %v, want {"FOO": ""}`, got)
+	if got != "" {
+		t.Errorf("resolveConfigDir = %q, want no overlay at all", got)
 	}
 }
 
-func TestParseEnvFlagsValueContainingEqualsSplitsOnFirst(t *testing.T) {
-	got, err := parseEnvFlags([]string{"CONN=user=admin;pass=secret"})
-	if err != nil {
-		t.Fatalf("parseEnvFlags: %v", err)
-	}
-	if want := "user=admin;pass=secret"; got["CONN"] != want {
-		t.Errorf("parseEnvFlags CONN = %q, want %q", got["CONN"], want)
-	}
-}
-
-func TestParseEnvFlagsRejectsMissingEquals(t *testing.T) {
-	_, err := parseEnvFlags([]string{"NOEQUALS"})
-	if err == nil {
-		t.Fatal("parseEnvFlags([NOEQUALS]) succeeded, want an error")
-	}
-	if !strings.Contains(err.Error(), "--env needs KEY=VALUE") {
-		t.Errorf("error = %q, want it to mention KEY=VALUE", err.Error())
-	}
-}
-
-func TestParseEnvFlagsRejectsInvalidKeyChars(t *testing.T) {
-	for _, in := range []string{"1STARTSWITHDIGIT=x", "HAS-HYPHEN=x", "HAS SPACE=x", "=emptykey"} {
-		if _, err := parseEnvFlags([]string{in}); err == nil {
-			t.Errorf("parseEnvFlags([%q]) succeeded, want an error", in)
-		}
-	}
-}
-
-func TestParseEnvFlagsRejectsReservedGosdNamespace(t *testing.T) {
-	_, err := parseEnvFlags([]string{"GOSD_FOO=bar"})
-	if err == nil {
-		t.Fatal("parseEnvFlags([GOSD_FOO=bar]) succeeded, want an error")
-	}
-	if !strings.Contains(err.Error(), "GOSD_") {
-		t.Errorf("error = %q, want it to mention the GOSD_ namespace", err.Error())
-	}
-}
-
-func TestParseEnvFlagsRejectsDuplicateKey(t *testing.T) {
-	_, err := parseEnvFlags([]string{"FOO=one", "FOO=two"})
-	if err == nil {
-		t.Fatal("parseEnvFlags with a duplicate key succeeded, want an error")
-	}
-	if !strings.Contains(err.Error(), "FOO") {
-		t.Errorf("error = %q, want it to mention the duplicate key FOO", err.Error())
+// A typo'd --config-dir must fail rather than silently building gosd's bare
+// defaults, which would ship an image missing every setting the app needs.
+func TestResolveConfigDirRefusesAMissingExplicitDirectory(t *testing.T) {
+	_, err := resolveConfigDir(t.TempDir(), filepath.Join(t.TempDir(), "nope"))
+	if err == nil || !strings.Contains(err.Error(), "--config-dir") {
+		t.Fatalf("resolveConfigDir with a missing directory = %v, want a refusal naming the flag", err)
 	}
 }
 

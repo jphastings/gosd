@@ -52,22 +52,11 @@ type BoardArtifactsFunc func(ctx context.Context, cacheDir, board string) (strin
 // interface passes BuildConfig through in case a board's boot-time template
 // needs them directly).
 type BuildConfig struct {
+	// Hostname is the name the device falls back to when the card's
+	// config/hostname setting is left unset: the sanitized basename of the
+	// app's main package, baked into /etc/gosd/config.json.
 	Hostname string
 
-	// HostnameExplicit marks Hostname as an operator's deliberate choice
-	// (gosd build/run --hostname) rather than the sanitized-main-package
-	// default. The build pipeline uses it to decide how Hostname is baked
-	// into gosd.toml: an explicit hostname renders uncommented (it always
-	// wins, like a hand-edit), the default renders commented out, like the
-	// [wifi] block, so an Imager wizard's cloud-init hostname can take
-	// effect instead of always being shadowed by the baked default (locked
-	// gosd.toml > cloud-init > config.json precedence; see bean gosd-4hz1).
-	// config.json's hostname always carries Hostname either way, as the
-	// last-resort fallback.
-	HostnameExplicit bool
-
-	WifiSSID     string
-	WifiPassword string
 	// UsbGadget is set when --usb-gadget was passed: the board's USB
 	// controller should boot in peripheral mode so an app using the
 	// gadget package has a UDC to bind to. Boards that need a boot-time
@@ -75,14 +64,6 @@ type BuildConfig struct {
 	// that don't (Radxa Zero 3E's dwc3 negotiates role automatically)
 	// ignore it.
 	UsbGadget bool
-
-	// Env holds developer-set default app environment variables (gosd
-	// build --env, repeatable KEY=VALUE). The build pipeline bakes these
-	// into both /etc/gosd/config.json (initcfg.Config.Env) and the
-	// rendered gosd.toml [env] section - see gosd-9b5c's locked
-	// precedence (a hand-edited gosd.toml [env] entry overrides the same
-	// key here).
-	Env map[string]string
 
 	// ConsoleBaud overrides the serial console baud rate baked into a
 	// board's boot config (extlinux.conf's console= argument on the

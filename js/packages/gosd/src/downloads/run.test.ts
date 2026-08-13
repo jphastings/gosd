@@ -26,6 +26,7 @@ function fixture(): { image: Uint8Array<ArrayBuffer>; manifest: Manifest } {
       sha256: sha256Hex(image),
     },
     placeholders: [],
+    config: [],
   };
   return { image, manifest };
 }
