@@ -1,0 +1,42 @@
+# Maintains the release PR (branch knope/release) whenever main has pending
+# change files. Merging that PR runs release.yml, which tags and publishes.
+# Everything runs via the KNOPE_PAT fine-grained PAT (not GITHUB_TOKEN) so
+# the PR and later the tags trigger other workflows (CI, artifacts, npm).
+name: Prepare release PR
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  prepare-release:
+    # Don't loop when the release PR itself merges: its merge commit carries
+    # the PR title "chore: prepare release" in the message body.
+    if: "!contains(github.event.head_commit.message, 'chore: prepare release')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.KNOPE_PAT }}
+      # Skip cleanly when nothing is pending: knope's PrepareRelease has no
+      # no-op mode — with zero change files the workflow would fail at the
+      # empty `git commit`.
+      - name: Check for pending change files
+        id: pending
+        run: compgen -G ".changeset/*.md" > /dev/null && echo "pending=true" >> "$GITHUB_OUTPUT" || true
+      - name: Configure Git
+        if: steps.pending.outputs.pending == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        if: steps.pending.outputs.pending == 'true'
+        with:
+          version: 0.23.0
+      - run: knope prepare-release --verbose
+        if: steps.pending.outputs.pending == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.KNOPE_PAT }}

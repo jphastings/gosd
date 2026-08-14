@@ -1,0 +1,31 @@
+# Every PR with user-facing changes must carry a change file (.changeset/*.md
+# — see docs/releasing.md); PRs with none (refactors, CI, beans-only) get the
+# `no release notes` label instead.
+name: Change file check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  change-file:
+    if: github.head_ref != 'knope/release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Require a change file or the escape-hatch label
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          case ",$LABELS," in *",no release notes,"*) echo "label present"; exit 0 ;; esac
+          git fetch --no-tags origin "$BASE"
+          git diff --name-only "origin/$BASE...HEAD" | grep -q '^\.changeset/.*\.md$' || {
+            echo "::error::No .changeset/*.md in this PR. Add one (see docs/releasing.md) or apply the 'no release notes' label."
+            exit 1
+          }
