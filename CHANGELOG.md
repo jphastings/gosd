@@ -1,6 +1,6 @@
----
-gosd: minor
----
+## 0.6.1 (2026-08-14)
+
+### Features
 
 #### Releases are now prepared by change files and a release PR
 
