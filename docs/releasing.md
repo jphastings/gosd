@@ -24,6 +24,11 @@ Until a change file lands, there's nothing to release: the release PR
 simply doesn't exist. It can also sit open indefinitely — see "combined-PR
 ordering discipline" below.
 
+> **Don't retitle the release PR.** Its merge commit's message — carrying
+> the "chore: prepare release" title — is what routes the next push to
+> `main` to the release workflow instead of the prepare workflow. A renamed
+> release PR merges without releasing anything.
+
 ## Change-file format
 
 A change file is markdown with YAML frontmatter mapping package name to

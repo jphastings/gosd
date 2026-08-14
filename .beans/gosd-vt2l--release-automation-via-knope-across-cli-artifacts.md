@@ -5,7 +5,7 @@ status: in-progress
 type: epic
 priority: normal
 created_at: 2026-08-14T06:00:53Z
-updated_at: 2026-08-14T06:10:54Z
+updated_at: 2026-08-14T06:51:20Z
 ---
 
 Adopt knope (knope.tech) for changesets-style release automation across the three release surfaces: gosd CLI (plain vX.Y.Z + gosd/vX.Y.Z tags), board artifacts (artifacts/vX.Y.Z), and npm (npm/gosd/vX.Y.Z). Contributors add .changeset/*.md files per user-facing change; a knope-maintained release PR on branch knope/release accumulates them; merging it tags and creates GitHub releases with real notes; existing tag-triggered pipelines publish unchanged.
@@ -14,7 +14,7 @@ Full approved plan: /Users/jp/.claude/plans/i-d-like-to-automate-fluttering-boot
 
 ## Locked decisions (JP, 2026-08-13)
 
-- Tool is **knope v0.23.0**, pure GitHub Actions mode (NO knope-bot App). One fine-grained PAT (`KNOPE_PAT`, this repo only, Contents RW + Pull requests RW) so knope-created tags/PRs trigger other workflows; JP creates it.
+- Tool is **knope v0.23.0**, pure GitHub Actions mode (NO knope-bot App). Credentials: a self-owned GitHub App (Contents RW + Pull requests RW, installed on this repo only) whose private key lives in the `knope-release` environment (deployment branches restricted to main); workflows mint 1-hour auto-revoked installation tokens via actions/create-github-app-token, so knope-created PRs/tags trigger other workflows without any long-lived user credential (amended from a fine-grained PAT 2026-08-14 over exfiltration concerns).
 - **One combined release PR** across all packages with pending change files. Ordering discipline documented in docs/releasing.md, not enforced in tooling.
 - **Auto-open the pin-bump PR** after an artifacts release publishes (own bean; human still does the three-way verification and merges).
 - Deliberate amendment of docs/artifacts.md's "no automation pushes tags": the release-PR merge becomes the deliberate human act.

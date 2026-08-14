@@ -19,12 +19,12 @@ Land the core knope adoption (see epic gosd-vt2l for locked decisions; full TOML
 - [x] go.mod module-line comment: `module github.com/jphastings/gosd // v0.6.0`
 - [x] build/artifacts/VERSION = 0.10.0 (one bare line)
 - [x] Delete docs/releases/UNRELEASED.md (freshly reset stub; superseded by change files — remove the fold-and-reset ritual it describes)
-- [x] .github/workflows/prepare-release.yml (push to main; merge-message guard + compgen change-file guard — the latter is ESSENTIAL per spike finding 5; KNOPE_PAT checkout, fetch-depth 0; knope-dev/action SHA-pinned, version 0.23.0)
+- [x] .github/workflows/prepare-release.yml (push to main; merge-message guard + compgen change-file guard — the latter is ESSENTIAL per spike finding 5; app-token minted from the knope-release environment, fetch-depth 0; knope-dev/action SHA-pinned, version 0.23.0)
 - [x] .github/workflows/release.yml (pull_request closed, head_ref == knope/release && merged; git config user; knope release; then `git push origin --tags` for the plain Go module tag)
 - [x] .github/workflows/change-file-check.yml (require .changeset/*.md in diff OR `no release notes` label; skip for knope/release branch)
 - [x] docs/releasing.md (change-file format with the UNQUOTED-key warning, label escape hatch, release-PR semantics, combined-PR ordering discipline, --override-version, 0.x bump rules incl. features→patch, hand-tag escape hatch)
 - [x] CLAUDE.md bullet: user-facing PRs need a change file or the label
-- [ ] JP (outside the PR): create fine-grained PAT `KNOPE_PAT` (this repo; Contents RW + Pull requests RW) as an Actions secret; create the `no release notes` label; push the one-time bootstrap tag `git tag gosd/v0.6.0 v0.6.0 && git push origin gosd/v0.6.0` (BEFORE the first release-PR merge — else knope creates a spurious gosd/v0.6.0 release, spike finding 4; adjust if the CLI version has moved past 0.6.0 by then)
+- [ ] JP (outside the PR): (1) create a GitHub App (e.g. `gosd-knope`): webhook off, Repository permissions Contents RW + Pull requests RW, only on this account; generate a private key and note the Client ID; (2) install it on the gosd repo only; (3) create the `knope-release` environment with deployment branches restricted to `main`, holding environment variable `KNOPE_APP_CLIENT_ID` and environment secret `KNOPE_APP_PRIVATE_KEY` (no required reviewers); (4) create the `no release notes` label; (5) BEFORE the first release-PR merge, push the one-time bootstrap tag `git tag gosd/v0.6.0 v0.6.0 && git push origin gosd/v0.6.0` (else knope creates a spurious gosd/v0.6.0 release, spike finding 4; adjust if the CLI version has moved past 0.6.0 by then)
 
 After merge the release PR will appear once change files exist — HOLD it until gosd-gnnn (artifacts workflow), gosd-96qg (npm docs), and gosd-vxdt (docs cleanup) land.
 
@@ -84,3 +84,5 @@ bean's own brief, that content was specified verbatim, and updating
 `build-artifacts.yml` to match is exactly the "artifacts workflow" bean
 (gosd-gnnn) this bean's HOLD note already defers to — but until it lands,
 the doc describes the target state, not the current one.
+
+Amended 2026-08-14 (JP request): the fine-grained PAT is replaced by a self-owned GitHub App — 1-hour auto-revoked installation tokens minted per run, key scoped to the knope-release environment (main-only branch policy), release.yml re-triggered on push-to-main with the merge-message guard. Rationale: limits what an exfiltrated credential can do if the repo picks up malware; app tokens still trigger downstream workflows, which GITHUB_TOKEN cannot.
