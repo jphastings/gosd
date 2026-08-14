@@ -265,7 +265,9 @@ say so in the bean rather than silently diverging.
   pinned URL + sha256 (per-board `manifest.json`) and caches them. Our artifact
   releases (`artifacts/vX.Y.Z` tags) contain only what we compile — kernels and
   U-Boot — with source repo, commit, and config recorded in the manifest (GPL
-  compliance). CLI releases are plain `vX.Y.Z` tags and pin an artifact version.
+  compliance). CLI releases are cut by merging the knope release PR, which
+  produces a `gosd/vX.Y.Z` GitHub release plus the plain `vX.Y.Z` Go-module
+  tag, and pin an artifact version.
   Developers never *have to* compile a kernel themselves — `gosd build-kernel`
   (epic gosd-47rm) is an opt-in path for compiling in a driver GoSD's stock,
   trimmed kernels cut; see `docs/custom-kernels.md`.
@@ -446,9 +448,11 @@ say so in the bean rather than silently diverging.
   DTS patch, U-Boot) only reaches real (non-`--artifacts-dir`) builds after a
   new `artifacts/vX.Y.Z` GitHub release. Ship the build change WITHOUT bumping
   `internal/artifacts.Version` in the same PR — bumping to an unpublished tag
-  turns the qemu boot-to-HTTP CI job red. JP pushes the tag; then a separate
-  follow-up PR bumps `Version` and verifies against the real release. Full
-  procedure in `docs/artifacts.md`. Releases are cheap — cut an interim one
+  turns the qemu boot-to-HTTP CI job red. It lands with an `artifacts:`
+  change file (see `docs/releasing.md`); merging the knope release PR once
+  it lists `artifacts` creates the tag and GitHub release, and a separate
+  follow-up PR then bumps `Version` and verifies against the real release.
+  Full procedure in `docs/artifacts.md`. Releases are cheap — cut an interim one
   rather than queueing bench-blocking fixes for a planned window (v0.7.0 and
   v0.8.0 shipped hours apart, 2026-07-26).
 - **Verify an artifact bump three ways, recorded in the bean:** clean-machine
