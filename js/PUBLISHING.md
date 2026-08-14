@@ -78,18 +78,34 @@ that no token is ever used again:
 
 ## Cutting a release
 
-1. Land a PR that bumps `version` in `js/packages/<dir>/package.json`
-   (the workflow refuses a tag whose version disagrees with the manifest).
-2. Tag the merged commit on `main` and push the tag — the tag uses the
-   package's **directory** name, not its (possibly scoped) npm name:
+Versioning and tagging are no longer hand steps — they come from
+[the repo's change-file → release-PR pipeline](../docs/releasing.md).
+For `js/packages/<dir>`:
 
-   ```sh
-   git tag npm/<dir>/v<version> && git push origin npm/<dir>/v<version>
+1. The PR carrying the actual change adds a `.changeset/*.md` change file
+   whose frontmatter maps the package to a bump type, e.g.:
+
+   ```markdown
+   ---
+   npm/gosd: patch
+   ---
    ```
 
-3. The workflow verifies everything and then pauses; approve the
-   **npm-publish** environment run (the `verify` job's log shows the exact
-   tarball file list you're approving).
+   The key is the package's **directory** name under `js/packages/`
+   prefixed `npm/` (`npm/gosd` for `js/packages/gosd`), not its
+   (possibly scoped) npm name — and it must be **unquoted**, or knope
+   silently ignores it; see
+   [the change-file format](../docs/releasing.md#change-file-format).
+2. Merging the bot-maintained release PR bumps `version` in
+   `js/packages/<dir>/package.json`, writes `js/packages/<dir>/CHANGELOG.md`
+   from the accumulated change files, and tags the merge commit
+   `npm/<dir>/v<version>` — the same tag shape (directory name, not npm
+   name) `publish-npm.yml` has always keyed on.
+3. From there nothing has changed: the tag fires `publish-npm.yml`, whose
+   `verify` job re-runs every js quality gate and cross-checks the tag's
+   version against the manifest, then pauses; approve the **npm-publish**
+   environment run (the `verify` job's log shows the exact tarball file
+   list you're approving).
 4. After publish + smoke pass, the version is live on the `next` dist-tag.
    Try it out (`npm install <name>@next`), then promote it:
 
