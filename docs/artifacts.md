@@ -46,14 +46,17 @@ Pushing a git tag `artifacts/vX.Y.Z` runs
    `gosd build-kernel --staging` emits the generated `kernel.config`
    alongside the kernel image and DTB, so that file is packaged into the
    tarball too.
-3. Publishes a GitHub Release for the pushed tag with the tarballs and
-   `manifest.json` attached.
+3. Uploads the tarballs and `manifest.json` to the GitHub Release that
+   already exists for the pushed tag — knope creates that release, with its
+   notes, when its release PR is merged (see
+   [cutting a new release](#cutting-a-new-release) below); this workflow
+   only attaches assets to it.
 
 The workflow also has a `workflow_dispatch` trigger for testing the full
 kernel-build → package pipeline on a branch without cutting a real release:
-a dispatch run skips the final "Publish GitHub Release" step (tag-conditional
-on `refs/tags/artifacts/*`) and instead uploads `dist/` as a workflow
-artifact for inspection.
+a dispatch run skips the final "Upload assets to the knope-published
+release" step (tag-conditional on `refs/tags/artifacts/*`) and instead
+uploads `dist/` as a workflow artifact for inspection.
 
 `qemu-virt` is an **internal-only board**: it's a CI/local-dev boot-testing
 profile (bean gosd-5wm0, epic gosd-c54j), never advertised in end-user docs
@@ -129,25 +132,32 @@ the same tarballs + manifest.json the workflow publishes.
 
 1. Land the kernel/U-Boot change on `main` (an `internal/kernelspec`,
    config-fragment, or U-Boot `build.sh` change, reviewed and merged like
-   any other PR) **without** bumping `internal/artifacts.Version` in the
-   same PR — that bump is step 5, after the tag exists.
-2. Decide the new version number, `vX.Y.Z` — independent of the CLI's own
-   version. Bump it when kernels/U-Boot changed, not for unrelated CLI code
-   changes.
-3. JP pushes the tag: `git tag artifacts/vX.Y.Z && git push origin
-   artifacts/vX.Y.Z`. This is a deliberate, manual step — no automation
-   pushes tags — so cutting a release is never a side effect of merging a
-   PR.
-4. Watch the `Build artifacts` workflow run. On success it publishes a
-   GitHub Release named `Artifacts vX.Y.Z` with `pi-zero-2w.tar.zst`,
-   `pi-zero-w.tar.zst`, `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`,
-   `nanopi-zero2.tar.zst`, `rock-4se.tar.zst`, `cubie-a5e.tar.zst`,
-   `qemu-virt.tar.zst`, and `manifest.json` attached.
-5. In a follow-up PR — a normal CLI-code change, part of the *next* CLI
+   any other PR) together with a change file declaring `artifacts: minor`
+   (or `patch`/`major` as appropriate) describing the change — release
+   notes now come from these files rather than a hardcoded body; see
+   [how change files drive a release](releasing.md). Still
+   **without** bumping `internal/artifacts.Version` in the same PR — that
+   bump is a later, separate step, once the tag exists — for the same
+   reason as before: bumping to an unpublished tag turns the qemu
+   boot-to-HTTP CI job red.
+2. When knope opens its release PR listing the `artifacts` package, merging
+   it is the deliberate, human release act (this amends the old "no
+   automation pushes tags" rule: the merge is the decision, tagging and
+   release creation are the mechanical consequence). Merging creates the
+   `artifacts/vX.Y.Z` tag and a GitHub Release (knope names it like `artifacts X.Y.Z`)
+   with notes assembled from the accumulated change files.
+3. That tag push fires the `Build artifacts` workflow, exactly as before.
+   On success it attaches `pi-zero-2w.tar.zst`, `pi-zero-w.tar.zst`,
+   `pi-3b.tar.zst`, `radxa-zero-3e.tar.zst`, `nanopi-zero2.tar.zst`,
+   `rock-4se.tar.zst`, `cubie-a5e.tar.zst`, `qemu-virt.tar.zst`, and
+   `manifest.json` to the release knope already created (20–60 min) — the
+   workflow no longer creates or describes the release itself, only
+   attaches assets to it.
+4. In a follow-up PR — a normal CLI-code change, part of the *next* CLI
    `vX.Y.Z` release, not the artifact release itself — bump
    `internal/artifacts.Version` to the new tag, so newly-built `gosd`
    binaries pick it up.
-6. Before merging that PR, verify the bump three ways and record each in
+5. Before merging that PR, verify the bump three ways and record each in
    the bean:
    - **Clean-machine build** — fresh `HOME`, no `--board`/`--artifacts-dir`
      flags, so every public board's image comes from a real download of the
@@ -157,10 +167,17 @@ the same tarballs + manifest.json the workflow publishes.
    - **Content spot-check** — confirm the released artifact actually
      carries the change, e.g. `dtc -I dtb -O dts` showing the newly enabled
      DT node.
-7. Also check the cacerts pin is current —
+6. Also check the cacerts pin is current —
    `.github/workflows/cacerts-pin-check.yml` runs this check on a schedule
    and files an issue when it's not (bean gosd-w6zc); no need to duplicate
    its logic here.
+
+**Escape hatch:** hand-pushing a tag still works for emergencies —
+`git tag artifacts/vX.Y.Z && git push origin artifacts/vX.Y.Z` — but you
+must create the release *first*, with `gh release create artifacts/vX.Y.Z`,
+before pushing (or re-running) the tag: the `Build artifacts` workflow only
+uploads assets to an existing release now, so a hand-pushed tag with no
+release behind it fails the upload step.
 
 ## How the CLI consumes a release: pinning and caching
 
