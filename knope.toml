@@ -55,6 +55,13 @@ command = "git switch -c knope/release"
 [[workflows.steps]]
 type = "PrepareRelease"
 
+# knope's package.json serializer drops the file's trailing newline, which
+# fails the js format gate (bean gosd-489p) — restore it before committing.
+[[workflows.steps]]
+type = "Command"
+command = 'if [ -n "$(tail -c1 js/packages/gosd/package.json)" ]; then echo >> js/packages/gosd/package.json && git add js/packages/gosd/package.json; fi'
+shell = true
+
 [[workflows.steps]]
 type = "Command"
 command = "git commit -m \"chore: prepare release\""
