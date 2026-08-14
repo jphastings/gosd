@@ -1,11 +1,11 @@
 ---
 # gosd-gnnn
 title: 'build-artifacts.yml: upload assets onto the knope-published release'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-14T06:00:53Z
-updated_at: 2026-08-14T06:08:26Z
+updated_at: 2026-08-14T06:51:20Z
 parent: gosd-vt2l
 blocked_by:
     - gosd-dnzo

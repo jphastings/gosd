@@ -1,0 +1,83 @@
+# Release automation (knope.tech) across the three release surfaces:
+# the gosd CLI, board artifacts, and the npm package. See docs/releasing.md.
+
+[changes]
+# This repo does not use conventional commits: change files (.changeset/*.md)
+# are the only versioning/changelog input.
+ignore_conventional_commits = true
+
+# The Go CLI. Release tag: gosd/vX.Y.Z (the GitHub release lives there), PLUS
+# the plain vX.Y.Z Go-module tag knope derives from the root go.mod — the tag
+# `go install …@latest` resolves. The module line's `// vX.Y.Z` comment is the
+# version source that lets the post-merge `knope release` detect a prepared
+# release; it must stay.
+[packages.gosd]
+versioned_files = ["go.mod"]
+changelog = "CHANGELOG.md"
+extra_changelog_sections = [{ name = "Notes", types = ["note"] }]
+
+# Board kernels/U-Boot. Tag artifacts/vX.Y.Z — exactly the existing
+# build-artifacts.yml trigger. build/artifacts/VERSION is release-automation
+# bookkeeping ONLY; the consumption pin stays internal/artifacts.Version,
+# bumped tag-first/bump-second per docs/artifacts.md.
+[packages.artifacts]
+versioned_files = [{ path = "build/artifacts/VERSION", regex = '(?<version>\d+\.\d+\.\d+)' }]
+changelog = "docs/releases/artifacts.md"
+
+# The npm package @jphastings/gosd, keyed (like its tags) on the DIRECTORY
+# name under js/packages/. Tag npm/gosd/vX.Y.Z matches publish-npm.yml's
+# existing `npm/*/v*` trigger and its dir/version parsing unchanged.
+[packages."npm/gosd"]
+versioned_files = ["js/packages/gosd/package.json"]
+changelog = "js/packages/gosd/CHANGELOG.md"
+
+[github]
+owner = "jphastings"
+repo = "gosd"
+
+# `knope document-change` — interactive change-file creation for humans;
+# agents write .changeset/*.md by hand (same format, see docs/releasing.md).
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+# Run by .github/workflows/prepare-release.yml on every push to main that
+# has pending change files: refreshes the release PR.
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c knope/release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin knope/release"
+
+# $changelog/$version are single-package-only variables, so the title and
+# body are static; reviewers read the PR diff (changelogs + version files).
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release"
+
+[workflows.steps.body]
+template = "Merging this PR tags and publishes every release listed in the diff (the artifacts/npm pipelines fire from their tags). Close it to hold releases; it will be recreated on the next push to main with pending change files."
+
+# Run by .github/workflows/release.yml when the knope/release PR merges.
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"

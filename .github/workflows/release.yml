@@ -1,0 +1,50 @@
+# Releases every package prepared by the merged knope/release PR: creates
+# the per-package tags and GitHub releases (with notes from the changelog
+# diff). The artifacts/npm pipelines fire from those tags. Auth matches
+# prepare-release.yml: an app installation token minted from the
+# knope-release environment's key, so the created tags trigger those
+# pipelines.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release:
+    # Exact complement of prepare-release.yml's guard: only the release PR's
+    # merge commit carries "chore: prepare release" (its title) in the
+    # message body. Retitling the release PR would break this routing — see
+    # docs/releasing.md.
+    if: "contains(github.event.head_commit.message, 'chore: prepare release')"
+    runs-on: ubuntu-latest
+    environment: knope-release
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.KNOPE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KNOPE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure Git as the app bot # knope creates the plain Go-module tag locally, which needs a tagger identity
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          user_id="$(gh api "/users/${{ steps.app-token.outputs.app-slug }}%5Bbot%5D" --jq .id)"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${user_id}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        with:
+          version: 0.23.0
+      - run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      # knope creates release tags (gosd/v*, artifacts/v*, npm/gosd/v*) via
+      # the GitHub API, but the plain vX.Y.Z Go-module tag only locally.
+      - name: Push the Go module tag
+        run: git push origin --tags
