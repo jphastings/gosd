@@ -3,12 +3,17 @@ name: Build artifacts
 # Triggered by pushing a git tag matching artifacts/v*, e.g. artifacts/v0.1.0
 # (see bean gosd-wtpa and docs/artifacts.md for the full release process), or
 # manually via workflow_dispatch for testing on a branch (bean gosd-07fl) —
-# a dispatch run skips the final publish step, see package-and-release below.
+# a dispatch run skips the final upload step, see package-and-release below.
 # Builds the kernel/DTB/bootloader files GoSD compiles itself for both
 # end-user boards plus the internal-only qemu-virt board (CI/local boot
 # testing, bean gosd-5wm0) — never shown in end-user docs or the default
-# all-boards build — packages them into per-board tarballs + a
-# manifest.json, and publishes a GitHub Release from them. Third-party
+# all-boards build — and packages them into per-board tarballs + a
+# manifest.json. knope (bean gosd-9qb0) owns creating the GitHub Release
+# and its notes, from accumulated change files, when its release PR is
+# merged; this workflow's job is only to attach the built assets to the
+# release knope already created for the pushed tag (bean gosd-gnnn). A
+# manually pushed artifacts/v* tag needs `gh release create` run first, or
+# the asset upload below fails with no release to attach to. Third-party
 # blobs (GPU firmware, WiFi firmware, rkbin) are NOT built or re-hosted
 # here — they stay upstream-fetched by the CLI at pinned URL+sha256, per
 # the no-rehosting policy in the repo root CLAUDE.md.
@@ -33,7 +38,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write # required to publish a GitHub Release
+  contents: write # required to upload assets to a GitHub Release
 
 jobs:
   pi-zero-2w-kernel:
@@ -418,32 +423,24 @@ jobs:
       - name: Package tarballs and manifest.json
         run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
 
-      - name: Publish GitHub Release
-        # Only a real artifacts/v* tag push publishes a release. A
-        # workflow_dispatch run (bean gosd-07fl's verification gate) exercises
-        # every build/package step above without cutting a release.
+      - name: Upload assets to the knope-published release
+        # Only a real artifacts/v* tag push has a release to attach to; a
+        # workflow_dispatch run still exercises every build/package step and
+        # surfaces dist/ via the workflow-artifact upload below.
         if: startsWith(github.ref, 'refs/tags/artifacts/')
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "Artifacts ${{ steps.version.outputs.version }}"
-          body: |
-            CI-built kernels and U-Boot for GoSD's supported boards (bean gosd-wtpa).
-
-            Every file's build source (upstream repo, pinned commit/tag, config
-            path) is recorded per-board in manifest.json for GPL compliance; see
-            docs/artifacts.md for how the CLI consumes this release.
-          files: |
-            dist/pi-zero-2w.tar.zst
-            dist/pi-zero-w.tar.zst
-            dist/pi-3b.tar.zst
-            dist/radxa-zero-3e.tar.zst
-            dist/nanopi-zero2.tar.zst
-            dist/rock-4se.tar.zst
-            dist/cubie-a5e.tar.zst
-            dist/qemu-virt.tar.zst
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            dist/pi-zero-2w.tar.zst \
+            dist/pi-zero-w.tar.zst \
+            dist/pi-3b.tar.zst \
+            dist/radxa-zero-3e.tar.zst \
+            dist/nanopi-zero2.tar.zst \
+            dist/rock-4se.tar.zst \
+            dist/cubie-a5e.tar.zst \
+            dist/qemu-virt.tar.zst \
             dist/manifest.json
-          fail_on_unmatched_files: true
 
       - name: Upload dist/ for workflow_dispatch inspection
         # Not needed for a real tag-triggered release (the GitHub Release
