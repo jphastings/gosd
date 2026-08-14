@@ -25,11 +25,9 @@ the people you send them to never need a terminal.
 
 ## Quickstart
 
-> **Pre-release:** no numbered CLI release has been tagged yet, so `go
-> install …@latest` resolves to the newest commit (and installs cleanly).
-> The steps below are the real, working pipeline on `main`, proven end-to-end
-> on real hardware — per-board verification status lives in
-> [`COMPATIBILITY.md`](COMPATIBILITY.md).
+See [the project's GitHub releases](https://github.com/jphastings/gosd/releases)
+for what's shipped; per-board verification status lives in
+[`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 1. Install the CLI:
 
