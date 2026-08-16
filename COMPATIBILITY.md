@@ -54,7 +54,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | Radxa Zero 3E | In progress (`gosd-nlzf`) |
 | NanoPi Zero2 | Complete (`gosd-odp7`) |
 | Radxa ROCK 4SE | Complete (`gosd-sz6p`) |
-| Radxa Cubie A5E | Not started — code-complete, artifacts published (bean `gosd-6pfn`) |
+| Radxa Cubie A5E | Boot proven on the 1GB variant; 2GB/4GB unverified — see board notes (bean `gosd-6pfn`) |
 
 ## Board-specific features
 
@@ -93,7 +93,14 @@ board · ❌ not supported (see footnote).
   (`sun55i-a523.dtsi` has no SPI node at this kernel tag, so there's
   nothing for a DTS patch to enable) and no header I2C either — only the
   PMIC-internal `r_i2c0` bus is wired up; both are deferred to a
-  post-bring-up follow-up (bean `gosd-jpc8`). GPIO works as usual.
+  post-bring-up follow-up (bean `gosd-jpc8`). GPIO works as usual. Its
+  U-Boot ships per-chip vendor DRAM calibration values hardware-verified
+  only on the **1GB LPDDR4x variant** (bean `gosd-6pfn`) — upstream
+  mainline's own values fail U-Boot SPL's DRAM init on that unit
+  (`DRAM test failure at address 0x6fffffc0`, bean `gosd-84b8`). The
+  2GB/4GB variants have not been tested and may fail to boot with the same
+  DRAM error at a different address; if you're running one, feedback
+  (working or not) is very welcome on bean `gosd-84b8`.
 
 [^pi3b-wifi]: The 3B+'s BCM43455 WiFi firmware isn't bundled yet, so a
     3B+ is Ethernet-first for now (bean `gosd-oq0z`).

@@ -63,10 +63,16 @@ RUN make PLAT=sun55i_a523 \
 RUN git clone --branch "$UBOOT_TAG" --depth 1 https://github.com/u-boot/u-boot.git /src/u-boot
 
 COPY bootdelay0.config /src/bootdelay0.config
+# dram-1gb.config overrides the defconfig's per-chip vendor DRAM calibration
+# values with ones hardware-verified on the 1GB LPDDR4x variant -- upstream's
+# own values fail SPL DRAM init on that unit (see the fragment's header
+# comment and bean gosd-84b8). 2GB/4GB variants are unverified and may need
+# different values of their own.
+COPY dram-1gb.config /src/dram-1gb.config
 
 WORKDIR /src/u-boot
 RUN make CROSS_COMPILE=aarch64-linux-gnu- radxa-cubie-a5e_defconfig
-RUN ./scripts/kconfig/merge_config.sh -m .config /src/bootdelay0.config \
+RUN ./scripts/kconfig/merge_config.sh -m .config /src/bootdelay0.config /src/dram-1gb.config \
     && make CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
 # BL31= takes the raw bl31.bin (not the .elf rock-4se uses) per U-Boot's
