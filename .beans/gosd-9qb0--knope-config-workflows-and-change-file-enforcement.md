@@ -1,7 +1,7 @@
 ---
 # gosd-9qb0
 title: knope config, workflows, and change-file enforcement
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-08-14T06:00:53Z
@@ -24,7 +24,7 @@ Land the core knope adoption (see epic gosd-vt2l for locked decisions; full TOML
 - [x] .github/workflows/change-file-check.yml (require .changeset/*.md in diff OR `no release notes` label; skip for knope/release branch)
 - [x] docs/releasing.md (change-file format with the UNQUOTED-key warning, label escape hatch, release-PR semantics, combined-PR ordering discipline, --override-version, 0.x bump rules incl. features→patch, hand-tag escape hatch)
 - [x] CLAUDE.md bullet: user-facing PRs need a change file or the label
-- [ ] JP (outside the PR): (1) create a GitHub App (e.g. `gosd-knope`): webhook off, Repository permissions Contents RW + Pull requests RW, only on this account; generate a private key and note the Client ID; (2) install it on the gosd repo only; (3) create the `knope-release` environment with deployment branches restricted to `main`, holding environment variable `KNOPE_APP_CLIENT_ID` and environment secret `KNOPE_APP_PRIVATE_KEY` (no required reviewers); (4) create the `no release notes` label; (5) BEFORE the first release-PR merge, push the one-time bootstrap tag `git tag gosd/v0.6.0 v0.6.0 && git push origin gosd/v0.6.0` (else knope creates a spurious gosd/v0.6.0 release, spike finding 4; adjust if the CLI version has moved past 0.6.0 by then)
+- [x] JP (outside the PR): (1) create a GitHub App (e.g. `gosd-knope`): webhook off, Repository permissions Contents RW + Pull requests RW, only on this account; generate a private key and note the Client ID; (2) install it on the gosd repo only; (3) create the `knope-release` environment with deployment branches restricted to `main`, holding environment variable `KNOPE_APP_CLIENT_ID` and environment secret `KNOPE_APP_PRIVATE_KEY` (no required reviewers); (4) create the `no release notes` label; (5) BEFORE the first release-PR merge, push the one-time bootstrap tag `git tag gosd/v0.6.0 v0.6.0 && git push origin gosd/v0.6.0` (else knope creates a spurious gosd/v0.6.0 release, spike finding 4; adjust if the CLI version has moved past 0.6.0 by then)
 
 After merge the release PR will appear once change files exist — HOLD it until gosd-gnnn (artifacts workflow), gosd-96qg (npm docs), and gosd-vxdt (docs cleanup) land.
 
@@ -86,3 +86,5 @@ bean's own brief, that content was specified verbatim, and updating
 the doc describes the target state, not the current one.
 
 Amended 2026-08-14 (JP request): the fine-grained PAT is replaced by a self-owned GitHub App — 1-hour auto-revoked installation tokens minted per run, key scoped to the knope-release environment (main-only branch policy), release.yml re-triggered on push-to-main with the merge-message guard. Rationale: limits what an exfiltrated credential can do if the repo picks up malware; app tokens still trigger downstream workflows, which GITHUB_TOKEN cannot.
+
+Closed 2026-08-16: all setup done by JP; the first prepare-release run failed only because the Client ID had been stored as an environment secret rather than a variable (the workflow reads `vars.`) and the private key wasn't yet added — corrected, and release PR #284 (gosd 0.6.1) then flowed end to end.

@@ -1,7 +1,7 @@
 ---
 # gosd-vxdt
 title: 'Docs cleanup: stale README pre-release note + CLAUDE.md release bullets'
-status: in-progress
+status: completed
 type: task
 created_at: 2026-08-14T06:00:53Z
 updated_at: 2026-08-14T06:00:53Z

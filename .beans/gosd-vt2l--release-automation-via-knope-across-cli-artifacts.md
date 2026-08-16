@@ -22,3 +22,8 @@ Full approved plan: /Users/jp/.claude/plans/i-d-like-to-automate-fluttering-boot
 - `[changes] ignore_conventional_commits = true` — change files are the only versioning input.
 - docs/releases/UNRELEASED.md is retired. (The originally planned seed change file became obsolete mid-epic: v0.6.0 shipped on 2026-08-14 carrying the config-tree call-out, and UNRELEASED.md was freshly reset — adoption starts from a clean v0.6.0 baseline; see spike findings in gosd-dnzo. A one-time bootstrap tag gosd/v0.6.0 -> v0.6.0's commit is required before the first release-PR merge.)
 - "No release needed" escape hatch is the `no release notes` PR label (knope has no empty changesets); enforcement via a change-file-check workflow.
+
+## Progress (2026-08-16)
+
+Shipped and proven end to end: knope config + workflows (#281, app-token auth), attach-only artifacts workflow (#280), docs (#282, #283), the package.json newline fix (#286). Real releases through the pipeline: gosd 0.6.1 (release PR #284; `gosd/v0.6.1` + plain `v0.6.1` module tag) and npm/gosd 0.3.1 (release PR #287; its tag fired publish-npm.yml — the app-token-triggers-workflows mechanism artifacts will rely on). `release.yml` has correctly skipped on every ordinary merge since. Only gosd-odx3 (pin-bump auto-PR) remains, held for the first knope artifacts release.
+
