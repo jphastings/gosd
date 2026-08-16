@@ -262,6 +262,67 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 	}
 }
 
+// eraseLeadingRegion overwrites the first min(blankProbeBytes, deviceSize)
+// bytes of a device with zeroes, so that whatever a formatter goes on to
+// write there is the only filesystem signature Inspect can subsequently
+// find. It exists because go-diskfs's FAT32 writer (the one formatter here
+// that does not already own this guarantee, see FormatFAT32) touches only
+// its own boot sector, FSInfo and their backups within the reserved area —
+// it never zeroes the rest of that area, so a previous filesystem's
+// signature elsewhere in it (most importantly ext4's superblock, fixed at
+// offset 1024) survives a fully successful FAT32 format untouched. Inspect
+// then reports that dead filesystem in preference to the live one (bean
+// gosd-o34r, found on real hardware as a healthy device halting itself on
+// its second boot).
+//
+// blankProbeBytes is the right span to erase precisely because it is also
+// the span Inspect itself reads (readLeadingRegion) before running every
+// probe against it — isExFAT (offset 3), isEXT4 (offset 1024) and
+// go-diskfs's own FAT signature detection (within the first sector) all
+// resolve against bytes inside this same window, as does the isAllZero
+// blank check. Erasing exactly this window, and no more, is therefore both
+// necessary and sufficient: nothing Inspect can identify lives outside it.
+//
+// Crash-ordering argument: like every other write FormatFAT32, FormatExFAT
+// and FormatEXT4 issue, this call is not individually fsynced — this
+// package never fsyncs mid-format; durability is the caller's job, once,
+// at the end of a whole establish sequence (blockmount.SyncDevice,
+// dataexpand's post-marker sync). What has to be argued here is only the
+// ORDER this write is issued in relative to the formatter's own writes, and
+// what an interruption at each possible point leaves behind:
+//
+//   - Power lost before this erase reaches the medium: the device still
+//     shows exactly what Inspect reported before Format was ever called —
+//     no regression versus not having this step at all.
+//   - Power lost after this erase reaches the medium but before the
+//     formatter's own signature-bearing writes do: every byte in the
+//     window Inspect actually probes is now zero, so Inspect reports
+//     Contents{Blank: true} — the documented, safe "nothing to destroy"
+//     state (see Contents.Blank), never a stale foreign filesystem. This
+//     is a state the bug this closes could never reach before: there was
+//     no way to get from "ext4 superblock present" to "no filesystem
+//     identifiable" without also finishing a complete, self-consistent
+//     replacement filesystem.
+//   - Power lost partway through the formatter's own writes, after this
+//     erase already landed: no worse than an interrupted format has always
+//     been — a partial filesystem, exactly as (un)trustworthy as it always
+//     was pending whatever established-marker check the caller layers on
+//     top, whether or not this erase ran first.
+//
+// No interruption point can leave a foreign filesystem's magic bytes
+// intact underneath an otherwise-complete different filesystem — the one
+// state this function exists to make unreachable.
+func eraseLeadingRegion(w io.WriterAt, deviceSize int64) error {
+	n := int64(blankProbeBytes)
+	if deviceSize < n {
+		n = deviceSize
+	}
+	if err := writeSpan(w, 0, uint64(n), nil); err != nil {
+		return fmt.Errorf("clearing the leading %d bytes of the device before formatting failed: %w", n, err)
+	}
+	return nil
+}
+
 // FormatFAT32 formats the block device (or image file) at devicePath as a
 // single whole-device FAT32 filesystem labelled volumeLabel, discarding any
 // existing contents.
@@ -271,6 +332,10 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 // partition table, so no partition-table reread — the one step that needs
 // privileges on real hardware — is performed. The device's size is detected
 // automatically; the caller need not supply it.
+//
+// Before writing its own boot sector, it calls eraseLeadingRegion — see that
+// function's doc for why FAT32 alone (of the three formatters here) needs
+// this step and the full crash-ordering argument.
 func FormatFAT32(devicePath, volumeLabel string) (err error) {
 	d, err := openDisk(devicePath, false)
 	if err != nil {
@@ -292,6 +357,18 @@ func FormatFAT32(devicePath, volumeLabel string) (err error) {
 	// device it lays out correctly — at most two clusters short of all of it.
 	// See fat32selfconsistent.go.
 	d.Size = LargestSelfConsistentFAT32Bytes(d.Size)
+
+	// go-diskfs's FAT32 writer only ever touches its own boot sector, FSInfo
+	// and their backups; a previous filesystem's signature elsewhere in the
+	// reserved area (e.g. ext4's superblock at offset 1024) would otherwise
+	// survive a fully successful format — see eraseLeadingRegion's doc.
+	w, err := d.Backend.Writable()
+	if err != nil {
+		return fmt.Errorf("opening %s for writing failed: %w", devicePath, err)
+	}
+	if err := eraseLeadingRegion(w, d.Size); err != nil {
+		return fmt.Errorf("preparing %s for a FAT32 format failed: %w", devicePath, err)
+	}
 
 	if _, err := d.CreateFilesystem(disk.FilesystemSpec{
 		Partition:   0, // 0 = whole device, no partition table
