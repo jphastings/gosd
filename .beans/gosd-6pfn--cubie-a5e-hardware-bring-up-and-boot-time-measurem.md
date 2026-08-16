@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: deferred
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-16T21:04:48Z
+updated_at: 2026-08-16T21:37:58Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-zh95
@@ -194,3 +194,36 @@ half a dozen full-card writes today. Nothing here needs a code change.
   configuration is already proven, byte-identical `.config`, and reached
   `DRAM: 1024 MiB` from the committed recipe).
 - USB gadget, which needs the board's USB-C re-wired off power.
+
+
+
+## Rig fault resolved, and the committed recipe verified end to end
+
+The `mmc block read error, Error: -38` scare was **not a failing card**: during
+the reseat the SD card ended up in the CalDigit dock's own SD slot
+(`TS4 Card Reader`) rather than the SDWire's (`USB3.0-CRW`, serial
+20120501030900000). macOS happily showed the card as an external disk the whole
+time, which is what made it look like a healthy rig with a dying card, while
+`sdwire disk` correctly reported no block device. Diagnostic that settles it in
+one step: map each `/dev/diskN` to its `Device / Media Name` — the mux's reader
+is `USB3.0-CRW`, and anything else is the wrong slot.
+
+With the card back in the mux, the image built from the **committed** recipe
+(`dram-1gb.config`, PR #292) booted first time:
+
+```
+U-Boot SPL 2026.04 (Aug 16 2026 - 20:36:24 +0000)
+DRAM: 1024 MiB
+...
+[gosd] data partition already present on /dev/mmcblk0p2
+[gosd] started /app (pid 147)
+gosd hello, host=hello board=cubie-a5e boots=2
+```
+
+`boots=2` and `data partition already present` also re-confirm data adoption
+across a reboot. That closes the only verification gap the PR was carrying.
+
+Networking on this particular boot did NOT come up — a second, independent
+reproduction of the DHCP-vs-unseeded-CRNG bug (bean gosd-yx94, updated with the
+detail). Unrelated to the DRAM change; it predates it and reproduces on stock
+images.
