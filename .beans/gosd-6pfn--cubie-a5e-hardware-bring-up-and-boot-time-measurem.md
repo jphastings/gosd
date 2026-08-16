@@ -1,11 +1,11 @@
 ---
 # gosd-6pfn
 title: 'Cubie A5E: hardware bring-up and boot-time measurement'
-status: todo
+status: in-progress
 type: task
 priority: deferred
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-07T19:11:14Z
+updated_at: 2026-08-16T19:36:02Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-zh95
@@ -18,10 +18,139 @@ Watch for the known Allwinner-specific risks from the research bean: PMIC regula
 ## Todos
 
 - [ ] First boot: SPL/U-Boot banner → extlinux → kernel → gosd-init → /app on serial
-- [ ] Ethernet: link, DHCP, mDNS answer
+- [x] Ethernet: link, DHCP, mDNS answer
 - [ ] Data partition: adoption gate, dataexpand, reboot persistence
-- [ ] Provisioning: gosd.toml hand-edit honored
+- [x] Provisioning: config-tree hand-edit honored (config/hostname; gosd.toml is pre-gosd-rw6n wording)
 - [ ] Boot-time baseline recorded here + COMPATIBILITY.md footnotes updated with hardware-verified status
-- [ ] File follow-up beans for anything found (field-report pattern)
+- [x] File follow-up beans for anything found (field-report pattern)
 
 DEFERRED (JP, 2026-08-07): the Cubie A5E is still in the post — bring-up starts when the board physically arrives and goes on the sdwire rig. Software side is fully activated (artifacts v0.9.0, public board, PR #205), so this is hardware-gated only.
+
+
+## Bench session 2026-08-16 (first hardware on the rig)
+
+Board: Radxa Cubie A5E, **1GB LPDDR4x variant**, on the sdwire rig, CP2102N on
+ttyS0 @ 115200. Image: `examples/hello`, `gosd build ./examples/hello
+--board cubie-a5e --data-size expand`, stock artifacts v0.10.0.
+
+**Result: boot BLOCKED in U-Boot SPL — DRAM init fails before the kernel.**
+Root cause is upstream mainline's single fixed set of vendor DRAM parameters,
+which don't suit this board's 1GB-variant DRAM chip; full evidence, decode of
+the failure address and the decision it forces are in bean gosd-84b8.
+
+### Verified on hardware anyway (each proven by the failing boot itself)
+
+- **BootROM finds our SPL at byte 8192** — the epic's central new-to-gosd
+  assumption (one raw write of `u-boot-sunxi-with-spl.bin`, where Rockchip
+  needs two) is correct on real silicon.
+- **The SPL that runs is ours** — banner build date matches the v0.10.0
+  cubie-a5e artifact, so the U-Boot/TF-A Docker pipeline, FIT assembly,
+  artifact release, download+sha256 verification and image assembly are all
+  sound end to end.
+- **Console is ttyS0 @ 115200 and reads cleanly** on the CP2102N — the
+  research bean's call was right, and none of the Rockchip 1.5M baud garble
+  applies here.
+- **Boot chain reaches SPL in well under a second** from mains-on.
+- `gosd build` image structure verified by reading the built image back:
+  MBR partition 1 = FAT32 LBA at 16MiB, 256MiB; `eGON.BT0` header at 8192
+  carrying `allwinner/sun55i-a52...`; boot partition holds Image, board DTB,
+  initramfs.cpio.zst, `extlinux/extlinux.conf` (correct `console=`, `fdt`,
+  `gosd.board=cubie-a5e`) and the full `config/` tree with `.explain.md`
+  sidecars.
+- Bench flow itself is healthy: `sdwire flash` wrote and handed the card over,
+  `sdwire power cycle` cycles the board (config resolves, power plugin
+  reports controlling device "bench").
+
+### Not yet verifiable (all gated behind DRAM)
+
+Kernel boot, gosd-init, /app, Ethernet DHCP + mDNS, /data adoption +
+dataexpand, config-tree provisioning, USB gadget, boot-time baseline.
+
+### Note on this bean's own text
+
+The todo below says "gosd.toml hand-edit honored" — that predates epic
+gosd-rw6n, which replaced the single boot file with the per-attribute
+`config/` tree. The provisioning check to run once the board boots is a
+config-tree edit (e.g. `config/hostname`), not a gosd.toml one.
+
+
+## Results with the DRAM blocker worked around (same session)
+
+To get past gosd-84b8 and actually exercise the board, U-Boot was rebuilt from
+the SAME pinned sources with only the community's 1GB-variant DRAM parameters
+added as a config fragment (`TPR6/TPR10/TPR11/TPR12`), and images were built
+with `--artifacts-dir`. **That one change took the board from "halts in SPL" to
+a full clean boot**, first try:
+
+```
+U-Boot SPL 2026.04
+DRAM: 1024 MiB
+NOTICE:  BL31: Detected Allwinner A523 SoC (1890)
+U-Boot 2026.04 ... Model: Radxa Cubie A5E
+Found /extlinux/extlinux.conf ... Starting kernel ...
+[gosd] started /app (pid 150)
+```
+
+Everything below was verified on that basis. The stock artifact still cannot
+boot this board — see gosd-84b8 for the decision that needs making.
+
+### Verified
+
+- **Full boot chain**: SPL → BL31 (TF-A fork pin works) → U-Boot proper →
+  extlinux → kernel → gosd-init → /app.
+- **Ethernet (EMAC0)**: `dwmac-sun8i` binds, carrier up, DHCP lease
+  (`[gosd] eth0: lease {192.168.1.201 ...} via gateway 192.168.1.1`), U-Boot
+  gets its own lease too.
+- **mDNS + HTTP**: `mdns: answering as cubiebench.local on all up interfaces`;
+  from the Mac, `ping cubiebench.local` → 0.36ms and `curl` served the app.
+- **Data partition**: `dataexpand` created and formatted a 59.2GiB FAT32 volume
+  on first boot of an `expand` image; a fixed-size image's volume was adopted
+  cleanly across 8+ reboots (`.gosd-data` marker, `.gosd-boot-count` = 8, and
+  app files all persisted, readable on the Mac).
+- **Config-tree provisioning**: hand-editing `config/hostname` on the card was
+  honoured, and the change was recorded for re-flash:
+  ```
+  [gosd] hostname set to "benchdiag"
+  [gosd] hostname set to "cubiebench" (config/hostname applied)
+  [gosd] kept for the next re-flash: config/hostname
+  ```
+  mDNS followed the new name. (This is the config tree from epic gosd-rw6n, not
+  the gosd.toml this bean's todo predates.)
+- **Console** ttyS0 @ 115200, clean, no garble at any stage.
+- **NTP**: `system clock synchronized via NTP: 1970-01-02T00:00:13Z ->
+  2026-08-16T19:28:47Z`.
+
+### Boot-time baseline
+
+**10.38s from SPL banner to /app running** (n=5 clean power cycles, spread
+0.15s), phases: U-Boot 9.05s → kernel 1.25s → gosd-init→app 0.06s. Power-on to
+SPL banner is under a second. Comparable to the fleet (rock-4se 9.21s,
+nanopi-zero2 10.33s), and ~4.5s of it is a pointless U-Boot USB scan — bean
+gosd-uj4l.
+
+### Follow-up beans filed
+
+- **gosd-84b8** — the 1GB DRAM blocker (blocks this bean)
+- **gosd-o34r** — FAT32-over-ext4 leaves the ext4 superblock, so a healthy
+  device halts on its second boot (found here, NOT board-specific)
+- **gosd-yx94** — DHCP can fail permanently when the CRNG is unseeded; this
+  board has no entropy source at all
+- **gosd-3id7** — U-Boot once failed to read /Image from our FAT boot partition
+- **gosd-uj4l** — the 4.5s USB scan
+
+### Explained, NOT a defect
+
+A `FAT-fs (mmcblk0p2): error, fat_free_clusters ... Filesystem has been set
+read-only` appeared on the data partition late in the session. That was the
+throwaway diagnostic app rewriting a file with plain `os.WriteFile` (no
+fsync/rename, i.e. deliberately violating docs/runtime.md) across five abrupt
+power cuts — the documented FAT hazard. A fresh `diskfmt` FAT32 image passes
+`fsck.vfat` clean and survived 200 rewrite/delete cycles under Linux with no
+kernel complaint, so the formatter is not implicated.
+
+### Not tested
+
+USB gadget (MUSB peripheral mode): the board's USB-C carries its power on this
+rig, so exercising it as a gadget needs JP to re-wire the bench first.
+COMPATIBILITY.md is deliberately left untouched — what this board's row should
+say depends on the gosd-84b8 decision.
