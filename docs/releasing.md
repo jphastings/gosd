@@ -24,6 +24,18 @@ Until a change file lands, there's nothing to release: the release PR
 simply doesn't exist. It can also sit open indefinitely — see "combined-PR
 ordering discipline" below.
 
+> **A package's changelog file must already exist.** knope writes release
+> notes with a plain file write and will not create missing parent
+> directories, so a `changelog =` path pointing at a directory that isn't in
+> the repo fails the whole `prepare-release` workflow — after it has already
+> computed the version bump, which makes it read like a versioning problem
+> rather than a missing file. This bit the `artifacts` package: adopting
+> knope deleted the last file in `docs/releases/`, git stopped tracking the
+> now-empty directory, and the first `artifacts:` change file to come along
+> (months later) failed with `Error writing to docs/releases/artifacts.md:
+> No such file or directory`. When adding a package to `knope.toml`, commit
+> its changelog file in the same PR, even if it is only a heading.
+
 > **Don't retitle the release PR.** Its merge commit's message — carrying
 > the "chore: prepare release" title — is what routes the next push to
 > `main` to the release workflow instead of the prepare workflow. A renamed
