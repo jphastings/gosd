@@ -41,7 +41,7 @@
           #   hash mismatch in fixed-output derivation ...
           #     got: sha256-...
           # Paste that "got:" value here.
-          vendorHash = "sha256-dskNeCcI7gzc1z3v7DMgfmQPHwiNzyOBFYtDT6H0ew8=";
+          vendorHash = "sha256-dusxD5nOrCtUpj1zTSHoZFTiW4S2WPYsjDNshU36Eak=";
 
           subPackages = [ "cmd/gosd" ];
           env.CGO_ENABLED = "0";
