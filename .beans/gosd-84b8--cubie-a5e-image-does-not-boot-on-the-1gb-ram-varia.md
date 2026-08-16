@@ -102,8 +102,8 @@ options 1 and 2), so it is written up here rather than decided.
 
 ## Decision (JP, 2026-08-16): ship the 1GB values, ask for feedback on the others
 
-Option 1 of the four above. Implemented on branch
-`bean/gosd-6pfn-cubie-a5e-bringup`: `build/boards/cubie-a5e/uboot/dram-1gb.config`
+Option 1 of the four above. Implemented in PR #292 (branch
+`bean/gosd-84b8-cubie-a5e-1gb-dram`): `build/boards/cubie-a5e/uboot/dram-1gb.config`
 overrides `TPR6/TPR10/TPR11/TPR12`, merged by the Dockerfile alongside
 `bootdelay0.config`; COMPATIBILITY.md and the U-Boot README carry the
 1GB-only caveat and invite reports from 2GB/4GB owners. No
