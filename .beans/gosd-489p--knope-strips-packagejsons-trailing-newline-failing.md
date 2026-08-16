@@ -1,7 +1,7 @@
 ---
 # gosd-489p
 title: knope strips package.json's trailing newline, failing the oxfmt gate
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-14T09:43:02Z
@@ -18,4 +18,8 @@ Fix: a `shell = true` Command step in knope.toml's prepare-release workflow, bet
 ## Todos
 
 - [x] knope.toml: newline-restore Command step (shell = true) after PrepareRelease
-- [ ] Verify merged: prepare-release refresh turns release PR #285 green without manual action
+- [x] Verify merged: prepare-release refresh re-issued the release PR (knope closed #285 and opened #287) with the newline intact; CI green, no manual action
+
+## Summary of Changes
+
+A guarded `shell = true` Command step in knope.toml's prepare-release workflow restores package.json's trailing newline after PrepareRelease and re-stages the file (PR #286). Verified in production: the next refresh produced release PR #287 with a green js gate. The upstream knope bug remains unreported pending JP's decision.
