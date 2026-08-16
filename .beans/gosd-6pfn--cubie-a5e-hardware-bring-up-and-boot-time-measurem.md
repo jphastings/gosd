@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: deferred
 created_at: 2026-08-06T22:34:12Z
-updated_at: 2026-08-16T19:36:02Z
+updated_at: 2026-08-16T21:04:48Z
 parent: gosd-h1wv
 blocked_by:
     - gosd-zh95
@@ -154,3 +154,43 @@ USB gadget (MUSB peripheral mode): the board's USB-C carries its power on this
 rig, so exercising it as a gadget needs JP to re-wire the bench first.
 COMPATIBILITY.md is deliberately left untouched — what this board's row should
 say depends on the gosd-84b8 decision.
+
+
+
+## Bench fault at session end (2026-08-16, ~22:00) — rig, not software
+
+After JP disconnected and reconnected the bench, the board stopped booting off
+the card. SPL runs and DRAM inits, then:
+
+```
+Trying to boot from MMC1
+mmc_load_image_raw_sector: mmc block read error
+Error: -38
+SPL: Unsupported Boot Device!
+```
+
+Established as a rig/card fault, not a code or image fault:
+
+- The **known-good image** — the exact binary that had booted ~15 times an hour
+  earlier — now fails **identically**. That is the skill's control experiment,
+  and it points at the rig.
+- Immediately beforehand, `sdwire flash` failed with `no block device appeared
+  for reader within 30s`; a switch dut → switch host handover brought the card
+  back, and flashing then succeeded (272MiB, twice) — so writes through the mux
+  work while the board's own reads fail.
+- The BootROM still loads the SPL from the card fine (SPL banner + `DRAM: 1024
+  MiB` appear); it is **SPL's own MMC driver** that cannot re-read the card.
+  That split — conservative BootROM read OK, driver read fails — is the
+  signature of a marginal card or connection rather than bad data, and it
+  rhymes with nanopi-zero2's card-specific U-Boot MMC trouble (bean gosd-0abt).
+
+Suggested next step before any more bring-up work: reseat the card and the
+board-side SD connection, and try a **different SD card** — this one has taken
+half a dozen full-card writes today. Nothing here needs a code change.
+
+### Still outstanding
+
+- Full boot-to-/app from the repo-built U-Boot (blocked by the above; the same
+  configuration is already proven, byte-identical `.config`, and reached
+  `DRAM: 1024 MiB` from the committed recipe).
+- USB gadget, which needs the board's USB-C re-wired off power.

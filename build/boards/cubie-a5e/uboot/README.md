@@ -77,8 +77,9 @@ distribute (see `../manifest.json`'s `license_note`).
 
 - **U-Boot**: mainline, tag pinned in `build.sh` (`UBOOT_TAG`).
 - **Defconfig**: `radxa-cubie-a5e_defconfig`, plus `bootdelay0.config` (sets
-  `CONFIG_BOOTDELAY=0`) merged on top via `scripts/kconfig/merge_config.sh`.
-  Single-board defconfig
+  `CONFIG_BOOTDELAY=0`) and `dram-1gb.config` (overrides four per-chip vendor
+  DRAM calibration values, see below) merged on top via
+  `scripts/kconfig/merge_config.sh`. Single-board defconfig
   (`CONFIG_DEFAULT_DEVICE_TREE="allwinner/sun55i-a527-cubie-a5e"`).
 - **TF-A**: repo, branch (informational), and commit (authoritative) pinned
   in `../manifest.json`.
@@ -101,11 +102,37 @@ No `LD=aarch64-linux-gnu-ld` override: unlike rock-4se's rk3399 TF-A build
 clang-linker-driver default since v2.13), the A523 platform's default link
 places BL31 correctly with Debian's aarch64-linux-gnu toolchain as-is.
 
+## DRAM calibration: verified on the 1GB variant only
+
+`radxa-cubie-a5e_defconfig` hardcodes one fixed set of
+`CONFIG_DRAM_SUNXI_TPR*` values -- per-chip vendor DRAM calibration data --
+but the Cubie A5E ships in 1GB/2GB/4GB LPDDR4x variants with different DRAM
+chips, and upstream's values only suit whichever reference unit was used to
+submit the board. On JP's 1GB board (bean `gosd-6pfn`) upstream's values
+fail U-Boot SPL's DRAM init outright (`DRAM test failure at address
+0x6fffffc0`; root-caused in bean `gosd-84b8`). `dram-1gb.config` overrides
+four of those values with ones read back from a working vendor bootloader
+by the Armbian community
+([Guation/radxa-cubie-a5e-armbian-build@202f1bf](https://github.com/Guation/radxa-cubie-a5e-armbian-build/commit/202f1bf))
+and hardware-verified the same way: rebuilding with only these four values
+changed took the board from halting in SPL to a clean `DRAM: 1024 MiB` and a
+full boot, first try.
+
+**This is verified on a 1GB board only.** The 2GB/4GB variants ship
+different DRAM chips and may still fail SPL DRAM init with these values --
+see `COMPATIBILITY.md`'s board notes, and bean `gosd-84b8` if you have one
+of those variants and want to report back. Re-deriving values for another
+variant means reading `tpr6`/`tpr10`/`tpr11`/`tpr12` back off that
+variant's own working vendor bootloader, the same way the Armbian community
+did here.
+
 ## Known gaps
 
-- Not yet serial-verified on real hardware (U-Boot banner, extlinux discovery
-  on partition 1). That happens in the bring-up bean -- see the parent epic
-  (gosd-h1wv, bean gosd-6pfn).
+- Serial-verified on real hardware (bean `gosd-6pfn`, 2026-08-16): SPL banner,
+  BL31 handoff, U-Boot proper, extlinux discovery on partition 1 and a full
+  boot to /app all confirmed on a 1GB board -- with `dram-1gb.config` in
+  place, without which SPL never reaches any of it. The 2GB/4GB variants
+  remain unverified (see the DRAM calibration section above).
 - **No FDT overlay support**: `radxa-cubie-a5e_defconfig` (checked at the
   pinned `UBOOT_TAG`) does not set `CONFIG_OF_LIBFDT_OVERLAY`, and no merged
   fragment adds it. extlinux.conf's `fdtoverlays` directive isn't available,

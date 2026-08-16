@@ -5,7 +5,7 @@ status: in-progress
 type: bug
 priority: normal
 created_at: 2026-08-16T18:44:19Z
-updated_at: 2026-08-16T18:45:39Z
+updated_at: 2026-08-16T21:04:32Z
 parent: gosd-h1wv
 blocking:
     - gosd-6pfn
@@ -97,3 +97,26 @@ options 1 and 2), so it is written up here rather than decided.
       progress at time of writing) to confirm the diagnosis
 - [ ] JP decides which of the four options above cubie-a5e takes
 - [ ] COMPATIBILITY.md: record hardware-verified status honestly for this board
+
+
+
+## Decision (JP, 2026-08-16): ship the 1GB values, ask for feedback on the others
+
+Option 1 of the four above. Implemented on branch
+`bean/gosd-6pfn-cubie-a5e-bringup`: `build/boards/cubie-a5e/uboot/dram-1gb.config`
+overrides `TPR6/TPR10/TPR11/TPR12`, merged by the Dockerfile alongside
+`bootdelay0.config`; COMPATIBILITY.md and the U-Boot README carry the
+1GB-only caveat and invite reports from 2GB/4GB owners. No
+`internal/artifacts.Version` bump — tag-first, bump-second.
+
+### Verification status
+
+- The repo recipe's merged `.config` is **byte-identical** to the
+  hand-staged one proven on hardware earlier (2117 lines, `diff` clean), so
+  the two builds differ only by their embedded timestamp.
+- Booting the repo-built binary on the board reached `DRAM: 1024 MiB` — the
+  fix itself is hardware-verified from the committed recipe.
+- The **full** boot-to-/app run from the repo-built binary could NOT be
+  completed: the bench developed an SD fault mid-session (see gosd-6pfn's
+  note). Re-run once the rig is healthy; nothing about it is expected to
+  differ, but it is not yet observed.
