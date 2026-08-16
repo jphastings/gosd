@@ -5,7 +5,7 @@ status: in-progress
 type: bug
 priority: normal
 created_at: 2026-08-16T18:44:19Z
-updated_at: 2026-08-16T21:04:32Z
+updated_at: 2026-08-16T21:37:41Z
 parent: gosd-h1wv
 blocking:
     - gosd-6pfn
@@ -116,7 +116,10 @@ overrides `TPR6/TPR10/TPR11/TPR12`, merged by the Dockerfile alongside
   the two builds differ only by their embedded timestamp.
 - Booting the repo-built binary on the board reached `DRAM: 1024 MiB` — the
   fix itself is hardware-verified from the committed recipe.
-- The **full** boot-to-/app run from the repo-built binary could NOT be
-  completed: the bench developed an SD fault mid-session (see gosd-6pfn's
-  note). Re-run once the rig is healthy; nothing about it is expected to
-  differ, but it is not yet observed.
+- **The full boot-to-/app run from the repo-built binary is now verified**
+  (2026-08-16, after the card was reseated into the SDWire — the earlier SD
+  fault was the card sitting in the dock's reader, not the mux). SPL build
+  20:36:24 → `DRAM: 1024 MiB` → BL31 → U-Boot → extlinux → kernel →
+  gosd-init → `/app`, with `data partition already present` and `boots=2`
+  proving adoption across a reboot. Nothing outstanding for this bean's
+  verification.

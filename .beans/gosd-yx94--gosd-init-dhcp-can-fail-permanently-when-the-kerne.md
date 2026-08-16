@@ -3,8 +3,9 @@
 title: 'gosd-init: DHCP can fail permanently when the kernel CRNG is unseeded (cubie-a5e has no entropy source)'
 status: todo
 type: bug
+priority: normal
 created_at: 2026-08-16T19:25:39Z
-updated_at: 2026-08-16T19:25:39Z
+updated_at: 2026-08-16T21:37:32Z
 ---
 
 Found on the Cubie A5E bench (bean gosd-6pfn). One boot in a handful never
@@ -82,3 +83,38 @@ one that decides whether the device is reachable at all.
 - [ ] Decide fix 1 and/or 2 in gosd-init
 - [ ] Establish whether an entropy source can be given to this board at all
 - [ ] Audit the other boards' kernels for a real RNG driver
+
+
+
+## Second reproduction (2026-08-16, later the same evening)
+
+Same board, clean boot of a stock `examples/hello` image, no diagnostic app
+involved this time:
+
+```
+[ 23.633] gosd hello: listening on [::]:80
+[146.706] [gosd] DHCP discovery on eth0 failed: DHCP discover/request on eth0:
+unable to receive an offer: unable to create a discovery request: could not get
+random number: context deadline exceeded; retrying in 683.069466ms
+```
+
+Identical shape to the first: **one** log line, a claimed retry, then silence —
+and the board never reached the network (mDNS unresolvable and unreachable for
+the remaining ~3 minutes of the capture). So this is not a one-off.
+
+Two details worth keeping:
+
+- The failure surfaces **~2.4 minutes after the app starts** (146s here, 123s
+  the first time), long after the link is up in the boots that work — so
+  whatever is retrying is doing so silently for minutes before it says
+  anything, and then says it once.
+- On the boots that succeed, the lease arrives ~20s in
+  (`[gosd] eth0: lease {...}`) and mDNS answers immediately after. There is no
+  in-between state observed: a boot either gets on the network quickly or
+  never does.
+
+Rough rate on this board: at least 2 failures across roughly 10 observed boots.
+That is frequent enough that a user would meet it, and — because the app itself
+starts fine and logs nothing — it presents as "my board is on but I can't reach
+it", with no clue on the console unless someone is watching serial at the
+2.5-minute mark.
