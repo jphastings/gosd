@@ -16,6 +16,7 @@ require (
 	github.com/pion/mdns/v2 v2.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/u-root/u-root v0.16.0
+	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701
 	github.com/vishvananda/netlink v1.3.1
 	github.com/warthog618/go-gpiocdev v0.9.1
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260712151947-c1a3b97d708a
@@ -67,7 +68,6 @@ require (
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20250124233751-d4cd19a26976 // indirect
 	github.com/tailscale/wireguard-go v0.0.0-20260715223240-2e01ba5b00f0 // indirect
-	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
