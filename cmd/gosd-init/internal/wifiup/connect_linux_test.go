@@ -23,6 +23,20 @@ func TestConnectRequestFlagsIncludeRequest(t *testing.T) {
 	}
 }
 
+// SupportsOffloadedHandshake's GET_WIPHY dump is the other raw netlink
+// call in this package, and it fails the same silent way: without
+// NLM_F_REQUEST the kernel skips the message, the dump comes back empty,
+// and every phy reads as lacking 4WAY_HANDSHAKE_STA_PSK — so ConnectPSK
+// is refused on hardware that supports it, with nothing to point at.
+func TestWiphyDumpFlagsIncludeRequest(t *testing.T) {
+	if wiphyDumpFlags&netlink.Request == 0 {
+		t.Fatal("wiphyDumpFlags is missing netlink.Request: the kernel will silently discard the GET_WIPHY dump")
+	}
+	if wiphyDumpFlags&netlink.Dump == 0 {
+		t.Fatal("wiphyDumpFlags is missing netlink.Dump: a split wiphy dump would be truncated to its first message")
+	}
+}
+
 // The CONNECT attribute set must stay in lockstep with mdlayher/wifi's
 // ConnectWPAPSK (v0.8.0 client_linux.go:146-163) — the only set
 // bench-proven against real BCM43430/1 firmware (gosd-anyp, 2026-07-25).
