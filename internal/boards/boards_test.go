@@ -133,6 +133,26 @@ func TestKnownArchesKeyedByTheirOwnKey(t *testing.T) {
 	}
 }
 
+func TestRegisterInternalAppearsInAllIncludingInternalButNotAll(t *testing.T) {
+	boards.RegisterInternal(fakeBoard{name: "test-board-all-including-internal"})
+
+	foundInAllIncludingInternal := false
+	for _, b := range boards.AllIncludingInternal() {
+		if b.Name() == "test-board-all-including-internal" {
+			foundInAllIncludingInternal = true
+		}
+	}
+	if !foundInAllIncludingInternal {
+		t.Error("AllIncludingInternal() didn't contain the internal-only registered board")
+	}
+
+	for _, b := range boards.All() {
+		if b.Name() == "test-board-all-including-internal" {
+			t.Error("All() contains an internal-only board; it must be excluded from the default build set")
+		}
+	}
+}
+
 func TestRegisterAndRegisterInternalShareOneNamespace(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-shared-namespace"})
 
