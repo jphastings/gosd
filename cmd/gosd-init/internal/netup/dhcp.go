@@ -27,6 +27,7 @@ import (
 // is up.
 func RunDHCP(ctx context.Context, deps Deps, iface string, onLease func(*Lease)) error {
 	backoff := deps.NewBackoff()
+	status := newRetryStatus(deps.Clock)
 
 	for {
 		lease, err := deps.DHCP.Request(ctx, iface)
@@ -35,7 +36,7 @@ func RunDHCP(ctx context.Context, deps Deps, iface string, onLease func(*Lease))
 				return nil
 			}
 			delay := backoff.Next()
-			deps.Log("DHCP discovery on %s failed: %v; retrying in %s", iface, err, delay)
+			status.fail(deps, iface, err, delay)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -45,6 +46,7 @@ func RunDHCP(ctx context.Context, deps Deps, iface string, onLease func(*Lease))
 		}
 
 		backoff.Reset()
+		status.reset()
 		onLease(lease)
 
 		err = maintainLease(ctx, deps, iface, lease, onLease)

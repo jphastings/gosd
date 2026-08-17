@@ -251,3 +251,59 @@ func TestRunDHCPStopsWhenContextCancelledDuringDiscovery(t *testing.T) {
 		t.Fatal("RunDHCP did not return promptly after ctx cancellation")
 	}
 }
+
+// TestRunDHCPKeepsPersistentFailureVisibleWithoutSpamming drives RunDHCP
+// through many consecutive discovery failures and proves both halves of
+// gosd-yx94's "must keep saying so" fix at once: the console isn't flooded
+// with one line per failed attempt, but a status line reappears (naming how
+// long discovery has been failing) as the failure persists.
+func TestRunDHCPKeepsPersistentFailureVisibleWithoutSpamming(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	log := &testLog{}
+	dhcp := &fakeDHCP{requestResults: []requestResult{{err: errBoom}}} // every call fails
+	deps := testDeps(clock, dhcp, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = RunDHCP(ctx, deps, "eth0", func(*Lease) {})
+		close(done)
+	}()
+
+	// Matches noJitterBackoff(1s, 10s)'s exact delay sequence, landing the
+	// 5th and 7th attempts (t=15s, t=35s) just past minStatusInterval's
+	// (10s) backing-off cadence.
+	delays := []time.Duration{
+		time.Second, 2 * time.Second, 4 * time.Second,
+		8 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second,
+	}
+	for _, d := range delays {
+		waitForPending(t, clock, 1)
+		clock.Advance(d)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for dhcp.requestCallCount() < 8 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if got := dhcp.requestCallCount(); got != 8 {
+		t.Fatalf("Request called %d times, want 8", got)
+	}
+	lines := log.snapshot()
+	if len(lines) != 3 {
+		t.Fatalf("log has %d lines after 8 consecutive failures, want 3 (first failure + two backed-off status reports): %v", len(lines), lines)
+	}
+	if !log.contains("still failing after 15s") || !log.contains("still failing after 35s") {
+		t.Errorf("missing expected elapsed-time status lines: %v", lines)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunDHCP did not return after ctx was cancelled")
+	}
+}

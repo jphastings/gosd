@@ -78,9 +78,9 @@ one that decides whether the device is reachable at all.
 
 ## Todos
 
-- [ ] Reproduce the DHCP-vs-CRNG race deterministically (a fake/slow entropy
+- [x] Reproduce the DHCP-vs-CRNG race deterministically (a fake/slow entropy
       source in the netup tests, not the bench)
-- [ ] Decide fix 1 and/or 2 in gosd-init
+- [x] Decide fix 1 and/or 2 in gosd-init
 - [ ] Establish whether an entropy source can be given to this board at all
 - [ ] Audit the other boards' kernels for a real RNG driver
 
@@ -118,3 +118,55 @@ That is frequent enough that a user would meet it, and — because the app itsel
 starts fine and logs nothing — it presents as "my board is on but I can't reach
 it", with no clue on the console unless someone is watching serial at the
 2.5-minute mark.
+
+## Summary of Changes
+
+**Fix 1 (DHCP no longer depends on a seeded CRNG).** Traced the failure to
+`github.com/insomniacslk/dhcp/dhcpv4.GenerateTransactionIDWithContext`
+(`dhcpv4packet.go`), which every `dhcpv4.New*` call — including nclient4's
+Discover/Request, unreachably deep inside `dhcpv4.NewDiscovery` — calls before
+any caller-supplied modifier runs. Neither `nclient4.ClientOpt` nor
+`dhcpv4.Modifier` exposes a way to influence it; the one real seam either
+library offers is `github.com/u-root/uio/rand.Reader`, a package-level,
+exported, mutable `ContextReader` that `GenerateTransactionIDWithContext`
+reads from every call. On Linux its default (`getrandomReader`) busy-loops on
+`getrandom(2, GRND_NONBLOCK)` until the CRNG is seeded or the library's own
+2-minute `RandomTimeout` fires — exactly the observed ~123s/146s failures and
+the "could not get random number: context deadline exceeded" text. Verified
+`github.com/u-root/uio/rand` is imported nowhere else in gosd-init's build
+graph, so overriding it is scoped to exactly this one call site.
+
+Added `netup.dhcpXIDSource` (`dhcprand.go`), a `ContextReader` that fills
+requested bytes from `math/rand/v2`'s top-level generator — seeded
+non-blockingly by the Go runtime at process start (ELF auxv `AT_RANDOM`), never
+touching `crypto/rand`/`/dev/urandom`/`getrandom(2)`. A DHCP transaction ID only
+needs to be probably-unique among concurrent exchanges (RFC 2131 §4.1), not
+cryptographic; DHCP has no authentication for anything else in the exchange
+either. Wired in via a package `init()` in `platform_linux.go` (the only file
+that imports the real DHCP client), so it's installed before gosd-init's first
+DHCP call without any startup-path wiring.
+
+**Fix 2 (persistent failure stays visible without spamming).** Added
+`netup.retryStatus` (`dhcpstatus.go`), used by `RunDHCP` (`dhcp.go`): the first
+discovery failure in a streak still logs immediately (unchanged wording);
+later failures are silent until a backing-off interval elapses (starts at 10s,
+doubles up to a 5-minute cap), at which point one status line reports how long
+discovery has been failing and the last error. Success resets the streak.
+
+**Tests** (`dhcprand_test.go`, `dhcpstatus_test.go`, plus one addition to
+`dhcp_test.go`): `TestUnseededCRNGReproducesTheObservedDHCPFailure` installs a
+fake reader that only ever blocks until `ctx` is cancelled (modeling the
+unseeded-CRNG behavior exactly) and calls the real
+`dhcpv4.GenerateTransactionIDWithContext`, reproducing the bean's precise
+"context deadline exceeded" error deterministically, no hardware or timing
+race needed. `TestDHCPXIDSourceFixesTheUnseededCRNGRace` runs the identical
+call with `dhcpXIDSource` installed and a context with zero time left,
+proving the fix succeeds regardless. `TestRunDHCPKeepsPersistentFailureVisibleWithoutSpamming`
+drives `RunDHCP` through 8 consecutive failures via a fake clock and asserts
+exactly 3 log lines (first + two backed-off status reports, each naming
+elapsed time) rather than 8. `retryStatus` itself has direct unit tests for
+suppression, re-reporting, interval doubling/capping, and reset.
+
+Left unchecked: whether the board can be given a real entropy source, and
+auditing other boards' kernels for hardware RNGs — both are kernel/DTS work,
+not this change's job.

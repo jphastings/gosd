@@ -8,8 +8,24 @@ import (
 	"net"
 
 	"github.com/insomniacslk/dhcp/dhcpv4/nclient4"
+	uiorand "github.com/u-root/uio/rand"
 	"github.com/vishvananda/netlink"
 )
+
+// init overrides the random source github.com/insomniacslk/dhcp uses to
+// generate DHCP transaction IDs (via github.com/u-root/uio/rand, the only
+// customization point either library exposes — there is no nclient4.
+// ClientOpt or dhcpv4.Modifier for it, since the call that needs it,
+// dhcpv4.New, generates the transaction ID before any modifier runs). This
+// must happen before the first DHCP call; running it as a package init on
+// the only file that ever imports the DHCP client keeps that guaranteed
+// without gosd-init's startup path having to know about it. See
+// dhcpXIDSource's doc for why this is safe. github.com/u-root/uio/rand is
+// otherwise unused by anything else in gosd-init's dependency graph, so
+// this override's effect is scoped to exactly the DHCP transaction ID.
+func init() {
+	uiorand.Reader = dhcpXIDSource{}
+}
 
 // NewPlatform wires up the real, netlink- and DHCPv4-backed implementations
 // of Links and DHCPClient.
