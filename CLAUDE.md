@@ -12,9 +12,11 @@ say so in the bean rather than silently diverging.
 ## Workflow
 
 - One bean = one branch = one PR. Branch name: `bean/<bean-id>-<short-slug>`.
-- PRs with user-facing changes need a change file (`.changeset/*.md` —
-  package keys unquoted; see docs/releasing.md), or the `no release notes`
-  label. Releases happen by merging the knope release PR, not by tagging.
+- PRs with user-facing changes need a change file (`.changeset/*.md`, format
+  in docs/releasing.md — `internal/repocheck`'s change-file test validates
+  every one in the tree, so `go test ./...` catches a malformed key), or the
+  `no release notes` label. Releases happen by merging the knope release PR,
+  not by tagging.
 - JP reviews and merges every PR. Do **not** self-merge, even on green CI.
 - CI must be green before requesting review. Include the bean file changes
   (status, checked todos, Summary of Changes) in the same PR as the code.
