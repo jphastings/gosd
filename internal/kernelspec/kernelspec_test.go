@@ -133,15 +133,33 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 				}
 			}
 
-			// AdditionalDTBs get no exemption map: a board only lists one
-			// when it means to ship it (pi-3b's 3B+ blob, bean gosd-oq0z).
 			for _, dtb := range spec.AdditionalDTBs {
+				if pendingArtifactDTBs[id][dtb.Filename] {
+					continue
+				}
 				if !artifactNames[dtb.Filename] {
 					t.Errorf("AdditionalDTBs filename %q is not in %s's Artifacts()", dtb.Filename, id)
 				}
 			}
 		})
 	}
+}
+
+// pendingArtifactDTBs names DTBs the kernel build already publishes but no
+// board consumes YET, which is a deliberate half-step rather than an
+// oversight. Artifact resolution is eager over every ref in a board's
+// Artifacts(), so listing a file the pinned artifacts release does not carry
+// would fail EVERY build for that board - not just the ones that want the
+// file. The output therefore has to ship first, an artifacts release has to
+// be cut, and only then can the board start listing it (the same tag-first,
+// bump-second order docs/artifacts.md describes).
+//
+// cubie-a5e's gadget DTB is mid-flight through exactly that sequence (bean
+// gosd-3io0): remove this entry in the follow-up that bumps
+// internal/artifacts.Version onto the release carrying it, at which point
+// this map should be empty again.
+var pendingArtifactDTBs = map[string]map[string]bool{
+	"cubie-a5e": {"sun55i-a527-cubie-a5e-gadget.dtb": true},
 }
 
 func TestEmbeddedConfigFragmentsAreNonEmpty(t *testing.T) {
@@ -171,6 +189,9 @@ func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 		"nanopi-zero2":  true,
 		"rock-4se":      true,
 		"pi-zero-w":     true,
+		// Not peripheral enablement like the Rockchip boards: this one
+		// adds a second, USB-gadget variant DTB (bean gosd-3io0).
+		"cubie-a5e": true,
 	}
 
 	for _, id := range allBoardIDs {
@@ -195,12 +216,18 @@ func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 }
 
 // TestAdditionalDTBsOnlyOnExpectedBoards guards against extra DTBs silently
-// appearing on (or vanishing from) a board: only pi-3b ships a second blob
-// (the 3B+'s, so one image covers the whole 3B family - bean gosd-oq0z).
+// appearing on (or vanishing from) a board. Two ship a second blob, for
+// opposite reasons: pi-3b carries the 3B+'s so one image covers the whole 3B
+// family (bean gosd-oq0z), while cubie-a5e carries a variant of its OWN DTB
+// that --usb-gadget selects instead of the stock one (bean gosd-3io0).
 // Every other board builds at most its single primary DTB.
 func TestAdditionalDTBsOnlyOnExpectedBoards(t *testing.T) {
 	wantAdditional := map[string][]string{
 		"pi-3b": {"bcm2710-rpi-3-b-plus.dtb"},
+		// The gadget variant of the same board: identical except
+		// ehci0/ohci0 are disabled so MUSB keeps the USB-C port's phy
+		// (bean gosd-3io0). --usb-gadget picks which one ships.
+		"cubie-a5e": {"sun55i-a527-cubie-a5e-gadget.dtb"},
 	}
 
 	for _, id := range allBoardIDs {

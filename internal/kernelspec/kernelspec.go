@@ -565,11 +565,17 @@ var specs = map[string]KernelSpec{
 	// same fleet kernel tag, but a different SoC family entirely - see
 	// build/boards/cubie-a5e/kernel/README.md and bean gosd-jpc8's
 	// research findings for the verified compatible->driver map this
-	// spec's ConfigFragment/RequiredY were built from. No DTSPatches:
-	// header I2C/SPI enablement is deferred to a post-bring-up follow-up
-	// (locked in bean gosd-axtv) - the dtsi has no SPI nodes at this
-	// kernel tag at all, so there's nothing for an SPI patch to attach to
-	// yet.
+	// spec's ConfigFragment/RequiredY were built from. Its one DTSPatch
+	// adds a USB-gadget variant DTB rather than enabling a peripheral:
+	// ehci0/ohci0 share usbphy port 0 with usb_otg and this board has no
+	// ID/VBUS detection to arbitrate, so the host controllers win at
+	// probe and dr_mode="peripheral" never takes effect (bean gosd-3io0).
+	// Host and gadget are mutually exclusive here, so the build emits
+	// both DTBs and internal/boards/cubiea5e ships whichever
+	// `--usb-gadget` calls for. Header I2C/SPI enablement is still
+	// deferred to a post-bring-up follow-up (locked in bean gosd-axtv) -
+	// the dtsi has no SPI nodes at this kernel tag at all, so there's
+	// nothing for an SPI patch to attach to yet.
 	"cubie-a5e": {
 		BoardID: "cubie-a5e",
 		Source: Source{
@@ -582,11 +588,23 @@ var specs = map[string]KernelSpec{
 
 		ConfigFragment: cubiea5ekernel.ConfigFragment,
 
+		DTSPatches: loadPatches(cubiea5ekernel.PatchesFS, "patches"),
+
 		DTB: &DTB{
 			MakeTarget: "allwinner/sun55i-a527-cubie-a5e.dtb",
 			SourcePath: "arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dtb",
 			Filename:   "sun55i-a527-cubie-a5e.dtb",
 		},
+
+		// The gadget variant of the same board, built from the DTS patch
+		// above: identical except ehci0/ohci0 are disabled so MUSB keeps
+		// usbphy port 0. Shipped only when `gosd build --usb-gadget`
+		// selects it (bean gosd-3io0).
+		AdditionalDTBs: []DTB{{
+			MakeTarget: "allwinner/sun55i-a527-cubie-a5e-gadget.dtb",
+			SourcePath: "arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e-gadget.dtb",
+			Filename:   "sun55i-a527-cubie-a5e-gadget.dtb",
+		}},
 
 		KernelMakeTarget: "Image",
 		KernelSourcePath: "arch/arm64/boot/Image",

@@ -1,0 +1,67 @@
+Add a USB-gadget variant DTB for the Radxa Cubie A5E
+
+The board's USB-C port is its only OTG-capable port, and sun55i-a523.dtsi
+routes BOTH the MUSB peripheral controller (usb_otg) and the ehci0/ohci0 host
+controllers to usbphy index 0. The board DTS enables all of them, and the
+board has no ID or VBUS detection wired up to arbitrate between them -- its
+own DTS says so:
+
+    The schematic describes USB0_ID (PL10), measuring VBUS_5V, which looks to
+    be always on. ... The AXP717C provides proper USB-C CC pin functionality,
+    but the PMIC is not connected to those pins of the USB-C connector.
+
+With no arbitration, probe order decides, and ehci0 wins on every boot:
+
+    phy phy-4100400.phy.0: Changing dr_mode to 1     <- USB_DR_MODE_HOST
+    ehci-platform 4101000.usb: EHCI Host Controller
+
+so dr_mode="peripheral" never takes effect and the port cannot enumerate as a
+device (bench-proven on a 1GB board, bean gosd-3io0).
+
+Host and peripheral are therefore mutually exclusive on this hardware and the
+choice has to be made at build time. Rather than change the stock DTB -- which
+would silently remove USB-C host support from every image, including for the
+GPIO-5V-powered setup the stock DTS explicitly caters for -- add a variant DTB
+that disables the two host controllers contending for phy 0. GoSD ships the
+stock DTB by default and this one only when `gosd build --usb-gadget` asks for
+peripheral mode.
+
+--- /dev/null
++++ b/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e-gadget.dts
+@@ -0,0 +1,26 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Radxa Cubie A5E, USB-gadget variant.
++ *
++ * Identical to the stock board DTB except that the ehci0/ohci0 host
++ * controllers are disabled. Those two share usbphy port 0 with usb_otg
++ * (MUSB), and this board has no ID/VBUS detection to arbitrate between
++ * them, so whichever driver probes last owns the port -- in practice
++ * ehci0, which switches the phy to host mode and leaves the gadget
++ * unable to enumerate however dr_mode is set.
++ *
++ * Disabling them leaves phy 0 to MUSB, which is what dr_mode="peripheral"
++ * in the stock DTS already asks for. The cost is that the USB-C port
++ * cannot act as a USB host in this configuration; the USB 3.0 Type-A
++ * port is unaffected, being wired to ehci1/ohci1.
++ */
++
++#include "sun55i-a527-cubie-a5e.dts"
++
++&ehci0 {
++	status = "disabled";
++};
++
++&ohci0 {
++	status = "disabled";
++};
+--- a/arch/arm64/boot/dts/allwinner/Makefile
++++ b/arch/arm64/boot/dts/allwinner/Makefile
+@@ -56,6 +56,7 @@
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-plus.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-sp.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-a527-cubie-a5e.dtb
++dtb-$(CONFIG_ARCH_SUNXI) += sun55i-a527-cubie-a5e-gadget.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-h728-x96qpro+.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-t527-avaota-a1.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-t527-orangepi-4a.dtb

@@ -245,9 +245,18 @@ func TestFirmwareFilesIsEmpty(t *testing.T) {
 	}
 }
 
-func TestUsbGadgetSupportIsSupported(t *testing.T) {
-	if got := cubiea5e.New().UsbGadgetSupport(); !got.Supported {
-		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true (board DT pins usb_otg dr_mode=peripheral at the pinned kernel)", got)
+// TestUsbGadgetSupportIsRefusedUntilTheVariantDTBShips pins the corrected
+// claim from bean gosd-3io0: this board cannot enumerate as a USB device at
+// the pinned artifacts, because ehci0/ohci0 take the USB-C port's phy from
+// the peripheral controller at probe. Refusing beats building an image that
+// looks right and cannot work, and the reason has to name the fix.
+func TestUsbGadgetSupportIsRefusedUntilTheVariantDTBShips(t *testing.T) {
+	got := cubiea5e.New().UsbGadgetSupport()
+	if got.Supported {
+		t.Fatalf("UsbGadgetSupport() = %+v, want Supported: false while the pinned artifacts carry no gadget DTB", got)
+	}
+	if got.Reason == "" {
+		t.Error("UsbGadgetSupport().Reason is empty; a refusal must tell the user why and what changes it")
 	}
 }
 

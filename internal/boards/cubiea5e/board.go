@@ -194,13 +194,25 @@ func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
 
-// UsbGadgetSupport implements boards.Board: supported. The board DT pins
-// usb_otg's dr_mode to "peripheral" at the pinned kernel (mainline MUSB,
-// bean gosd-jpc8), so the controller is already gadget-capable with no DTS
-// patch needed - unlike most boards, this needed no research surprise to
-// enable. Not yet hardware-verified (bench bean gosd-6pfn).
+// UsbGadgetSupport implements boards.Board: unsupported at the PINNED
+// artifacts, which corrects an earlier claim that this board needed no
+// device-tree work (bean gosd-jpc8). dr_mode="peripheral" in the board DT is
+// necessary but not sufficient: ehci0/ohci0 share usbphy port 0 with
+// usb_otg, this board has no ID/VBUS detection to arbitrate between them, so
+// the host controllers win at probe and switch the phy to host mode. A gadget
+// binds to the UDC and /dev/ttyGS0 appears, yet the port never enumerates -
+// bench-proven, with the host seeing nothing at all (bean gosd-3io0).
+//
+// The fix is a variant DTB with those two controllers disabled, which the
+// kernel build now produces. It becomes selectable here once an artifacts
+// release carries it and internal/artifacts.Version points at that release;
+// until then refusing is the only honest answer, since the alternative is an
+// image that looks right and cannot work.
 func (board) UsbGadgetSupport() boards.GadgetSupport {
-	return boards.GadgetSupport{Supported: true}
+	return boards.GadgetSupport{
+		Supported: false,
+		Reason:    "the USB-C port's host controllers (ehci0/ohci0) share a phy with the peripheral controller and win at probe, so the port cannot enumerate as a device; the variant device tree that fixes this ships with the next artifacts release (bean gosd-3io0)",
+	}
 }
 
 // ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's
