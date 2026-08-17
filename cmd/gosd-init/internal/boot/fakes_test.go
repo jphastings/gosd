@@ -203,6 +203,32 @@ func assertBefore(t *testing.T, order []string, first, second string) {
 	}
 }
 
+// fakeStatusLED records every state transition Run asks for, in order, so
+// tests can assert both that the right ones happened and that a failed one
+// never stops Run.
+type fakeStatusLED struct {
+	mu                               sync.Mutex
+	calls                            []string
+	bootingErr, runningErr, fatalErr error
+}
+
+func (f *fakeStatusLED) Booting() error { return f.call("Booting", f.bootingErr) }
+func (f *fakeStatusLED) Running() error { return f.call("Running", f.runningErr) }
+func (f *fakeStatusLED) Fatal() error   { return f.call("Fatal", f.fatalErr) }
+
+func (f *fakeStatusLED) call(name string, err error) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, name)
+	f.mu.Unlock()
+	return err
+}
+
+func (f *fakeStatusLED) callList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
 // fakeReaper always reports an immediate, clean exit (status 0, unsignaled).
 type fakeReaper struct{}
 

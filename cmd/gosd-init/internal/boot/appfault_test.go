@@ -57,6 +57,31 @@ func TestAFaultTheAppDeclaredReachesTheCardAndStopsTheDevice(t *testing.T) {
 	}
 }
 
+// TestHaltForAppFaultSetsTheFatalStatusLED covers gosd-xtcs's other current
+// halting path: an app-declared fault always halts (unlike fatal()'s
+// class.halt-gated call), so it always gets the fast fatal blink.
+func TestHaltForAppFaultSetsTheFatalStatusLED(t *testing.T) {
+	f := &fakeFaultReport{}
+	led := &fakeStatusLED{}
+	deps, reporter, rebooter := declaredFault(t, f, func() (faultreport.Report, bool) {
+		return faultreport.Report{Code: "NO-API-KEY", Problem: "the weather service rejected our API key"}, true
+	})
+	deps.StatusLED = led
+
+	declared, ok := appFault(deps)
+	if !ok {
+		t.Fatal("the declared fault was not picked up")
+	}
+	haltForAppFault(deps, func(string, ...any) {}, reporter, declared, "")
+
+	if !rebooter.halted {
+		t.Fatal("the device was not halted")
+	}
+	if calls := led.callList(); len(calls) != 1 || calls[0] != "Fatal" {
+		t.Errorf("status LED calls = %v, want exactly [Fatal]", calls)
+	}
+}
+
 func TestAnExitThatDeclaresNothingIsLeftToTheSupervisor(t *testing.T) {
 	// An ordinary crash is not this path's business: nobody classified
 	// it, transience is unknowable, and the supervisor restarts it.
