@@ -121,25 +121,28 @@ jobs:
           cache: true
       # The image-smoke-build job below now covers the full `gosd build`
       # path (board profiles landed with gosd-3zrc). This job stays as a
-      # narrower, faster check that the pure-Go, no-root, arm64 cross-
-      # compile path works for the binaries gosd assembles into images.
+      # narrower, faster check that the pure-Go, no-root cross-compile path
+      # works for the binaries gosd assembles into images, on both board
+      # architectures.
+      #
+      # Both legs build ./examples/... as a wildcard rather than a
+      # hand-maintained package list. The lists drifted (bean gosd-asdg):
+      # examples/sattrack was in neither leg and examples/usbserial was
+      # missing from the armv6 one, so CLAUDE.md's "every example must
+      # cross-compile for every board arch" went unenforced for them.
+      # internal/repocheck/examplesci_test.go fails if either leg is
+      # re-expanded into per-example packages.
       - name: Cross-compile arm64 targets (CGO disabled)
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/hello ./examples/usbserial ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/diskstorage ./examples/usbwebsite ./examples/chime
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/gosd-init ./examples/...
       # GOARM=6 is the pi-zero-w board's target (bean gosd-2j6z, keystone for
-      # gosd-et0q): a narrower check than the arm64 one above, just proving
-      # the 32-bit ARM cross-compile path works for the binaries every board
-      # build needs, same as the arm64 check does for the other three boards.
-      # examples/i2cscan, examples/gpioinfo, and examples/spiloopback are
-      # included here too (beans gosd-85pt, gosd-nyad, gosd-fnza): all three
-      # must build for every board, including the 32-bit pi-zero-w.
-      # examples/chime (beans gosd-y9hc, gosd-lrxz) is here for a sharper
-      # reason: it pulls in the public sound package, which transcribes the
-      # ALSA PCM ioctl structs, whose sizes the ioctl request numbers embed
-      # and which differ between 32- and 64-bit. That package's compile-time
-      # size assertions only get checked for armv6 by this step, so don't
-      # drop chime from the list without adding ./sound in its place.
+      # gosd-et0q), the only 32-bit board gosd builds for. ./sound is named
+      # explicitly because it transcribes the ALSA PCM ioctl structs, whose
+      # sizes the ioctl request numbers embed and which differ between 32-
+      # and 64-bit: its compile-time size assertions are only checked for
+      # armv6 here, and reaching them via examples/chime would make that
+      # coverage a side effect of one example's dependency list.
       - name: Cross-compile armv6 targets (CGO disabled)
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./examples/hello ./examples/i2cscan ./examples/gpioinfo ./examples/spiloopback ./examples/emmcstorage ./examples/diskstorage ./examples/usbwebsite ./examples/chime
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build ./cmd/gosd-init ./sound ./examples/...
       - name: Build gosd CLI for host
         run: go build ./cmd/gosd
 

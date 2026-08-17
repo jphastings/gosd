@@ -600,6 +600,17 @@ say so in the bean rather than silently diverging.
 - Examples stay stdlib-only where practical and must cross-compile for every
   board arch (arm64 AND `GOARCH=arm GOARM=6`); peripheral examples degrade
   gracefully when the device/bus is absent (see `examples/i2cscan`).
+  **CI enforces that with a `./examples/...` wildcard** in ci.yml's
+  `smoke-build` job, one leg per arch — so a new example is covered the moment
+  its directory exists, and there is no exemption mechanism: an example that
+  can't build for a board arch is a bug in the example. Never re-expand
+  either leg into per-example packages; the hand-maintained lists that
+  preceded the wildcard drifted (bean `gosd-asdg`: `sattrack` was in neither
+  leg, `usbserial` missing from armv6), and
+  `internal/repocheck/examplesci_test.go` now fails if anyone reintroduces
+  them. The armv6 leg also names `./sound` outright, because its ALSA ioctl
+  request numbers embed struct sizes that differ 32-vs-64-bit and armv6 is
+  the only place those compile-time assertions get checked.
   `examples/sattrack` is the reference for a bigger example: third-party deps
   when its bean justifies them, an in-tree `gosd build-kernel` recipe
   (`examples/sattrack/kernel/`), and graceful no-display degradation.
