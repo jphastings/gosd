@@ -128,6 +128,13 @@ SPL banner is under a second. Comparable to the fleet (rock-4se 9.21s,
 nanopi-zero2 10.33s), and ~4.5s of it is a pointless U-Boot USB scan — bean
 gosd-uj4l.
 
+**Superseded 2026-08-17 by gosd-uj4l's fix:** with the preboot USB scan
+removed, the U-Boot phase measures **4.50s** (5 clean power cycles, spread
+0.03s) and total SPL→app comes in at **6.98s mean** (6.70–7.75s). That makes
+this board the fastest of the fleet rather than the slowest. The totals carry
+more spread than this original baseline's 0.15s, so treat the U-Boot phase as
+the comparable figure — see gosd-uj4l for the full table and method.
+
 ### Follow-up beans filed
 
 - **gosd-84b8** — the 1GB DRAM blocker (blocks this bean)

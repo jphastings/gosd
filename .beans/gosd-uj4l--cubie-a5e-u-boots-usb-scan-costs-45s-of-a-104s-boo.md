@@ -44,7 +44,7 @@ Worth checking whether the same scan is costing the other extlinux boards
 ## Todos
 
 - [x] Confirm which U-Boot config controls the scan at our pin
-- [ ] Rebuild, re-measure, and record the new baseline (needs the bench —
+- [x] Rebuild, re-measure, and record the new baseline (needs the bench —
       no container runtime or bench access at implementation time; the
       ~4.5s saving below is a hypothesis, not a measurement)
 - [ ] Check the other U-Boot boards for the same cost
@@ -116,7 +116,37 @@ untouched), `CONFIG_BOOTSTD=y`, `CONFIG_DISTRO_DEFAULTS=y`,
 `CONFIG_BOOTCOMMAND="run distro_bootcmd"`, `CONFIG_BOOTDELAY=0` and the
 `dram-1gb.config` values.
 
-**Still unmeasured:** the ~4.5s saving remains the bench observation of what
-the scan costs, not a measurement of this build. The U-Boot binary has not
-been rebuilt or booted. Re-measure and update gosd-6pfn's 10.38s baseline
-before claiming a new boot time anywhere user-facing.
+**Now measured** — see the bench results below.
+
+
+## Bench result — measured 2026-08-17
+
+Rebuilt U-Boot from this recipe (the fragment merged by the board's own
+Dockerfile) and booted it on the 1GB board.
+
+**The scan is gone.** No `starting USB...`, no `Bus usb@...: N USB Device(s)
+found`, no `scanning usb for storage devices` — zero such lines across every
+boot captured.
+
+**Timing, 5 clean power cycles** (the baseline's own methodology):
+
+| phase | before (gosd-6pfn) | after | delta |
+|---|---|---|---|
+| U-Boot (SPL banner → `Starting kernel`) | 9.05s | **4.50s** (spread 0.03s) | **−4.55s** |
+| total (SPL banner → app listening) | 10.38s (spread 0.15s) | 6.98s mean (6.70–7.75) | ≈ −3.4s |
+
+The U-Boot phase is the clean apples-to-apples figure and it is very tight
+(0.03s across five boots): −4.55s, which recovers essentially all of the
+4.5s the scan was measured to cost. The end-to-end totals improve by ~3.4s
+but vary more than the baseline's did (spread 1.04s vs 0.15s), because the
+variance now sits after the kernel starts and this run used
+`examples/hello` rather than the bring-up session's image — so the total is
+reported as a range rather than a new precise baseline.
+
+Boot is otherwise normal: mmc/extlinux discovery, kernel, gosd-init, `/app`,
+and on these boots DHCP, mDNS and NTP all came up
+(`eth0: lease {192.168.1.201 ...}`, `mdns: answering as hello.local`).
+
+`CONFIG_USB_GADGET` remains set, so `--usb-gadget` is unaffected — untested
+here only because this board's USB-C carries its bench power (bean
+gosd-6pfn).
