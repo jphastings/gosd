@@ -1,11 +1,11 @@
 ---
 # gosd-qs2g
 title: Validate change files in-tree, so a quoted knope key can't fail silently
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T16:56:30Z
-updated_at: 2026-08-17T17:57:35Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 ---
 

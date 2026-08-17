@@ -1,11 +1,11 @@
 ---
 # gosd-x915
 title: 'Derive board parity from the registry: kernelspec, build/boards, fake-artifacts, COMPATIBILITY.md'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T16:55:53Z
-updated_at: 2026-08-17T17:52:27Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 blocked_by:
     - gosd-ihdn
