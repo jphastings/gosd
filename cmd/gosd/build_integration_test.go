@@ -21,6 +21,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/u-root/u-root/pkg/cpio"
 
+	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/cacerts"
 	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -1103,9 +1104,9 @@ func findRecord(records []cpio.Record, name string) (cpio.Record, bool) {
 }
 
 // TestBuildWithNoBoardFlagBuildsAllBoards confirms that omitting --board (as
-// gosd's locked "no --board builds every board" decision requires) now
-// produces the pi-zero-2w, pi-zero-w, pi-3b, radxa-zero-3e, nanopi-zero2,
-// rock-4se, and cubie-a5e images, not just a subset.
+// gosd's locked "no --board builds every board" decision requires) produces
+// an image for every public board, not just a subset - and nothing else, so
+// an internal-only board can't leak into the default build set.
 func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -1126,7 +1127,9 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 		t.Fatalf("gosd build failed: %v", err)
 	}
 
-	for _, want := range []string{"hello-pi-zero-2w.img", "hello-pi-zero-w.img", "hello-pi-3b.img", "hello-radxa-zero-3e.img", "hello-nanopi-zero2.img", "hello-rock-4se.img", "hello-cubie-a5e.img"} {
+	public := boards.All()
+	for _, b := range public {
+		want := "hello-" + b.Name() + ".img"
 		path := filepath.Join(outDir, want)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -1140,8 +1143,7 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 
 	// qemu-virt is the only internal-only board (cubie-a5e went public in
 	// bean gosd-zh95's activation): the default no---board build must
-	// produce exactly the seven public boards' images, never one for
-	// qemu-virt.
+	// produce exactly the public boards' images, never one for qemu-virt.
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		t.Fatalf("reading output directory: %v", err)
@@ -1152,8 +1154,8 @@ func TestBuildWithNoBoardFlagBuildsAllBoards(t *testing.T) {
 			imgNames = append(imgNames, e.Name())
 		}
 	}
-	if len(imgNames) != 7 {
-		t.Errorf("default build produced %d .img files (%v), want exactly 7 (internal-only boards must stay excluded)", len(imgNames), imgNames)
+	if len(imgNames) != len(public) {
+		t.Errorf("default build produced %d .img files (%v), want exactly %d (internal-only boards must stay excluded)", len(imgNames), imgNames, len(public))
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "hello-qemu-virt.img")); err == nil {
 		t.Error("default build produced hello-qemu-virt.img; that board is internal-only and must be excluded from the default build set")

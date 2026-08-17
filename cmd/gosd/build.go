@@ -14,14 +14,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jphastings/gosd/internal/boards"
-	"github.com/jphastings/gosd/internal/boards/cubiea5e"
-	"github.com/jphastings/gosd/internal/boards/nanopizero2"
-	"github.com/jphastings/gosd/internal/boards/pi3b"
-	"github.com/jphastings/gosd/internal/boards/pizero2w"
-	"github.com/jphastings/gosd/internal/boards/pizerow"
-	"github.com/jphastings/gosd/internal/boards/qemuvirt"
-	"github.com/jphastings/gosd/internal/boards/radxazero3e"
-	"github.com/jphastings/gosd/internal/boards/rock4se"
+	// Registers every board gosd ships, via boardset's init(). Dropping
+	// this import still compiles: it produces a gosd that knows about zero
+	// boards, where a bare `gosd build` builds nothing and every --board is
+	// unknown.
+	_ "github.com/jphastings/gosd/internal/boardset"
 	"github.com/jphastings/gosd/internal/build"
 	"github.com/jphastings/gosd/internal/catalog"
 	"github.com/jphastings/gosd/internal/configtree"
@@ -31,37 +28,6 @@ import (
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
-
-func init() {
-	boards.Register(pizero2w.New())
-	boards.Register(pizerow.New())
-	boards.Register(radxazero3e.New())
-	// nanopi-zero2 is public: gosd-f39b's U-Boot artifact pipeline entries
-	// are published in the artifacts/v0.2.0 release, so real
-	// (non---artifacts-dir) fetches for this board now resolve.
-	boards.Register(nanopizero2.New())
-	// qemu-virt is internal-only (see CLAUDE.md's locked decision): it's a
-	// real, fully buildable board, but only reachable via an explicit
-	// --board=qemu-virt, never part of the default no---board build set,
-	// --help text, or catalog generation.
-	boards.RegisterInternal(qemuvirt.New())
-	// rock-4se is public: its kernel and U-Boot (TF-A compiled from
-	// source, no rkbin blobs) are published in the artifacts/v0.5.0
-	// release, so real (non---artifacts-dir) fetches for this board now
-	// resolve (bean gosd-h8a8's activation flip).
-	boards.Register(rock4se.New())
-	// pi-3b is public: its kernel and both family DTBs (one image covers
-	// the 3B and the 3B+) are published in the artifacts/v0.8.0 release,
-	// so real (non---artifacts-dir) fetches for this board now resolve
-	// (bean gosd-7wv9's activation flip).
-	boards.Register(pi3b.New())
-	// cubie-a5e is public: its kernel (the fleet's first Allwinner member)
-	// and U-Boot (BL31 compiled from a pinned TF-A fork, no rkbin-style
-	// blobs) are published in the artifacts/v0.9.0 release, so real
-	// (non---artifacts-dir) fetches for this board now resolve (bean
-	// gosd-zh95's activation flip).
-	boards.Register(cubiea5e.New())
-}
 
 var (
 	boardIDs       []string
