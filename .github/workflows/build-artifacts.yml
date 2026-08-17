@@ -412,13 +412,15 @@ jobs:
 
           # cubie-a5e also compiles its BL31 from source (a pinned TF-A
           # fork, not a blob — see build/boards/cubie-a5e/manifest.json), so
-          # fold the same provenance in as rock-4se above. Two config
-          # fragments are merged for this board (bootdelay0.config plus
-          # dram-1gb.config, the 1GB-variant DRAM calibration override — see
-          # uboot/README.md and bean gosd-84b8); record both, comma-
-          # separated, in the one config field.
+          # fold the same provenance in as rock-4se above. Three config
+          # fragments are merged for this board (bootdelay0.config, plus
+          # dram-1gb.config — the 1GB-variant DRAM calibration override, see
+          # uboot/README.md and bean gosd-84b8 — plus skip-usb-scan.config —
+          # silences the boot-time USB preboot scan, see uboot/README.md and
+          # bean gosd-uj4l); record all three, comma-separated, in the one
+          # config field.
           jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$cubie_a5e_uboot_tag" \
-            --arg config "build/boards/cubie-a5e/uboot/bootdelay0.config,build/boards/cubie-a5e/uboot/dram-1gb.config" \
+            --arg config "build/boards/cubie-a5e/uboot/bootdelay0.config,build/boards/cubie-a5e/uboot/dram-1gb.config,build/boards/cubie-a5e/uboot/skip-usb-scan.config" \
             --slurpfile board_manifest build/boards/cubie-a5e/manifest.json \
             '.uboot = {repo: $repo, ref: $ref, config: $config} | .tfa = $board_manifest[0].tfa' \
             staging/cubie-a5e/source.json >staging/cubie-a5e/source.json.tmp

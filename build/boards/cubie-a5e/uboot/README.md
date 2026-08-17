@@ -77,8 +77,9 @@ distribute (see `../manifest.json`'s `license_note`).
 
 - **U-Boot**: mainline, tag pinned in `build.sh` (`UBOOT_TAG`).
 - **Defconfig**: `radxa-cubie-a5e_defconfig`, plus `bootdelay0.config` (sets
-  `CONFIG_BOOTDELAY=0`) and `dram-1gb.config` (overrides four per-chip vendor
-  DRAM calibration values, see below) merged on top via
+  `CONFIG_BOOTDELAY=0`), `dram-1gb.config` (overrides four per-chip vendor
+  DRAM calibration values, see below) and `skip-usb-scan.config` (silences
+  the boot-time USB preboot scan, see below) merged on top via
   `scripts/kconfig/merge_config.sh`. Single-board defconfig
   (`CONFIG_DEFAULT_DEVICE_TREE="allwinner/sun55i-a527-cubie-a5e"`).
 - **TF-A**: repo, branch (informational), and commit (authoritative) pinned
@@ -126,6 +127,39 @@ variant means reading `tpr6`/`tpr10`/`tpr11`/`tpr12` back off that
 variant's own working vendor bootloader, the same way the Armbian community
 did here.
 
+## Boot-time: skipping the unconditional USB preboot scan
+
+On hardware, U-Boot spent ~4.5s of its ~9s boot phase running a `usb start`
+scan that finds nothing and is never needed: gosd images boot from mmc via
+extlinux and never from USB (bean `gosd-uj4l`). At the pinned `UBOOT_TAG`,
+`arch/arm/Kconfig`'s `ARCH_SUNXI` hard-`select`s `CONFIG_CMD_USB`,
+`CONFIG_USB_STORAGE` and `CONFIG_USB_KEYBOARD` whenever
+`DISTRO_DEFAULTS && USB_HOST` (both true here -- DISTRO_DEFAULTS drives the
+mmc/extlinux boot this board depends on, USB_HOST is select'd by the
+EHCI/OHCI host-controller drivers) -- a `select` a fragment can't turn off,
+and disabling USB_HOST to break the condition would remove real USB host
+support along with the scan. The actual trigger is one step further down
+the same chain but is an ordinary `default`, not a `select`:
+`CONFIG_USB_KEYBOARD` gives `boot/Kconfig`'s `CONFIG_PREBOOT` a default of
+`"usb start"`, run unconditionally before the boot-delay countdown so a
+keyboard plugged in can interrupt autoboot. `skip-usb-scan.config` overrides
+that default to an empty string, which a fragment *can* do -- confirmed by
+generating this defconfig's real `.config` at the pinned tag with
+`scripts/kconfig/merge_config.sh -m` + `make olddefconfig`: `CONFIG_PREBOOT`
+stays empty while `CONFIG_CMD_USB`, `CONFIG_USB_STORAGE`, `CONFIG_USB_HOST`,
+`CONFIG_DM_USB` and `CONFIG_USB_GADGET` (this board's MUSB peripheral mode,
+used by `--usb-gadget`) are all untouched, and so are `CONFIG_BOOTSTD`,
+`CONFIG_DISTRO_DEFAULTS` and `CONFIG_BOOTCOMMAND` (`run distro_bootcmd`) --
+the mmc extlinux boot path is unaffected, and USB remains available as a
+`distro_bootcmd` fallback target and from the U-Boot command line, just not
+auto-run.
+
+**The ~4.5s saving is not yet re-measured.** This fragment was written
+without a container runtime or bench access, so it's verified against the
+pinned tag's actual Kconfig sources and the real kconfig tooling (see
+above), but not through an actual U-Boot rebuild and hardware boot -- see
+bean `gosd-uj4l` for the todo to rebuild and re-measure.
+
 ## Known gaps
 
 - Serial-verified on real hardware (bean `gosd-6pfn`, 2026-08-16): SPL banner,
@@ -133,6 +167,8 @@ did here.
   boot to /app all confirmed on a 1GB board -- with `dram-1gb.config` in
   place, without which SPL never reaches any of it. The 2GB/4GB variants
   remain unverified (see the DRAM calibration section above).
+  `skip-usb-scan.config` postdates that session and has not yet been through
+  a rebuild + bench boot (see the boot-time section above).
 - **No FDT overlay support**: `radxa-cubie-a5e_defconfig` (checked at the
   pinned `UBOOT_TAG`) does not set `CONFIG_OF_LIBFDT_OVERLAY`, and no merged
   fragment adds it. extlinux.conf's `fdtoverlays` directive isn't available,

@@ -69,10 +69,15 @@ COPY bootdelay0.config /src/bootdelay0.config
 # comment and bean gosd-84b8). 2GB/4GB variants are unverified and may need
 # different values of their own.
 COPY dram-1gb.config /src/dram-1gb.config
+# skip-usb-scan.config silences the unconditional preboot "usb start" scan
+# (~4.5s on hardware, gosd never boots from USB) without touching USB host,
+# storage or gadget support -- see the fragment's header comment and bean
+# gosd-uj4l.
+COPY skip-usb-scan.config /src/skip-usb-scan.config
 
 WORKDIR /src/u-boot
 RUN make CROSS_COMPILE=aarch64-linux-gnu- radxa-cubie-a5e_defconfig
-RUN ./scripts/kconfig/merge_config.sh -m .config /src/bootdelay0.config /src/dram-1gb.config \
+RUN ./scripts/kconfig/merge_config.sh -m .config /src/bootdelay0.config /src/dram-1gb.config /src/skip-usb-scan.config \
     && make CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
 # BL31= takes the raw bl31.bin (not the .elf rock-4se uses) per U-Boot's
