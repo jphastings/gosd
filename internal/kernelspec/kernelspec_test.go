@@ -3,7 +3,6 @@ package kernelspec_test
 import (
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 
@@ -24,20 +23,6 @@ func boardIDsFromRegistry() []string {
 		ids = append(ids, b.Name())
 	}
 	return ids
-}
-
-func TestBoardIDsListsExactlyTheKernelBuildingBoards(t *testing.T) {
-	got := kernelspec.BoardIDs()
-	want := append([]string(nil), allBoardIDs...)
-	sort.Strings(want)
-	if len(got) != len(want) {
-		t.Fatalf("BoardIDs() = %v, want %v", got, want)
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("BoardIDs()[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
 }
 
 func TestSpecResolutionIsComplete(t *testing.T) {

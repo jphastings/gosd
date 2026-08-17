@@ -303,6 +303,26 @@ func All() []Board {
 	return out
 }
 
+// AllIncludingInternal returns every registered board, sorted by name -
+// public and internal-only (RegisterInternal) alike. Use this instead of
+// All() for fleet-wide checks that must not silently skip a board like
+// qemu-virt just because it's not user-facing (see internal/repocheck).
+//
+// This only sees boards some package has actually registered: nothing
+// registers itself just by being compiled in, so a caller that doesn't
+// import (even blank-import) internal/boardset gets an empty slice back,
+// not an error. boardset.Registered() exists precisely so fleet-wide checks
+// can't make that mistake by accident - prefer it over calling this
+// directly unless you're implementing that same guarantee yourself.
+func AllIncludingInternal() []Board {
+	out := make([]Board, 0, len(registry))
+	for _, b := range registry {
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out
+}
+
 // Find looks up a board by its ID (Name()), public or internal-only: an
 // explicit --board=qemu-virt must still resolve even though qemu-virt is
 // absent from All()/IDs().
