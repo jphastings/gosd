@@ -1,0 +1,144 @@
+name: Pin artifacts version
+
+# Opens the pull request that points internal/artifacts.Version at a freshly
+# published artifacts release — the "bump" half of the tag-first, bump-second
+# procedure in docs/artifacts.md (bean gosd-odx3). Before this existed the
+# bump was hand-typed after every artifacts release, which is exactly the
+# kind of step that gets forgotten: until it lands, gosd still downloads the
+# PREVIOUS release, so a merged board fix reaches nobody.
+#
+# Triggered by "Build artifacts" completing, rather than living inside that
+# workflow, for two reasons. A workflow_run event runs the file from the
+# default branch, so this logic can be fixed without re-cutting a release —
+# a job added to build-artifacts.yml would only take effect for tags pushed
+# afterwards, and could never generate a PR for a release that predates it.
+# It also runs in the default branch's context, so the knope-release
+# environment's deployment policy needs no widening to cover artifacts/v*
+# tag refs.
+#
+# The PR is opened as a DRAFT on purpose: the pin is only sound once someone
+# has verified the release the way docs/artifacts.md describes (clean-machine
+# build, offline re-run, content spot-check). The body carries that checklist,
+# and marking it ready for review is the human gate.
+
+on:
+  workflow_run:
+    workflows: ["Build artifacts"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Artifacts release to pin, e.g. v0.10.2 (must already be published with its assets)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  open-pin-pr:
+    name: Open the version-pin PR
+    runs-on: ubuntu-latest
+    # A workflow_run fires for dispatch/branch runs of Build artifacts too,
+    # which publish nothing; only a successful artifacts/v* tag run has a
+    # release worth pinning.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'artifacts/v'))
+    environment: knope-release
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.KNOPE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KNOPE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Resolve the version to pin
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            raw="${{ inputs.version }}"
+          else
+            raw="${{ github.event.workflow_run.head_branch }}"
+          fi
+          # Accepts "artifacts/v0.10.2" (the tag ref) and "v0.10.2"/"0.10.2"
+          # (what a human types into the dispatch form) alike.
+          version="${raw#artifacts/}"
+          version="v${version#v}"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "Pinning $version"
+
+      - name: Require the release to have its assets
+        # The whole point of bump-second is that the release exists AND its
+        # assets are attached; pinning a tag whose build failed or is still
+        # running would break every build and turn the qemu jobs red.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          count=$(gh release view "artifacts/$version" --json assets --jq '.assets | length')
+          if [ "${count:-0}" -lt 2 ]; then
+            echo "::error::artifacts/$version has $count assets; refusing to pin a release without published artifacts"
+            exit 1
+          fi
+          echo "artifacts/$version has $count assets"
+
+      - name: Rewrite the pin
+        id: bump
+        run: |
+          set +e
+          out=$(build/artifacts/pin-bump.sh "${{ steps.version.outputs.version }}")
+          status=$?
+          set -e
+          echo "$out"
+          if [ "$status" -eq 3 ]; then
+            echo "already-pinned=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit "$status"
+
+      - name: Configure Git as the app bot
+        if: steps.bump.outputs.already-pinned != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          user_id="$(gh api "/users/${{ steps.app-token.outputs.app-slug }}%5Bbot%5D" --jq .id)"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${user_id}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+      - name: Push the branch and open the PR
+        if: steps.bump.outputs.already-pinned != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          branch="pin/artifacts-$version"
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "$branch already exists; leaving the existing pull request alone"
+            exit 0
+          fi
+
+          git switch -c "$branch"
+          git add internal/artifacts/artifacts.go
+          git commit -m "Bump internal/artifacts.Version to $version" \
+            -m "Opened automatically once artifacts/$version's assets were published, so the release a merged board fix rides in actually reaches builds (bean gosd-odx3). The doc-comment entry is spliced from that release's notes; polish it in review." \
+            -m "Not merge-ready until the verification in docs/artifacts.md has been run — hence draft."
+          git push --set-upstream origin "$branch"
+
+          body="$(sed "s|{{VERSION}}|$version|g" build/artifacts/pin-bump-pr-body.md)"
+          gh pr create --draft --base main --head "$branch" \
+            --label "no release notes" \
+            --title "Bump internal/artifacts.Version to $version" \
+            --body "$body"
+
+      - name: Report when there was nothing to do
+        if: steps.bump.outputs.already-pinned == 'true'
+        run: echo "::notice::internal/artifacts.Version already pins ${{ steps.version.outputs.version }}; no pull request needed"
