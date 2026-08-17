@@ -48,6 +48,7 @@ import (
 // attached storage for pi-zero-2w/pi-zero-w/pi-3b, and it is the first
 // published build of the radxa-zero-3e/nanopi-zero2 exFAT fragments.
 // Other boards are unchanged rebuilds from identical source pins.
+//   - v0.10.1: Cubie A5E images now boot the 1GB RAM variant.
 //   - v0.10.2: The Cubie A5E kernel build now produces a USB-gadget
 //     variant device tree; Cubie A5E U-Boot no longer scans USB on every
 //     boot.

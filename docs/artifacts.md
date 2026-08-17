@@ -156,8 +156,12 @@ the same tarballs + manifest.json the workflow publishes.
 4. A follow-up PR bumping `internal/artifacts.Version` to the new tag —
    so newly-built `gosd` binaries pick it up — **opens itself**. Once the
    asset upload above succeeds, `.github/workflows/pin-artifacts-version.yml`
-   rewrites the constant (splicing the release's own notes into its doc
-   comment) and opens a draft PR (bean gosd-odx3). It is a normal CLI-code
+   rewrites the constant, splices the notes of every release between the old
+   pin and the new one into its doc comment, **writes a change file** so the
+   bump ships in a CLI release, and opens the PR (bean gosd-odx3). The change
+   file matters: knope cuts a release only from accumulated change files, so a
+   pin that lands without one sits on `main` while `gosd` installed from a
+   release keeps downloading the old artifacts. It is a normal CLI-code
    change, part of the *next* CLI `vX.Y.Z` release, not the artifact release
    itself.
 

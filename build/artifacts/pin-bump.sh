@@ -15,9 +15,10 @@
 # version is the release to pin, with or without the tag prefix: "v0.10.2",
 # "0.10.2" and "artifacts/v0.10.2" are all accepted.
 #
-# Edits internal/artifacts/artifacts.go in place and prints what it did. It
-# does NOT commit, push, or open anything: the caller decides what to do with
-# the working tree, which is what makes it testable. Exit status 0 means the
+# Edits internal/artifacts/artifacts.go in place, writes a change file so the
+# bump actually ships in a CLI release, and prints what it did. It does NOT
+# commit, push, or open anything: the caller decides what to do with the
+# working tree, which is what makes it testable. Exit status 0 means the
 # file now pins <version>; exit status 3 means it already did, and nothing
 # was changed (so a caller can skip opening a duplicate pull request).
 set -euo pipefail
@@ -45,51 +46,83 @@ if [ "$current" = "$version" ]; then
 	exit 3
 fi
 
-# The release notes knope wrote for this version become the doc comment's
-# entry for it, so the constant explains what moving to it changes without a
-# human having to restate the changelog. Prose polish happens in review; the
-# point here is that the summary is never missing or invented.
-notes="$(awk -v want="## ${version#v} " '
-	index($0, want) == 1 { grabbing = 1; next }
-	grabbing && /^## / { exit }
-	grabbing { print }
-' "$changelog")"
-
-if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
-	echo "pin-bump.sh: no ${version#v} section in docs/releases/artifacts.md; has knope released it yet?" >&2
-	exit 1
-fi
-
-export PIN_VERSION="$version" PIN_NOTES="$notes"
-python3 - "$source_file" <<'PYEOF'
+export PIN_VERSION="$version" PIN_CURRENT="$current"
+changefile="$(python3 - "$source_file" "$changelog" "$repo_root/.changeset" <<'PYEOF'
 import os, re, sys, textwrap
 
-path = sys.argv[1]
-version = os.environ["PIN_VERSION"]
-notes = os.environ["PIN_NOTES"]
+source_file, changelog_path, changeset_dir = sys.argv[1:4]
+current = os.environ["PIN_CURRENT"]
+target = os.environ["PIN_VERSION"]
 
-# Only the change TITLES (knope's "#### ..." headings) go in the comment.
-# The bodies live in docs/releases/artifacts.md and would swamp a doc
-# comment; what a reader of the constant needs is what moving to this
-# release changes, in one line each.
-titles = [l.strip().lstrip("#").strip() for l in notes.splitlines() if l.strip().startswith("####")]
-if not titles:
-    sys.exit("pin-bump.sh: no change entries found in the release notes")
+def key(v):
+    return tuple(int(p) for p in v.lstrip("v").split("."))
 
-# Titles are used verbatim: lowercasing the first word to make one
-# sentence would mangle proper nouns like "Cubie".
-body = "; ".join(titles) + "."
-wrapped = textwrap.wrap(f"{version}: {body}", width=66)
-entry = [f"//   - {wrapped[0]}"] + [f"//     {l}" for l in wrapped[1:]]
+# Every release BETWEEN the old pin and the new one is news, not just the
+# newest: bumping v0.10.0 -> v0.10.2 delivers v0.10.1's changes too, and
+# those are often the reason the bump matters (v0.10.1 is what made the
+# Cubie A5E boot at all).
+sections, version = {}, None
+for line in open(changelog_path):
+    m = re.match(r"^## (\d+\.\d+\.\d+)\b", line)
+    if m:
+        version = "v" + m.group(1)
+        sections[version] = []
+        continue
+    if version:
+        sections[version].append(line.rstrip("\n"))
 
-src = open(path).read()
+wanted = sorted((v for v in sections if key(current) < key(v) <= key(target)), key=key)
+if not wanted and target in sections:
+    wanted = [target]  # a rollback, or a re-pin: describe the target itself
+if not wanted:
+    sys.exit(f"pin-bump.sh: no release notes between {current} and {target} in {changelog_path}")
+
+titles = {v: [l.strip()[5:].strip() for l in sections[v] if l.strip().startswith("#### ")] for v in wanted}
+
+src = open(source_file).read()
 m = re.search(r'^const Version = "v\d+\.\d+\.\d+"$', src, re.M)
 if not m:
     sys.exit("pin-bump.sh: could not find the Version constant")
 
-src = src[:m.start()] + "\n".join(entry) + "\n" + f'const Version = "{version}"' + src[m.end():]
-open(path, "w").write(src)
+# Releases the comment already describes are not described twice: this can
+# legitimately run again over a tree a previous run already annotated.
+already = {ln.split(":")[0].removeprefix("//   - ").strip()
+           for ln in src.splitlines() if ln.startswith("//   - v")}
+
+comment = []
+for v in wanted:
+    if v in already:
+        continue
+    body = ("; ".join(titles[v]) + ".") if titles[v] else "rebuilt artifacts, no user-facing changes."
+    wrapped = textwrap.wrap(f"{v}: {body}", width=66)
+    comment.append(f"//   - {wrapped[0]}")
+    comment.extend(f"//     {l}" for l in wrapped[1:])
+
+new_comment = ("\n".join(comment) + "\n") if comment else ""
+open(source_file, "w").write(
+    src[: m.start()] + new_comment + f'const Version = "{target}"' + src[m.end() :]
+)
+
+# Without a change file, knope cuts no CLI release and the bump reaches
+# nobody who installs gosd rather than building it from source.
+os.makedirs(changeset_dir, exist_ok=True)
+path = os.path.join(changeset_dir, f"artifacts-pin-{target.replace('.', '-')}.md")
+lines = [
+    "---", "gosd: patch", "---", "",
+    f"#### Board images are now built from artifacts {target}", "",
+    "`gosd build` downloads the board kernels and bootloaders published as",
+    f"{target}" + (f", up from {current}," if len(wanted) > 1 else ",") + " which brings:",
+    "",
+]
+for v in wanted:
+    lines.extend(f"- {t}" for t in titles[v])
+    if not titles[v]:
+        lines.append(f"- {v}: rebuilt artifacts with no user-facing changes")
+open(path, "w").write("\n".join(lines) + "\n")
+print(os.path.basename(path))
 PYEOF
+)"
 
 gofmt -w "$source_file"
 echo "pin-bump.sh: pinned $current -> $version"
+echo "pin-bump.sh: wrote .changeset/$changefile so the bump ships in a release"
