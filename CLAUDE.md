@@ -564,6 +564,14 @@ say so in the bean rather than silently diverging.
 
 ## Code conventions
 
+- Markdown docs hyperlink a **descriptive phrase**, never a file path — not in
+  prose and not as a link's text: `[the runtime contract](runtime.md)`, not
+  `` [`docs/runtime.md`](runtime.md) ``. COMPATIBILITY.md is the exemplar.
+  `internal/repocheck` ratchets this rather than enforcing it — per-file counts
+  seeded from the tree, which may not rise — so the existing violations stay
+  put and only new ones fail (bean gosd-nw6e). Fixing prose and lowering a
+  count is welcome, never required. This file is exempt: it is an index for
+  agents, where the bare path is the useful form.
 - Errors shown to CLI users must be actionable ("X failed because Y; try Z"),
   never bare wrapped chains.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
