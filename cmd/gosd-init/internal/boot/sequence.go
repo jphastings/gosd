@@ -248,6 +248,7 @@ func Run(deps Deps, opts Options) error {
 		log = NewLogger(w).Printf
 	}
 	setStatusLED(deps, log, "booting", StatusLED.Booting)
+	describeStatusLED(deps, log)
 
 	cfg, err := deps.ReadConfig()
 	if err != nil {
@@ -947,6 +948,16 @@ func setStatusLED(deps Deps, log func(format string, args ...any), state string,
 	}
 	if err := call(deps.StatusLED); err != nil {
 		log("status LED: setting the %s state failed: %v", state, err)
+	}
+}
+
+// describeStatusLED logs which LED the board resolved to, once, immediately
+// after the first state is set — see StatusLEDDescriber for why that line is
+// the only diagnostic available on a device with no shell. Silent for a nil
+// StatusLED, and for any implementation that doesn't describe itself.
+func describeStatusLED(deps Deps, log func(format string, args ...any)) {
+	if d, ok := deps.StatusLED.(StatusLEDDescriber); ok {
+		log("status LED: %s", d.Describe())
 	}
 }
 
