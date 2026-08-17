@@ -46,6 +46,10 @@ type Deps struct {
 	Reaper     Reaper
 	Rebooter   Rebooter
 
+	// StatusLED drives the board's onboard status LED, if it has one — see
+	// the StatusLED interface's own doc. Nil is a valid, silent no-op.
+	StatusLED StatusLED
+
 	// PathExists checks whether a path exists, used by MountBootPartition
 	// to confirm a freshly-mounted FAT candidate is really the boot
 	// partition (see gosd-pcwl) rather than just a filesystem the kernel
@@ -243,6 +247,7 @@ func Run(deps Deps, opts Options) error {
 		console = w
 		log = NewLogger(w).Printf
 	}
+	setStatusLED(deps, log, "booting", StatusLED.Booting)
 
 	cfg, err := deps.ReadConfig()
 	if err != nil {
@@ -447,9 +452,20 @@ func Run(deps Deps, opts Options) error {
 	tail := consoletail.New()
 	appOutput := io.MultiWriter(console, tail)
 
+	// appHandedOver guards the one-time "Running" transition: only the
+	// first successful start hands control to the app, so a later restart
+	// after a transient crash must not blink the LED back to "booting" —
+	// there are only three states, and a mid-boot-shaped flicker on every
+	// ordinary restart isn't one of them.
+	appHandedOver := false
 	sup := &Supervisor{
 		Start: func() (int, error) {
-			return deps.AppStarter.Start(opts.AppPath, env, appOutput, appOutput)
+			pid, err := deps.AppStarter.Start(opts.AppPath, env, appOutput, appOutput)
+			if err == nil && !appHandedOver {
+				appHandedOver = true
+				setStatusLED(deps, log, "running", StatusLED.Running)
+			}
+			return pid, err
 		},
 		Wait:        deps.Reaper.Wait,
 		Sleep:       deps.Sleep,
@@ -919,6 +935,21 @@ func haltForDataCorruption(deps Deps, log func(format string, args ...any), repo
 	}, cause)
 }
 
+// setStatusLED calls one of Deps.StatusLED's three state transitions —
+// State expected to be a method expression like StatusLED.Booting — and
+// logs rather than propagates a failure: an LED is a courtesy for whoever
+// is looking at the device, never something worth failing or delaying boot
+// over. A nil StatusLED (no LED wired at all — qemu-virt, or a test that
+// doesn't care) is a silent no-op.
+func setStatusLED(deps Deps, log func(format string, args ...any), state string, call func(StatusLED) error) {
+	if deps.StatusLED == nil {
+		return
+	}
+	if err := call(deps.StatusLED); err != nil {
+		log("status LED: setting the %s state failed: %v", state, err)
+	}
+}
+
 // fatal implements step 8 of the boot sequence: log, record what happened
 // where the device's owner can find it, sync, and then either halt or (the
 // default) sleep 5s and reboot. It returns the wrapped error so callers (and
@@ -937,6 +968,12 @@ func fatal(deps Deps, log func(format string, args ...any), report *fatalReporte
 
 	if class.halt {
 		log("fatal: %v; halting", wrapped)
+		// Only the halting branch gets the fast fatal blink: a rebooting
+		// fatal is back to a fresh boot (and its own "booting" blink) within
+		// 5s, and — for both of gosd-init's own reboot-only classes — never
+		// even has a report to point at, since neither can happen once the
+		// boot partition (and so LAST_FATAL_ERROR.md) exists to record one.
+		setStatusLED(deps, log, "fatal", StatusLED.Fatal)
 	} else {
 		log("fatal: %v; rebooting in 5s", wrapped)
 	}

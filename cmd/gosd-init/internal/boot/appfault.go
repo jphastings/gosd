@@ -37,6 +37,7 @@ func haltForAppFault(deps Deps, log func(format string, args ...any), reporter *
 		declared = "a fatal fault"
 	}
 	log("fatal: the app declared %s and asked to stop: %s; halting", declared, report.Problem)
+	setStatusLED(deps, log, "fatal", StatusLED.Fatal)
 	reporter.record(report)
 
 	deps.Rebooter.Sync()

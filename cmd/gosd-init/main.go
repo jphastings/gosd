@@ -23,6 +23,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/durable"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/statusled"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
@@ -101,11 +102,17 @@ func main() {
 		// really is one (see boot.MountBootPartition and gosd-pcwl); plain
 		// os.Stat is enough since gosd-init only ever calls it against an
 		// already-mounted path.
-		PathExists:  pathExists,
-		Hostname:    platform.Hostname,
-		AppStarter:  platform.AppStarter,
-		Reaper:      platform.Reaper,
-		Rebooter:    platform.Rebooter,
+		PathExists: pathExists,
+		Hostname:   platform.Hostname,
+		AppStarter: platform.AppStarter,
+		Reaper:     platform.Reaper,
+		Rebooter:   platform.Rebooter,
+		// StatusLED discovers its LED lazily, on first use — see
+		// statusled.Sysfs's doc — so wiring it here, before /sys is
+		// mounted, is safe: it's a silent no-op on any board that turns
+		// out to have none (qemu-virt, or any board with no gpio-leds LED
+		// at all).
+		StatusLED:   statusled.New(statusled.DefaultRoot),
 		OpenConsole: platform.OpenConsole,
 		FallbackLog: fallbackLog,
 		ReadConfig:  readConfig,

@@ -72,6 +72,21 @@ type Reaper interface {
 	Wait(pid int) (ExitStatus, error)
 }
 
+// StatusLED drives the board's onboard status LED through its three boot
+// states, for a board that has one wired at all — see
+// cmd/gosd-init/internal/statusled for how it discovers which sysfs LED to
+// use and why the kernel's own "timer" trigger does the actual blinking,
+// never a goroutine (that's what lets the blink survive the very halt or
+// wedge it's reporting on). A nil StatusLED (Deps.StatusLED left unset) must
+// be a silent no-op everywhere it's called — qemu-virt has no LED at all,
+// so CI can never exercise the blink end-to-end, and none of boot's own
+// tests wire one up unless they're specifically testing this.
+type StatusLED interface {
+	Booting() error
+	Running() error
+	Fatal() error
+}
+
 // Rebooter performs the fatal-error shutdown paths: flush disks and the
 // console, then either restart the machine (transient failures, where a
 // retry may succeed) or halt it (states no retry can improve, like a
