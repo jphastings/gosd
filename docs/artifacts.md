@@ -153,12 +153,22 @@ the same tarballs + manifest.json the workflow publishes.
    `manifest.json` to the release knope already created (20–60 min) — the
    workflow no longer creates or describes the release itself, only
    attaches assets to it.
-4. In a follow-up PR — a normal CLI-code change, part of the *next* CLI
-   `vX.Y.Z` release, not the artifact release itself — bump
-   `internal/artifacts.Version` to the new tag, so newly-built `gosd`
-   binaries pick it up.
-5. Before merging that PR, verify the bump three ways and record each in
-   the bean:
+4. A follow-up PR bumping `internal/artifacts.Version` to the new tag —
+   so newly-built `gosd` binaries pick it up — **opens itself**. Once the
+   asset upload above succeeds, `.github/workflows/pin-artifacts-version.yml`
+   rewrites the constant (splicing the release's own notes into its doc
+   comment) and opens a draft PR (bean gosd-odx3). It is a normal CLI-code
+   change, part of the *next* CLI `vX.Y.Z` release, not the artifact release
+   itself.
+
+   If that PR is missing — the release predates the automation, or the job
+   failed — run the workflow by hand from the Actions tab with the version
+   as its input (`v0.10.2`), or locally with
+   `build/artifacts/pin-bump.sh v0.10.2` and open the PR yourself. The
+   workflow refuses to pin a release whose assets aren't attached yet, and
+   does nothing if the constant already names that version.
+5. **The PR arrives as a draft on purpose**: verify the bump three ways
+   before marking it ready for review, and record each in the bean:
    - **Clean-machine build** — fresh `HOME`, no `--board`/`--artifacts-dir`
      flags, so every public board's image comes from a real download of the
      new release.
