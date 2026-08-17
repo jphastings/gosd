@@ -16,7 +16,7 @@ const wantExtlinuxConf = "default gosd\n" +
 	"    append console=ttyS0,115200n8 quiet init=/init gosd.board=cubie-a5e panic=10\n"
 
 func TestRenderExtlinuxConf(t *testing.T) {
-	got, err := RenderExtlinuxConf(ExtlinuxConfData{ConsoleBaud: 115200})
+	got, err := RenderExtlinuxConf(ExtlinuxConfData{ConsoleBaud: 115200, DTBFilename: "sun55i-a527-cubie-a5e.dtb"})
 	if err != nil {
 		t.Fatalf("RenderExtlinuxConf() error = %v", err)
 	}
@@ -26,7 +26,7 @@ func TestRenderExtlinuxConf(t *testing.T) {
 }
 
 func TestRenderExtlinuxConf_ConsoleBaudOverride(t *testing.T) {
-	got, err := RenderExtlinuxConf(ExtlinuxConfData{ConsoleBaud: 1500000})
+	got, err := RenderExtlinuxConf(ExtlinuxConfData{ConsoleBaud: 1500000, DTBFilename: "sun55i-a527-cubie-a5e.dtb"})
 	if err != nil {
 		t.Fatalf("RenderExtlinuxConf() error = %v", err)
 	}

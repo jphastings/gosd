@@ -68,7 +68,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 |---|---|---|---|---|---|---|---|
 | Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ [^cubie-eth] |
 | WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] |
-| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ❌ [^cubie-gadget] |
+| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ⚠️ [^cubie-gadget] |
 | Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
 | ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
 | exFAT on the eMMC | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
@@ -128,18 +128,16 @@ board · ❌ not supported (see footnote).
     mainline kernel yet, so this board has no USB at all — host or gadget
     (bean `gosd-36yy`); `--usb-gadget` refuses to build.
 
-[^cubie-gadget]: Bench-proven not to work at the pinned artifacts (bean
-    `gosd-3io0`), correcting an earlier ✅ that was read off the board's
-    device tree rather than hardware. The USB-C port is the only OTG-capable
-    one, and its `ehci0`/`ohci0` host controllers share a phy with the
-    peripheral controller; with no ID/VBUS detection on this board to
-    arbitrate, the host side wins at probe and the port never enumerates as a
-    device, whatever `dr_mode` says. `--usb-gadget` refuses to build for now.
-    The kernel build already produces a variant device tree with those
-    controllers disabled, and support returns once an artifacts release
-    carries it — at which point host mode on the USB-C port becomes the
-    trade: an image is built for one or the other, never both. The USB 3.0
-    Type-A port is unaffected either way.
+[^cubie-gadget]: Building with `--usb-gadget` ships a variant device tree
+    with the USB-C port's `ehci0`/`ohci0` host controllers disabled, because
+    they share a phy with the peripheral controller and this board has no
+    ID/VBUS detection to arbitrate — without it the host side wins at probe
+    and the port can never enumerate as a device, whatever `dr_mode` says
+    (bench-proven, bean `gosd-3io0`). **The trade is that a gadget-mode image
+    cannot use the USB-C port as a host**; the USB 3.0 Type-A port is
+    unaffected. On hardware the device tree is confirmed to keep the phy with
+    the peripheral controller, but a full enumeration round-trip against a
+    host has not been run yet — hence ⚠️ rather than ✅.
 
 [^emmc-optional]: eMMC is an optional module/SKU on these boards; with
     none fitted, `emmc.FormatAndMount` returns `ErrNoEMMC`.

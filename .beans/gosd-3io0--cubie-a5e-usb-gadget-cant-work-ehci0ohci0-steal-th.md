@@ -98,7 +98,7 @@ board-level decision recorded here.
       --usb-gadget --board cubie-a5e` must refuse with an actionable error
       rather than shipping an image that cannot work
 - [ ] Decide between the two fix options above (JP)
-- [~] If option 1: write the DTS patch, rebuild the kernel, re-run this probe,
+- [x] If option 1: write the DTS patch, rebuild the kernel, re-run this probe,
       and confirm the Mac enumerates `/dev/cu.usbmodem*` with an echo round-trip
 - [ ] Re-check whether the Type-A host port still works after any such patch
 
@@ -124,3 +124,19 @@ tag-first/bump-second seam:
 2. **Artifacts release** cut from it.
 3. **Follow-up PR** — `Version` bump, the board consuming the new DTB, support
    flipped back to ✅, and the exemption removed.
+
+
+## Consuming the DTB (2026-08-17)
+
+With `internal/artifacts.Version` now at v0.10.2 — which carries
+`sun55i-a527-cubie-a5e-gadget.dtb` — the board can select it, so this is the
+other half: `Artifacts()` lists it, `BootFiles` picks between stock and
+variant on `cfg.UsbGadget`, `extlinux.conf` names whichever shipped, and
+`kernelspec`'s `pendingArtifactDTBs` exemption is gone (its whole reason was
+the release window, now closed).
+
+COMPATIBILITY.md goes to **⚠️, not ✅**: the device tree is proven on hardware
+to keep the phy with the peripheral controller and to leave the Type-A port
+working, but a full enumeration round-trip against a host has never run — the
+bench's USB-C has carried power, not data, since the day this was found. That
+last step is the only thing between ⚠️ and ✅.

@@ -45,6 +45,10 @@ const (
 	ubootArtifactName  = "u-boot-sunxi-with-spl.bin"
 	kernelArtifactName = "Image"
 	dtbArtifactName    = "sun55i-a527-cubie-a5e.dtb"
+	// gadgetDTBArtifactName is the same board DTB with ehci0/ohci0
+	// disabled, shipped in place of the stock one when --usb-gadget is
+	// set. See BootFiles and bean gosd-3io0.
+	gadgetDTBArtifactName = "sun55i-a527-cubie-a5e-gadget.dtb"
 
 	// initramfsName is the file name the initramfs is written under in the
 	// FAT boot partition; extlinux.conf's initrd directive and this name
@@ -104,16 +108,23 @@ func (board) Artifacts() []boards.ArtifactRef {
 		{Name: ubootArtifactName},
 		{Name: kernelArtifactName},
 		{Name: dtbArtifactName},
+		{Name: gadgetDTBArtifactName},
 	}
 }
 
 // BootFiles implements boards.Board: the kernel, DTB, the initramfs the
 // build pipeline has already built into art.Initramfs, and extlinux.conf
-// rendered from the locked template. BuildConfig.UsbGadget is deliberately
-// ignored: the board DT already pins usb_otg's dr_mode to "peripheral" at
-// the pinned kernel (mainline MUSB, allwinner,sun8i-a33-musb - see bean
-// gosd-jpc8), so the controller boots in peripheral mode regardless of
-// --usb-gadget, and no boot-file change is needed.
+// rendered from the locked template.
+//
+// BuildConfig.UsbGadget picks WHICH DTB ships. The board DT pins usb_otg's
+// dr_mode to "peripheral", but that alone is not enough: ehci0/ohci0 share
+// usbphy port 0 with usb_otg, and with no ID/VBUS detection on this board to
+// arbitrate, the host controllers win at probe and switch the phy to host
+// mode - so the gadget can never enumerate (bench-proven, bean gosd-3io0).
+// The kernel build therefore emits a second DTB with those two controllers
+// disabled, and --usb-gadget selects it. The two are mutually exclusive on
+// this hardware: an image built for gadget mode cannot use the USB-C port as
+// a host. The USB 3.0 Type-A port is unaffected either way (ehci1/ohci1).
 func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
@@ -123,11 +134,15 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 	}
 	files[kernelArtifactName] = kernel
 
-	dtb, err := art.Open(dtbArtifactName)
+	dtbName := dtbArtifactName
+	if cfg.UsbGadget {
+		dtbName = gadgetDTBArtifactName
+	}
+	dtb, err := art.Open(dtbName)
 	if err != nil {
 		return nil, err
 	}
-	files[dtbArtifactName] = dtb
+	files[dtbName] = dtb
 
 	if art.Initramfs == nil {
 		return nil, fmt.Errorf("cubie-a5e BootFiles: no initramfs archive was provided by the build pipeline")
@@ -138,7 +153,10 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 	if consoleBaud == 0 {
 		consoleBaud = defaultConsoleBaud
 	}
-	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud})
+	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{
+		ConsoleBaud: consoleBaud,
+		DTBFilename: dtbName,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("rendering extlinux.conf: %w", err)
 	}
@@ -194,25 +212,21 @@ func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
 
-// UsbGadgetSupport implements boards.Board: unsupported at the PINNED
-// artifacts, which corrects an earlier claim that this board needed no
-// device-tree work (bean gosd-jpc8). dr_mode="peripheral" in the board DT is
-// necessary but not sufficient: ehci0/ohci0 share usbphy port 0 with
-// usb_otg, this board has no ID/VBUS detection to arbitrate between them, so
-// the host controllers win at probe and switch the phy to host mode. A gadget
-// binds to the UDC and /dev/ttyGS0 appears, yet the port never enumerates -
-// bench-proven, with the host seeing nothing at all (bean gosd-3io0).
+// UsbGadgetSupport implements boards.Board: supported, via the gadget
+// variant DTB BootFiles selects (bean gosd-3io0), and only because the
+// pinned artifacts now carry it.
 //
-// The fix is a variant DTB with those two controllers disabled, which the
-// kernel build now produces. It becomes selectable here once an artifacts
-// release carries it and internal/artifacts.Version points at that release;
-// until then refusing is the only honest answer, since the alternative is an
-// image that looks right and cannot work.
+// The original claim of support was read off the board's device tree -
+// usb_otg pins dr_mode="peripheral" (bean gosd-jpc8) - and was wrong.
+// That is necessary but not sufficient: ehci0/ohci0 share usbphy port 0
+// with usb_otg, this board has no ID/VBUS detection to arbitrate, so the
+// host controllers win at probe and switch the phy to host mode. A gadget
+// binds to the UDC and /dev/ttyGS0 appears while the host sees nothing at
+// all, which is how a device-tree reading passed for hardware proof.
+// Shipping the variant DTB, which disables those two controllers, is what
+// makes the claim true.
 func (board) UsbGadgetSupport() boards.GadgetSupport {
-	return boards.GadgetSupport{
-		Supported: false,
-		Reason:    "the USB-C port's host controllers (ehci0/ohci0) share a phy with the peripheral controller and win at probe, so the port cannot enumerate as a device; the variant device tree that fixes this ships with the next artifacts release (bean gosd-3io0)",
-	}
+	return boards.GadgetSupport{Supported: true}
 }
 
 // ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's

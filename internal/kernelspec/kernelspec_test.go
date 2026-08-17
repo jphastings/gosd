@@ -110,33 +110,16 @@ func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
 				}
 			}
 
+			// No exemptions: a board only lists an AdditionalDTB when it
+			// means to ship it, and the pinned release must already carry
+			// it (see docs/artifacts.md's tag-first, bump-second order).
 			for _, dtb := range spec.AdditionalDTBs {
-				if pendingArtifactDTBs[id][dtb.Filename] {
-					continue
-				}
 				if !artifactNames[dtb.Filename] {
 					t.Errorf("AdditionalDTBs filename %q is not in %s's Artifacts()", dtb.Filename, id)
 				}
 			}
 		})
 	}
-}
-
-// pendingArtifactDTBs names DTBs the kernel build already publishes but no
-// board consumes YET, which is a deliberate half-step rather than an
-// oversight. Artifact resolution is eager over every ref in a board's
-// Artifacts(), so listing a file the pinned artifacts release does not carry
-// would fail EVERY build for that board - not just the ones that want the
-// file. The output therefore has to ship first, an artifacts release has to
-// be cut, and only then can the board start listing it (the same tag-first,
-// bump-second order docs/artifacts.md describes).
-//
-// cubie-a5e's gadget DTB is mid-flight through exactly that sequence (bean
-// gosd-3io0): remove this entry in the follow-up that bumps
-// internal/artifacts.Version onto the release carrying it, at which point
-// this map should be empty again.
-var pendingArtifactDTBs = map[string]map[string]bool{
-	"cubie-a5e": {"sun55i-a527-cubie-a5e-gadget.dtb": true},
 }
 
 func TestEmbeddedConfigFragmentsAreNonEmpty(t *testing.T) {

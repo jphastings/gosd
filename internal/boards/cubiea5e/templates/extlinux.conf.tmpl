@@ -2,6 +2,6 @@ default gosd
 timeout 0
 label gosd
     kernel /Image
-    fdt /sun55i-a527-cubie-a5e.dtb
+    fdt /{{.DTBFilename}}
     initrd /initramfs.cpio.zst
     append console=ttyS0,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=cubie-a5e panic=10

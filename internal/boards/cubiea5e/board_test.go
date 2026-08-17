@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -109,32 +110,59 @@ func TestBootFilesContents(t *testing.T) {
 	}
 }
 
-func TestBootFilesIgnoresUsbGadget(t *testing.T) {
-	b := cubiea5e.New()
-	art := resolveFakeArtifacts(t, b)
-	art.Initramfs = strings.NewReader("fake initramfs bytes")
-	without, err := b.BootFiles(boards.BuildConfig{}, art)
-	if err != nil {
-		t.Fatalf("BootFiles() with UsbGadget=false: %v", err)
-	}
+// TestBootFilesSelectsTheDTBUsbGadgetNeeds pins the one thing that makes
+// gadget mode work on this board. dr_mode="peripheral" in the stock DT is
+// not enough: ehci0/ohci0 share the USB-C port's phy with the peripheral
+// controller and win at probe, so an image must ship the variant DTB that
+// disables them or it can never enumerate as a device (bean gosd-3io0).
+func TestBootFilesSelectsTheDTBUsbGadgetNeeds(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		gadget    bool
+		wantDTB   string
+		unwantDTB string
+	}{
+		{"without --usb-gadget ships the stock DTB", false,
+			"sun55i-a527-cubie-a5e.dtb", "sun55i-a527-cubie-a5e-gadget.dtb"},
+		{"with --usb-gadget ships the gadget DTB", true,
+			"sun55i-a527-cubie-a5e-gadget.dtb", "sun55i-a527-cubie-a5e.dtb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := cubiea5e.New()
+			art := resolveFakeArtifacts(t, b)
+			art.Initramfs = strings.NewReader("fake initramfs bytes")
 
-	art.Initramfs = strings.NewReader("fake initramfs bytes")
-	with, err := b.BootFiles(boards.BuildConfig{UsbGadget: true}, art)
-	if err != nil {
-		t.Fatalf("BootFiles() with UsbGadget=true: %v", err)
-	}
+			files, err := b.BootFiles(boards.BuildConfig{UsbGadget: tc.gadget}, art)
+			if err != nil {
+				t.Fatalf("BootFiles(): %v", err)
+			}
 
-	extlinuxWithout, err := io.ReadAll(without["extlinux/extlinux.conf"])
-	if err != nil {
-		t.Fatalf("reading extlinux.conf: %v", err)
+			if _, ok := files[tc.wantDTB]; !ok {
+				t.Errorf("boot files do not include %s; got %v", tc.wantDTB, keys(files))
+			}
+			if _, ok := files[tc.unwantDTB]; ok {
+				t.Errorf("boot files include %s, which this configuration must not ship", tc.unwantDTB)
+			}
+
+			extlinuxConf, err := io.ReadAll(files["extlinux/extlinux.conf"])
+			if err != nil {
+				t.Fatalf("reading extlinux.conf: %v", err)
+			}
+			if !strings.Contains(string(extlinuxConf), "fdt /"+tc.wantDTB+"\n") {
+				t.Errorf("extlinux.conf = %q, want it to load %s", extlinuxConf, tc.wantDTB)
+			}
+		})
 	}
-	extlinuxWith, err := io.ReadAll(with["extlinux/extlinux.conf"])
-	if err != nil {
-		t.Fatalf("reading extlinux.conf: %v", err)
+}
+
+// keys lists a boot-file map's names for failure messages.
+func keys(m map[string]io.Reader) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
-	if string(extlinuxWithout) != string(extlinuxWith) {
-		t.Errorf("extlinux.conf differs between UsbGadget=false/true; this board needs no boot-time change for USB gadget mode")
-	}
+	sort.Strings(out)
+	return out
 }
 
 func TestBootFilesDefaultsConsoleBaudTo115200(t *testing.T) {
@@ -245,18 +273,14 @@ func TestFirmwareFilesIsEmpty(t *testing.T) {
 	}
 }
 
-// TestUsbGadgetSupportIsRefusedUntilTheVariantDTBShips pins the corrected
-// claim from bean gosd-3io0: this board cannot enumerate as a USB device at
-// the pinned artifacts, because ehci0/ohci0 take the USB-C port's phy from
-// the peripheral controller at probe. Refusing beats building an image that
-// looks right and cannot work, and the reason has to name the fix.
-func TestUsbGadgetSupportIsRefusedUntilTheVariantDTBShips(t *testing.T) {
-	got := cubiea5e.New().UsbGadgetSupport()
-	if got.Supported {
-		t.Fatalf("UsbGadgetSupport() = %+v, want Supported: false while the pinned artifacts carry no gadget DTB", got)
-	}
-	if got.Reason == "" {
-		t.Error("UsbGadgetSupport().Reason is empty; a refusal must tell the user why and what changes it")
+// TestUsbGadgetSupportIsSupported pins the claim this board earns only by
+// shipping the variant DTB: dr_mode="peripheral" alone never made gadget
+// mode work here, because ehci0/ohci0 take the USB-C port's phy at probe
+// (bean gosd-3io0). BootFiles selecting that DTB is what makes this true,
+// so the two are tested together.
+func TestUsbGadgetSupportIsSupported(t *testing.T) {
+	if got := cubiea5e.New().UsbGadgetSupport(); !got.Supported {
+		t.Errorf("UsbGadgetSupport() = %+v, want Supported: true now the pinned artifacts carry the gadget DTB", got)
 	}
 }
 
