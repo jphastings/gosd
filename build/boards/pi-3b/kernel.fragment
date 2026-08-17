@@ -153,6 +153,26 @@ CONFIG_SERIAL_8250_RUNTIME_UARTS=1
 CONFIG_SERIAL_AMBA_PL011=y
 CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
 
+# --- LEDs: the boot-state indicator (gosd-xtcs) drives a GPIO LED through
+# the Linux LED class + timer trigger — NEW_LEDS/LEDS_CLASS (led class
+# core), LEDS_GPIO (GPIO-backed LED driver), LEDS_TRIGGER_TIMER (blink
+# pattern trigger). All =y today only because bcm2711_defconfig happens to
+# set them; asserted here so a kernel bump can't silently drop them and
+# take the boot-state LED with it (bean gosd-ci98).
+# GPIO_BCM_VIRT is a genuine requirement on this board specifically (unlike
+# the rest of this section, which is generic): the 3B's ACT LED hangs off
+# brcm,bcm2835-virtgpio (the firmware's virtual GPIO over the mailbox), not
+# the SoC GPIO. The 3B+ moved it to a real GPIO, but the shared pi-3b image
+# covers both, so the symbol stays required. Do not copy this line to
+# pi-zero-w (genuinely absent from its released config — its ACT LED is on
+# the SoC GPIO) or pi-zero-2w (=y there today by defconfig luck, not need).
+# ---
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
+CONFIG_LEDS_TRIGGER_TIMER=y
+CONFIG_GPIO_BCM_VIRT=y
+
 # --- Cut aggressively: no sound, no DRM/video/fb, no bluetooth ---
 # CONFIG_SOUND is not set
 # CONFIG_SND is not set
