@@ -70,3 +70,42 @@ pinned, 0 on success; and produces a compact one-entry doc comment
 (`v0.10.2: The Cubie A5E kernel build now produces a USB-gadget variant
 device tree; Cubie A5E U-Boot no longer scans USB on every boot.`) rather
 than dumping whole changelog bodies, which the first draft did.
+
+
+## Follow-up (JP, 2026-08-17): the checklist is CI's job, not a human's
+
+The first cut opened the PR as a draft carrying the three-way verification as
+a markdown checklist. JP's objection on seeing the generated PR (#304): a
+checklist somebody has to work through is the step that gets skipped, and it
+looks like verification while proving nothing. Automated instead.
+
+`.github/workflows/verify-artifacts-pin.yml` runs on any PR touching
+`internal/artifacts/artifacts.go`:
+
+- **Clean-machine build** — `XDG_CACHE_HOME` redirected at an empty dir (Go's
+  `os.UserCacheDir` follows it on Linux, and `artifactCacheDir` derives from
+  that), no `--board`/`--artifacts-dir`, so every public board builds from a
+  real download. `EnsureBoard` verifies each file against the manifest's
+  sha256 while unpacking, so a green build IS the digest check — no
+  reimplementation needed.
+- **It really was the new release** — asserts the redirected cache contains a
+  directory for the newly pinned version, catching a build that quietly
+  succeeded against some other release.
+- **Offline re-run** — every proxy at a closed port; must succeed from the
+  cache the previous step populated.
+- **What actually moved** — `build/artifacts/pin-diff.sh` compares the two
+  releases' manifests file by file into the job summary.
+
+The pin PR therefore opens ready for review rather than as a draft: green
+checks are the gate.
+
+### What deliberately stays human
+
+Whether a release carries the change it was *cut for* is judgment, not a
+check — so `pin-diff.sh` reports which boards moved and the reviewer reads
+it. Real-hardware boots stay on the motivating bean. Run against the live
+releases, v0.10.0 → v0.10.2 reports cubie-a5e/nanopi-zero2/qemu-virt/
+radxa-zero-3e/rock-4se moving (the mainline fleet shares a kernel tag and was
+rebuilt) with the Pi family byte-identical, and shows cubie's stock DTB
+unchanged while its U-Boot changed and the gadget DTB is new — exactly the
+shape a reviewer needs.

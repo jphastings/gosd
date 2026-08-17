@@ -167,16 +167,26 @@ the same tarballs + manifest.json the workflow publishes.
    `build/artifacts/pin-bump.sh v0.10.2` and open the PR yourself. The
    workflow refuses to pin a release whose assets aren't attached yet, and
    does nothing if the constant already names that version.
-5. **The PR arrives as a draft on purpose**: verify the bump three ways
-   before marking it ready for review, and record each in the bean:
-   - **Clean-machine build** — fresh `HOME`, no `--board`/`--artifacts-dir`
-     flags, so every public board's image comes from a real download of the
-     new release.
-   - **Offline re-run** — kill network access (e.g. a dead proxy) and
-     rebuild; it must succeed entirely from the now-populated cache.
-   - **Content spot-check** — confirm the released artifact actually
-     carries the change, e.g. `dtc -I dtb -O dts` showing the newly enabled
-     DT node.
+5. **CI verifies that PR for you.** `Verify artifacts pin` runs on any pull
+   request touching `internal/artifacts/artifacts.go` and does what used to
+   be a manual checklist:
+   - **Clean-machine build** — `XDG_CACHE_HOME` redirected at an empty
+     directory, no `--board`/`--artifacts-dir`, so every public board's
+     image comes from a real download of the new release. `EnsureBoard`
+     verifies each file against the release manifest's sha256 while
+     unpacking, so a green build is also the digest check.
+   - **It really was the new release** — the redirected cache must contain
+     the newly pinned version, catching a build that quietly succeeded
+     against something else.
+   - **Offline re-run** — every proxy pointed at a closed port; the build
+     must succeed entirely from the cache the previous step populated.
+   - **What actually moved** — `build/artifacts/pin-diff.sh` compares the
+     two releases' manifests file by file and writes the answer to the job
+     summary. Read it: a release meant to touch one board that turns out to
+     move five is the thing to catch before merging.
+
+   What CI cannot judge is hardware: if the release exists for a board fix,
+   boot it on that board and record it in the motivating bean.
 6. Also check the cacerts pin is current —
    `.github/workflows/cacerts-pin-check.yml` runs this check on a schedule
    and files an issue when it's not (bean gosd-w6zc); no need to duplicate
