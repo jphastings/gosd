@@ -522,13 +522,16 @@ say so in the bean rather than silently diverging.
   `radxa-cubie-a5e_defconfig`; searching the list name produced a false
   "not merged" — verify against the tree at the pinned tag, never the
   posting).
-- **Activating a board (internal → public) must also add its artifacts to
-  `cmd/gosd/testdata/fake-artifacts/`**: the network-tripwire integration
-  tests build the default all-boards set, so a newly public board without
-  fixtures falls through to a real release fetch that only CI catches — a
-  warm artifact cache in the real HOME satisfies resolution before any
-  network request, silently masking the tripwire locally (PR #205). Run the
-  cmd/gosd tests with an isolated `HOME` before pushing an activation.
+- **Adding or activating a board is checked mechanically**, so don't work
+  from a remembered list: `internal/repocheck/boards_test.go` derives from
+  the board registry that every board has a `kernelspec` entry and a
+  `build/boards/<id>/` directory, and that every *public* board's artifacts
+  have fixtures in `cmd/gosd/testdata/fake-artifacts/` and a bring-up row in
+  COMPATIBILITY.md — each in both directions, with the failure naming the
+  edit to make. Flipping `registerInternal` → `register` starts demanding the
+  last two by itself. The fixtures are checked because a missing one falls
+  through to a real release fetch that a warm artifact cache in the real HOME
+  satisfies locally, so the network tripwire only ever fires in CI (PR #205).
 
 ## Quality gates — run ALL of these before every commit/PR
 
@@ -570,6 +573,10 @@ say so in the bean rather than silently diverging.
 - Tests are behavioral and concise; fixture-driven where the bean says so.
 - Comments only where code can't explain itself; docstrings on exported API.
 - Board or feature status changes must update COMPATIBILITY.md in the same PR.
+  Its bring-up table is enforced (`internal/repocheck` asserts one row per
+  public board, keyed on `DisplayName()`); the board × feature table below it
+  is not — its column headers are deliberately abbreviated — so a feature's
+  row is still yours to remember.
 - Anything that formats, adopts, or commits on-disk state needs an explicit
   crash-ordering argument (what is provably durable before the commit record
   lands) and an adversarial review pass BEFORE requesting JP's review. A
