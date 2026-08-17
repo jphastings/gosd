@@ -48,7 +48,10 @@ import (
 // attached storage for pi-zero-2w/pi-zero-w/pi-3b, and it is the first
 // published build of the radxa-zero-3e/nanopi-zero2 exFAT fragments.
 // Other boards are unchanged rebuilds from identical source pins.
-const Version = "v0.10.0"
+//   - v0.10.2: The Cubie A5E kernel build now produces a USB-gadget
+//     variant device tree; Cubie A5E U-Boot no longer scans USB on every
+//     boot.
+const Version = "v0.10.2"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
