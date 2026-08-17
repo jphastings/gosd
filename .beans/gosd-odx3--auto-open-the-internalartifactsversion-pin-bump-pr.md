@@ -109,3 +109,29 @@ radxa-zero-3e/rock-4se moving (the mainline fleet shares a kernel tag and was
 rebuilt) with the Pi family byte-identical, and shows cubie's stock DTB
 unchanged while its U-Boot changed and the gadget DTB is new — exactly the
 shape a reviewer needs.
+
+
+## The gap this missed, found by JP (2026-08-17)
+
+The generated pin PR carried no change file, and I labelled the manual one
+`no release notes` on the same reasoning: a pin bump is "release plumbing
+with no user-facing surface". That is exactly backwards — delivering the
+board fixes IS its user-facing surface.
+
+The consequence was live within hours: JP's `atfs` image, built with an
+installed `gosd v0.6.2`, halted in U-Boot SPL on his 1GB board with the very
+DRAM failure fixed that morning. `gosd v0.6.2` pins v0.10.0, because the pin
+landed on main AFTER that release was cut, and with no change file pending
+knope had no reason to cut another. Anyone running `gosd@latest` was still
+building unbootable Cubie A5E images.
+
+So `pin-bump.sh` now writes the change file itself, and two related bugs
+found while testing it are fixed:
+
+- **It only described the target release.** Bumping v0.10.0 → v0.10.2
+  reported v0.10.2's changes and silently dropped v0.10.1's — which was the
+  DRAM fix, i.e. the entire reason the bump mattered. It now spans every
+  release in the range, in both the change file and the doc comment.
+- **Re-running duplicated entries.** The workflow can legitimately run again
+  over an already-annotated tree; releases the comment already names are now
+  skipped.
