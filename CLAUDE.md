@@ -20,14 +20,13 @@ say so in the bean rather than silently diverging.
   (status, checked todos, Summary of Changes) in the same PR as the code.
 - Commit messages: imperative subject, body explains why. No test-result
   summaries in commit messages.
-- `beans update` applies only the LAST `--body-replace-old/--body-replace-new`
-  pair per invocation (the GraphQL path differs). Do one replacement per call,
-  and check off todos one at a time.
-- `beans create` takes the title as a POSITIONAL argument
-  (`beans create "Title" -t bug`) — there is no `--title` flag.
-- `beans create --json` returns the new id at `.bean.id`, NOT `.id` —
-  `jq -r .id` silently yields `null`, which then cascades into confusing
-  "parent bean not found: null" errors.
+- Three `beans` CLI traps — the title being positional, the new id living at
+  `.bean.id`, and `--body-replace-old/--body-replace-new` applying one pair per
+  call — are enforced by a `PreToolUse` hook (`scripts/claude-guard.sh`,
+  wired up in `.claude/settings.json`), as are self-merging and PRs to repos
+  outside `jphastings`. The hook refuses the command and explains the reason
+  and the fix at the moment it matters, so they are not restated here; read the
+  script if you want the rules without triggering one.
 - Stacked work: when a task depends on an as-yet-unmerged PR, branch from that
   PR's branch (not `main`), say "stacked on #NN" in the body, and rebase onto
   `main` once it lands. Keep stacks shallow — prefer waiting for a merge over
