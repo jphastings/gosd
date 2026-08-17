@@ -20,6 +20,12 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newBuildKernelCmd())
 	cmd.AddCommand(newBuildExternalCmd())
+	cmd.AddCommand(newVersionCmd())
+
+	// --version is what people try first, so it prints exactly what the
+	// version subcommand does rather than cobra's bare version string.
+	cmd.Version = renderedVersion()
+	cmd.SetVersionTemplate("{{.Version}}")
 	return cmd
 }
 

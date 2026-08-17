@@ -207,6 +207,21 @@ determines which kernels a `gosd build` run fetches — there is no
 environment variable or flag to override it, so that every copy of a given
 `gosd` binary behaves identically.
 
+To find out what a given binary will fetch, ask it:
+
+```console
+$ gosd version
+gosd:      v0.6.2
+artifacts: v0.10.2
+go:        go1.26.5
+```
+
+That second line is the one that changes what an image contains. When a board
+boots with one `gosd` and not another, this is usually where they differ — a
+release pins the artifacts that existed when it was cut, so a fix merged
+afterwards reaches you only in a later release (or by building from a
+checkout).
+
 When `gosd build` needs a compiled artifact (e.g. `kernel8.img`) that isn't
 found in `--artifacts-dir`, `internal/boards.ResolveArtifacts` falls back to
 `internal/artifacts.EnsureBoard`, which:
