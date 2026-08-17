@@ -1,0 +1,118 @@
+name: Verify artifacts pin
+
+# Proves an internal/artifacts.Version bump is safe, so the checks that used
+# to be a checklist in the pull request body are CI's job instead of a
+# human's (bean gosd-odx3). A checklist nobody runs is worse than no
+# checklist: it looks like verification while proving nothing.
+#
+# Only runs when the pin actually changes, because it deliberately does what
+# the rest of CI is built to avoid — a real download of every board's
+# artifacts. The rest of the suite uses testdata/fake-artifacts plus a
+# network tripwire; this job is the one place that must talk to the real
+# release, since "does the pinned release exist, verify, and build" is the
+# entire question.
+
+on:
+  pull_request:
+    paths:
+      - "internal/artifacts/artifacts.go"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-pin:
+    name: Build every board from the pinned release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Read the old and new pins
+        id: pins
+        run: |
+          pin() { grep -oE 'const Version = "v[0-9]+\.[0-9]+\.[0-9]+"' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+'; }
+          new="$(pin internal/artifacts/artifacts.go)"
+          git show "origin/${{ github.base_ref }}:internal/artifacts/artifacts.go" >/tmp/base-artifacts.go
+          old="$(pin /tmp/base-artifacts.go)"
+          echo "new=$new" >>"$GITHUB_OUTPUT"
+          echo "old=$old" >>"$GITHUB_OUTPUT"
+          echo "Pin moves $old -> $new"
+          if [ "$old" = "$new" ]; then
+            echo "::notice::The pin is unchanged; nothing to verify"
+            echo "unchanged=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the CLI once
+        if: steps.pins.outputs.unchanged != 'true'
+        # Built up front so the offline pass below exercises gosd's own
+        # cache, not the Go toolchain's module fetching.
+        run: go build -o /tmp/gosd ./cmd/gosd
+
+      - name: Clean-machine build of every public board
+        if: steps.pins.outputs.unchanged != 'true'
+        # XDG_CACHE_HOME (what os.UserCacheDir follows on Linux) is redirected
+        # at an empty directory, so every artifact comes from a real download
+        # of the newly pinned release rather than anything left behind.
+        # EnsureBoard verifies each file against the release manifest's
+        # sha256 as it unpacks, so a green build is also the digest check.
+        env:
+          XDG_CACHE_HOME: /tmp/pin-cache
+        run: |
+          mkdir -p /tmp/pin-cache /tmp/pin-out
+          /tmp/gosd build ./examples/hello -o /tmp/pin-out/hello.img
+          echo "### Images built from artifacts/${{ steps.pins.outputs.new }}" >>"$GITHUB_STEP_SUMMARY"
+          built=0
+          for img in /tmp/pin-out/hello.img/*.img /tmp/pin-out/*.img; do
+            [ -e "$img" ] || continue
+            echo "- \`$(basename "$img")\` ($(du -h "$img" | cut -f1))" >>"$GITHUB_STEP_SUMMARY"
+            built=$((built + 1))
+          done
+          if [ "$built" -eq 0 ]; then
+            echo "::error::the build produced no images"
+            exit 1
+          fi
+          echo "Built $built board images"
+
+      - name: Confirm the download really was the new release
+        if: steps.pins.outputs.unchanged != 'true'
+        # Guards the case that matters most: a build that quietly succeeded
+        # against some other release would prove nothing about this pin.
+        run: |
+          dir="/tmp/pin-cache/gosd/artifacts/${{ steps.pins.outputs.new }}"
+          if [ ! -d "$dir" ]; then
+            echo "::error::no cached artifacts for ${{ steps.pins.outputs.new }}; the build did not use the pinned release"
+            ls -la /tmp/pin-cache/gosd/artifacts/ || true
+            exit 1
+          fi
+          echo "Cached boards from ${{ steps.pins.outputs.new }}: $(ls "$dir" | tr '\n' ' ')"
+
+      - name: Offline re-run
+        if: steps.pins.outputs.unchanged != 'true'
+        # Every proxy points at a closed port: the build must now succeed
+        # entirely from the cache the previous step populated. This is what
+        # catches an artifact that resolves at build time but was never
+        # actually cached.
+        env:
+          XDG_CACHE_HOME: /tmp/pin-cache
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          NO_PROXY: ""
+        run: |
+          mkdir -p /tmp/pin-out-offline
+          /tmp/gosd build ./examples/hello -o /tmp/pin-out-offline/hello.img
+          echo "Offline rebuild succeeded from cache"
+
+      - name: Report what the pin actually changes
+        if: steps.pins.outputs.unchanged != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build/artifacts/pin-diff.sh \
+            "${{ steps.pins.outputs.old }}" "${{ steps.pins.outputs.new }}" >>"$GITHUB_STEP_SUMMARY"

@@ -2,10 +2,13 @@ Points `internal/artifacts.Version` at [artifacts/{{VERSION}}](https://github.co
 
 Until this merges, `gosd build` still downloads the previous release — so every board fix in {{VERSION}} reaches nobody, however long ago it was merged.
 
-**Draft until verified.** Per the artifacts documentation, a pin bump is sound only once someone has checked the release it points at:
+**Verification is CI's job, not yours.** The `Verify artifacts pin` workflow runs on this pull request and:
 
-- [ ] **Clean-machine build** — fresh `HOME`, no `--board`, no `--artifacts-dir`: every public board image builds from a real download
-- [ ] **Offline re-run** — same `HOME` with the network blocked: the build succeeds entirely from cache
-- [ ] **Content spot-check** — the downloaded tarball really carries the change this release was cut for (e.g. `dtc -I dtb -O dts` showing an enabled node, or bytes absent from a bootloader)
+- builds **every public board** against a redirected, empty cache, so all artifacts come from a real download of {{VERSION}} (gosd checks each file against the release manifest's sha256 as it unpacks, so a green build is also the digest check);
+- confirms the cache really holds {{VERSION}}, catching a build that quietly succeeded against some other release;
+- rebuilds with every proxy pointed at a closed port, proving the offline path works from cache alone;
+- posts a summary of **which boards the pin actually moves**, compared byte-for-byte against the previous pin.
 
-Mark ready for review once those pass, saying what you ran. The doc-comment entry is spliced from the release notes — reword it here if it reads awkwardly.
+Read that summary before merging: it is the evidence that this release changes what it was cut to change, and nothing else.
+
+The doc-comment entry is spliced from the release notes — reword it here if it reads awkwardly. Anything hardware-specific (booting a real board) is still a human call, and belongs on the bean that motivated the release.

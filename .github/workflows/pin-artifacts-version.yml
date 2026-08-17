@@ -16,10 +16,11 @@ name: Pin artifacts version
 # environment's deployment policy needs no widening to cover artifacts/v*
 # tag refs.
 #
-# The PR is opened as a DRAFT on purpose: the pin is only sound once someone
-# has verified the release the way docs/artifacts.md describes (clean-machine
-# build, offline re-run, content spot-check). The body carries that checklist,
-# and marking it ready for review is the human gate.
+# The PR opens ready for review, not as a draft: everything the old manual
+# checklist asked a human to do is now the "Verify artifacts pin" workflow's
+# job, which runs on the pull request itself (clean-machine build of every
+# board from a real download, offline rebuild from cache, and a byte-level
+# report of which boards the pin actually moves). Green checks are the gate.
 
 on:
   workflow_run:
@@ -122,7 +123,7 @@ jobs:
           branch="pin/artifacts-$version"
 
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            echo "$branch already exists; leaving the existing pull request alone"
+            echo "::notice::$branch already exists, so its pull request is left alone. To regenerate it (e.g. after this workflow changed), delete the branch and re-run: git push origin --delete $branch"
             exit 0
           fi
 
@@ -130,11 +131,11 @@ jobs:
           git add internal/artifacts/artifacts.go
           git commit -m "Bump internal/artifacts.Version to $version" \
             -m "Opened automatically once artifacts/$version's assets were published, so the release a merged board fix rides in actually reaches builds (bean gosd-odx3). The doc-comment entry is spliced from that release's notes; polish it in review." \
-            -m "Not merge-ready until the verification in docs/artifacts.md has been run — hence draft."
+            -m "The Verify artifacts pin workflow checks this on the pull request: every public board built from a real download of the release, an offline rebuild from cache, and a report of which boards actually move."
           git push --set-upstream origin "$branch"
 
           body="$(sed "s|{{VERSION}}|$version|g" build/artifacts/pin-bump-pr-body.md)"
-          gh pr create --draft --base main --head "$branch" \
+          gh pr create --base main --head "$branch" \
             --label "no release notes" \
             --title "Bump internal/artifacts.Version to $version" \
             --body "$body"
