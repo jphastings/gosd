@@ -10,12 +10,12 @@ supported board has at least one software-controllable LED, and `gosd-init`
 now uses it as that signal automatically — no code changes, no config:
 
 - Blinks slowly (250ms on/off) while booting.
-- Blinks fast (125ms on/off) if a fatal error was recorded — see
-  `docs/crash-reports.md`.
+- Blinks fast (125ms on/off) if a [fatal error was recorded](docs/crash-reports.md).
 - Solid on once your app has started and been handed control.
 
 `gosd-init` picks the LED marked ACT, or the activity/status LED, or the
 green LED, or whichever LED the board has, following its own device tree —
-see `docs/status-led.md` for the full selection rule and the per-board
-table. The blink itself is driven by the kernel's own `timer` trigger, not a
-goroutine, so it keeps blinking through a fatal halt or a wedged `gosd-init`.
+the [full selection rule and per-board table](docs/status-led.md) covers
+which LED that is on each board. The blink itself is driven by the kernel's
+own `timer` trigger, not a goroutine, so it keeps blinking through a fatal
+halt or a wedged `gosd-init`.
