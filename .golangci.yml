@@ -1,0 +1,32 @@
+# The only job of this file is the depguard rule below. `default: standard` is
+# exactly the linter set CI ran before this file existed, so introducing it
+# changes no finding other than depguard's. Adding linters here is a separate
+# decision — make it deliberately, not as a drive-by.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        go-diskfs:
+          # Deny-only rule: everything not named in `deny` is allowed.
+          list-mode: lax
+          # depguard scopes a whole rule to a file set, so "only these three
+          # packages may import go-diskfs" is written as an all-but list.
+          # internal/diskfmt owns the wrappers, internal/image is the image
+          # assembler, internal/qemurun opens a built image read-only, and
+          # tests open a built .img to assert on its contents.
+          files:
+            - "!**/internal/diskfmt/*.go"
+            - "!**/internal/image/*.go"
+            - "!**/internal/qemurun/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/diskfs/go-diskfs
+              desc: >-
+                Use internal/diskfmt's wrappers for FAT32 work: go-diskfs
+                under-sizes FATs, trims label spaces per 8.3 field, and hides
+                leading-dot filenames from its own listings.
