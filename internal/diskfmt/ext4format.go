@@ -167,6 +167,14 @@ func isPowerOf(n, base uint64) bool {
 // commit is blockmount's territory once its own marker lands (bean
 // gosd-1c0x), the same way dataexpand's marker — not a FAT probe — is what
 // proves a FAT32 format finished.
+//
+// Unlike FormatFAT32, this needs no separate eraseLeadingRegion call: the
+// golden image is streamed starting at offset 0 and is unconditionally at
+// least MinEXT4Bytes (512 MiB), so a successful call here has already
+// overwritten every byte in [0, 512MiB) — vastly more than the
+// blankProbeBytes window any of Inspect's probes ever reads — with the
+// golden's own content. Nothing a prior filesystem left in that range can
+// survive.
 func FormatEXT4(devicePath, volumeLabel string) (err error) {
 	d, err := openDisk(devicePath, false)
 	if err != nil {

@@ -67,6 +67,16 @@ type exFATLayout struct {
 // partition-table reread is needed. go-diskfs has no exFAT support at all, so
 // the filesystem is written from the Microsoft exFAT specification; the device
 // is opened and sized by the same openDisk helper FormatFAT32 uses.
+//
+// Unlike FormatFAT32, this needs no separate eraseLeadingRegion call:
+// writeExFAT's very first writes are the Main and Backup Boot Regions, each
+// a full, freshly-built exFATBootRegionSectors*sector buffer written
+// wholesale at offsets 0 and 6144 — together they unconditionally overwrite
+// every byte in [0, 12288), which comfortably contains every offset
+// Inspect's probes examine (isExFAT's offset 3, isEXT4's offset 1024, and
+// go-diskfs's own FAT signature within the first sector). A prior
+// filesystem's signature anywhere in that span cannot survive a successful
+// call here, so there is nothing left for a separate erase step to do.
 func FormatExFAT(devicePath, volumeLabel string) (err error) {
 	d, err := openDisk(devicePath, false)
 	if err != nil {

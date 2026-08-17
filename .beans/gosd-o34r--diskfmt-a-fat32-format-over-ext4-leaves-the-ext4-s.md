@@ -123,8 +123,59 @@ indistinguishable from a live volume.
 
 ## Todos
 
-- [ ] Land the reproduction above as a regression test
-- [ ] Erase competing filesystem signatures when establishing a volume, with
+- [x] Land the reproduction above as a regression test
+- [x] Erase competing filesystem signatures when establishing a volume, with
       an explicit crash-ordering argument
-- [ ] Check the same stale-signature question for the boot partition and for
+- [x] Check the same stale-signature question for the boot partition and for
       `emmc`/`disk` adoption paths
+
+
+## Summary of Changes
+
+`diskfmt.FormatFAT32` now zeroes the first 1 MiB of the device (a new
+`eraseLeadingRegion`) before go-diskfs writes its boot sector, so a
+successful format leaves exactly one identifiable filesystem behind.
+
+The erase span is deliberately `blankProbeBytes` — the very span `Inspect`
+reads before running every probe — which makes it both necessary and
+sufficient: `isExFAT` (offset 3), `isEXT4` (offset 1024) and go-diskfs's own
+FAT detection all resolve inside that window, so nothing identifiable can
+survive outside it.
+
+**Crash ordering.** The erase is issued before the formatter's own writes,
+and this package never fsyncs mid-format (durability is the caller's single
+sync at the end of an establish sequence), so the argument is about order
+and reachable states: lose power before the erase lands and the device reads
+exactly as it did before `Format` was called; lose power after it lands but
+before the new signatures do and every probed byte is zero, so `Inspect`
+reports `Blank: true` — the documented safe "nothing to destroy" state,
+never a foreign filesystem; lose power partway through the formatter's own
+writes and it is an interrupted format exactly as before, no worse. No
+interruption can leave a foreign filesystem's magic intact underneath an
+otherwise-complete different one, which is the single state this closes.
+
+`FormatExFAT` and `FormatEXT4` were checked and deliberately left alone —
+each already overwrites the whole probed window (exFAT writes its Main and
+Backup Boot Regions across [0, 12288); ext4 streams a >=512 MiB golden from
+offset 0). Both now carry a comment saying so, so the guarantee is
+documented rather than accidental.
+
+### The third todo, answered
+
+- **`emmc` and `disk`** inherit the fix with no changes of their own: both
+  format through `internal/blockmount`, which calls these same
+  `diskfmt.Format*` functions — there is no second formatting path.
+  `dataexpand` likewise (`platform_linux.go` wires `diskfmt.FormatFAT32` /
+  `FormatEXT4` straight in).
+- **The boot partition** was never exposed: it is built into a freshly
+  created (all-zero) image file by `internal/image`, and flashing rewrites
+  that whole region on the card, so there is no prior filesystem underneath
+  it to survive.
+
+### Test
+
+`TestReformatOverwritesEveryPriorSignature` drives all six ordered pairs of
+{ext4, fat32, exfat}. Confirmed it reproduces the bug on the unfixed code —
+`Inspect after ext4 -> FAT32 = {FS:ext4 Label:OLD-DATA ...}`, exactly the
+hardware symptom — and passes with the fix, with the other five pairs
+unaffected.
