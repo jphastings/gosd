@@ -140,6 +140,19 @@ CONFIG_SERIAL_8250_BCM2835AUX=y
 CONFIG_SERIAL_AMBA_PL011=y
 CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
 
+# --- LEDs: the boot-state indicator (gosd-xtcs) drives a GPIO LED through
+# the Linux LED class + timer trigger — NEW_LEDS/LEDS_CLASS (led class
+# core), LEDS_GPIO (GPIO-backed LED driver), LEDS_TRIGGER_TIMER (blink
+# pattern trigger). All =y today only because bcmrpi_defconfig happens to
+# set them; asserted here so a kernel bump can't silently drop them and
+# take the boot-state LED with it (bean gosd-ci98). This board's ACT LED
+# is on the SoC GPIO, not brcm,bcm2835-virtgpio (that's pi-3b only — see
+# its fragment), so no GPIO_BCM_VIRT here. ---
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
+CONFIG_LEDS_TRIGGER_TIMER=y
+
 # --- Cut aggressively: no sound, no DRM/video/fb, no bluetooth ---
 # CONFIG_SOUND is not set
 # CONFIG_SND is not set
