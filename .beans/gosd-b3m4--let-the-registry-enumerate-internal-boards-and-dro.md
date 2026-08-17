@@ -1,11 +1,11 @@
 ---
 # gosd-b3m4
 title: Let the registry enumerate internal boards, and drop the duplicated kernelspec parity check
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T20:10:47Z
-updated_at: 2026-08-17T20:21:29Z
+updated_at: 2026-08-17T21:08:21Z
 parent: gosd-8pgg
 ---
 

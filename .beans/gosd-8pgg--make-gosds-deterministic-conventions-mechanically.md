@@ -1,11 +1,11 @@
 ---
 # gosd-8pgg
 title: Make GoSD's deterministic conventions mechanically enforced
-status: in-progress
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-17T16:55:14Z
-updated_at: 2026-08-17T16:57:57Z
+updated_at: 2026-08-17T21:08:37Z
 ---
 
 CLAUDE.md carries ~40 locked decisions. Some are already enforced by code; several
@@ -70,3 +70,41 @@ gosd-ihdn is the only blocker; the four beans stacked on it touch different
 files and are mutually independent. Retarget the survivors onto main once
 gosd-ihdn merges, and verify the content actually reached main rather than
 trusting a badge.
+
+
+## Summary of Changes
+
+Shipped as nine PRs (#311-#319), all merged 2026-08-17. Three enforcement
+layers now cover the deterministic rules, and each PR shrank the CLAUDE.md
+prose its mechanism replaced.
+
+**Repo-invariant `go test` cases** — `internal/repocheck` (gosd-x915, gosd-qs2g,
+gosd-nw6e, gosd-asdg) plus the `internal/boardset` refactor (gosd-ihdn) that
+made them possible by lifting board registration out of `cmd/gosd`'s `init()`.
+Board parity is now derived from the registry across kernelspec entries,
+`build/boards/`, fake-artifacts and COMPATIBILITY.md's bring-up table; change
+files are validated lexically (a YAML round-trip is structurally blind to the
+quoting knope silently ignores); bean citations in docs must resolve; bare doc
+paths are ratcheted at 83 across 13 files. Three hand-maintained board lists
+were deleted.
+
+**`.golangci.yml`** (gosd-cfnh) — the repo had none, so CI ran the v2 default
+set. `linters.default: standard` reproduces that exactly, adding only a
+depguard fence for go-diskfs.
+
+**Claude Code hooks** (gosd-bn6j) — five workflow mistakes blocked as they are
+typed, matching shell tokens rather than substrings, and failing open.
+
+**Two real defects found, both fixed:** `wiphyDumpFlags` had no test pinning
+`netlink.Request`, and three of twenty example/architecture pairs were never
+cross-compiled by CI. `examples/sattrack`'s absence turned out to be pure list
+drift — it builds for armv6 fine — so both legs became `./examples/...`.
+
+**Three planning assumptions proved wrong**, corrected in the work: CLAUDE.md's
+go-diskfs rule named one owning package where three import it legitimately; the
+doc-link violation estimate (~103 of 141) was not reproducible and is 83 of 124;
+and `golangci-lint run` does not validate its own config schema, so the hazard
+is a silently widened fence rather than a red job.
+
+Follow-up gosd-b3m4 added `boards.AllIncludingInternal()` and dropped a
+duplicated registry/kernelspec check.

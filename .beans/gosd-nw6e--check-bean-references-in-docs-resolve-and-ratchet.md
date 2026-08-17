@@ -1,11 +1,11 @@
 ---
 # gosd-nw6e
 title: Check bean references in docs resolve, and ratchet down bare doc paths
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T16:56:52Z
-updated_at: 2026-08-17T17:59:07Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 ---
 

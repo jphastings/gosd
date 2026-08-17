@@ -1,11 +1,11 @@
 ---
 # gosd-asdg
 title: 'Close two conventions with real holes: examples cross-compile coverage and the netlink Request flag'
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-17T16:57:20Z
-updated_at: 2026-08-17T17:58:57Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 ---
 

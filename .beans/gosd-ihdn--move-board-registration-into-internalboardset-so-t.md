@@ -1,11 +1,11 @@
 ---
 # gosd-ihdn
 title: Move board registration into internal/boardset so tests can populate the registry
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T16:55:33Z
-updated_at: 2026-08-17T17:22:11Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 ---
 

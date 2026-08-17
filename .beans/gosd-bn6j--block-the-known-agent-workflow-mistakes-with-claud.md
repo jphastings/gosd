@@ -1,11 +1,11 @@
 ---
 # gosd-bn6j
 title: Block the known agent-workflow mistakes with Claude Code hooks
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T16:57:40Z
-updated_at: 2026-08-17T17:20:17Z
+updated_at: 2026-08-17T21:08:20Z
 parent: gosd-8pgg
 ---
 
