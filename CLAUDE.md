@@ -582,7 +582,15 @@ say so in the bean rather than silently diverging.
   diskfmt; upstream patch recorded in gosd-e3e3), silently drops label spaces
   to per-field 8.3 trims (gosd-xq9l, gosd-f83b), and makes leading-dot
   filenames invisible to its own directory listings (documented on
-  `diskfmt.CreateEmptyFile`).
+  `diskfmt.CreateEmptyFile`). Exactly three non-test packages may import
+  go-diskfs: `internal/diskfmt` (the wrappers themselves), `internal/image`
+  (the image assembler) and `internal/qemurun` (opens a built image
+  read-only); tests may too, since reading a built `.img` back is the
+  verification idiom this file mandates elsewhere. That fence is a depguard
+  rule in `.golangci.yml`, so a fourth importer is a lint failure rather than
+  something review has to catch — and `.golangci.yml` exists for that rule
+  alone (`linters.default: standard` is exactly the set CI ran when there was
+  no config at all).
 - Raw netlink via `mdlayher/netlink` MUST OR `netlink.Request` into
   Execute/Send flags — the library does not add it, and the kernel silently
   SKIPS non-Request messages while still returning a success ack when
