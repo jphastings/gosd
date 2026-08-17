@@ -3,7 +3,7 @@
 // per-board architectures (see Arch) - most are arm64, but some (the Pi Zero
 // W, GOARM=6) are 32-bit; adding a board means implementing Board in its own
 // sub-package (see pizero2w and radxazero3e) and registering it (see
-// cmd/gosd).
+// internal/boardset).
 package boards
 
 import (
@@ -262,7 +262,7 @@ var internalOnly = map[string]bool{}
 // Register adds b to the set of known boards, keyed by b.Name(), and
 // includes it in All(), IDs(), and catalog generation. It's meant to be
 // called once at startup for every public board implementation (see
-// cmd/gosd); registering the same name twice (via Register or
+// internal/boardset); registering the same name twice (via Register or
 // RegisterInternal) is a programmer error.
 func Register(b Board) {
 	register(b, false)

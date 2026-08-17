@@ -411,7 +411,7 @@ say so in the bean rather than silently diverging.
   published release note before `gosd-ssth` undid it.
 - **Building a board's kernel needs the board *registered*, not just a
   `kernelspec` entry.** `gosd build-kernel --board <id>` resolves `<id>`
-  through `internal/boards` (registered in `cmd/gosd/build.go`) *before*
+  through `internal/boards` (registered in `internal/boardset`) *before*
   looking up its `kernelspec` entry, so a kernelspec entry with no registered
   board fails with "unknown board". A new board's kernel therefore isn't
   buildable until its board profile is registered — `RegisterInternal` is
@@ -424,10 +424,11 @@ say so in the bean rather than silently diverging.
   activation once went public before its tag existed and turned CI red).
   Pre-merge-test a new board's artifacts CI job by `workflow_dispatch`-ing
   `build-artifacts.yml` on the PR branch — the tag run must not be the job's
-  first execution. Adding a
-  `kernelspec` entry also means updating the board-enumerating test lists in
-  `internal/kernelspec/kernelspec_test.go` (the board-count list, the Rockchip
-  DTS-patch allowlist, and the kernelspec-outputs-vs-Artifacts board map).
+  first execution. `internal/kernelspec/kernelspec_test.go` enumerates the
+  fleet from `internal/boardset`, so a new board reaches its board-count and
+  outputs-vs-`Artifacts()` checks on registration alone; the one list there
+  still hand-maintained is the Rockchip DTS-patch allowlist (a board either
+  should or should not carry patches — only a human knows which).
 - **`gosd build-kernel` builds are content-addressed and cached** (kernel ref
   + image digest + fragment/patches + overlay) in a durable per-OS state dir
   (`internal/kernelbuild`'s `defaultBuildRoot`): identical re-runs are instant

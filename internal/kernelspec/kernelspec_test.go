@@ -8,18 +8,23 @@ import (
 	"testing"
 
 	"github.com/jphastings/gosd/internal/boards"
-	"github.com/jphastings/gosd/internal/boards/cubiea5e"
-	"github.com/jphastings/gosd/internal/boards/nanopizero2"
-	"github.com/jphastings/gosd/internal/boards/pi3b"
-	"github.com/jphastings/gosd/internal/boards/pizero2w"
-	"github.com/jphastings/gosd/internal/boards/pizerow"
-	"github.com/jphastings/gosd/internal/boards/qemuvirt"
-	"github.com/jphastings/gosd/internal/boards/radxazero3e"
-	"github.com/jphastings/gosd/internal/boards/rock4se"
+	"github.com/jphastings/gosd/internal/boardset"
 	"github.com/jphastings/gosd/internal/kernelspec"
 )
 
-var allBoardIDs = []string{"pi-zero-2w", "pi-zero-w", "pi-3b", "radxa-zero-3e", "nanopi-zero2", "rock-4se", "cubie-a5e", "qemu-virt"}
+// allBoardIDs is every board gosd registers, internal-only ones included:
+// each one builds a kernel, so the board registry is the list. Deriving it
+// rather than repeating it means adding a board can't leave this file
+// silently testing the old fleet.
+var allBoardIDs = boardIDsFromRegistry()
+
+func boardIDsFromRegistry() []string {
+	var ids []string
+	for _, b := range boardset.Registered() {
+		ids = append(ids, b.Name())
+	}
+	return ids
+}
 
 func TestBoardIDsListsExactlyTheKernelBuildingBoards(t *testing.T) {
 	got := kernelspec.BoardIDs()
@@ -96,27 +101,14 @@ var dtbExemptFromArtifacts = map[string]bool{}
 // of truth (KernelSpec here, Board.Artifacts() in internal/boards) cannot
 // silently diverge.
 func TestKernelSpecOutputsMatchBoardArtifacts(t *testing.T) {
-	boardsByID := map[string]boards.Board{
-		"pi-zero-2w":    pizero2w.New(),
-		"pi-zero-w":     pizerow.New(),
-		"pi-3b":         pi3b.New(),
-		"radxa-zero-3e": radxazero3e.New(),
-		"nanopi-zero2":  nanopizero2.New(),
-		"rock-4se":      rock4se.New(),
-		"cubie-a5e":     cubiea5e.New(),
-		"qemu-virt":     qemuvirt.New(),
-	}
-
 	for _, id := range allBoardIDs {
 		t.Run(id, func(t *testing.T) {
 			spec, ok := kernelspec.Get(id)
 			if !ok {
 				t.Fatalf("Get(%q) not found", id)
 			}
-			b, ok := boardsByID[id]
-			if !ok {
-				t.Fatalf("no internal/boards.Board wired up in this test for %q", id)
-			}
+			// allBoardIDs comes from the registry, so this always resolves.
+			b, _ := boards.Find(id)
 
 			artifactNames := make(map[string]bool)
 			for _, ref := range b.Artifacts() {
