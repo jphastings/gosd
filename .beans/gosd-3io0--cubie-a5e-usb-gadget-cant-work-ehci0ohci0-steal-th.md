@@ -3,8 +3,9 @@
 title: 'cubie-a5e USB gadget can''t work: ehci0/ohci0 steal the OTG phy at boot'
 status: todo
 type: bug
+priority: normal
 created_at: 2026-08-17T06:05:25Z
-updated_at: 2026-08-17T06:05:25Z
+updated_at: 2026-08-17T08:08:17Z
 parent: gosd-h1wv
 ---
 
@@ -124,3 +125,56 @@ tag-first/bump-second seam:
 2. **Artifacts release** cut from it.
 3. **Follow-up PR** — `Version` bump, the board consuming the new DTB, support
    flipped back to ✅, and the exemption removed.
+
+
+
+## Bench: the approach works (2026-08-17, hand-patched DTB)
+
+Before committing to a kernel rebuild, the fix was tested the cheap way: the
+shipped DTB decompiled, ehci0/ohci0 set to `status = "disabled"`, recompiled
+with dtc, and dropped onto the boot partition — no kernel build needed, since
+extlinux just loads a file.
+
+| | stock DTB | patched DTB |
+|---|---|---|
+| `phy phy-4100400.phy.0: Changing dr_mode to 1` | present | **gone** |
+| `ehci-platform 4101000.usb` (ehci0, on phy 0) | probes | **absent** |
+| `ehci-platform 4200000.usb` (the Type-A port) | probes | **still probes** |
+
+So the host controllers no longer take the phy, and the USB 3.0 Type-A port —
+the one real regression risk — is unaffected. The board otherwise boots
+normally: DRAM, kernel, gosd-init, `/app`, DHCP lease, mDNS and NTP all fine,
+and `gadget.Apply` still succeeds with the gadget bound to the UDC.
+
+**Not proven: enumeration.** The bench has moved back to Meross power, so the
+USB-C now carries power from a PSU rather than a data link to the Mac, and
+there is no host to enumerate against. `state` stays "not attached", which is
+the expected reading with no host attached and says nothing either way about
+the fix. Proving the round-trip needs the USB-C wired to the Mac again with a
+data cable, which is what the follow-up PR (support back to ✅) must wait for.
+
+That splits the evidence cleanly: the mechanism (phy freed, Type-A intact) is
+proven now, and belongs to the PR that ships the DTB and corrects the claim;
+the end-to-end round-trip is the one thing the ✅ restoration turns on.
+
+
+
+## The real built DTB, verified on hardware (2026-08-17)
+
+`gosd build-kernel --board cubie-a5e` with the patch produced both blobs, so
+the variant DTS compiles as part of a normal build:
+
+| DTB | ehci0 | ohci0 | ehci1 (Type-A) | usb_otg |
+|---|---|---|---|---|
+| `sun55i-a527-cubie-a5e.dtb` | okay | okay | okay | okay |
+| `sun55i-a527-cubie-a5e-gadget.dtb` | **disabled** | **disabled** | okay | okay |
+
+Booted on the board (image built from the build's own artifacts, not the
+hand-patched blob): `ehci0`/`ohci0` never probe, no `Changing dr_mode` line,
+`ehci-platform 4200000` (the Type-A port) still comes up, `gadget.Apply`
+succeeds, and the board reaches `/app` with a DHCP lease. Same result as the
+hand-patched proof, now from the artifact we would actually ship.
+
+Enumeration remains the one unproven step — the bench is back on Meross power,
+so the USB-C carries power rather than a data link to the Mac. It is the gate
+on restoring ✅, not on shipping the DTB.

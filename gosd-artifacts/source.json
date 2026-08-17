@@ -1,0 +1,7 @@
+{
+  "kernel": {
+    "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
+    "ref": "v6.18.37",
+    "config": "kernel.config"
+  }
+}

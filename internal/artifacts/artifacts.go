@@ -48,7 +48,26 @@ import (
 // attached storage for pi-zero-2w/pi-zero-w/pi-3b, and it is the first
 // published build of the radxa-zero-3e/nanopi-zero2 exFAT fragments.
 // Other boards are unchanged rebuilds from identical source pins.
-const Version = "v0.10.0"
+//
+// v0.10.1 and v0.10.2 (bean gosd-g0of) are cubie-a5e releases; every other
+// board is an unchanged rebuild from identical source pins. Between them
+// they make that board bootable and faster, and prepare its USB gadget
+// support:
+//
+//   - v0.10.1 (bean gosd-84b8): U-Boot carries DRAM calibration values
+//     verified on the 1GB LPDDR4x variant. Without them SPL's DRAM init
+//     fails outright and the board cannot boot at all, so every release
+//     before this one is unusable on a 1GB unit. The 2GB/4GB variants
+//     remain unverified.
+//   - v0.10.2 (bean gosd-uj4l): U-Boot no longer runs a preboot "usb start"
+//     scan, cutting the U-Boot phase from 9.05s to 4.50s (measured over 5
+//     clean power cycles). It also adds a second DTB,
+//     sun55i-a527-cubie-a5e-gadget.dtb, with the ehci0/ohci0 host
+//     controllers disabled so the USB-C port's phy stays with the
+//     peripheral controller (bean gosd-3io0) - published here, but not yet
+//     consumed by internal/boards/cubiea5e, which still refuses
+//     --usb-gadget until enumeration is proven on hardware.
+const Version = "v0.10.2"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
