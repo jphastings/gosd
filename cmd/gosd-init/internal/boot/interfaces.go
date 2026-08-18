@@ -87,6 +87,23 @@ type StatusLED interface {
 	Fatal() error
 }
 
+// StatusLEDDescriber is an optional companion to StatusLED: when the wired
+// implementation also provides it, Run logs its description once, right
+// after the first state is applied (the earliest point at which the sysfs
+// implementation's lazy discovery has actually run). Optional, so no
+// existing fake has to grow a method it doesn't care about, and a nil
+// StatusLED stays a silent no-op — a type assertion on a nil interface
+// simply doesn't match.
+//
+// This one line matters more than its size suggests: gosd-init has no
+// shell, no SSH and no remote debug, so the console is the only way to tell
+// an empty /sys/class/leds apart from a candidate filter that rejected
+// every entry, or from having picked the wrong LED. Guessing between those
+// costs a reflash cycle each (bean gosd-ddz6).
+type StatusLEDDescriber interface {
+	Describe() string
+}
+
 // Rebooter performs the fatal-error shutdown paths: flush disks and the
 // console, then either restart the machine (transient failures, where a
 // retry may succeed) or halt it (states no retry can improve, like a

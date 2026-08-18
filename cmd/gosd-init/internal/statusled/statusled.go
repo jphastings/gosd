@@ -7,6 +7,7 @@
 package statusled
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,26 +82,71 @@ func parseName(name string) (label, colour, function string) {
 // (permissions, a non-directory path) — still never worth failing or
 // delaying boot over, but worth logging.
 func Discover(root string) (LED, bool, error) {
+	d, err := Inspect(root)
+	return d.LED, d.Found, err
+}
+
+// Discovery is everything Inspect saw, so gosd-init can say on the console
+// which LED it resolved to and — more usefully when nothing lights up — why
+// it resolved to none. gosd-init has no shell, no SSH and no remote debug
+// (a locked project decision), so this line is the only way to tell an
+// empty /sys/class/leds apart from a candidate filter that rejected
+// everything, and either from having simply picked the wrong LED. Each of
+// those otherwise costs a reflash cycle to guess at (bean gosd-ddz6).
+type Discovery struct {
+	// LED and Found are Discover's two return values.
+	LED   LED
+	Found bool
+	// Candidates are the gpio-leds-backed entry names Found chose between,
+	// and Rejected are the entries that were present but failed that
+	// filter. Both are sorted, so the logged line is stable across boots
+	// (os.ReadDir order is not specified).
+	Candidates []string
+	Rejected   []string
+}
+
+// String renders the one line the boot sequence logs.
+func (d Discovery) String() string {
+	switch {
+	case d.Found:
+		return fmt.Sprintf("using %s (gpio-leds candidates: %s)", d.LED.Name(), strings.Join(d.Candidates, ", "))
+	case len(d.Rejected) > 0:
+		return fmt.Sprintf("no gpio-leds LED found; these entries are not gpio-leds backed: %s", strings.Join(d.Rejected, ", "))
+	default:
+		return "no LEDs registered at all"
+	}
+}
+
+// Inspect is Discover with its reasoning kept, for logging. It is the one
+// place that scans and selects; Discover is a thin wrapper over it, so the
+// line gosd-init logs can never describe a different choice from the one it
+// actually made.
+func Inspect(root string) (Discovery, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return LED{}, false, nil
+			return Discovery{}, nil
 		}
-		return LED{}, false, err
+		return Discovery{}, err
 	}
 
+	var d Discovery
 	var candidates []LED
 	for _, entry := range entries {
 		name := entry.Name()
 		if !isGPIOLEDCandidate(root, name) {
+			d.Rejected = append(d.Rejected, name)
 			continue
 		}
 		label, colour, function := parseName(name)
 		candidates = append(candidates, LED{root: root, name: name, label: label, colour: colour, function: function})
+		d.Candidates = append(d.Candidates, name)
 	}
+	sort.Strings(d.Candidates)
+	sort.Strings(d.Rejected)
 
-	led, found := selectLED(candidates)
-	return led, found, nil
+	d.LED, d.Found = selectLED(candidates)
+	return d, nil
 }
 
 // tier is one of gosd-xtcs's four selection tiers, tried in order; the
