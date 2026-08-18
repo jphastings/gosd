@@ -1,6 +1,7 @@
 package statusled
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,31 +23,77 @@ func TestBootingClaimsTimerTriggerThenSetsQuarterSecondDelays(t *testing.T) {
 	assertFileContent(t, filepath.Join(root, "ACT", "delay_off"), "250")
 }
 
-func TestFatalBlinksTwiceAsFastAsBooting(t *testing.T) {
+// Fatal must be STEADY, never a blink: gosd-init halts the board straight
+// after setting it, and a halted kernel stops the timer trigger dead (proven
+// on nanopi-zero2 - the old blink lasted ~100ms). Claiming the "none" trigger
+// is what takes the LED off whatever the board shipped, so the brightness
+// write sticks.
+func TestFatalIsSteadyOnRatherThanBlinking(t *testing.T) {
 	root := t.TempDir()
-	makeGPIOLED(t, root, "ACT")
+	makeGPIOLED(t, root, "ACT") // max_brightness = 255
 	led := LED{root: root, name: "ACT"}
 
 	if err := led.Fatal(); err != nil {
 		t.Fatalf("Fatal() error = %v", err)
 	}
 
-	assertFileContent(t, filepath.Join(root, "ACT", "trigger"), "timer")
-	assertFileContent(t, filepath.Join(root, "ACT", "delay_on"), "125")
-	assertFileContent(t, filepath.Join(root, "ACT", "delay_off"), "125")
+	assertFileContent(t, filepath.Join(root, "ACT", "trigger"), "none")
+	assertFileContent(t, filepath.Join(root, "ACT", "brightness"), "255")
+
+	for _, blinkFile := range []string{"delay_on", "delay_off"} {
+		if _, err := os.Stat(filepath.Join(root, "ACT", blinkFile)); err == nil {
+			t.Errorf("Fatal() wrote %s: it must not blink, or the signal dies with the kernel", blinkFile)
+		}
+	}
 }
 
-func TestRunningClaimsNoneTriggerThenSetsMaxBrightness(t *testing.T) {
+// Running is a short blip against a mostly-dark LED, which is what keeps it
+// distinguishable from Booting's even flash and from Fatal's steady level.
+func TestRunningBlipsBrieflyOncePerSecond(t *testing.T) {
 	root := t.TempDir()
-	makeGPIOLED(t, root, "ACT") // max_brightness = 255
+	makeGPIOLED(t, root, "ACT")
 	led := LED{root: root, name: "ACT"}
 
 	if err := led.Running(); err != nil {
 		t.Fatalf("Running() error = %v", err)
 	}
 
-	assertFileContent(t, filepath.Join(root, "ACT", "trigger"), "none")
-	assertFileContent(t, filepath.Join(root, "ACT", "brightness"), "255")
+	assertFileContent(t, filepath.Join(root, "ACT", "trigger"), "timer")
+	assertFileContent(t, filepath.Join(root, "ACT", "delay_on"), "50")
+	assertFileContent(t, filepath.Join(root, "ACT", "delay_off"), "950")
+}
+
+// The three states have to be told apart by eye, so no two may drive the
+// LED the same way.
+func TestTheThreeStatesAreVisiblyDistinct(t *testing.T) {
+	read := func(state func(LED) error) map[string]string {
+		root := t.TempDir()
+		makeGPIOLED(t, root, "ACT")
+		led := LED{root: root, name: "ACT"}
+		if err := state(led); err != nil {
+			t.Fatalf("state error = %v", err)
+		}
+		got := map[string]string{}
+		for _, f := range []string{"trigger", "delay_on", "delay_off", "brightness"} {
+			if b, err := os.ReadFile(filepath.Join(root, "ACT", f)); err == nil {
+				got[f] = string(b)
+			}
+		}
+		return got
+	}
+
+	states := map[string]map[string]string{
+		"booting": read(LED.Booting),
+		"running": read(LED.Running),
+		"fatal":   read(LED.Fatal),
+	}
+	for a, av := range states {
+		for b, bv := range states {
+			if a < b && fmt.Sprint(av) == fmt.Sprint(bv) {
+				t.Errorf("%s and %s drive the LED identically (%v)", a, b, av)
+			}
+		}
+	}
 }
 
 // TestBootingWritesTriggerBeforeTheDelays pins the load-bearing write order:
@@ -75,7 +122,10 @@ func TestBootingWritesTriggerBeforeTheDelays(t *testing.T) {
 	}
 }
 
-func TestRunningWritesTriggerBeforeBrightness(t *testing.T) {
+// Fatal claims the "none" trigger before writing brightness: every board
+// ships some default trigger, and a brightness written first is simply
+// overwritten by whatever trigger still owns the LED.
+func TestFatalWritesTriggerBeforeBrightness(t *testing.T) {
 	var calls []string
 	old := writeFile
 	writeFile = func(name string, _ []byte, _ os.FileMode) error {
@@ -87,8 +137,8 @@ func TestRunningWritesTriggerBeforeBrightness(t *testing.T) {
 	root := t.TempDir()
 	makeGPIOLED(t, root, "ACT")
 	led := LED{root: root, name: "ACT"}
-	if err := led.Running(); err != nil {
-		t.Fatalf("Running() error = %v", err)
+	if err := led.Fatal(); err != nil {
+		t.Fatalf("Fatal() error = %v", err)
 	}
 
 	want := []string{"trigger", "brightness"}

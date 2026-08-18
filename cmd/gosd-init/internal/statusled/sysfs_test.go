@@ -26,8 +26,8 @@ func TestSysfsDiscoversLazilyAndCachesTheResult(t *testing.T) {
 	// A second LED appearing after the first call must not change what was
 	// already resolved: discovery only ever runs once.
 	makeGPIOLED(t, root, "PWR")
-	if err := s.Running(); err != nil {
-		t.Fatalf("Running() error = %v", err)
+	if err := s.Fatal(); err != nil {
+		t.Fatalf("Fatal() error = %v", err)
 	}
 	assertFileContent(t, filepath.Join(root, "ACT", "trigger"), "none")
 	if _, err := os.Stat(filepath.Join(root, "PWR", "trigger")); err == nil {

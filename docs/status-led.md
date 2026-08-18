@@ -10,8 +10,8 @@ and `gosd-init` uses it as that one signal:
 
 > The LED marked ACT, or the activity/status LED, or the green LED, or the
 > only LED your board has — in that order, depending on what your board
-> provides — blinks slowly while booting, blinks rapidly if a fatal error
-> was recorded, and is solid on once your application is running.
+> provides — flashes evenly while booting, blips briefly once a second while
+> your application runs, and goes solid on if a fatal error was recorded.
 
 This is automatic. There's no flag to turn it on, and nothing in your app
 needs to change.
@@ -20,22 +20,36 @@ needs to change.
 
 | State | LED behaviour | When |
 | --- | --- | --- |
-| Booting | Blinks at 250ms on / 250ms off | From just after `gosd-init` opens the console, until your app starts |
-| Fatal | Blinks at 125ms on / 125ms off — twice as fast | A fatal error was recorded and the device has halted — see [the crash-report guide](crash-reports.md) |
-| Running | Solid on | `/app` has started successfully and been handed control |
+| Booting | Flashes evenly, 250ms on / 250ms off | From just after `gosd-init` opens the console, until your app starts |
+| Running | Blips briefly, 50ms on / 950ms off | `/app` has started successfully and been handed control |
+| Fatal | Solid on | A fatal error was recorded and the device has halted — see [the crash-report guide](crash-reports.md) |
 
-Once your app has started, an ordinary crash-and-restart (the common case —
-see "What you get for free" in the crash-report guide) does not blink the
-LED back to booting; the LED only ever moves to the fast fatal blink, which
-happens on a **halt**, not a restart. There is no fourth "restarting" state.
+Booting and running are told apart by shape rather than speed alone: an even
+flash against a short blip on a mostly-dark LED. Once your app has started,
+an ordinary crash-and-restart (the common case — see "What you get for free"
+in the crash-report guide) does not return the LED to booting; the LED only
+moves to the fatal state on a **halt**, not a restart. There is no fourth
+"restarting" state.
 
-**The blink is driven by the kernel, not by `gosd-init` itself.** Both
-blinking states claim the LED's `timer` trigger and set its `delay_on`/
-`delay_off` files; the kernel does the actual blinking from then on. This is
-deliberate: the fatal blink has to keep going after the board halts (nothing
-in userspace is running to blink it), and a wedged `gosd-init` — the exact
-situation "still booting" needs to show — can't be trusted to keep a
-goroutine alive either.
+**The two blinking states are driven by the kernel, not by `gosd-init`
+itself.** Both claim the LED's `timer` trigger and set its `delay_on` /
+`delay_off` files; the kernel blinks it from then on. That matters for
+booting in particular: a wedged `gosd-init` — the exact situation "still
+booting" needs to show — can't be trusted to keep a goroutine alive, but a
+kernel timer carries on regardless.
+
+**Fatal is steady precisely because it can't be a blink.** `gosd-init` halts
+the board immediately after recording a fatal error, and a halted kernel
+stops the timer trigger dead, so a blinking fatal signal would last a
+fraction of a second and then vanish. A steady level is the only thing that
+can outlive the halt.
+
+> **Known limitation.** For that steady level to survive the halt at all, the
+> board's device tree has to mark the LED as retaining its state through
+> shutdown; otherwise the kernel turns every GPIO LED off on its way down. No
+> board ships that yet, so today the LED goes dark when the device halts. The
+> fatal state is still correct on any board that gains it, and everything
+> else on this page is unaffected.
 
 ## Which LED gets used
 
