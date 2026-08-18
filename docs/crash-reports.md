@@ -26,8 +26,8 @@ therefore readable on any Mac, Windows or Linux machine. The owner pulls the
 card, opens one file, and either fixes it themselves or forwards it to you.
 
 A fatal error is also visible before anyone touches the card at all: gosd-init
-switches [the device's status LED](status-led.md) to a fast blink the moment
-one is recorded, so a rapidly blinking light is what tells its owner there's
+switches [the device's status LED](status-led.md) to solid on the moment
+one is recorded, so a steadily lit light is what tells its owner there's
 something on the card worth reading in the first place.
 
 Nothing is ever sent anywhere. There is no telemetry in GoSD and this is not

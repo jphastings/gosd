@@ -137,8 +137,8 @@ for what's shipped; per-board verification status lives in
   [when to raise one, and what it says](docs/crash-reports.md)
 - **A status LED shows boot state at a glance** — the LED marked ACT, the
   activity/status LED, the green LED, or whichever LED your board has,
-  blinks slowly while booting, blinks fast on a recorded fatal error, and is
-  solid on once your app is running. No code changes, no config:
+  flashes evenly while booting, blips once a second while your app runs, and
+  goes solid on for a recorded fatal error. No code changes, no config:
   [which LED gets used and why](docs/status-led.md)
 - **The device's config tree** — the hand-editable settings on every
   card, one plain-text file per setting: [`docs/config.md`](docs/config.md)

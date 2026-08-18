@@ -8,49 +8,49 @@ import (
 	"strings"
 )
 
-// bootingDelayMillis and fatalDelayMillis are gosd-xtcs's locked timer-
-// trigger delays, in milliseconds: 250ms on/off while booting, half that
-// (125ms) once a fatal error has been recorded.
+// The three states' timings, in milliseconds (bean gosd-n82u).
+//
+// Booting and Running both blink, and are told apart by duty cycle rather
+// than rate alone: booting is an even flash, running a short regular blip
+// against a mostly-dark LED. Failure is the odd one out and is steady, not
+// because a blink would be unclear but because it is impossible — see Fatal.
 const (
-	bootingDelayMillis = 250
-	fatalDelayMillis   = 125
+	bootingOnMillis  = 250
+	bootingOffMillis = 250
+	runningOnMillis  = 50
+	runningOffMillis = 950
 )
 
-// Booting sets the LED blinking at 250ms on/off: gosd-init is still
-// starting up.
+// Booting sets an even 250ms flash: gosd-init is still starting up. The
+// kernel's own timer trigger does this, so it carries on flashing even if
+// gosd-init wedges — which is the whole point of it, and remains true
+// however badly userspace fails, because a kernel timer does not care.
 func (l LED) Booting() error {
-	return l.blink(bootingDelayMillis)
+	return l.blink(bootingOnMillis, bootingOffMillis)
 }
 
-// Fatal sets the LED blinking at 125ms on/off — twice Booting's rate — to
-// mark a recorded fatal error. Like Booting, this claims the kernel's
-// "timer" trigger rather than blinking from a goroutine, which is what lets
-// it keep blinking through the halt that follows it (see the package doc).
-func (l LED) Fatal() error {
-	return l.blink(fatalDelayMillis)
-}
-
-// blink claims the LED via the "timer" trigger and only then sets its
-// on/off delay. That order is load-bearing, not stylistic: delay_on and
-// delay_off only exist once "timer" is the active trigger, so writing
-// either first would fail against a real sysfs tree.
-func (l LED) blink(delayMillis int) error {
-	if err := l.write("trigger", "timer"); err != nil {
-		return err
-	}
-	delay := strconv.Itoa(delayMillis)
-	if err := l.write("delay_on", delay); err != nil {
-		return err
-	}
-	return l.write("delay_off", delay)
-}
-
-// Running sets the LED solid on: /app has started and been handed control.
-// Every board ships some default trigger (mmc0, actpwr, heartbeat,
-// default-on), so claiming "none" first is what makes the brightness write
-// stick rather than being overwritten by whatever trigger already owned the
-// LED.
+// Running sets a short 50ms blip once a second: /app has started and been
+// handed control. A blip rather than solid on, so that a healthy board
+// visibly reads as alive rather than merely lit, and so the running state
+// cannot be confused with Fatal's steady level.
 func (l LED) Running() error {
+	return l.blink(runningOnMillis, runningOffMillis)
+}
+
+// Fatal sets the LED steady on to mark a recorded fatal error.
+//
+// Steady rather than blinking because gosd-init halts the board immediately
+// afterwards, and a halted kernel cannot blink: the timer trigger is a
+// kernel timer, so it stops the moment the kernel stops scheduling. This was
+// proven on nanopi-zero2 — the old fast blink existed for about 100ms before
+// "reboot: System halted" and was invisible.
+//
+// A steady level survives only if the board's device tree carries
+// retain-state-shutdown on this LED; without it, gpio_led_shutdown() turns
+// the LED off during device_shutdown(). That DT work is bean gosd-54j8, and
+// until it ships the LED goes dark at halt on every board — the same as
+// before this change, so nothing here depends on it.
+func (l LED) Fatal() error {
 	if err := l.write("trigger", "none"); err != nil {
 		return err
 	}
@@ -59,6 +59,22 @@ func (l LED) Running() error {
 		return fmt.Errorf("reading max_brightness: %w", err)
 	}
 	return l.write("brightness", strings.TrimSpace(string(max)))
+}
+
+// blink claims the LED via the "timer" trigger and only then sets its on and
+// off delays. That order is load-bearing, not stylistic: delay_on and
+// delay_off only exist once "timer" is the active trigger, so writing either
+// first fails against a real sysfs tree. Claiming the trigger is also what
+// takes the LED off whatever default the board shipped (mmc0, actpwr,
+// heartbeat, default-on).
+func (l LED) blink(onMillis, offMillis int) error {
+	if err := l.write("trigger", "timer"); err != nil {
+		return err
+	}
+	if err := l.write("delay_on", strconv.Itoa(onMillis)); err != nil {
+		return err
+	}
+	return l.write("delay_off", strconv.Itoa(offMillis))
 }
 
 func (l LED) path(file string) string {

@@ -33,8 +33,9 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   stock kernels omit (`gosd build-kernel`).
 - Enables I2C, SPI and GPIO by default ([pinouts](docs/runtime.md)) —
   except the Radxa Cubie A5E, see Board notes below.
-- Shows boot state on an onboard status LED — slow blink while booting, fast
-  blink on a recorded fatal error, solid on once your app is running — no
+- Shows boot state on an onboard status LED — even flash while booting, a
+  short blip once a second while your app runs, solid on for a recorded
+  fatal error — no
   code changes, no config: [which LED gets used and
   why](docs/status-led.md). Code-complete and unit-tested; not yet
   bench-verified on any board (bean `gosd-xtcs`).
