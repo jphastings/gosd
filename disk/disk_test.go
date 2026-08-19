@@ -2,9 +2,11 @@ package disk
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jphastings/gosd/internal/blockmount"
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -332,5 +334,199 @@ func TestFormatAndMountWithRejectsAnUnknownFilesystem(t *testing.T) {
 	}
 	if _, open := <-ch; open {
 		t.Error("the channel delivered more than one Result")
+	}
+}
+
+// appearsAfter is a probe for a disk that shows up on the nth call.
+func appearsAfter(n int, calls *int) func() error {
+	return func() error {
+		*calls++
+		if *calls >= n {
+			return nil
+		}
+		return ErrNoDisk
+	}
+}
+
+func TestAwaitCandidateWaitsForADiskThatArrivesLate(t *testing.T) {
+	var calls int
+	var slept time.Duration
+	err := awaitCandidate(appearsAfter(3, &calls), 5*time.Second, func(d time.Duration) { slept += d })
+	if err != nil {
+		t.Fatalf("awaitCandidate: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("probed %d times, want 3", calls)
+	}
+	if want := 2 * discoveryPoll; slept != want {
+		t.Errorf("slept %s, want %s", slept, want)
+	}
+}
+
+func TestAwaitCandidateGivesUpWhenNoDiskEverAppears(t *testing.T) {
+	var calls int
+	var slept time.Duration
+	probe := func() error { calls++; return ErrNoDisk }
+
+	err := awaitCandidate(probe, time.Second, func(d time.Duration) { slept += d })
+	if !errors.Is(err, ErrNoDisk) {
+		t.Fatalf("awaitCandidate = %v, want ErrNoDisk", err)
+	}
+	if slept != time.Second {
+		t.Errorf("slept %s, want the whole 1s window", slept)
+	}
+	if calls < 2 {
+		t.Errorf("probed %d times, want repeated attempts across the window", calls)
+	}
+}
+
+func TestAwaitCandidateWithoutAWaitProbesOnce(t *testing.T) {
+	var calls int
+	probe := func() error { calls++; return ErrNoDisk }
+
+	if err := awaitCandidate(probe, 0, func(time.Duration) {
+		t.Error("slept despite a zero Wait")
+	}); !errors.Is(err, ErrNoDisk) {
+		t.Fatalf("awaitCandidate = %v, want ErrNoDisk", err)
+	}
+	if calls != 1 {
+		t.Errorf("probed %d times, want exactly 1", calls)
+	}
+}
+
+func TestAwaitCandidateDoesNotWaitOutAnErrorWaitingCannotFix(t *testing.T) {
+	inUse := errors.New("the disk at /dev/sda is in use")
+	var calls int
+	probe := func() error { calls++; return inUse }
+
+	err := awaitCandidate(probe, time.Minute, func(time.Duration) {
+		t.Error("slept on an error that waiting cannot change")
+	})
+	if !errors.Is(err, inUse) {
+		t.Fatalf("awaitCandidate = %v, want the probe's own error", err)
+	}
+	if calls != 1 {
+		t.Errorf("probed %d times, want exactly 1", calls)
+	}
+}
+
+func TestAwaitCandidateHonoursAWaitShorterThanOnePoll(t *testing.T) {
+	var slept time.Duration
+	probe := func() error { return ErrNoDisk }
+
+	if err := awaitCandidate(probe, 10*time.Millisecond, func(d time.Duration) { slept += d }); !errors.Is(err, ErrNoDisk) {
+		t.Fatalf("awaitCandidate = %v, want ErrNoDisk", err)
+	}
+	if slept != 10*time.Millisecond {
+		t.Errorf("slept %s, want to stop at the 10ms window rather than overrun a poll", slept)
+	}
+}
+
+func TestExplainNoDiskOffersTheRemedyItHas(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		waited time.Duration
+		want   string
+	}{{
+		name: "never asked to wait, so say waiting is possible",
+		err:  ErrNoDisk,
+		want: "disk.Options.Wait",
+	}, {
+		name:   "waited and still nothing, so say how long",
+		err:    ErrNoDisk,
+		waited: 5 * time.Second,
+		want:   "after waiting 5s",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := explainNoDisk(tc.err, tc.waited)
+			if !errors.Is(got, ErrNoDisk) {
+				t.Fatalf("explainNoDisk = %v, no longer matches ErrNoDisk", got)
+			}
+			if !strings.Contains(got.Error(), tc.want) {
+				t.Errorf("explainNoDisk = %q, want it to mention %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExplainNoDiskLeavesOtherOutcomesAlone(t *testing.T) {
+	refused := fmt.Errorf("wrapped: %w", ErrRefusedFormat)
+	if got := explainNoDisk(refused, 0); got != refused {
+		t.Errorf("explainNoDisk rewrote a non-ErrNoDisk error: %v", got)
+	}
+	if got := explainNoDisk(nil, time.Second); got != nil {
+		t.Errorf("explainNoDisk(nil) = %v, want nil", got)
+	}
+}
+
+// mountedAt is a Deps whose mount-table lookup answers as told.
+func mountedAt(mounted bool, err error) blockmount.Deps {
+	return blockmount.Deps{
+		MountedAt: func(string) (string, bool, error) { return "/dev/sda", mounted, err },
+	}
+}
+
+func TestAwaitStorage(t *testing.T) {
+	neverAppears := func() error { return ErrNoDisk }
+
+	for _, tc := range []struct {
+		name      string
+		deps      blockmount.Deps
+		wait      time.Duration
+		wantErr   error
+		wantProbe bool
+		wantSleep bool
+	}{{
+		// The regression this guard exists for: a warm restart has the
+		// storage already mounted, and a mounted disk is never a discovery
+		// candidate — so probing here would wait out the window and then
+		// report ErrNoDisk for a disk that is mounted and working.
+		name: "storage already mounted, so there is nothing to wait for",
+		deps: mountedAt(true, nil),
+		wait: time.Minute,
+	}, {
+		name:    "nothing mounted and no disk arrives",
+		deps:    mountedAt(false, nil),
+		wait:    time.Second,
+		wantErr: ErrNoDisk,
+
+		wantProbe: true,
+		wantSleep: true,
+	}, {
+		name: "no wait asked for, so discovery is left entirely to Run",
+		deps: mountedAt(false, nil),
+		wait: 0,
+	}, {
+		name: "an unreadable mount table is Run's to report, not ours to guess",
+		deps: mountedAt(false, errors.New("cannot read /proc/mounts")),
+		wait: time.Minute,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var probed, slept bool
+			probe := func() error { probed = true; return neverAppears() }
+
+			err := awaitStorage(tc.deps, probe, "/storage", tc.wait, func(time.Duration) { slept = true })
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("awaitStorage = %v, want %v", err, tc.wantErr)
+			}
+			if probed != tc.wantProbe {
+				t.Errorf("probed = %v, want %v", probed, tc.wantProbe)
+			}
+			if slept != tc.wantSleep {
+				t.Errorf("slept = %v, want %v", slept, tc.wantSleep)
+			}
+		})
+	}
+}
+
+func TestAwaitStorageStopsAsSoonAsADiskArrives(t *testing.T) {
+	var calls int
+	if err := awaitStorage(mountedAt(false, nil), appearsAfter(2, &calls), "/storage", time.Minute, func(time.Duration) {}); err != nil {
+		t.Fatalf("awaitStorage: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("probed %d times, want it to stop at the 2nd, when the disk appeared", calls)
 	}
 }

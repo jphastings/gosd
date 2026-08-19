@@ -23,6 +23,11 @@
 // application data with the temp-file-then-rename pattern as for GOSD_DATA
 // (see docs/runtime.md's fsync pattern).
 //
+// Discovery looks once by default, which suits an NVMe SSD or an eMMC — both
+// already enumerated before an app's main runs. A USB drive can take seconds
+// longer than that to appear, and Options.Wait is how long to keep looking for
+// one.
+//
 // A disk already carrying a volume with the app's chosen label is mounted,
 // not reformatted — but only when its filesystem also matches what was
 // asked for. A label match against a *different* filesystem (a drive that
@@ -41,6 +46,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jphastings/gosd/internal/blockmount"
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -50,6 +56,10 @@ import (
 // suitable is attached, or the only disk present is the one the board booted
 // from and so is off-limits. Apps that can run without their disk should match
 // this with errors.Is and carry on.
+//
+// A USB drive that is merely slow to enumerate reports this too, since from
+// discovery's point of view it is indistinguishable from one that was never
+// plugged in — see Options.Wait, which is how an app gives one time to appear.
 var ErrNoDisk = errors.New("no usable disk found")
 
 // ErrRefusedFormat reports that the disk already holds other content — a
@@ -93,12 +103,13 @@ var ErrUnmountable = blockmount.ErrUnmountable
 //	}
 //	// res.MountPoint is ready to use; res.BlockDevice is the node behind it.
 //
-// The disk is discovered automatically — see Devices for exactly which block
-// devices qualify and in what order they are preferred. A disk already
-// carrying an ext4 volume with this label is only mounted, never reformatted
-// (nor re-grown — growth happens exactly once, when the volume is first
-// established), which is how re-runs of the same app avoid wiping their own
-// data. A disk carrying a *different* filesystem under this label — e.g. one
+// The disk is discovered automatically, once, with no wait for one that has
+// yet to appear — see Devices for exactly which block devices qualify and in
+// what order they are preferred, and Options.Wait for giving a USB drive that
+// is still enumerating time to show up. A disk already carrying an ext4 volume
+// with this label is only mounted, never reformatted (nor re-grown — growth
+// happens exactly once, when the volume is first established), which is how
+// re-runs of the same app avoid wiping their own data. A disk carrying a *different* filesystem under this label — e.g. one
 // formatted by an app built before this default existed, or by a previous
 // FormatAndMountWith(Options{Filesystem: ...}) choice — is treated as other
 // content: see destructive, below. A blank disk (no filesystem and an
@@ -175,6 +186,32 @@ type Options struct {
 	// match Filesystem. The zero value refuses, wrapping ErrRefusedFormat.
 	// It has no bearing on a blank disk, which is always formatted.
 	Destructive bool
+	// Wait is how long to keep looking for a disk that has not shown up yet
+	// before giving up with ErrNoDisk. The zero value does not wait at all:
+	// it looks once, which is right for the storage GoSD was first built
+	// around — an NVMe SSD or an eMMC is on an on-SoC bus and is already
+	// enumerated by the time an app's main runs.
+	//
+	// USB mass storage is the case that needs this. A stick or an enclosure
+	// has to have its hub port powered, then be probed, then scanned, then
+	// report its medium ready — commonly a second or two after the host
+	// controller comes up, and longer through a hub or for a disk that has
+	// to spin up. An app that reaches FormatAndMount before all that
+	// finishes sees ErrNoDisk for a drive that is physically plugged in.
+	// Setting Wait to a few seconds covers it; setting it to minutes turns
+	// FormatAndMount into "use the drive whenever someone plugs one in",
+	// which is the same gap seen from further away.
+	//
+	// There is deliberately no default window. An app that treats ErrNoDisk
+	// as "no disk here, carry on" would be stalled by one, and a board with
+	// nothing ever attached would pay it on every boot. Only the caller
+	// knows which case it is in.
+	//
+	// Waiting never resolves the disk that gets formatted — it only answers
+	// "has one shown up yet?", and discovery then runs normally. A drive
+	// that appears and is claimed by something else in between still
+	// reports ErrNoDisk.
+	Wait time.Duration
 }
 
 // FormatAndMountWith is FormatAndMount with the choices spelled out — the
@@ -199,13 +236,20 @@ func FormatAndMountWith(label, mountpoint string, opts Options) <-chan Result {
 			return
 		}
 		deps := newPlatformDeps()
+		probe := func() error { _, err := discover(); return err }
 		if opts.Device != "" {
 			deps.Discover = func() (string, error) { return verifyNamedDevice(opts.Device) }
+			probe = func() error { _, err := verifyNamedDevice(opts.Device); return err }
+		}
+
+		if err := awaitStorage(deps, probe, mountpoint, opts.Wait, time.Sleep); err != nil {
+			out <- Result{Err: explainNoDisk(err, opts.Wait)}
+			return
 		}
 
 		device, err := blockmount.Run(storage(deps), fs, label, mountpoint, opts.Destructive)
 		if err != nil {
-			out <- Result{Err: err}
+			out <- Result{Err: explainNoDisk(err, opts.Wait)}
 			return
 		}
 		out <- Result{MountPoint: mountpoint, BlockDevice: device}
@@ -224,6 +268,81 @@ func (o Options) filesystem() (diskfmt.FS, error) {
 	default:
 		return "", fmt.Errorf("disk: %q is not a filesystem GoSD can create; use disk.EXT4, disk.FAT32 or disk.ExFAT", string(o.Filesystem))
 	}
+}
+
+// discoveryPoll is how often awaitCandidate re-checks while waiting for a disk
+// to appear. Enumerating a USB drive takes seconds, so this only has to be
+// fast relative to a human noticing — reading /sys/block is cheap, but there is
+// nothing to gain from spinning tighter.
+const discoveryPoll = 250 * time.Millisecond
+
+// awaitStorage holds FormatAndMountWith up until there is a disk for
+// blockmount.Run to find, or Options.Wait runs out. A zero wait returns at
+// once, leaving Run to discover exactly as it did before Wait existed — the
+// point being that no app pays so much as an extra /sys/block read for an
+// option it did not ask for.
+//
+// Waiting happens out here rather than inside deps.Discover because Run holds a
+// process-wide lock across discovery that it shares with the emmc package
+// (gosd-45bv): waiting under that lock would stall a sibling
+// emmc.FormatAndMount for the whole window. Run still discovers for itself,
+// under the lock, once a candidate has appeared — so this never decides which
+// disk gets formatted, only when it is worth looking.
+//
+// The mounted check is not an optimisation. Run short-circuits a warm restart
+// (the app relaunched without a reboot, storage still mounted) before it
+// discovers anything, and a mounted disk is deliberately never a discovery
+// candidate — so waiting for one to appear would spend the entire window and
+// then fail with ErrNoDisk where Run would have succeeded immediately. An error
+// reading the mount table is left for Run to report properly rather than
+// guessed at here.
+func awaitStorage(deps blockmount.Deps, probe func() error, mountpoint string, wait time.Duration, sleep func(time.Duration)) error {
+	if wait <= 0 {
+		return nil
+	}
+	if _, mounted, err := deps.MountedAt(mountpoint); err != nil || mounted {
+		return nil
+	}
+	return awaitCandidate(probe, wait, sleep)
+}
+
+// awaitCandidate polls probe until it finds a disk or wait runs out, and
+// reports probe's last error. A zero wait probes exactly once, which is what
+// makes Options.Wait's zero value the behaviour that shipped before it existed.
+//
+// Only ErrNoDisk is worth retrying: it is the one error that means "not there
+// (yet)" — including a disk that is present but currently in use, which may
+// well be released. Anything else is a condition waiting cannot change (an
+// unreadable /sys/block, a named device something has mounted), so it is
+// returned at once rather than after the full window.
+//
+// sleep is a seam so the tests can drive the whole schedule without spending
+// the wall-clock time; the real caller passes time.Sleep.
+func awaitCandidate(probe func() error, wait time.Duration, sleep func(time.Duration)) error {
+	err := probe()
+	for remaining := wait; err != nil && remaining > 0 && errors.Is(err, ErrNoDisk); {
+		nap := min(discoveryPoll, remaining)
+		sleep(nap)
+		remaining -= nap
+		err = probe()
+	}
+	return err
+}
+
+// explainNoDisk adds the one remedy an ErrNoDisk might have to it. A disk that
+// was still enumerating is the likeliest reason for a surprising ErrNoDisk on a
+// board with a USB drive plugged in, and the fix is one option — so an app that
+// never asked to wait is told it can, and one that did is told how long it
+// waited, so the number can be raised knowingly. Other errors pass through
+// untouched, and the wrapping keeps errors.Is(err, ErrNoDisk) true either way.
+func explainNoDisk(err error, waited time.Duration) error {
+	if err == nil || !errors.Is(err, ErrNoDisk) {
+		return err
+	}
+	if waited <= 0 {
+		return fmt.Errorf("%w; a USB drive can take a few seconds after boot to enumerate, so set disk.Options.Wait if one might not have appeared yet", err)
+	}
+	return fmt.Errorf("%w, after waiting %s for one to appear; raise disk.Options.Wait if the drive needs longer", err, waited)
 }
 
 // Result is the outcome of a FormatAndMount, delivered once on its channel. On
