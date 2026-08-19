@@ -812,6 +812,29 @@ a blank disk is always formatted; `destructive` gates everything else.
   `disk.ErrNoDisk` — check for it with `errors.Is` and treat it as "no disk
   here" rather than a fatal error, exactly as `examples/emmcstorage` does for
   `ErrNoEMMC`.
+- **A USB drive may not have appeared yet, and `Options.Wait` is how you
+  wait for it.** Discovery looks once. That is right for an NVMe SSD or an
+  eMMC, which sit on on-SoC buses and are enumerated well before your `main`
+  runs, but a USB stick or enclosure has to have its hub port powered, be
+  probed, be scanned, and report its medium ready — commonly a second or two
+  after the USB host controller comes up, and longer through a hub or for a
+  disk that spins. Reach `FormatAndMount` before that finishes and you get
+  `ErrNoDisk` for a drive that is plugged in. `Options.Wait` keeps looking
+  for that long:
+
+  ```go
+  res := <-disk.FormatAndMountWith("APPDATA", "/storage", disk.Options{
+  	Wait: 10 * time.Second,
+  })
+  ```
+
+  There is deliberately no default window — it would stall every app that
+  treats `ErrNoDisk` as "carry on without one", and every board with nothing
+  attached would pay it on each boot. A long `Wait` is also the honest way to
+  say "use a drive whenever someone plugs one in", since true hotplug is the
+  same problem seen from further away. Waiting only asks whether a disk has
+  shown up; discovery, the boot-media exclusion and the in-use rule then all
+  run exactly as they otherwise would.
 
 `examples/diskstorage` is the worked example — it also doubles as CI's
 `qemu-disk-ext4` job's test app, so it's exercised on every PR.
