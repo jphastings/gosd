@@ -221,3 +221,25 @@ is now closed in `examples/usbserial`, which reports every USB controller
 state change to the console. It cost one boot to go from an unanswerable
 question to a definite answer, and every future gadget bring-up on any board
 would otherwise hit the same wall.
+
+## Unrelated lint fix riding along (2026-08-19)
+
+`main`'s own CI was already red when this PR was rebased onto it: the
+`golangci-lint` job fails on `cmd/gosd/build_test.go` with four staticcheck
+SA5011 "possible nil pointer dereference" findings against the
+`--gosd-init-src` tests. Nothing in this bean touches that file. It broke with
+the knope release PR (#327), the only thing merged between main's last green
+run and its first failure.
+
+The findings are a false positive — `t.Fatal` terminates, so the guarded
+dereference cannot run on a nil flag — and they do not reproduce on macOS at
+all: clean on darwin and under `GOOS=linux GOARCH=amd64`, before and after
+`golangci-lint cache clean`, on the same pinned v2.12.2 and the same Go
+1.26.5 as CI, both on this branch and on a clean checkout of main.
+
+Rather than a `//nolint` that could not be verified locally, the guard was
+restructured to `else if`, which makes the dereference provably unreachable
+when the flag is nil for any analyser version. Behaviour is identical.
+
+Fixed here rather than in its own PR at JP's discretion, since main is red and
+one merge unblocks both.
