@@ -1,7 +1,7 @@
 ---
 # gosd-3io0
 title: 'cubie-a5e USB gadget can''t work: ehci0/ohci0 steal the OTG phy at boot'
-status: todo
+status: completed
 type: bug
 created_at: 2026-08-17T06:05:25Z
 updated_at: 2026-08-17T06:05:25Z
@@ -185,3 +185,39 @@ bring-up on any board hits this same blind spot.
 **COMPATIBILITY.md stays ⚠️.** Nothing here justifies ✅, and nothing here
 contradicts the DTB work either — this PR remains correct and a prerequisite
 either way.
+
+## Round-trip CONFIRMED (2026-08-19) — ⚠️ → ✅
+
+The USB-C was then wired to a host with a data cable, and the controller's own
+state file settled it instantly:
+
+```
+gosd usbserial: USB controller state: musb-hdrc.2.auto=not attached
+gosd usbserial: USB controller state: musb-hdrc.2.auto=configured
+```
+
+`configured` means the host completed enumeration. The host agreed: a device
+with the gadget's vendor ID `0x0525` appeared in the USB tree and macOS
+created `/dev/cu.usbmodem1111301`.
+
+Echo round-trip over that node **passes**: four lines sent, including a
+60-character one, each returned intact. Every line comes back twice, which is
+expected rather than a fault — `/dev/ttyGS0` is a terminal, so the tty's own
+echo arrives alongside the app's write-back. (A first attempt appeared to
+fail with replies lagging one message behind; that was the test not draining
+between sends, not the device.)
+
+So the full chain is proven on hardware: variant DTB ships and loads → MUSB
+present and in peripheral mode → ACM binds → host enumerates → data flows
+both ways. COMPATIBILITY.md goes to ✅ and the footnote records the
+verification rather than the caveat.
+
+### The blind spot this closed, kept
+
+The earlier attempt could not tell "the bench cable carries power only" from
+"the gadget does not enumerate", because a board with a bound ACM function
+looks identical either way and has no shell to inspect itself with. That gap
+is now closed in `examples/usbserial`, which reports every USB controller
+state change to the console. It cost one boot to go from an unanswerable
+question to a definite answer, and every future gadget bring-up on any board
+would otherwise hit the same wall.

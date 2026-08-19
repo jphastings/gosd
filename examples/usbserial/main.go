@@ -9,6 +9,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/gadget"
@@ -28,6 +30,10 @@ const (
 	// to the UDC, which races this app's own startup.
 	ttyOpenTimeout = 10 * time.Second
 	ttyOpenRetry   = 200 * time.Millisecond
+
+	// udcPollInterval is how often the USB controller's state is checked.
+	// A host plugging in is a human-scale event, so a second is plenty.
+	udcPollInterval = 1 * time.Second
 )
 
 func main() {
@@ -48,6 +54,7 @@ func main() {
 	defer func() { _ = g.Close() }()
 
 	fmt.Println("gosd usbserial: gadget applied, waiting for", ttyPath)
+	go reportUDCState(udcPollInterval)
 
 	tty, err := openTTYWithRetry(ttyPath, ttyOpenTimeout)
 	if err != nil {
@@ -69,6 +76,48 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gosd usbserial: read failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// reportUDCState logs what the USB device controller believes is attached,
+// once at startup and then on every change.
+//
+// Without this an unenumerated gadget is undiagnosable from the board. A
+// device that has bound its ACM function looks identical whether a host is
+// talking to it or the cable only carries power: /dev/ttyGS0 exists either
+// way, and a GoSD device has no shell to go and look with. The controller's
+// own state file is the one place that distinguishes them — "not attached"
+// means no host or no data path, "configured" means a host has enumerated
+// this gadget — which turns "it did not appear on my Mac" from a guess into
+// a fact about which end is at fault.
+func reportUDCState(every time.Duration) {
+	var last string
+	for {
+		if state := udcState(); state != last {
+			fmt.Println("gosd usbserial: USB controller state:", state)
+			last = state
+		}
+		time.Sleep(every)
+	}
+}
+
+// udcState reads every USB device controller's state, named, so a board with
+// more than one says which is which.
+func udcState() string {
+	states, err := filepath.Glob("/sys/class/udc/*/state")
+	if err != nil || len(states) == 0 {
+		return "no USB device controller present"
+	}
+	var report []string
+	for _, path := range states {
+		name := filepath.Base(filepath.Dir(path))
+		value, err := os.ReadFile(path)
+		if err != nil {
+			report = append(report, fmt.Sprintf("%s=unreadable (%v)", name, err))
+			continue
+		}
+		report = append(report, fmt.Sprintf("%s=%s", name, strings.TrimSpace(string(value))))
+	}
+	return strings.Join(report, " ")
 }
 
 // openTTYWithRetry opens path, retrying on "not found" until timeout

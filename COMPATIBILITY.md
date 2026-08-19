@@ -68,7 +68,7 @@ console → network up → mDNS + HTTP → power-cycle survival).
 |---|---|---|---|---|---|---|---|
 | Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ [^cubie-eth] |
 | WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] |
-| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ⚠️ [^cubie-gadget] |
+| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ [^cubie-gadget] |
 | Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
 | ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
 | exFAT on the eMMC | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
@@ -135,9 +135,8 @@ board · ❌ not supported (see footnote).
     and the port can never enumerate as a device, whatever `dr_mode` says
     (bench-proven, bean `gosd-3io0`). **The trade is that a gadget-mode image
     cannot use the USB-C port as a host**; the USB 3.0 Type-A port is
-    unaffected. On hardware the device tree is confirmed to keep the phy with
-    the peripheral controller, but a full enumeration round-trip against a
-    host has not been run yet — hence ⚠️ rather than ✅.
+    unaffected. Bench-verified end to end: the board enumerates on a host as
+    a CDC-ACM device and echoes lines back over it.
 
 [^emmc-optional]: eMMC is an optional module/SKU on these boards; with
     none fitted, `emmc.FormatAndMount` returns `ErrNoEMMC`.
