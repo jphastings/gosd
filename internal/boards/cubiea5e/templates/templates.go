@@ -34,6 +34,14 @@ type ExtlinuxConfData struct {
 	// cmdline's console= argument, e.g. 115200. See
 	// boards.BuildConfig.ConsoleBaud / --console-baud.
 	ConsoleBaud int
+
+	// DTBFilename is the device tree blob extlinux loads, named rather
+	// than hardcoded because this board ships two: the stock DTB, and a
+	// variant with the ehci0/ohci0 host controllers disabled so the
+	// USB-C port's phy stays with the peripheral controller. See
+	// board.go's BootFiles and bean gosd-3io0 - the two are mutually
+	// exclusive on this hardware.
+	DTBFilename string
 }
 
 // RenderExtlinuxConf renders extlinux/extlinux.conf for the given data.

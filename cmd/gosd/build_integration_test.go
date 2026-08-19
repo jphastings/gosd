@@ -1872,6 +1872,67 @@ func TestBuildProducesABootableImageForCubieA5EFromFakeArtifacts(t *testing.T) {
 // writes a real os_list.json entry with the display name from
 // internal/catalog and its "devices" tag falling back to the raw board ID,
 // like the other non-Raspberry-Pi boards.
+// TestBuildWithUsbGadgetForCubieA5EShipsTheGadgetDTB is the acceptance test
+// for bean gosd-3io0. On this board dr_mode="peripheral" in the stock DT is
+// not sufficient for gadget mode: ehci0/ohci0 share the USB-C port's phy
+// with the peripheral controller and win at probe, so an image must ship the
+// variant DTB that disables them. --usb-gadget therefore changes which DTB
+// lands on the boot partition and which one extlinux loads - the two cannot
+// both be active on this hardware.
+func TestBuildWithUsbGadgetForCubieA5EShipsTheGadgetDTB(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "hello-cubie-a5e.img")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "cubie-a5e",
+		"--usb-gadget",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build --board=cubie-a5e --usb-gadget failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	fs, err := d.GetFilesystem(1)
+	if err != nil {
+		t.Fatalf("GetFilesystem(1) failed: %v", err)
+	}
+
+	gadgetDTB, err := fs.ReadFile("sun55i-a527-cubie-a5e-gadget.dtb")
+	if err != nil {
+		t.Fatalf("boot partition is missing the gadget DTB: %v", err)
+	}
+	if !strings.Contains(string(gadgetDTB), "gadget") {
+		t.Errorf("gadget DTB content = %q, want the gadget variant's bytes", gadgetDTB)
+	}
+
+	if _, err := fs.ReadFile("sun55i-a527-cubie-a5e.dtb"); err == nil {
+		t.Error("boot partition also carries the stock DTB; a gadget-mode image must ship only the variant, so there is no doubt which one is loaded")
+	}
+
+	extlinuxConf, err := fs.ReadFile("extlinux/extlinux.conf")
+	if err != nil {
+		t.Fatalf("reading extlinux/extlinux.conf: %v", err)
+	}
+	if !strings.Contains(string(extlinuxConf), "fdt /sun55i-a527-cubie-a5e-gadget.dtb\n") {
+		t.Errorf("extlinux.conf = %q, want it to load the gadget DTB", extlinuxConf)
+	}
+}
+
 func TestBuildCatalogForCubieA5EWritesEntry(t *testing.T) {
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {

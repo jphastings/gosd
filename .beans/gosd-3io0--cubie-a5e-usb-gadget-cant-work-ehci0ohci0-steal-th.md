@@ -1,7 +1,7 @@
 ---
 # gosd-3io0
 title: 'cubie-a5e USB gadget can''t work: ehci0/ohci0 steal the OTG phy at boot'
-status: todo
+status: completed
 type: bug
 created_at: 2026-08-17T06:05:25Z
 updated_at: 2026-08-17T06:05:25Z
@@ -98,7 +98,7 @@ board-level decision recorded here.
       --usb-gadget --board cubie-a5e` must refuse with an actionable error
       rather than shipping an image that cannot work
 - [ ] Decide between the two fix options above (JP)
-- [~] If option 1: write the DTS patch, rebuild the kernel, re-run this probe,
+- [x] If option 1: write the DTS patch, rebuild the kernel, re-run this probe,
       and confirm the Mac enumerates `/dev/cu.usbmodem*` with an echo round-trip
 - [ ] Re-check whether the Type-A host port still works after any such patch
 
@@ -124,3 +124,122 @@ tag-first/bump-second seam:
 2. **Artifacts release** cut from it.
 3. **Follow-up PR** — `Version` bump, the board consuming the new DTB, support
    flipped back to ✅, and the exemption removed.
+
+
+## Consuming the DTB (2026-08-17)
+
+With `internal/artifacts.Version` now at v0.10.2 — which carries
+`sun55i-a527-cubie-a5e-gadget.dtb` — the board can select it, so this is the
+other half: `Artifacts()` lists it, `BootFiles` picks between stock and
+variant on `cfg.UsbGadget`, `extlinux.conf` names whichever shipped, and
+`kernelspec`'s `pendingArtifactDTBs` exemption is gone (its whole reason was
+the release window, now closed).
+
+COMPATIBILITY.md goes to **⚠️, not ✅**: the device tree is proven on hardware
+to keep the phy with the peripheral controller and to leave the Type-A port
+working, but a full enumeration round-trip against a host has never run — the
+bench's USB-C has carried power, not data, since the day this was found. That
+last step is the only thing between ⚠️ and ✅.
+
+## Bench attempt at the enumeration round-trip (2026-08-19) — device side
+## good, host side saw nothing
+
+Built `examples/usbserial` for cubie-a5e with `--usb-gadget` from this branch
+and flashed it via the SDWire. The image is right: only
+`sun55i-a527-cubie-a5e-gadget.dtb` ships (the stock DTB is absent) and
+`extlinux.conf` loads it, confirmed by reading the built image back.
+
+**The device side works, on every boot.** U-Boot retrieves the gadget DTB,
+and the app reaches:
+
+```
+gosd usbserial: gadget applied, waiting for /dev/ttyGS0
+gosd usbserial: echoing lines over /dev/ttyGS0
+```
+
+Opening `/dev/ttyGS0` means the ACM function bound to a UDC, which can only
+happen with MUSB present and in peripheral mode — so the variant DTB is doing
+its job at runtime, not just on paper.
+
+**The host side saw nothing at all.** Snapshotting the Mac's USB tree
+(`ioreg -p IOUSB`) before and after a power cycle gave a byte-identical 35
+entries: no new device, nothing with the gadget's vendor ID 0x0525, and no
+`/dev/cu.usbmodem*` node at any point. Not a failed or partial enumeration —
+no enumeration attempt reached the host.
+
+**This does not distinguish a cable from a bug**, and it should not be
+recorded as either. The board's own view of whether a host is attached was
+not observable: kernel messages are suppressed by `quiet`, and gosd-init has
+no shell, so `/sys/class/udc/*/state` — the one file that settles it — could
+not be read.
+
+### The discriminator, for whoever picks this up
+
+Log `/sys/class/udc/*/state` from the app. It reads `not attached` with no
+host or no data path, and `configured` once a host has enumerated it. That
+single line separates "the bench USB-C is still power-only" from "the gadget
+does not enumerate", which is the whole remaining question. Worth adding to
+`examples/usbserial` rather than a throwaway, since every future gadget
+bring-up on any board hits this same blind spot.
+
+**COMPATIBILITY.md stays ⚠️.** Nothing here justifies ✅, and nothing here
+contradicts the DTB work either — this PR remains correct and a prerequisite
+either way.
+
+## Round-trip CONFIRMED (2026-08-19) — ⚠️ → ✅
+
+The USB-C was then wired to a host with a data cable, and the controller's own
+state file settled it instantly:
+
+```
+gosd usbserial: USB controller state: musb-hdrc.2.auto=not attached
+gosd usbserial: USB controller state: musb-hdrc.2.auto=configured
+```
+
+`configured` means the host completed enumeration. The host agreed: a device
+with the gadget's vendor ID `0x0525` appeared in the USB tree and macOS
+created `/dev/cu.usbmodem1111301`.
+
+Echo round-trip over that node **passes**: four lines sent, including a
+60-character one, each returned intact. Every line comes back twice, which is
+expected rather than a fault — `/dev/ttyGS0` is a terminal, so the tty's own
+echo arrives alongside the app's write-back. (A first attempt appeared to
+fail with replies lagging one message behind; that was the test not draining
+between sends, not the device.)
+
+So the full chain is proven on hardware: variant DTB ships and loads → MUSB
+present and in peripheral mode → ACM binds → host enumerates → data flows
+both ways. COMPATIBILITY.md goes to ✅ and the footnote records the
+verification rather than the caveat.
+
+### The blind spot this closed, kept
+
+The earlier attempt could not tell "the bench cable carries power only" from
+"the gadget does not enumerate", because a board with a bound ACM function
+looks identical either way and has no shell to inspect itself with. That gap
+is now closed in `examples/usbserial`, which reports every USB controller
+state change to the console. It cost one boot to go from an unanswerable
+question to a definite answer, and every future gadget bring-up on any board
+would otherwise hit the same wall.
+
+## Unrelated lint fix riding along (2026-08-19)
+
+`main`'s own CI was already red when this PR was rebased onto it: the
+`golangci-lint` job fails on `cmd/gosd/build_test.go` with four staticcheck
+SA5011 "possible nil pointer dereference" findings against the
+`--gosd-init-src` tests. Nothing in this bean touches that file. It broke with
+the knope release PR (#327), the only thing merged between main's last green
+run and its first failure.
+
+The findings are a false positive — `t.Fatal` terminates, so the guarded
+dereference cannot run on a nil flag — and they do not reproduce on macOS at
+all: clean on darwin and under `GOOS=linux GOARCH=amd64`, before and after
+`golangci-lint cache clean`, on the same pinned v2.12.2 and the same Go
+1.26.5 as CI, both on this branch and on a clean checkout of main.
+
+Rather than a `//nolint` that could not be verified locally, the guard was
+restructured to `else if`, which makes the dereference provably unreachable
+when the flag is nil for any analyser version. Behaviour is identical.
+
+Fixed here rather than in its own PR at JP's discretion, since main is red and
+one merge unblocks both.

@@ -916,8 +916,7 @@ func TestGosdInitSrcFlagDefaultsToEnv(t *testing.T) {
 	flag := newBuildCmd().Flags().Lookup("gosd-init-src")
 	if flag == nil {
 		t.Fatal("build command has no --gosd-init-src flag")
-	}
-	if flag.DefValue != "/nix/store/example-gosd-src" {
+	} else if flag.DefValue != "/nix/store/example-gosd-src" {
 		t.Errorf("--gosd-init-src default = %q, want the GOSD_INIT_SRC env value (the package-manager hook)", flag.DefValue)
 	}
 }
@@ -928,8 +927,7 @@ func TestGosdInitSrcFlagDefaultsEmptyWithoutEnv(t *testing.T) {
 	flag := newBuildCmd().Flags().Lookup("gosd-init-src")
 	if flag == nil {
 		t.Fatal("build command has no --gosd-init-src flag")
-	}
-	if flag.DefValue != "" {
+	} else if flag.DefValue != "" {
 		t.Errorf("--gosd-init-src default = %q, want empty when GOSD_INIT_SRC is unset", flag.DefValue)
 	}
 }
