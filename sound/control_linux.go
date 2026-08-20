@@ -349,9 +349,11 @@ const (
 )
 
 // applyAudibility runs the audibility pass against a card: read every control
-// element, decide what has to change for a stream to be heard, and write it.
-// It reports what it changed even when a later write fails, so a caller can
-// log how far it got.
+// element, decide what has to change for a stream to be heard, and write
+// every one of those changes — a control this codec doesn't have, or a
+// transient DAPM power race, does not stop the rest from being attempted.
+// It reports every change that succeeded, plus every failure joined into one
+// error, so a caller can log how far it got.
 func applyAudibility(card int, volume int, prefer Output) ([]Change, error) {
 	c, err := openControl(card)
 	if err != nil {
@@ -367,12 +369,5 @@ func applyAudibility(card int, volume int, prefer Output) ([]Change, error) {
 	for _, e := range elements {
 		byNumid[e.Numid] = e.Type
 	}
-	var done []Change
-	for _, ch := range audibilityPass(elements, volume, prefer) {
-		if err := c.write(uint32(ch.Numid), byNumid[ch.Numid], ch.To); err != nil {
-			return done, err
-		}
-		done = append(done, ch)
-	}
-	return done, nil
+	return applyChanges(c, byNumid, audibilityPass(elements, volume, prefer))
 }

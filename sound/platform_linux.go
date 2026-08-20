@@ -351,8 +351,22 @@ func (d *device) Mixer() (Mixer, error) {
 	return m, errors.Join(d.mixerErr, err)
 }
 
-// SetControl sets one of the card's control elements by name.
+// SetControl sets one of the card's control elements by name, at index 0.
+// Most control names are unique on a card, so this is index 0 nearly always;
+// for a card with more than one element sharing a name (see Control.Index),
+// use SetControlIndexed instead.
 func (d *device) SetControl(name string, values ...int) error {
+	return d.setControl(name, 0, values)
+}
+
+// SetControlIndexed is SetControl for a card with more than one element
+// sharing a name (Control.Index) — SetControl alone can only ever reach
+// index 0.
+func (d *device) SetControlIndexed(name string, index int, values ...int) error {
+	return d.setControl(name, index, values)
+}
+
+func (d *device) setControl(name string, index int, values []int) error {
 	c, err := openControl(d.pcm.card)
 	if err != nil {
 		return err
@@ -362,19 +376,17 @@ func (d *device) SetControl(name string, values ...int) error {
 	if err != nil {
 		return err
 	}
-	for _, e := range elements {
-		if e.Name != name || e.Index != 0 {
-			continue
-		}
-		if !e.Writable {
-			return fmt.Errorf("control %q on card %d is read-only", name, d.pcm.card)
-		}
-		if len(values) != len(e.Values) {
-			return fmt.Errorf("control %q on card %d takes %d values, not %d", name, d.pcm.card, len(e.Values), len(values))
-		}
-		return c.write(uint32(e.Numid), e.Type, values)
+	e, err := findControl(elements, name, index)
+	if err != nil {
+		return fmt.Errorf("card %d: %w", d.pcm.card, err)
 	}
-	return fmt.Errorf("card %d has no control named %q; Device.Mixer lists the %d it does have", d.pcm.card, name, len(elements))
+	if !e.Writable {
+		return fmt.Errorf("control %q on card %d is read-only", name, d.pcm.card)
+	}
+	if len(values) != len(e.Values) {
+		return fmt.Errorf("control %q on card %d takes %d values, not %d", name, d.pcm.card, len(e.Values), len(values))
+	}
+	return c.write(uint32(e.Numid), e.Type, values)
 }
 
 // configure commits hardware and software parameters and prepares the stream.

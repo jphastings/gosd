@@ -1,6 +1,7 @@
 package sound
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -264,5 +265,112 @@ func TestControlAndChangeReadAsDiagnostics(t *testing.T) {
 	ch := Change{Numid: 2, Name: "Headphone Mixer Volume", From: []int{0, 0}, To: []int{8, 8}, Why: "playback level"}
 	if got := ch.String(); !strings.Contains(got, "0,0 -> 8,8") || !strings.Contains(got, "playback level") {
 		t.Errorf("change rendered as %q", got)
+	}
+}
+
+// fakeWriter stands in for a real /dev/snd/controlC<card> so applyChanges'
+// error-collecting behaviour can be tested without hardware: one designated
+// numid fails, and every attempted write is recorded regardless.
+type fakeWriter struct {
+	fail  map[int]error
+	calls []int
+}
+
+func (f *fakeWriter) write(numid uint32, _ ControlType, _ []int) error {
+	f.calls = append(f.calls, int(numid))
+	return f.fail[int(numid)]
+}
+
+// This is the whole point of gosd-83sw: a card whose codec lacks one element
+// (or hits a transient DAPM power race) must not lose every other, unrelated
+// unmute queued up after it.
+func TestApplyChangesContinuesPastAFailingWrite(t *testing.T) {
+	changes := []Change{
+		{Numid: 1, Name: "A Playback Switch", To: []int{1}},
+		{Numid: 2, Name: "B Playback Switch", To: []int{1}},
+		{Numid: 3, Name: "C Playback Volume", To: []int{144}},
+	}
+	byNumid := map[int]ControlType{1: ControlBoolean, 2: ControlBoolean, 3: ControlInteger}
+	w := &fakeWriter{fail: map[int]error{2: errors.New("no such control")}}
+
+	done, err := applyChanges(w, byNumid, changes)
+
+	if len(w.calls) != 3 {
+		t.Fatalf("attempted %d writes, want all 3 even though the second fails", len(w.calls))
+	}
+	gotNames := map[string]bool{}
+	for _, ch := range done {
+		gotNames[ch.Name] = true
+	}
+	if !gotNames["A Playback Switch"] || !gotNames["C Playback Volume"] {
+		t.Errorf("done = %v, want both changes whose write succeeded", done)
+	}
+	if gotNames["B Playback Switch"] {
+		t.Errorf("done includes %q, whose write failed", "B Playback Switch")
+	}
+	if err == nil {
+		t.Fatal("applyChanges returned a nil error despite one write failing")
+	}
+	if !strings.Contains(err.Error(), "B Playback Switch") || !strings.Contains(err.Error(), "no such control") {
+		t.Errorf("error %q does not name the failing element and why", err)
+	}
+}
+
+func TestApplyChangesReportsNoErrorWhenEverySuccessfulWrite(t *testing.T) {
+	changes := []Change{{Numid: 1, Name: "A Playback Switch", To: []int{1}}}
+	done, err := applyChanges(&fakeWriter{}, map[int]ControlType{1: ControlBoolean}, changes)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(done) != 1 || done[0].Name != "A Playback Switch" {
+		t.Errorf("done = %v, want the one change", done)
+	}
+}
+
+// A card with the same control name at more than one index (Control.Index)
+// is real hardware, and SetControlIndexed is how it gets addressed.
+func TestFindControlAddressesElementsByIndex(t *testing.T) {
+	elements := []Control{
+		{Numid: 10, Name: "Foo", Index: 0},
+		{Numid: 11, Name: "Foo", Index: 1},
+	}
+	got, err := findControl(elements, "Foo", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Numid != 11 {
+		t.Errorf("matched numid=%d, want 11 (the element at index 1)", got.Numid)
+	}
+}
+
+// The whole point of gosd-9q2q: when the name exists but not at the index
+// asked for, the error must say so rather than reading like a typo'd name.
+func TestFindControlErrorNamesTheIndexesItActuallyFound(t *testing.T) {
+	elements := []Control{
+		{Numid: 10, Name: "Foo", Index: 0},
+		{Numid: 11, Name: "Foo", Index: 1},
+	}
+	_, err := findControl(elements, "Foo", 2)
+	if err == nil {
+		t.Fatal("expected an error: index 2 does not exist")
+	}
+	for _, want := range []string{`"Foo"`, "index 2", "index 0,1", "SetControlIndexed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q is missing %q", err, want)
+		}
+	}
+}
+
+func TestFindControlErrorForANameThatDoesNotExistAtAll(t *testing.T) {
+	elements := []Control{{Numid: 10, Name: "Foo", Index: 0}}
+	_, err := findControl(elements, "Bar", 0)
+	if err == nil {
+		t.Fatal("expected an error: no element is named Bar")
+	}
+	if !strings.Contains(err.Error(), `"Bar"`) || !strings.Contains(err.Error(), "Mixer") {
+		t.Errorf("error %q does not name what was sought or point at Device.Mixer", err)
+	}
+	if strings.Contains(err.Error(), "index") {
+		t.Errorf("error %q mentions an index, but Bar exists at no index at all", err)
 	}
 }
