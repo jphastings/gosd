@@ -5,11 +5,15 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:15:07Z
-updated_at: 2026-08-20T07:19:34Z
+updated_at: 2026-08-20T08:43:12Z
 ---
 
 **Severity: High.** Defeats reflashing — the owner's primary and most drastic
 remediation — and can silently re-point a device's WiFi and public tunnel.
+
+> **Decided 2026-08-20, by JP, and it overrides this bean's own first
+> recommendation.** See "The decision" below before acting on the Fix
+> section: **credentials are kept and restored like every other setting.**
 
 ## Verified
 
@@ -66,10 +70,11 @@ reflash this must survive, `/data` is what the attacker reads, and these
 boards have no TPM or secure element. So do not file this as "add HMAC".
 The practical measures, in order of value:
 
-1. **Do not silently restore secrets.** Restoring an `[ingress.*]` token or
+1. ~~**Do not silently restore secrets.** Restoring an `[ingress.*]` token or
    authkey from unauthenticated storage is the highest-value part to close.
    Either drop `[ingress.*]` from the restore set, or gate it behind an
-   explicit opt-in in the freshly-flashed gosd.toml.
+   explicit opt-in in the freshly-flashed gosd.toml.~~ **Overruled — see
+   "The decision" below. Credentials are kept and restored.**
 2. **Validate everything restored**, to the same standard as the on-card
    path — the hostname gate is missing today (sibling bean).
 3. **Log loudly** what was restored and from where, so a restore is visible
@@ -87,6 +92,37 @@ The practical measures, in order of value:
 - [x] Document /data as a trust boundary that survives reflash, in docs/design/upgrade-path.md and the provsnapshot package doc
 - [x] Correct the package doc, which presents the digest as an integrity control without stating it is not an authenticity control
 
+## The decision: credentials are kept (JP, 2026-08-20)
+
+The first version of this PR removed `ingress/cloudflared/token` and
+`ingress/tailscale-funnel/authkey` from what the config store keeps, and
+purged any copy already on `/data`. **JP rejected that**, and the reasoning
+is worth recording in full because it is the kind of change that looks like
+pure upside from inside a security bean:
+
+- **A reflash must keep ALL of a device's settings, credentials included.**
+  That is the store's locked purpose — CLAUDE.md states it as "puts the
+  settings somebody put on the card back onto the newly flashed one" — and
+  narrowing it is a product change this bean was never authorised to make.
+- **The exclusion would have forfeited the feature while keeping the whole
+  of the risk.** Every other setting still survives a reflash, so a planted
+  hostname, SSID or env var still reaches a freshly flashed card. What the
+  exclusion bought was not "the attack stops working"; it was "the attack
+  works, and additionally the owner's own tunnel stops working after every
+  reflash". The values hardest to retype are exactly the ones an owner most
+  needs back.
+- **The residual risk is ACCEPTED, not mitigated.** Anything able to write
+  `/data` — someone who has had the card, or the app itself, which runs as
+  root with `/data` as its storage — can put a setting onto a freshly
+  flashed card. That is now written down for developers (the `configstore`
+  package doc, the upgrade-path spike §3a) and for users (docs/config.md,
+  "A reflash is not a factory reset") rather than partially papered over.
+- **The compensating control is a real reset path**, not a smaller restore
+  set: bean `gosd-df24` designs a factory reset an owner triggers from the
+  **boot** partition — the only partition editable from macOS or Windows,
+  which is precisely why today's documented remedy ("clear `/data`") is
+  unavailable to most owners on an ext4 data partition.
+
 ## Summary of Changes
 
 Shipped with `gosd-39da` in one PR.
@@ -103,10 +139,10 @@ identity — i.e. precisely on a reflash. Only the file names changed.
 
 Stated plainly, because it would be easy to read this PR as having fixed
 the bean's headline: **the store is still unauthenticated, and a planted
-non-credential setting still survives a reflash.** What shipped is a
-narrowing of the blast radius, not an authenticity control, and the bean's
-own guidance ("be honest about what is achievable", "do not file this as
-'add HMAC'") is what it follows.
+setting still survives a reflash.** What shipped is hardening of the
+*restore path* plus an honest, published account of the limitation — which
+is what the bean itself asks for ("be honest about what is achievable", "do
+not file this as 'add HMAC'").
 
 The digest was never the problem to fix and adding a keyed one is not
 available. Two different properties:
@@ -146,95 +182,84 @@ package doc, the design doc and the user-facing guide.
 
 ### What did ship
 
-1. **Bearer credentials are never kept, and so never restored**
-   (`configtree.IsCredential`: `ingress/cloudflared/token`,
-   `ingress/tailscale-funnel/authkey`). This is the bean's option 1, taken
-   in its "drop from the restore set" form rather than the opt-in form: an
-   opt-in would have meant a new config-tree key and its whole apparatus,
-   when the recovery path already exists and is the same act that set the
-   value originally — type it onto the card. The distinction being drawn is
-   real and worth stating: every other setting says what the device should
-   *do*; a token or authkey *is* the authorisation to reach it, from
-   anywhere. The store never holds one, and a copy an earlier release left
-   there is deleted on the next boot.
-   - **Adversarial finding, caught in review of my own patch:** the first
-     version matched paths case-sensitively. Both partitions can be FAT,
-     where `Token` and `token` are one file — so planting the value under a
-     different capitalization would have been restored onto the card and
-     landed in the very file the device reads. `IsCredential` folds case,
-     as `checkCollisions` already does for the same reason, and a test
-     pins it.
-   - A `configtree` test walks the shipped defaults tree and fails on any
-     credential-shaped name (`token`, `authkey`, `secret`, `password`,
-     `passphrase`, …) that is neither refused nor deliberately exempted
-     with a written reason, so the next ingress agent cannot ship a
-     restorable token by omission. `wifi/passphrase` is the one recorded
-     exemption: refusing it alone would leave a device trying to join its
-     own network with no key, or joining an attacker's open one.
-2. **Every restored value is validated by the gates the card's own path
-   uses** — see `gosd-39da` for the field-by-field audit. The structural
-   property that makes this true, and that is now stated in the package
-   doc, is that a restored value is written onto the card and read back out
-   of the tree: there is no restore path that reaches a sink without
-   passing what a hand-edited card passes. Two gaps closed on the way:
-   `configtree.ValidEnvName` applied at runtime, and
-   `configtree.PlausibleValue` refusing a NUL (which would have made
-   `execve(2)` fail, stopping `/app` on every boot — a sticky denial of
-   service surviving the reflash performed to fix it).
-3. **A restore announces itself**, once before the per-setting lines,
-   naming the partition it came from and that gosd cannot tell who wrote
-   it.
-4. **Documented as a trust boundary** in the config guide ("A reflash is
+1. **The restore is not a privileged path.** Every restored value is
+   written onto the card and read back out of the tree, so it passes the
+   identical gates a hand-edited card passes — restoring a value can do
+   nothing that typing it onto the card couldn't. That structural property
+   is what closes `gosd-39da` (see it for the field-by-field audit), and it
+   is now stated in the package doc and pinned by an end-to-end test rather
+   than left as a property of the current shape. Two gaps closed on the
+   way, both reachable from the store *and* from a hand-edited card:
+   - `configtree.ValidEnvName` is now applied at runtime in
+     `boot.mergeUserEnv`, holding a `config/env/` name to the same rule the
+     build enforces.
+   - `configtree.PlausibleValue` refuses a NUL, in `cardconfig` and in the
+     store. A NUL makes `execve(2)` fail with EINVAL, so one planted here
+     would stop `/app` starting on every boot — a sticky denial of service
+     surviving the reflash performed to fix it. Deliberately no stricter: a
+     multi-line value pasted into `config/env/` is legitimate.
+2. **A restore announces itself**, once before the per-setting lines,
+   naming the partition it came from, how many settings it put back, and
+   that gosd cannot tell who wrote them.
+3. **Documented as a trust boundary** in the config guide ("A reflash is
    not a factory reset"), the upgrade-path spike (§3a, which weighed this
    purely as an availability problem and never asked the other question),
    and the package doc.
-5. **Package doc corrected** — it previously stated the digest was not an
+4. **Package doc corrected** — it previously stated the digest was not an
    authenticity control in one sentence at the end; it now leads with the
-   integrity-vs-authenticity distinction and enumerates why no key exists.
+   integrity-vs-authenticity distinction, enumerates why no key exists, and
+   records that keeping less was considered and rejected.
+5. **A test pins the decision positively** — that a tunnel credential IS
+   kept and restored like any other setting — so a future agent reading the
+   trust-boundary section doesn't reintroduce the carve-out as an obvious
+   improvement.
 
 ### Crash-ordering argument
 
-The store's existing commit discipline is unchanged: an entry commits as
+The store's existing commit discipline is unchanged and this PR adds no new
+on-disk act beyond one the store already performed: an entry commits as
 value → sync → digest → sync, a delete removes the digest *first*, and the
 image identity is written last, after both phases, because it is the record
-that ends a restore window. This PR adds one new on-disk act — deleting a
-stored credential (and a stored NUL-carrying value) — and it is
-deliberately placed where its durability is *not* load-bearing. The purge
-happens in `load`, before the restore phase reads anything, and the entry
-is excluded from the in-memory `stored` map whether or not the delete
-reached the disk; so a power cut during the purge cannot cause a restore on
-that boot or any other. The delete itself reuses `deleteEntry`, which
-removes the digest before the value and fsyncs each directory: a crash
-between the two leaves a value with no digest, which reads as torn and is
-dropped by the next `load` — the same end state the delete was reaching
-for, so the purge is convergent rather than merely retried. A purge that
-fails outright is logged and does not set `readable=false`, which is
-correct and worth being explicit about: `readable` gates deletions and the
-identity stamp for settings the store *keeps*, and a credential is by
-definition not one of those, so a stale credential file lingering inertly
-on `/data` must not also cost the device a boot's worth of reconciliation
-for every other setting. Nothing here is gated on a filesystem probe: the
-credential decision is made from the entry's path, and the value decision
-from bytes that hashed to their own digest.
+that ends a restore window. The one behavioural addition is that a stored
+value carrying a NUL is now classified `entryNotASetting` and deleted, and
+its durability is deliberately not load-bearing: the drop happens in
+`load`, before the restore phase reads anything, and the entry is excluded
+from the in-memory `stored` map whether or not the delete reached the disk,
+so a power cut during it cannot cause a restore on that boot or any other.
+The delete reuses `deleteEntry`, which removes the digest before the value
+and fsyncs each directory: a crash between the two leaves a value with no
+digest, which reads as torn and is dropped by the next `load` — the same
+end state, so the drop is convergent rather than merely retried. Nothing
+here is gated on a filesystem probe: the decision is made from bytes that
+hashed to their own digest.
+
+`entryNotASetting` is also kept distinct from `entryTorn` on purpose. Torn
+means a write was interrupted; "this could never be a setting" means
+nothing was interrupted at all, and saying "wasn't finished being written"
+about a device node or a NUL would send somebody looking for a power cut
+that never happened.
 
 ### What remains true, and is now written down
 
 A plain reflash is not a factory reset. Anything with write access to
-`/data` — someone who has had the card, or the app itself, running as root
-with `/data` as its storage — can still put a *non-credential* setting onto
-a freshly flashed card. Clearing or reformatting the data partition is the
-operation that resets a device, and on an ext4 `/data` that needs a Linux
-host.
+`/data` can still put a setting onto a freshly flashed card, credentials
+included. Clearing or reformatting the data partition is the operation that
+resets a device, and on an ext4 `/data` that needs a Linux host — which is
+the gap bean `gosd-df24` closes.
+
+### Why this bean is completed rather than left open
+
+Its headline attack still works, so "completed" deserves justifying. Every
+todo it carries is now answered, including the first — which asked for a
+**decision** about `[ingress.*]`, and got one, at the product level, from
+JP. Authenticity is recorded as a non-goal with the reason, not deferred.
+The remaining work is not this bug: it is a distinct, designed feature with
+its own bean (`gosd-df24`). Leaving this open would create a backlog item
+that no code in this architecture can ever close, and would hide the fact
+that the decision has been made. The residual risk is accepted, documented
+in three places, and tracked forward.
 
 ### Deferred (worth a follow-up bean if wanted)
 
-- **Hand a refused credential back on the card** as an inert
-  `token.unused`-style file rather than deleting it, so an owner upgrading
-  from an earlier release can retrieve their own token once — and so a
-  *planted* one becomes visible evidence rather than a silent deletion.
-  Not done here: it needs a third reserved suffix with build-side refusal,
-  and writing secret material onto the card to solve a convenience problem
-  deserves its own decision.
-- **A "reset me" affordance** — a file on the boot partition that tells the
-  next boot to clear the store — would give owners the remediation a
-  reflash currently implies but does not perform, without needing a key.
+- **A "reset me" affordance** — now a bean in its own right, `gosd-df24`,
+  and the compensating control for the risk accepted above.

@@ -240,14 +240,29 @@ boot partition is erased by the reflash the store exists to survive, `/data`
 is what the attacker is writing, no supported board has a TPM or secure
 element, and a hardware-derived key is readable by the compromised app that
 is the actor of most concern. Recording that as a **non-goal with a reason**
-rather than an open task is the honest outcome; what shipped instead bounds
-the damage, and is described in
-[the config tree's own guide](../config.md#a-reflash-is-not-a-factory-reset):
-bearer credentials (tunnel token, tailnet authkey) are never kept and so
-never restored; every restored value re-enters through the card and is
-re-read through the gates a hand-edited card passes, so no restore path
-reaches a sink the card's own path would not; and a restore is announced on
-the console, naming the partition it came from.
+rather than an open task is the honest outcome.
+
+Narrowing what the store keeps was weighed and **rejected** (2026-08-20).
+Excluding the bearer credentials — a tunnel token, a tailnet authkey — would
+have been the highest-value exclusion available, and it still fails the
+test: the store exists to put back the settings somebody put on the card,
+and the values hardest to retype are the ones an owner most needs back.
+Dropping them would forfeit the feature while keeping the whole of the risk,
+since every other setting survives regardless. So the residual risk is
+**accepted and documented** rather than paid for with the feature, in
+[the config tree's own guide](../config.md#a-reflash-is-not-a-factory-reset).
+What holds the line instead is that the restore is not a privileged path:
+every restored value re-enters through the card and is re-read through the
+gates a hand-edited card passes, so no restore path reaches a sink the
+card's own path would not, and a restore is announced on the console, naming
+the partition it came from.
+
+The compensating control is the thing this spike's framing makes obvious the
+moment the question is asked at all: **an owner needs a real reset, and today
+has none most of them can perform.** Clearing `/data` is the operation that
+resets a device, and on an ext4 data partition it cannot be done from macOS
+or Windows. A reset triggered from the boot partition — the only one every
+host can edit — is designed in bean `gosd-df24`.
 
 ## 4. Image identity (small prerequisite)
 

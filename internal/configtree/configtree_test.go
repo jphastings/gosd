@@ -309,70 +309,6 @@ func TestIgnoredNameCoversEveryNameTheBuildRefusesAsJunk(t *testing.T) {
 	}
 }
 
-// restorableCredentialShaped names the settings whose names read like a
-// credential but which gosd-init still restores from the copy kept on the
-// data partition, each with the reason a person gave for it. It exists so
-// that the test below can insist every credential-shaped setting has been
-// classified deliberately, in one direction or the other, rather than
-// silently defaulting to "restorable" the day it is added.
-var restorableCredentialShaped = map[string]string{
-	"wifi/passphrase": "meaningless without the SSID beside it, which is not credential-shaped and has to be restored for a device to rejoin its network unattended after a re-flash; refusing only the passphrase would leave a device trying to join its own network with no key, or joining an attacker's open one",
-}
-
-func TestEveryCredentialShapedDefaultIsClassifiedByHand(t *testing.T) {
-	// A new ingress agent brings a new token file with it. Restoring one
-	// from unauthenticated storage is what bean gosd-7m9y is about, so the
-	// question has to be answered when the setting is added rather than
-	// noticed afterwards.
-	credentialWords := []string{"token", "authkey", "auth_key", "secret", "password", "passphrase", "apikey", "api_key", "credential"}
-
-	tree, err := Build("", Features{IngressCloudflared: true, IngressTailscaleFunnel: true})
-	if err != nil {
-		t.Fatalf("building gosd's own defaults failed: %v", err)
-	}
-
-	for _, v := range tree.Values {
-		name := strings.ToLower(filepath.Base(v.Path))
-		shaped := false
-		for _, word := range credentialWords {
-			if strings.Contains(name, word) {
-				shaped = true
-				break
-			}
-		}
-		if !shaped {
-			continue
-		}
-		if IsCredential(v.Path) {
-			continue
-		}
-		if _, exempted := restorableCredentialShaped[v.Path]; !exempted {
-			t.Errorf("%s reads like a bearer credential but gosd-init would restore it from the unauthenticated copy on /data.\n"+
-				"Decide which it is: add it to credentialPaths in configtree.go so it is never kept, or to restorableCredentialShaped in this test with the reason it is safe to put back.", v.Path)
-		}
-	}
-}
-
-func TestCredentialPathsNameSettingsThatActuallyShip(t *testing.T) {
-	// A credential path that matches nothing is a rename nobody noticed:
-	// the refusal quietly stops applying while still reading as though it
-	// does.
-	tree, err := Build("", Features{IngressCloudflared: true, IngressTailscaleFunnel: true})
-	if err != nil {
-		t.Fatalf("building gosd's own defaults failed: %v", err)
-	}
-
-	shipped := make(map[string]bool, len(tree.Values))
-	for _, v := range tree.Values {
-		shipped[v.Path] = true
-	}
-	for p := range credentialPaths {
-		if !shipped[p] {
-			t.Errorf("credentialPaths names %q, which no image ships; it protects nothing", p)
-		}
-	}
-}
-
 func TestPlausibleValueRefusesOnlyANul(t *testing.T) {
 	// A multi-line value is a real thing somebody pastes into config/env/,
 	// so the gate has to let one through; a NUL cannot survive execve(2)
@@ -384,26 +320,5 @@ func TestPlausibleValueRefusesOnlyANul(t *testing.T) {
 	}
 	if PlausibleValue([]byte("before\x00after")) {
 		t.Error("PlausibleValue accepted a NUL byte")
-	}
-}
-
-func TestIsCredentialIgnoresCapitalizationTheWayAFatCardDoes(t *testing.T) {
-	// The store may live on a FAT data partition and the tree always lives
-	// on a FAT boot partition, where "Token" and "token" are one file. A
-	// case-sensitive refusal would be one an attacker walks around by
-	// changing a letter.
-	for _, spelling := range []string{
-		"ingress/cloudflared/token",
-		"ingress/cloudflared/Token",
-		"ingress/cloudflared/TOKEN",
-		"Ingress/Cloudflared/token",
-		"ingress/tailscale-funnel/AuthKey",
-	} {
-		if !IsCredential(spelling) {
-			t.Errorf("IsCredential(%q) = false; on a FAT card that is the same file as the credential", spelling)
-		}
-	}
-	if IsCredential("ingress/cloudflared/hostname") {
-		t.Error("IsCredential refused the tunnel's hostname, which is not a credential and has to be restorable")
 	}
 }

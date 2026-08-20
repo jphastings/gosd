@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:13:59Z
-updated_at: 2026-08-20T07:19:35Z
+updated_at: 2026-08-20T08:43:39Z
 ---
 
 **Severity: High.** A one-line inconsistency in a single function, reachable
@@ -79,6 +79,16 @@ Shipped with `gosd-7m9y` in one PR: the two are the same defect seen from
 each end — an unauthenticated `/data` on one side, an ungated sink on the
 other.
 
+**This bean is the half that is genuinely fixed.** Its sibling’s
+unauthenticated store is a risk JP ACCEPTED on 2026-08-20 rather than
+mitigated: a reflash keeps all of a device’s settings, credentials
+included, because that is the store’s purpose, and the compensating control
+is a real reset path (`gosd-df24`). That decision does not soften anything
+here — it makes it load-bearing. Since a planted value *will* be restored,
+the gates below are the whole of what stops one reaching a sink it should
+not, which is exactly why `hostsfile.Render` refuses a bad hostname on its
+own account instead of trusting its caller.
+
 **The gate this bean asks for already exists, and did not when the bean was
 written.** Epic `gosd-rw6n` replaced `provsnapshot`'s `gosd.toml` with the
 per-file config tree and `cmd/gosd-init/internal/configstore` in between,
@@ -123,4 +133,4 @@ actually reaches. Two needed work, three did not:
 | `wifi/ssid`, `wifi/passphrase` | nl80211 netlink attributes | no text-format sink; length-delimited binary attributes, no `wpa_supplicant.conf` is ever written. No gate needed |
 | `ingress/cloudflared/hostname`, `port` | `config.yml` | already gated: `cloudflared/mode.go`'s own `validHostname` exists precisely to stop a break-out of the ingress rule's line |
 | `ingress/tailscale-funnel/*` | shim argv | argv elements, not a shell string; no injection. A NUL would fail the exec, now refused upstream |
-| `ingress/*/token`, `authkey` | tunnel authorisation | not a validation problem — see `gosd-7m9y`; never restored at all now |
+| `ingress/*/token`, `authkey` | tunnel authorisation | not a validation problem — a token is opaque to every sink it reaches. It IS restored, like every other setting (JP, 2026-08-20 — see `gosd-7m9y`); a NUL in one would fail the exec, now refused upstream |

@@ -297,38 +297,6 @@ func IgnoredName(name string) bool {
 	return isJunkName(name)
 }
 
-// credentialPaths are the settings whose value is a bearer credential for
-// a channel that reaches the device from anywhere: holding the string is
-// itself the authorisation, with no second factor and nothing tied to the
-// particular device it was typed onto. gosd-init will not put one of these
-// back onto a card from the copy kept on the data partition — see
-// cmd/gosd-init/internal/configstore's "/data is a trust boundary" section
-// and bean gosd-7m9y.
-//
-// Membership is decided by hand, per setting, and deliberately so: it is
-// the difference between "somebody has to retype this after a re-flash"
-// and "a value planted on /data survives the re-flash its owner performed
-// to be rid of it", and only a person can weigh that for a new setting.
-// configtree_test.go's credential-shape test makes a new one impossible to
-// add without answering the question.
-var credentialPaths = map[string]bool{
-	"ingress/cloudflared/token":        true,
-	"ingress/tailscale-funnel/authkey": true,
-}
-
-// IsCredential reports whether the setting at path — a tree path, e.g.
-// "ingress/cloudflared/token" — is a bearer credential in the sense
-// credentialPaths describes.
-//
-// Matched without regard to capitalization, as checkCollisions matches for
-// the same reason: the config tree lives on a FAT boot partition and the
-// store may live on a FAT data partition, and on FAT "Token" and "token"
-// are one file. A case-sensitive comparison here would be a refusal an
-// attacker walks around by changing a letter — planting the value under a
-// spelling this function doesn't recognise, which the card then writes into
-// the very file the device reads.
-func IsCredential(path string) bool { return credentialPaths[strings.ToLower(path)] }
-
 // ValidEnvName reports whether name has the shape of an environment
 // variable's name — the rule checkEnvValue enforces at build time, exposed
 // so a name that reached a running device by some other route is held to

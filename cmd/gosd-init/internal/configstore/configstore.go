@@ -134,34 +134,36 @@
 //     matters most: a compromised /app runs as root on the device and can
 //     read anything the derivation reads, then compute the MAC itself.
 //
-// So this package does not pretend. What it does instead is bound the
-// damage:
+// So this package does not pretend, and it does not narrow what it keeps
+// either. EVERY setting is kept and restored, credentials included: putting
+// back the settings somebody put on the card is the entire reason this
+// package exists, and a store that dropped the values hardest to retype
+// would fail at the job while still carrying all of the risk (decided
+// 2026-08-20, bean gosd-7m9y). What the store does instead is refuse to be
+// a privileged path, and be loud:
 //
-//   - A bearer credential is never kept, and so is never restored
-//     (configtree.IsCredential). Everything else on a card describes what
-//     the device should do; a tunnel token or a tailnet authkey IS the
-//     authorisation to reach it, from anywhere, and restoring one from
-//     unauthenticated storage hands that reach to whoever planted it — onto
-//     a device its owner has just re-flashed believing that reset it.
-//     Somebody re-typing a token after a re-flash is the price, and it is
-//     the same act that put it there the first time.
-//   - Every value that IS restored goes back onto the card and is then read
-//     out of the tree again, through the identical gates a hand-edited card
-//     goes through (boot's validHostname, cloudflared's own hostname check,
+//   - Every restored value goes back onto the card and is then read out of
+//     the tree again, through the identical gates a hand-edited card goes
+//     through (boot's validHostname, cloudflared's own hostname check,
 //     configtree.ValidEnvName). There is no restore path that reaches a
 //     sink without passing what the card's own path passes — which is the
 //     property bean gosd-39da's /etc/hosts injection broke, and the reason
-//     that gate belongs at the reader rather than at each writer.
+//     that gate belongs at the reader rather than at each writer. Restoring
+//     a value is no more powerful than typing it onto the card.
 //   - A restore says so, loudly, naming the partition it came from, so that
 //     somebody reading a console log after a re-flash can see that the
 //     re-flash did not reach these values.
 //
 // What remains true, and is documented for users in docs/config.md: a plain
 // re-flash is not a factory reset, and anything with write access to /data
-// can put a non-credential setting onto a freshly flashed card. Clearing or
-// reformatting the data partition is the operation that resets a device —
-// and on an ext4 /data that has to be done from a Linux host, because a
-// macOS or Windows machine can neither read nor clear it (bean gosd-7m9y).
+// — someone who has had the card, or the app itself, which runs as root and
+// whose storage /data is — can put a setting onto a freshly flashed card.
+// The operation that resets a device is clearing the data partition, not
+// re-flashing the boot one; on an ext4 /data that needs a Linux host today,
+// because a macOS or Windows machine can neither read nor clear it. Making
+// that remedy performable from any host — a reset an owner triggers from
+// the boot partition, which is the only one they can always edit — is bean
+// gosd-df24.
 //
 // # Failure is never fatal
 //
@@ -480,11 +482,6 @@ func dropOrphans(deps Deps, orphans []string, stored map[string]string) {
 // store, and one that matches has its entry deleted — the locked rule that
 // an edit back to the default is the default.
 //
-// A bearer credential (configtree.IsCredential) is the exception: it is
-// never written here at all, so there is never one to restore. See the
-// package doc's trust-boundary section for why that class alone is treated
-// this way.
-//
 // Deletions only happen when the boot reconciled cleanly (see Reconcile):
 // on any other boot a setting equal to its default may simply be one the
 // restore phase hasn't managed to put back yet.
@@ -506,19 +503,6 @@ func persist(deps Deps, config cardconfig.Tree, opts Options, stored map[string]
 	for _, path := range config.Paths() {
 		value := config[path]
 		bakedDigest, isBaked := opts.Baked[path]
-
-		if configtree.IsCredential(path) {
-			// A credential is never copied here, so there is never one to
-			// restore (see the package doc's trust-boundary section). Say
-			// so, every boot on which one is actually set, because the
-			// consequence lands much later — at the re-flash, when it
-			// doesn't come back — and by then there is nothing left to log.
-			shipped := isBaked && value.SHA256() == bakedDigest
-			if value.Value != "" && !shipped {
-				deps.Log("%s is not kept for the next re-flash; write it onto the card again afterwards", cardconfig.OnCard(path))
-			}
-			continue
-		}
 
 		if isBaked && value.SHA256() == bakedDigest {
 			if _, have := stored[path]; !have || !allowDelete {
@@ -598,18 +582,6 @@ func load(dir string, log func(format string, args ...any)) (map[string]string, 
 			// durable.WriteFile's temporary name, left by a power cut
 			// between the write and the rename. Never a setting.
 			_ = removeDurably(path)
-			return nil
-		}
-
-		if configtree.IsCredential(rel) {
-			// Never kept, so never restored: see the package doc's
-			// trust-boundary section. An entry here was written by an
-			// older gosd — or by something that wanted it acted on — and
-			// either way this is where it stops.
-			log("the kept copy of %s is dropped: a credential put back from the data partition would outlive the re-flash somebody performed to be rid of it, so gosd never restores one", cardconfig.OnCard(rel))
-			if err := deleteEntry(dir, rel); err != nil {
-				log("dropping it failed, and it will be dropped again next boot: %v", err)
-			}
 			return nil
 		}
 
