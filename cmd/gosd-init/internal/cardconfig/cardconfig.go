@@ -35,6 +35,30 @@ import (
 // filesystem is RAM.
 const MaxValueBytes = 64 * 1024
 
+// MaxTreeBytes caps what a whole tree may cost, which MaxValueBytes on its
+// own does not: the boot partition is a FAT volume of a couple of hundred
+// megabytes that anyone holding the card can fill with settings, and every
+// one of them would otherwise be read and kept. The device it would be read
+// on is PID 1 with its root filesystem in RAM, and Linux does not kill init
+// to reclaim memory — it panics, and the card still holds the same files on
+// the next boot.
+//
+// Every setting costs at least its reservation (configtree.MinValueBytes),
+// which is what makes this a bound on how many settings there are as well
+// as on how big they get: 1 MiB is room for four thousand of them, where
+// gosd's own tree ships eleven and an app's --config-dir adds its own
+// handful.
+const MaxTreeBytes = 1024 * 1024
+
+// MaxDepth caps how deeply Read will descend into a tree. gosd's own
+// deepest setting is three levels down (ingress/cloudflared/token), so this
+// is generous for anything an app adds. It is here because the walk is
+// recursive and the directories it walks are on a FAT volume written by
+// whoever holds the card: a directory entry pointing back at an ancestor's
+// cluster is a tree with no bottom, and a boot that never ends is as
+// effective a brick as one that panics.
+const MaxDepth = 8
+
 // Tree is a card's config/ directory in memory: every setting keyed by its
 // path within the tree ("wifi/ssid", "env/API_TOKEN"). Documentation
 // sidecars, the .new/.unused files the device writes itself, and
@@ -84,8 +108,15 @@ func (t Tree) Group(dir string) map[string]string {
 // mounted boot partition. A tree that isn't there at all reads as an empty
 // tree rather than an error, leaving every setting to fall back to the
 // values this image was built with.
+//
+// The walk is bounded in every direction a card can grow it: how big one
+// setting may be (MaxValueBytes), how much the tree may cost in total
+// (MaxTreeBytes), and how far down it goes (MaxDepth). Reaching a bound
+// stops the walk and leaves every setting not yet read at its baked value,
+// which is the same outcome as a card that never carried them.
 func Read(dir string, log func(format string, args ...any)) Tree {
 	tree := Tree{}
+	budget := MaxTreeBytes
 
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -108,14 +139,26 @@ func Read(dir string, log func(format string, args ...any)) Tree {
 			}
 			return nil
 		}
+		rel := treePath(dir, path)
 		if entry.IsDir() {
+			if strings.Count(rel, "/")+1 >= MaxDepth {
+				log("not looking inside %s: settings are never nested this deeply", OnCard(rel))
+				return fs.SkipDir
+			}
 			return nil
 		}
 
 		value, ok := readValue(dir, path, entry, log)
-		if ok {
-			tree[value.Path] = value
+		if !ok {
+			return nil
 		}
+		spend := cost(value)
+		if spend > budget {
+			log("stopping at %s: the settings on this card add up to more than the %d bytes gosd will read, so the rest keep the values this image was built with", OnCard(rel), MaxTreeBytes)
+			return fs.SkipAll
+		}
+		budget -= spend
+		tree[value.Path] = value
 		return nil
 	})
 	if err != nil {
@@ -127,6 +170,15 @@ func Read(dir string, log func(format string, args ...any)) Tree {
 	}
 
 	return tree
+}
+
+// cost is what one setting is charged against Read's budget: its bytes, or
+// the reservation every value file holds open (configtree.MinValueBytes),
+// whichever is larger. Charging the floor is what stops a tree of empty
+// files — which cost nothing to hold but plenty to walk and to key — from
+// being free.
+func cost(value configtree.Value) int {
+	return max(len(value.Content), configtree.MinValueBytes)
 }
 
 // readValue reads one setting file, reporting ok=false for anything that

@@ -74,6 +74,17 @@ padding, see "Padding is the reservation" below — means that setting is
 **unset**. For a setting that's either on or off (`data_flush`), any
 non-empty content means "enabled"; there's no particular word to type.
 
+A device only reads what could plausibly be a setting, and says so on the
+serial console when it skips something. A file bigger than 64 KiB, one
+holding bytes that aren't text, one that isn't an ordinary file, and
+anything nested more than eight directories deep are all ignored — as is
+everything past the first megabyte of settings, if a card somehow carries
+that many. A setting the device skips keeps the value the image was built
+with; nothing about it stops the device booting. Under `env/`, a file whose
+**name** isn't a valid environment variable name (letters, digits and
+underscores, not starting with a digit) is ignored too, since there is no
+variable it could set.
+
 An `ingress/<agent>/` directory only exists in the tree at all when that
 agent's binary is actually baked into the image (`gosd build --ingress
 <agent>`) **and** the board's architecture supports it — Cloudflare Tunnel is

@@ -173,11 +173,50 @@ func DeleteSeed(bootDir string, names []string) error {
 	return errors.Join(errs...)
 }
 
+// MaxSeedBytes caps how much of a cloud-init seed file this package will
+// read. A seed is a wizard's answers: the user-data and network-config
+// files Raspberry Pi Imager 2.0.10 actually writes are a few hundred bytes
+// each (see the captured fixtures in testdata), and gosd-init consumes a
+// hostname and a WiFi network from between them. This leaves three orders
+// of magnitude of room for a hand-written seed carrying cloud-init fields
+// gosd ignores, and still bounds what the parse below can cost.
+//
+// It has to be bounded because of what happens after the read. A seed is a
+// file on the FAT boot partition, so anyone holding the card writes one of
+// any size, and yaml.v3 builds a Node tree that outweighs its input by
+// roughly forty times — a few megabytes of YAML becomes hundreds of
+// megabytes of nodes. gosd-init is PID 1 on a board whose entire root
+// filesystem is RAM and which may have 512 MB of it in total; Linux will
+// not kill init to reclaim memory, so exhausting it is a kernel panic and,
+// since the file is still there on the next boot, a permanent one.
+const MaxSeedBytes = 256 * 1024
+
 // readOptional reads path, treating a missing file as a silent, expected
 // case (ok=false, no log) and any other read error as worth surfacing
 // (still ok=false, but logged) since it means a file is present but
 // somehow inaccessible.
+//
+// Anything that isn't an ordinary file of at most MaxSeedBytes is refused
+// before it is opened, not after: opening a named pipe blocks until
+// something writes to it, which in PID 1 is a device that never finishes
+// booting and never says why.
 func readOptional(path, name string, log func(format string, args ...any)) ([]byte, bool) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log("reading %s failed, ignoring it: %v", name, err)
+		}
+		return nil, false
+	}
+	if !info.Mode().IsRegular() {
+		log("ignoring %s: cloud-init provisioning has to be an ordinary file", name)
+		return nil, false
+	}
+	if info.Size() > MaxSeedBytes {
+		log("ignoring %s: it holds %d bytes, far more than any cloud-init seed (%d at most)", name, info.Size(), MaxSeedBytes)
+		return nil, false
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {

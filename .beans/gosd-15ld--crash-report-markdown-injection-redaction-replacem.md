@@ -1,110 +1,123 @@
 ---
 # gosd-15ld
 title: 'Crash-report Markdown injection: redaction Replacement is trusted but comes from the SD card'
-status: todo
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-12T04:08:24Z
-updated_at: 2026-08-12T04:08:24Z
+updated_at: 2026-08-20T05:38:04Z
 parent: gosd-m6py
 ---
 
-**Severity: Medium.** Not RCE, but it is a content-injection primitive that
-crosses the exact trust boundary this feature is built around: the report
-"invites its reader to forward the whole file" (docs/crash-reports.md:214),
-so injected content reaches a third party — the developer or support
-engineer — that the attacker otherwise has no channel to.
+**Re-validated 2026-08-20.** The trust boundary is intact and relocated,
+exactly as suspected. `gosd.toml` is gone (epic `gosd-rw6n`), so the filed
+reproduction — a TOML quoted `[env]` key carrying newline escapes — is dead.
+`redact.Rule.Replacement` is still trusted, still built from attacker-shaped
+input, and still applied to the **assembled** report body.
 
-## The hole
+## The hole, as it stands today
 
-`redact.Redact` treats `Rule.Needle` as untrusted but `Rule.Replacement` as
-trusted. Neither producer of a Replacement sanitises it, and both derive it
-from data outside gosd's control:
+`redact.Redact` (`internal/redact/redact.go`) treats `Rule.Needle` as
+untrusted and `Rule.Replacement` as trusted. Both producers derive one from
+data outside gosd's control:
 
-- `envRedactionRules` (cmd/gosd-init/internal/boot/sequence.go:689) builds
-  `Replacement: "{$" + key + "}"` where `key` is an `[env]` key from
-  **gosd.toml on the FAT boot partition** — editable by anyone holding the
-  card, on any computer, with no tools.
-- `secretreg.Label` (internal/secretreg/secretreg.go:118) builds
-  `"{secret: " + replacement + "}"` from the app's own
-  `fault.RegisterSecretString` second argument.
+- `boot.envRedactionRules` (`cmd/gosd-init/internal/boot/sequence.go`) builds
+  `"{$" + key + "}"`, where `key` is now a **file name in `config/env/` on
+  the FAT boot partition** — chosen by whoever holds the card. The build
+  validates those names; a file created on the card afterwards never went
+  through the build.
+- `secretreg.Label` builds `"{secret: " + replacement + "}"` from
+  `fault.RegisterSecretString`'s second argument. `secretreg` bounds the
+  file's size and entry count but never looks at what a replacement
+  contains.
 
-`faultreport.Render` (internal/faultreport/faultreport.go:168) assembles the
-whole body — including gosd's own fixed prose and the already-indented
-Technical detail code block — and only THEN runs redaction over it. So a
-Replacement containing a newline lands at column 0 anywhere the needle
-occurred, including inside gosd's own sentences.
+**Amended 2026-08-20, after `gosd-ywsv` (PR #340) landed on `main`.** That
+work moved redaction per-field: `faultreport.Render` now scrubs `Code`,
+`Doing`, `Problem`, `Fix`, `Detail` and the image line as individual values
+*before* `frontmatter` or `body` assembles anything, and `redact` exposes
+`New`/`Apply`/`Skipped` rather than the one-shot `Redact` this bean was
+filed against. That closes the ordering half of the hole — a replacement's
+line breaks now get `detailText`'s indent along with everything else — and
+it removes gosd's own boilerplate from the redacted set entirely.
 
-This also falsifies the claim on `detailText`
-(internal/faultreport/faultreport.go:332-334): *"renders Detail as an
-indented code block, which — unlike a fenced one — no content can break out
-of."* Content injected by the redaction pass breaks out of it, because
-indentation happens before redaction.
+It does **not** close the trust boundary. `Rule.Replacement` is still taken
+on trust, and `Doing`, `Problem` and `Fix` are prose where no indentation is
+coming: a replacement carrying a newline still lands text at column 0 of a
+report's own sentences, and one long enough to be content still reflows the
+paragraph it substitutes into. `Redactor.Skipped` carries replacements too
+and is logged to the console, so it reaches a reader by the same route.
+Sanitising the replacement itself is what is left, and it is this bean's.
 
-## Verified attack, end to end
+## What changed about reachability
 
-Confirmed by running the real `gosdtoml.Parse` -> `mergeUserEnv` ->
-`envRedactionRules` -> `faultreport.Render` chain. Attacker writes to
-gosd.toml on the card:
+The card route now needs a name a FAT volume can hold: macOS, Windows and
+Linux all refuse control characters in a file name, so plain newline
+injection via `config/env/` needs a hand-crafted FAT image (`dd` of one is
+well within reach of anyone who can write the card) rather than a file
+manager. Two routes need no such assumption:
 
-```toml
-[env]
-"X\n\n## Your device is compromised\n\n![](https://evil.example/beacon.png)\n" = "computer"
-```
-
-TOML quoted keys accept `\n` escapes; `gosdtoml.Parse` accepts this with
-**zero warnings** (verified). The value `computer` is chosen because it is
-exactly `redact.MinNeedleLength` (8) bytes AND appears in gosd's own
-boilerplate line "read it on any computer" — so the substitution fires on
-**every** crash report regardless of what the app does. Rendered output:
-
-```
-This file was written by the device itself, onto its own SD card, so you can
-read it on any {$X
-
-## Your device is compromised
-
-![](https://evil.example/beacon.png)
-}. Nothing was sent anywhere.
-```
-
-The injected heading sits inside gosd's own paragraph, so it reads in gosd's
-voice. What that buys an attacker:
-
-1. A forged "what to do next" section instructing the reader to visit a
-   phishing URL or run a command — indistinguishable from gosd's own text.
-2. `![](...)` beacons when the file is rendered in a GitHub issue, Slack or a
-   support portal, leaking the reader's IP/UA and confirming receipt.
-3. Forged content presented as a stack trace by escaping the code block.
+- **`fault.RegisterSecretString(secret, label)`** takes any string. An app
+  that interpolates anything into a label breaks the report's structure.
+- **The config store on `/data`.** `configstore.load` reads setting names
+  off the data partition, which is ext4 when built with
+  `--data-filesystem=ext4`, where a file name may hold any byte but `/` and
+  NUL. `restorePlan`'s `default` branch restores an `env/...` entry that is
+  neither baked nor on the card, and `restore` calls `config.Set` for it
+  **before** any card write is attempted — so the name reaches
+  `envRedactionRules` whether or not the FAT card would accept it.
 
 ## Fix
 
-Sanitise the Replacement at the one choke point both producers pass through
-— `redact.Redact` (internal/redact/redact.go:88):
+Sanitise at the one choke point both producers pass through — `redact.New`,
+where a rule set is prepared — rather than at each producer:
 
-- Before applying rules, map every rune `< 0x20 || == 0x7f` in
-  `rule.Replacement` to nothing (or U+FFFD), and cap Replacement length
-  (64 bytes is generous for a label).
-- Do the same for the `Skipped` slice, which is logged to the console.
+- Every `Replacement`, applied or skipped, has control characters
+  (`< 0x20`, `0x7f`) removed.
+- One longer than `MaxReplacementBytes` (64) — or empty after stripping — is
+  replaced outright with `FallbackReplacement` (`{redacted}`), never
+  truncated: half a label reads as a name, and the wrong one. The needle is
+  still redacted either way, which is the part that matters.
 
-Belt and braces, both worth doing:
+64 is derived rather than picked: the report's prose is hand-wrapped to a
+narrow terminal, so a label that fits inside one of those lines can only
+substitute a value in-line, where a longer one reflows the paragraph it
+landed in. Every honest label — `"{$"` plus a POSIX env name plus `"}"`,
+`"{secret: }"` around a word or two — is far shorter.
 
-- **Redact the fields, not the assembled document.** Apply redaction to
-  Doing/Problem/Fix/Detail/AppName in `faultreport.Render` BEFORE `body()`
-  assembles and `detailText` indents. This restores `detailText`'s documented
-  "cannot break out" property structurally, and stops redaction from
-  rewriting gosd's own constant prose, which can never contain a secret and
-  so can only be damaged (see sibling bean on boilerplate collisions).
-- **Reject the input at the door.** `gosdtoml` should drop-with-warning any
-  `[env]` key containing a control character. It currently accepts them
-  silently, and such a key is not a valid POSIX environment variable name
-  anyway.
+The env route is now closed twice over: `mergeUserEnv` also drops a card env
+name the build would have refused (bean `gosd-q4v5`, same PR), so no such
+key reaches `envRedactionRules` in the first place.
+
+## Deliberately not done
+
+**Nothing further.** The per-field redaction this bean deferred to
+`gosd-718m` arrived first, from `gosd-ywsv` in PR #340, so `gosd-718m` is
+scrapped as superseded and the two halves of the hole are closed by two
+separate changes rather than one. `faultreport`'s `scrub` docstring, which
+named the replacement half as still outstanding, now names `redact` as
+what supplies it.
 
 ## Todos
 
-- [ ] Sanitise `Rule.Replacement` (control chars stripped, length capped) in `redact.Redact`
-- [ ] Sanitise `Result.Skipped` the same way
-- [ ] Move redaction to per-field, before `body()` assembly and `detailText` indentation
-- [ ] `gosdtoml`: warn-and-drop `[env]` keys containing control characters or otherwise invalid as env var names
-- [ ] Test: hostile gosd.toml `[env]` key cannot place a character at column 0 of the rendered report
-- [ ] Test: `RegisterSecretString(secret, "a\nb")` cannot break the code block
-- [ ] Correct `detailText`'s docstring if any escape route remains
+- [x] Re-validate the trust boundary against the config tree
+- [x] Sanitise `Rule.Replacement` (control chars stripped, over-long replaced) in `redact.New`
+- [x] Sanitise `Redactor.Skipped` the same way
+- [x] Test: a replacement carrying a newline cannot place a character at column 0
+- [x] Test: an over-long replacement becomes the fallback rather than a truncated name
+- [x] Correct/qualify `detailText`'s and `scrub`'s docstrings
+- [x] Reject the input at the door too: a card env name the build would refuse is dropped (gosd-q4v5, shipped on `main` by gosd-39da)
+- [x] Move redaction to per-field, before `body()` assembly — shipped on `main` by `gosd-ywsv` (PR #340); `gosd-718m` scrapped as superseded
+
+## Summary of Changes
+
+`redact.New` now enforces the shape `Rule` has always documented instead of
+trusting it: control characters stripped from every replacement, and an
+empty or over-long one swapped for `{redacted}` rather than truncated. It
+sits in `New` so it covers both producers, every string a `Redactor` is
+applied to, and `Redactor.Skipped`, which is logged to the console.
+
+Rebased onto `main` after `gosd-ywsv` (PR #340) shipped per-field
+redaction, which supplied the other half of this bean and rewrote the API
+this fix was originally written against. `faultreport.scrub`'s docstring
+named the replacement half as outstanding; it now names `redact` as what
+supplies it.

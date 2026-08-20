@@ -216,11 +216,12 @@ func Render(r Report, c Context) Result {
 //
 // Doing it here rather than to the finished Markdown has a second effect
 // worth keeping: Detail is redacted before detailText indents it, so a
-// replacement carrying its own line breaks is indented along with the rest
-// of the technical detail rather than landing at column 0 inside the code
-// block. That is half of what bean gosd-15ld needs; sanitising the
-// replacement text itself — which still reaches gosd's prose through Doing,
-// Problem and Fix — remains that bean's.
+// replacement carrying its own line breaks would be indented along with the
+// rest of the technical detail rather than landing at column 0 inside the
+// code block. That was half of what bean gosd-15ld needed; the other half —
+// the replacement text itself, which reaches gosd's prose through Doing,
+// Problem and Fix where no indentation is coming to save it — is redact's,
+// which admits no replacement that is not a single-line label.
 func scrub(secrets redact.Redactor, r Report, c Context) (Report, Context) {
 	r.Code = secrets.Apply(r.Code)
 	r.Doing = secrets.Apply(r.Doing)
@@ -440,7 +441,8 @@ func fixText(r Report, c Context) string {
 
 // detailText renders Detail as an indented code block, which — unlike a
 // fenced one — no content can break out of, however many backticks a panic
-// dump happens to contain.
+// dump happens to contain. Every line it is handed gets the indent,
+// including any a redaction introduced, because scrub ran before this did.
 func detailText(detail string) string {
 	detail = strings.TrimRight(detail, "\n")
 	if strings.TrimSpace(detail) == "" {
