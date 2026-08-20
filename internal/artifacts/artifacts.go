@@ -11,11 +11,24 @@
 // cacheDir/<Version>/<board>/ so every subsequent call — for any board —
 // works without touching the network again, as long as the cache still
 // verifies.
+//
+// The manifest is what those per-file digests are read from, so it is
+// itself pinned in source — ManifestSHA256, next to Version — and re-checked
+// against its bytes every time they are read, downloaded or cached alike.
+// Before that anchor existed (bean gosd-1jjh) the cached manifest vouched
+// only for itself: anything able to write to the user's cache directory
+// could pair a backdoored kernel with a manifest listing that kernel's
+// digest, and every later build would take the offline cache-hit branch and
+// bake it into every image, without a single network request to notice.
+// Tampering with the cache now costs a re-download and nothing more, which
+// is exactly how internal/fetch has always treated its own cache.
 package artifacts
 
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,8 +46,9 @@ import (
 // Version pins the artifact release this build of gosd downloads: the
 // GitHub Release published from the git tag "artifacts/<Version>". Bumping
 // this constant to track a new artifacts/vX.Y.Z release (cut per
-// docs/artifacts.md) is the only step needed to move gosd onto newer
-// CI-built kernels/U-Boot.
+// docs/artifacts.md) is what moves gosd onto newer CI-built kernels/U-Boot —
+// always together with ManifestSHA256 below, which is that release's own
+// manifest.json.
 //
 // v0.9.0 carries the first cubie-a5e artifacts (epic gosd-h1wv, bean
 // gosd-axtv's kernel build): Image plus sun55i-a527-cubie-a5e.dtb, a
@@ -54,8 +68,35 @@ import (
 //     boot.
 const Version = "v0.10.2"
 
+// ManifestSHA256 is the SHA-256 (lowercase hex) of the manifest.json
+// published with the artifacts/<Version> release. It is the trust anchor for
+// everything this package reads: every per-file digest EnsureBoard verifies
+// against comes out of that manifest, so the manifest's own bytes are
+// checked against this compiled-in value before any entry inside it is
+// believed — whether they arrived over the network or out of the user's
+// cache directory (bean gosd-1jjh).
+//
+// It moves with Version, never separately. build/artifacts/pin-bump.sh
+// rewrites both (see docs/artifacts.md); by hand, it is
+//
+//	curl -sfL https://github.com/jphastings/gosd/releases/download/artifacts/<Version>/manifest.json | shasum -a 256
+const ManifestSHA256 = "d071808117052b7691409379a669e678157d14edef0bcc2cb42ede8ff15104fe"
+
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
+
+// maxUnpackedBytes caps how much one board tarball may decompress to before
+// extraction is abandoned. Every board's artifacts together are tens of MiB
+// today, so this is more than an order of magnitude of headroom; its only
+// job is to stop a corrupt or hostile archive from filling the disk, since
+// extraction necessarily happens before verifyFiles can reject what came
+// out of it.
+const maxUnpackedBytes = 1 << 30 // 1 GiB
+
+// maxManifestBytes bounds the manifest read: a few tens of KiB describe
+// every board, and the digest check can only run on bytes already in
+// memory, so an endless response must not be a way to get there.
+const maxManifestBytes = 4 << 20 // 4 MiB
 
 // Manifest is the top-level manifest.json a build-artifacts.yml run
 // publishes alongside the per-board tarballs, matching gosd-wtpa's locked
@@ -93,11 +134,12 @@ type FileEntry struct {
 // them from this repository's GitHub Release the first time it's called for
 // a given cacheDir/board/Version combination, and returns that directory.
 //
-// A nil client uses http.DefaultClient. Later calls with the same cacheDir
-// make no network request at all, provided the cached files still verify —
+// A nil client uses fetch.DefaultClient. Later calls with the same cacheDir
+// make no network request at all, provided the cached files still verify
+// against a cached manifest that itself still matches ManifestSHA256 —
 // gosd build works fully offline after the first successful call.
 func EnsureBoard(ctx context.Context, client *http.Client, cacheDir, board string) (string, error) {
-	return ensureBoard(ctx, client, cacheDir, board, Version, func(name string) string {
+	return ensureBoard(ctx, client, cacheDir, board, Version, ManifestSHA256, func(name string) string {
 		return fmt.Sprintf("https://github.com/%s/releases/download/artifacts/%s/%s", repoSlug, Version, name)
 	})
 }
@@ -105,25 +147,34 @@ func EnsureBoard(ctx context.Context, client *http.Client, cacheDir, board strin
 // ensureBoard is EnsureBoard's testable core: urlFor maps a release asset
 // name ("manifest.json" or "<board>.tar.zst") to a download URL, so tests
 // can point it at an httptest.Server instead of GitHub.
-func ensureBoard(ctx context.Context, client *http.Client, cacheDir, board, version string, urlFor func(name string) string) (string, error) {
+func ensureBoard(ctx context.Context, client *http.Client, cacheDir, board, version, manifestSHA256 string, urlFor func(name string) string) (string, error) {
 	if board == "" {
 		return "", errors.New("artifacts: board name is required")
 	}
+	if manifestSHA256 == "" {
+		return "", fmt.Errorf(
+			"this build of gosd pins artifacts release %s but no checksum for its manifest.json, so it can't tell a genuine release from a tampered one and won't use either; "+
+				"this is a bug in the build — internal/artifacts.ManifestSHA256 must be set alongside Version (see docs/artifacts.md) — so report it, or build for now with --artifacts-dir",
+			version)
+	}
 	if client == nil {
-		client = http.DefaultClient
+		client = fetch.DefaultClient
 	}
 
 	versionDir := filepath.Join(cacheDir, version)
 	boardDir := filepath.Join(versionDir, board)
 	manifestPath := filepath.Join(versionDir, "manifest.json")
 
-	if m, err := readManifestCache(manifestPath); err == nil {
+	if m, err := readManifestCache(manifestPath, manifestSHA256); err == nil {
 		if bf, ok := m.Boards[board]; ok && verifyFiles(boardDir, bf.Files) == nil {
 			return boardDir, nil // fully offline: cache already verified, no network touched
 		}
 	}
 
-	manifest, err := fetchManifest(ctx, client, urlFor("manifest.json"))
+	manifestBytes, manifest, err := fetchManifest(ctx, client, urlFor("manifest.json"), manifestSHA256)
+	if errors.Is(err, errUntrustedManifest) {
+		return "", err // says what went wrong on its own terms; being offline is not one of the explanations
+	}
 	if err != nil {
 		return "", fmt.Errorf(
 			"downloading the gosd artifact manifest for release artifacts/%s failed: %w; "+
@@ -148,7 +199,7 @@ func ensureBoard(ctx context.Context, client *http.Client, cacheDir, board, vers
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op once the rename below succeeds
 
-	if err := fetchTarball(ctx, client, urlFor(board+".tar.zst"), tmpDir); err != nil {
+	if err := fetchTarball(ctx, client, urlFor(board+".tar.zst"), tmpDir, maxUnpackedBytes); err != nil {
 		return "", fmt.Errorf("downloading %s's artifact tarball for release artifacts/%s failed: %w", board, version, err)
 	}
 
@@ -166,7 +217,7 @@ func ensureBoard(ctx context.Context, client *http.Client, cacheDir, board, vers
 		return "", fmt.Errorf("moving downloaded artifacts into place at %s: %w", boardDir, err)
 	}
 
-	if err := writeManifestCache(manifestPath, manifest); err != nil {
+	if err := writeManifestCache(manifestPath, manifestBytes); err != nil {
 		return "", fmt.Errorf("caching artifact manifest at %s: %w", manifestPath, err)
 	}
 
@@ -181,28 +232,55 @@ func boardNames(m Manifest) []string {
 	return names
 }
 
-// readManifestCache reads and parses a previously-cached manifest.json.
-func readManifestCache(path string) (Manifest, error) {
+// readManifestCache reads a previously-cached manifest.json, re-hashing its
+// bytes against the pinned digest before parsing them — the cached file is
+// as untrusted as a downloaded one, so a mismatch is reported as an error
+// and ensureBoard falls through to a fresh download.
+func readManifestCache(path, wantSHA256 string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Manifest{}, err
 	}
+	return parseManifest(data, wantSHA256, path)
+}
+
+// parseManifest verifies data against wantSHA256 — described to the reader
+// as source — and only then unmarshals it.
+func parseManifest(data []byte, wantSHA256, source string) (Manifest, error) {
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != wantSHA256 {
+		return Manifest{}, fmt.Errorf("%s: checksum mismatch: got sha256:%s, want sha256:%s", source, got, wantSHA256)
+	}
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return Manifest{}, fmt.Errorf("parsing cached manifest %s: %w", path, err)
+		return Manifest{}, fmt.Errorf("parsing manifest %s: %w", source, err)
 	}
 	return m, nil
 }
 
-// writeManifestCache persists manifest so future EnsureBoard calls (for this
-// or any other board at the same version) can verify their cache without a
-// network request.
-func writeManifestCache(path string, manifest Manifest) error {
-	data, err := json.Marshal(manifest)
+// writeManifestCache persists the verified manifest bytes — byte for byte as
+// published, so a later readManifestCache can re-check them against the same
+// pinned digest — so future EnsureBoard calls (for this or any other board
+// at the same version) can verify their cache without a network request.
+func writeManifestCache(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "manifest.json.part-*")
 	if err != nil {
-		return fmt.Errorf("encoding manifest: %w", err)
+		return fmt.Errorf("creating temp file in %s: %w", filepath.Dir(path), err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }() // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", tmpPath, err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("setting permissions on %s: %w", tmpPath, err)
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // verifyFiles checks that every file's sha256 and size match the manifest's
@@ -229,26 +307,43 @@ func verifyFiles(dir string, files []FileEntry) error {
 	return nil
 }
 
-// fetchManifest downloads and parses a manifest.json.
-func fetchManifest(ctx context.Context, client *http.Client, url string) (Manifest, error) {
+// errUntrustedManifest marks a manifest that downloaded fine but isn't the
+// one this gosd was built against — a different failure from not reaching
+// the release at all, and one no amount of network connectivity fixes.
+var errUntrustedManifest = errors.New("the artifact manifest is not the one this gosd was built against")
+
+// fetchManifest downloads a manifest.json, verifies its bytes against
+// wantSHA256, and returns both those bytes and the parsed result — the bytes
+// so the caller can cache exactly what it verified.
+func fetchManifest(ctx context.Context, client *http.Client, url, wantSHA256 string) ([]byte, Manifest, error) {
 	resp, err := httpGet(ctx, client, url)
 	if err != nil {
-		return Manifest{}, err
+		return nil, Manifest{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var m Manifest
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return Manifest{}, fmt.Errorf("parsing %s: %w", url, err)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes))
+	if err != nil {
+		return nil, Manifest{}, fmt.Errorf("reading %s: %w", url, err)
 	}
-	return m, nil
+
+	m, err := parseManifest(data, wantSHA256, url)
+	if err != nil {
+		return nil, Manifest{}, fmt.Errorf(
+			"%w: %w; this gosd only trusts the artifact release it was built against, so nothing has been "+
+				"downloaded or cached — re-run in case the transfer was corrupted, and if it keeps failing "+
+				"report it, or build from artifacts you supply yourself with --artifacts-dir",
+			errUntrustedManifest, err)
+	}
+	return data, m, nil
 }
 
 // fetchTarball downloads a zstd-compressed tar archive from url and extracts
 // its regular files directly into destDir (flattened: directory entries and
 // any path components in tar headers are not preserved beyond the base
-// name), rejecting entries whose name would escape destDir.
-func fetchTarball(ctx context.Context, client *http.Client, url, destDir string) error {
+// name), rejecting entries whose name would escape destDir and refusing to
+// write more than maxUnpacked bytes in total.
+func fetchTarball(ctx context.Context, client *http.Client, url, destDir string, maxUnpacked int64) error {
 	resp, err := httpGet(ctx, client, url)
 	if err != nil {
 		return err
@@ -261,7 +356,13 @@ func fetchTarball(ctx context.Context, client *http.Client, url, destDir string)
 	}
 	defer zr.Close()
 
-	tr := tar.NewReader(zr)
+	tr := tar.NewReader(&cappedReader{
+		r:         zr,
+		remaining: maxUnpacked,
+		err: fmt.Errorf(
+			"%s expands to more than %d bytes, far larger than any board's artifacts; extraction was abandoned rather than filling the disk",
+			url, maxUnpacked),
+	})
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -287,6 +388,27 @@ func fetchTarball(ctx context.Context, client *http.Client, url, destDir string)
 			return err
 		}
 	}
+}
+
+// cappedReader is io.LimitReader that reports its own error on running out
+// rather than a clean EOF, so an over-long archive fails as what it is
+// instead of as a truncated tar.
+type cappedReader struct {
+	r         io.Reader
+	remaining int64
+	err       error
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.remaining <= 0 {
+		return 0, c.err
+	}
+	if int64(len(p)) > c.remaining {
+		p = p[:c.remaining]
+	}
+	n, err := c.r.Read(p)
+	c.remaining -= int64(n)
+	return n, err
 }
 
 func extractFile(r io.Reader, dest string) error {
