@@ -4,6 +4,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 )
 
 func TestSupervisorRestartsWithEscalatingBackoff(t *testing.T) {
@@ -23,7 +25,7 @@ func TestSupervisorRestartsWithEscalatingBackoff(t *testing.T) {
 		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, nil }, // exits immediately every time
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
 		Now:         clock.Now,
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		Log:         func(string, ...any) {},
 	}
@@ -67,7 +69,7 @@ func TestSupervisorResetsBackoffAfterAStableRun(t *testing.T) {
 		},
 		Sleep:       func(d time.Duration) { sleeps = append(sleeps, d) },
 		Now:         clock.Now,
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		Log:         func(string, ...any) {},
 	}
@@ -112,7 +114,7 @@ func TestSupervisorReportsAStableRunWhileTheAppIsStillRunning(t *testing.T) {
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
 		After:       func(time.Duration) <-chan time.Time { return stableAfter },
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		OnStableRun: func() { close(stable) },
 		Log:         func(string, ...any) {},
@@ -140,7 +142,7 @@ func TestSupervisorDoesNotReportAStableRunForACrashLoop(t *testing.T) {
 		Now:   clock.Now,
 		// A timer that never fires: the app never lives long enough.
 		After:       func(time.Duration) <-chan time.Time { return make(chan time.Time) },
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		OnStableRun: func() { stableRuns++ },
 		Log:         func(string, ...any) {},
@@ -169,7 +171,7 @@ func TestSupervisorLogsStartFailuresAndKeepsRetrying(t *testing.T) {
 		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, nil },
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		Log:         func(string, ...any) {},
 	}
@@ -205,7 +207,7 @@ func TestSupervisorReportsOnExitWithTheFullExitStatus(t *testing.T) {
 		},
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		OnExit:      func(status ExitStatus, ran time.Duration) bool { got = append(got, status); return false },
 		Log:         func(string, ...any) {},
@@ -240,7 +242,7 @@ func TestSupervisorSkipsOnExitWhenWaitFails(t *testing.T) {
 		Wait:        func(int) (ExitStatus, error) { return ExitStatus{}, errBoom },
 		Sleep:       func(time.Duration) {},
 		Now:         clock.Now,
-		Backoff:     NewBackoff(1*time.Second, 10*time.Second),
+		Backoff:     childbackoff.NewBackoff(1*time.Second, 10*time.Second),
 		StableAfter: 30 * time.Second,
 		OnExit:      func(ExitStatus, time.Duration) bool { calls++; return false },
 		Log:         func(string, ...any) {},

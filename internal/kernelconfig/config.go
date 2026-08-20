@@ -50,13 +50,30 @@ type Config struct {
 // BoardOverlay is one [kernel.<board-id>] section: paths as written in the
 // file, not yet resolved into file contents (see Config.Overlay).
 type BoardOverlay struct {
-	// Fragment is a path to a Kconfig fragment file, merged onto the
-	// board's kernelspec.KernelSpec.ConfigFragment.
+	// Fragment is a path to a single Kconfig fragment file, merged onto the
+	// board's kernelspec.KernelSpec.ConfigFragment. Mutually exclusive with
+	// Fragments.
 	Fragment string `toml:"fragment"`
+	// Fragments is an ordered list of Kconfig fragment file paths, merged
+	// onto the board's kernelspec.KernelSpec.ConfigFragment in list order,
+	// each after the last — so two recipe variants of the same board can
+	// share a common fragment (bean gosd-vk8s) instead of each carrying a
+	// full copy of it, the way a single Fragment can't. Mutually exclusive
+	// with Fragment.
+	Fragments []string `toml:"fragments"`
 	// Patches is a list of paths or globs to device-tree patch files,
 	// applied (in the order they expand to, sorted) after every patch in
 	// KernelSpec.DTSPatches.
 	Patches []string `toml:"patches"`
+}
+
+// fragmentPaths returns b's fragment file paths in merge order, whichever
+// of Fragment/Fragments was set.
+func (b BoardOverlay) fragmentPaths() []string {
+	if b.Fragment != "" {
+		return []string{b.Fragment}
+	}
+	return b.Fragments
 }
 
 // FirmwareFile is one [[firmware]] entry: a runtime firmware blob fetched
@@ -192,6 +209,11 @@ func decodeKernelSection(md toml.MetaData, raw map[string]toml.Primitive) (Confi
 			if err := md.PrimitiveDecode(prim, &board); err != nil {
 				return Config{}, fmt.Errorf("gosd-kernel.toml [kernel.%s]: %w", key, err)
 			}
+			if board.Fragment != "" && len(board.Fragments) > 0 {
+				return Config{}, fmt.Errorf(
+					"gosd-kernel.toml [kernel.%s]: fragment and fragments are mutually exclusive; "+
+						"use fragments to merge more than one file", key)
+			}
 			cfg.Kernel[key] = board
 		}
 	}
@@ -256,9 +278,9 @@ func validDest(dest string) error {
 }
 
 // Overlay resolves boardID's [kernel.<board-id>] section (if any) into a
-// kernelbuild.Overlay, reading the fragment file and expanding+reading every
-// patches entry as a glob. Relative paths resolve against baseDir — the
-// directory gosd-kernel.toml itself lives in, matching how a developer
+// kernelbuild.Overlay, reading the fragment file(s) and expanding+reading
+// every patches entry as a glob. Relative paths resolve against baseDir —
+// the directory gosd-kernel.toml itself lives in, matching how a developer
 // editing that file would expect a relative path to behave. A board with no
 // matching section, or a zero Config, resolves to the zero (no-op) Overlay.
 func (c Config) Overlay(boardID, baseDir string) (kernelbuild.Overlay, error) {
@@ -269,11 +291,10 @@ func (c Config) Overlay(boardID, baseDir string) (kernelbuild.Overlay, error) {
 
 	var overlay kernelbuild.Overlay
 
-	if board.Fragment != "" {
-		path := resolvePath(baseDir, board.Fragment)
-		data, err := os.ReadFile(path)
+	if paths := board.fragmentPaths(); len(paths) > 0 {
+		data, err := readFragments(boardID, baseDir, paths)
 		if err != nil {
-			return kernelbuild.Overlay{}, fmt.Errorf("gosd-kernel.toml [kernel.%s] fragment %q: %w", boardID, path, err)
+			return kernelbuild.Overlay{}, err
 		}
 		overlay.ConfigFragment = data
 	}
@@ -299,6 +320,31 @@ func (c Config) Overlay(boardID, baseDir string) (kernelbuild.Overlay, error) {
 	}
 
 	return overlay, nil
+}
+
+// readFragments reads paths in order and concatenates them into the single
+// blob kernelbuild.Overlay.ConfigFragment carries, so two recipe variants
+// can share a common fragment by listing it first in each (bean gosd-vk8s):
+// the pieces are joined with an inserted newline where one is missing, so a
+// fragment file without its own trailing newline can't glue its last option
+// onto the next file's first line, and the concatenation order — preserved,
+// never sorted — is what makes a later fragment's line win a conflict with
+// an earlier one, exactly as merge_config.sh -m already does within a
+// single file.
+func readFragments(boardID, baseDir string, paths []string) ([]byte, error) {
+	var buf bytes.Buffer
+	for _, p := range paths {
+		resolved := resolvePath(baseDir, p)
+		data, err := os.ReadFile(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("gosd-kernel.toml [kernel.%s] fragment %q: %w", boardID, resolved, err)
+		}
+		buf.Write(data)
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			buf.WriteByte('\n')
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func resolvePath(baseDir, path string) string {

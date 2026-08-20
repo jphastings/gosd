@@ -1,11 +1,11 @@
 ---
 # gosd-9z43
-title: 'kernelspec.go still calls rock-4se "scaffolding-only," blocked on two beans that completed months ago'
-status: todo
+title: kernelspec.go still calls rock-4se "scaffolding-only," blocked on two beans that completed months ago
+status: completed
 type: bug
 priority: low
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T05:32:00Z
 ---
 
 **Severity: Low.** Cosmetic — no code depends on this comment — but it's the
@@ -49,7 +49,18 @@ context is worth keeping) that rock-4se shipped as a public board in
 
 ## Todos
 
-- [ ] Remove or rewrite `kernelspec.go:459-464`
-- [ ] Skim the rest of `kernelspec.go` for any other board's entry still
+- [x] Remove or rewrite `kernelspec.go:459-464`
+- [x] Skim the rest of `kernelspec.go` for any other board's entry still
       carrying a "scaffolding-only" / "not yet registered" comment from its
-      own bring-up era
+      own bring-up era (none found)
+
+## Summary of Changes
+
+Deleted the stale "rock-4se is scaffolding-only" comment block above the
+`"rock-4se"` kernelspec entry: both blocking beans (gosd-0vvh, gosd-iosp)
+completed months ago, rock-4se is registered and public
+(`boards.Register(rock4se.New())` in `cmd/gosd/build.go`), and the named
+test (`TestBoardIDsListsExactlyTheFiveKernelBuildingBoards`) doesn't exist
+under that name any more. Skimmed the rest of `kernelspec.go` for similar
+stale scaffolding/not-yet-registered comments on other boards' entries —
+found none.

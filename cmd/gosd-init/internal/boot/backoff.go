@@ -3,7 +3,9 @@ package boot
 import "time"
 
 // Boot-sequence-mandated restart backoff bounds: restart /app on exit with
-// exponential backoff capped at 10s.
+// exponential backoff capped at 10s. The doubling/capping engine itself is
+// childbackoff.Backoff (bean gosd-gkbi consolidated /app's own copy onto
+// it); these constants are boot's own choice of that engine's base/max.
 const (
 	DefaultBackoffBase = 1 * time.Second
 	DefaultBackoffCap  = 10 * time.Second
@@ -17,35 +19,3 @@ const (
 	// stay slow to restart for the rest of its uptime.
 	StableRunThreshold = 30 * time.Second
 )
-
-// Backoff computes the exponential restart delay for a crash-looping child
-// process: it doubles on each consecutive failure, capped at max, and can be
-// reset back to base once the process has proven stable.
-type Backoff struct {
-	base, max time.Duration
-	delay     time.Duration
-}
-
-// NewBackoff creates a Backoff that starts at base and never exceeds max.
-func NewBackoff(base, max time.Duration) *Backoff {
-	return &Backoff{base: base, max: max}
-}
-
-// Next returns the delay to wait before the next restart attempt, doubling
-// the delay (capped at max) for the following call.
-func (b *Backoff) Next() time.Duration {
-	if b.delay <= 0 {
-		b.delay = b.base
-	} else {
-		b.delay *= 2
-		if b.delay > b.max {
-			b.delay = b.max
-		}
-	}
-	return b.delay
-}
-
-// Reset returns the backoff to its initial state.
-func (b *Backoff) Reset() {
-	b.delay = 0
-}
