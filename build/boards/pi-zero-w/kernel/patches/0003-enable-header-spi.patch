@@ -1,0 +1,53 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
+@@ -137,6 +137,50 @@
+ 	status = "okay";
+ };
+ 
++&spi {
++	/*
++	 * GoSD (github.com/jphastings/gosd): enables the 40-pin header's SPI0
++	 * bus (physical pins 19 MOSI/21 MISO/23 SCLK/24 CE0/26 CE1 - GPIO10/
++	 * 9/11/8/7, matching this board's own gpio-line-names above:
++	 * SPI_MOSI/MISO/SCLK/CE0_N/CE1_N).
++	 *
++	 * config.txt's dtparam=spi=on is a no-op on pi-zero-w: dtparam is
++	 * implemented by the Pi firmware patching the DTB's __overrides__
++	 * block at boot, and this board is the one GoSD board built from the
++	 * mainline-style DTS chain (this file -> bcm2835.dtsi/bcm283x.dtsi),
++	 * which carries no __overrides__ node at all - the parameter is
++	 * accepted and silently discarded. See bean gosd-dkqb, and CLAUDE.md's
++	 * "know a Pi DTB's lineage" rule (already tripped by this board's DMA
++	 * and USB-gadget bindings - beans gosd-1ey5, gosd-spjt). This patch
++	 * enables the controller directly, the same route bean gosd-1ey5 used
++	 * for the dma-ranges fix above.
++	 */
++	pinctrl-names = "default";
++	pinctrl-0 = <&spi0_gpio7>;
++	status = "okay";
++
++	spidev@0 {
++		/*
++		 * "spidev" alone is refused by drivers/spi/spidev.c
++		 * (spidev_of_check) - rohm,dh2228fv is spidev's own documented
++		 * generic placeholder compatible (Documentation/spi/spidev.rst,
++		 * spidev_dt_ids[]), the same one used by the Rockchip boards'
++		 * SPI patches (bean gosd-fnza). Both chip selects are routed to
++		 * the 40-pin header on this board, so both spidev children are
++		 * added, mirroring nanopi-zero2's spi1 patch.
++		 */
++		compatible = "rohm,dh2228fv";
++		reg = <0>;
++		spi-max-frequency = <10000000>;
++	};
++
++	spidev@1 {
++		compatible = "rohm,dh2228fv";
++		reg = <1>;
++		spi-max-frequency = <10000000>;
++	};
++};
++
+ &uart0 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&uart0_gpio32 &uart0_ctsrts_gpio30>;

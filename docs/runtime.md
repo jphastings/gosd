@@ -1171,15 +1171,22 @@ enablement that was previously missing.
 | Board | Device | Physical pins | Notes |
 |---|---|---|---|
 | Raspberry Pi Zero 2 W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same pins as `GPIO2`/`GPIO3` on any Pi — the standard Pi I2C position. Using those pins as plain GPIO is unavailable while I2C is enabled. |
-| Raspberry Pi Zero W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
+| Raspberry Pi Zero W | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same pins, but by a different mechanism: `dtparam=i2c_arm=on` is a no-op on this board (see the SPI row below) — I2C works because upstream `bcm2835-rpi.dtsi` enables it unconditionally regardless of that line (bean `gosd-dkqb`). |
 | Raspberry Pi 3B (and 3B+) | `/dev/i2c-1` | Header pins 3 (SDA) / 5 (SCL) | Same as above. |
 | Radxa Zero 3E | `/dev/i2c-3` | 40-pin header pins 3 (SDA) / 5 (SCL) | Same physical header position as the Pi's I2C pins, confirmed against Radxa's own schematic and pinout docs. |
 | NanoPi Zero2 | `/dev/i2c-5` | 30-pin FPC pins 12 (SCL) / 13 (SDA) | Confirmed against FriendlyElec's schematic. **Needs an external ~2.2kΩ pull-up on both lines** — unlike the other boards' I2C pins, this bus has no onboard pull-up resistors (FriendlyElec's own schematic note); most breakout boards include their own, but bare sensor modules may not. |
 | Radxa ROCK 4SE | `/dev/i2c-7` | 40-pin header pins 3 (SDA7) / 5 (SCL7) | Same physical header position as the Pi's I2C pins. **Hardware-verified** (device ACK from a Qwiic Button, bean `gosd-sz6p`, 2026-07-23). Uniquely among GoSD's boards, two more header I2C buses are enabled and equally hardware-verified: `/dev/i2c-2` on pins 27 (SDA2) / 28 (SCL2), and `/dev/i2c-6` on pins 29 (SCL6) / 31 (SDA6) — note the SCL/SDA pin order flips between buses. Adapter numbers are alias-pinned to controller names and stable (buses 0/1/3/4 exist as internal-only buses; 5 and 8 are disabled controllers). |
 
-On the Pi boards, enabling I2C means `config.txt` carries
-`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism); on the
-three Rockchip boards, it means the shipped kernel's device tree
+On the Pi Zero 2W and 3B, enabling I2C means `config.txt` carries
+`dtparam=i2c_arm=on` (Raspberry Pi's own documented mechanism). These two
+boards' DTBs are downstream-style, which normally carries the
+`__overrides__` node that mechanism patches — expected to work, though not
+independently re-verified by parsing the released DTB the way pi-zero-w's
+mainline-style DTB was (bean `gosd-dkqb`'s per-board scope note). The Pi
+Zero W carries the same line, but it does nothing there — see the table
+note above; I2C works anyway, by upstream default rather than by this
+mechanism. On the three Rockchip boards, enabling I2C
+means the shipped kernel's device tree
 enables the relevant `i2cN` controller node(s) — see
 `build/boards/radxa-zero-3e/kernel/patches/`,
 `build/boards/nanopi-zero2/kernel/patches/`, and
@@ -1205,18 +1212,24 @@ device-tree/`config.txt` enablement that was previously missing.
 | Board | Device(s) | Physical pins | Notes |
 |---|---|---|---|
 | Raspberry Pi Zero 2 W | `/dev/spidev0.0`, `/dev/spidev0.1` | Header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CE0) / 26 (CE1) | The standard Pi SPI0 position, both chip selects. |
-| Raspberry Pi Zero W | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
+| Raspberry Pi Zero W | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | **Different mechanism, and pending an artifact release.** `dtparam=spi=on` is a no-op on this board: it's the one GoSD board built from the mainline-style DTS chain, which has no `__overrides__` node for the Pi firmware to patch (bean `gosd-dkqb`). A kernel-build DTS patch (`build/boards/pi-zero-w/kernel/patches/0003-enable-header-spi.patch`) enables `&spi` directly instead, but that only reaches a real (non-`--artifacts-dir`) build once a new `artifacts/vX.Y.Z` release ships it and `internal/artifacts.Version` is bumped to it — until then, this row is aspirational for pi-zero-w. |
 | Raspberry Pi 3B (and 3B+) | `/dev/spidev0.0`, `/dev/spidev0.1` | Same as above | Same as above. |
 | Radxa Zero 3E | `/dev/spidev3.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, confirmed against Radxa's own schematic and pinout docs — but only one chip select: physical pin 26, where a Pi's CE1 would be, is not connected on this board's header, so there is no `/dev/spidev3.1`. |
 | NanoPi Zero2 | `/dev/spidev1.0`, `/dev/spidev1.1` | 30-pin FPC pins 16 (CLK) / 17 (MOSI) / 18 (MISO) / 19 (CS0) / 20 (CS1) | Confirmed against FriendlyElec's schematic; both chip selects are routed to the FPC connector. |
 | Radxa ROCK 4SE | `/dev/spidev1.0` | 40-pin header pins 19 (MOSI) / 21 (MISO) / 23 (SCLK) / 24 (CS0) | Same physical header position as the Pi's SPI0 pins, per Radxa's own pinout docs. **Schematic-derived, not hardware-verified** — SPI wasn't exercised during the board's hardware bring-up (bean `gosd-sz6p`). Only one chip select is wired up (CS0); the DTS patch adds no second `spidev` child node, so there is no `/dev/spidev1.1`. |
 
-On the Pi boards, enabling SPI means `config.txt` carries
+On the Pi Zero 2W and 3B, enabling SPI means `config.txt` carries
 `dtparam=spi=on` (Raspberry Pi's own documented mechanism, giving both
-`spidev0.0` and `spidev0.1`); on the three Rockchip boards, it means
-the shipped kernel's device tree enables the relevant `spiN` controller
+`spidev0.0` and `spidev0.1`). As with I2C above, these two boards'
+downstream-style DTBs normally carry the `__overrides__` node that
+mechanism patches, but that's expected rather than independently
+re-verified (bean `gosd-dkqb`'s per-board scope note). The Pi Zero W needs
+a kernel-build DTS patch instead — see the table note above — the same
+mechanism the three Rockchip boards use, where the shipped kernel's device
+tree enables the relevant `spiN` controller
 node and adds a `spidev` child node for each header-routed chip select
-— see `build/boards/radxa-zero-3e/kernel/patches/`,
+— see `build/boards/pi-zero-w/kernel/patches/`,
+`build/boards/radxa-zero-3e/kernel/patches/`,
 `build/boards/nanopi-zero2/kernel/patches/`, and
 `build/boards/rock-4se/kernel/patches/` if you're curious about the
 mechanism. Note the child node's `compatible` value: the kernel's

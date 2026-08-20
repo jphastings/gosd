@@ -32,7 +32,8 @@ boards. Most of what it does is board-independent — on every board, GoSD:
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
   stock kernels omit (`gosd build-kernel`).
 - Enables I2C, SPI and GPIO by default ([pinouts](docs/runtime.md)) —
-  except the Radxa Cubie A5E, see Board notes below.
+  except the Radxa Cubie A5E, and except SPI on the Pi Zero W pending an
+  artifact release, see Board notes below.
 - Shows boot state on an onboard status LED — even flash while booting, a
   short blip once a second while your app runs, solid on for a recorded
   fatal error — no
@@ -86,7 +87,18 @@ board · ❌ not supported (see footnote).
 ## Board notes
 
 - **Pi Zero W** — single armv6 core (`GOARCH=arm GOARM=6`): a real
-  performance ceiling for CPU-bound work.
+  performance ceiling for CPU-bound work. Its SPI controller needs a
+  kernel-build DTS patch, not `config.txt`'s `dtparam=spi=on`: this is the
+  one GoSD board built from the mainline-style DTS chain, which (unlike the
+  downstream-style DTBs the other Pi boards use) has no `__overrides__`
+  node for the Pi firmware's dtparam mechanism to patch, so that line is
+  silently discarded (bean `gosd-dkqb`). The fix is in tree
+  (`build/boards/pi-zero-w/kernel/patches/0003-enable-header-spi.patch`)
+  but needs a new `artifacts/vX.Y.Z` release before a real (non-
+  `--artifacts-dir`) build picks it up — until then, `/dev/spidev0.*` will
+  not appear on this board. I2C is unaffected: `bcm2835-rpi.dtsi` enables
+  it unconditionally, independent of the (also inert on this board)
+  `dtparam=i2c_arm=on`.
 - **Pi 3B** — one image covers the 3B and 3B+ (both DTBs ship; the
   firmware picks by board revision).
 - **Radxa Zero 3E** — its [1,500,000-baud console](docs/runtime.md)
