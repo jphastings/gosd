@@ -6,7 +6,10 @@ import (
 )
 
 // Locked content, per beans gosd-06kj, gosd-85pt and gosd-fnza: do not change
-// these expectations without updating that decision.
+// these expectations without updating that decision. The dtparam comment
+// block is a gosd-dkqb addition: both dtparam lines are no-ops on this
+// board specifically (see config.txt.tmpl), which the comment explains
+// without removing the lines themselves.
 const (
 	wantConfigTxt = "kernel=kernel.img\n" +
 		"initramfs initramfs.cpio.zst followkernel\n" +
@@ -14,6 +17,19 @@ const (
 		"disable_splash=1\n" +
 		"boot_delay=0\n" +
 		"avoid_warnings=1\n" +
+		"# GoSD (github.com/jphastings/gosd): dtparam=i2c_arm=on and dtparam=spi=on\n" +
+		"# are both no-ops on THIS board - dtparam works by the Pi firmware patching\n" +
+		"# the DTB's __overrides__ block at boot, and pi-zero-w is the one GoSD\n" +
+		"# board built from the mainline-style DTS chain, which carries no\n" +
+		"# __overrides__ node at all (bean gosd-dkqb). They're kept here anyway, for\n" +
+		"# the same reason every other Pi board's config.txt carries them: as a\n" +
+		"# statement of intent, and because the firmware only logs and ignores an\n" +
+		"# unrecognised dtparam rather than failing the boot. I2C is unaffected -\n" +
+		"# bcm2835-rpi.dtsi sets &i2c0/&i2c1 status = \"okay\" unconditionally, so it\n" +
+		"# works regardless of this line. SPI is NOT unaffected: it needs (and, in\n" +
+		"# tree, now has) a kernel-build DTS patch instead -\n" +
+		"# build/boards/pi-zero-w/kernel/patches/0003-enable-header-spi.patch sets\n" +
+		"# &spi status = \"okay\" directly, since dtparam can't reach this DTB.\n" +
 		"dtparam=i2c_arm=on\n" +
 		"dtparam=spi=on\n"
 
