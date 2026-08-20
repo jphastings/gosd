@@ -1,0 +1,23 @@
+--- a/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts
++++ b/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts
+@@ -35,6 +35,20 @@
+ 		use-led {
+ 			function = LED_FUNCTION_ACTIVITY;
+ 			color = <LED_COLOR_ID_BLUE>;
++			/*
++			 * GoSD (github.com/jphastings/gosd): use-led (blue:activity)
++			 * is GoSD's status LED (bean gosd-n82u) - NOT power-led,
++			 * which is deliberately left alone. Solid on means a fatal
++			 * error was reported (fault.Fatal, see docs/status-led.md).
++			 * This node had no default-state - "off" means solid-on can
++			 * only be gosd-init's fault report, never whatever level the
++			 * GPIO comes up in before gosd-init claims the LED.
++			 * retain-state-shutdown stops gpio_led_shutdown() clearing
++			 * that report during device_shutdown(), so a fatal error's
++			 * steady level survives the halt. See bean gosd-54j8.
++			 */
++			default-state = "off";
++			retain-state-shutdown;
+ 			gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL5 */
+ 		};
+ 	};

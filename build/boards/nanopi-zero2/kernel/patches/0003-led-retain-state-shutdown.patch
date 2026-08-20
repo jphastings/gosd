@@ -1,0 +1,25 @@
+--- a/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3528-nanopi-zero2.dts
+@@ -66,7 +66,21 @@
+ 
+ 		led-1 {
+ 			color = <LED_COLOR_ID_GREEN>;
+-			default-state = "on";
++			/*
++			 * GoSD (github.com/jphastings/gosd): led-1 (green:status)
++			 * is GoSD's status LED (bean gosd-n82u) - NOT led-0, the
++			 * red heartbeat LED, which gosd deliberately does not
++			 * claim. Solid on means a fatal error was reported
++			 * (fault.Fatal, see docs/status-led.md). default-state =
++			 * "off" (was "on") means solid-on can only be that fault
++			 * report, never whatever level the GPIO comes up in
++			 * before gosd-init claims the LED. retain-state-shutdown
++			 * stops gpio_led_shutdown() clearing that report during
++			 * device_shutdown(), so a fatal error's steady level
++			 * survives the halt. See bean gosd-54j8.
++			 */
++			default-state = "off";
++			retain-state-shutdown;
+ 			function = LED_FUNCTION_STATUS;
+ 			gpios = <&gpio4 RK_PB1 GPIO_ACTIVE_HIGH>;
+ 			linux,default-trigger = "default-on";

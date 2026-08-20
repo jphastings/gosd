@@ -1,6 +1,6 @@
 package manifest
 
-import _ "embed"
+import "embed"
 
 // KernelFragment is the GoSD Kconfig fragment merged onto bcm2711_defconfig
 // (via scripts/kconfig/merge_config.sh) to build this board's trimmed
@@ -12,3 +12,11 @@ import _ "embed"
 //
 //go:embed kernel.fragment
 var KernelFragment []byte
+
+// PatchesFS embeds this board's device-tree patches, applied in filename
+// order with `patch -p1` before the config step (see internal/kernelbuild).
+// Mirrors pi-zero-w's PatchesFS; see that package's doc comment for why the
+// patches live under kernel/ rather than internal/kernelspec itself.
+//
+//go:embed kernel/patches
+var PatchesFS embed.FS

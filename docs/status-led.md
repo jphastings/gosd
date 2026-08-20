@@ -44,12 +44,20 @@ stops the timer trigger dead, so a blinking fatal signal would last a
 fraction of a second and then vanish. A steady level is the only thing that
 can outlive the halt.
 
-> **Known limitation.** For that steady level to survive the halt at all, the
-> board's device tree has to mark the LED as retaining its state through
-> shutdown; otherwise the kernel turns every GPIO LED off on its way down. No
-> board ships that yet, so today the LED goes dark when the device halts. The
-> fatal state is still correct on any board that gains it, and everything
-> else on this page is unaffected.
+For that steady level to actually survive the halt, the board's device tree
+has to mark the LED as retaining its state through shutdown — otherwise the
+kernel turns every GPIO LED off on its way down. Every board's status LED
+node carries that marker (`retain-state-shutdown`), so `gpio_led_shutdown()`
+leaves the fatal report's solid-on level alone rather than clearing it. The
+same device-tree change also flips the LED's power-on default to off on
+every board, so solid-on can only mean the fatal state above — never
+whatever level the GPIO happens to come up in before `gosd-init` claims the
+LED, and never what shows if `gosd-init` never runs at all. One board's LED
+sits behind firmware rather than being driven by Linux directly — the
+Raspberry Pi 3B/3B+'s ACT LED is on the VideoCore's mailbox GPIO, not the
+SoC's own — so whether its retained level survives past Linux's halt depends
+on that firmware too, and needs confirming per board at the bench rather
+than assumed from the device tree alone.
 
 ## Which LED gets used
 
