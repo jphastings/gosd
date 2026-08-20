@@ -27,13 +27,17 @@ import (
 // The settings gosd-init itself acts on, named by their path in the card's
 // config tree. Everything under envPath belongs to the app rather than to
 // gosd-init, and each ingress agent reads its own group directly (see
-// main.go's StartNetworking wiring).
+// main.go's StartNetworking wiring) — the two ingress credentials below are
+// named here as well only because a crash report has to redact them, never
+// to act on them (see ingressRedactionRules).
 const (
-	hostnamePath       = "hostname"
-	wifiSSIDPath       = "wifi/ssid"
-	wifiPassphrasePath = "wifi/passphrase"
-	dataFlushPath      = "data_flush"
-	envPath            = "env"
+	hostnamePath         = "hostname"
+	wifiSSIDPath         = "wifi/ssid"
+	wifiPassphrasePath   = "wifi/passphrase"
+	dataFlushPath        = "data_flush"
+	envPath              = "env"
+	cloudflaredTokenPath = "ingress/cloudflared/token"
+	tsfunnelAuthkeyPath  = "ingress/tailscale-funnel/authkey"
 )
 
 // Deps bundles every side-effecting dependency the boot sequence needs.
@@ -426,7 +430,7 @@ func Run(deps Deps, opts Options) error {
 	// mount succeeded, so its secrets are handed over now through
 	// setSecrets rather than at construction.
 	userEnv := mergeUserEnv(cfg.Env, config.Group(envPath), log)
-	report.setSecrets(envRedactionRules(userEnv))
+	report.setSecrets(append(envRedactionRules(userEnv), ingressRedactionRules(config)...))
 
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
@@ -819,6 +823,43 @@ func envRedactionRules(env []string) []redact.Rule {
 			continue
 		}
 		rules = append(rules, redact.Rule{Needle: value, Replacement: "{$" + key + "}"})
+	}
+	return rules
+}
+
+// ingressRedactionRules turns the credentials the card's ingress settings
+// carry — a Cloudflare tunnel token, a Tailscale auth key — into the rules
+// a crash report is redacted with, alongside envRedactionRules' app env
+// (bean gosd-tzd1). They are the one class of secret gosd-init holds
+// ITSELF, and until this they were the only one the redaction system knew
+// nothing about: an app env value in the same position was scrubbed
+// automatically, a tunnel token was not.
+//
+// No gosd-init code path puts either value in a log line today, so this is
+// a safety net rather than a fix for a live leak — which is exactly the
+// point. The redaction system exists so that nobody has to audit each new
+// log line, or each upstream library's, for whether it prints a credential
+// that then reaches a file whose own text tells its reader to forward it.
+//
+// The rules are built here, at the point Run has the settled config tree,
+// rather than inside the ingress agents: an agent that never starts (no
+// binary baked, network never up, the child dead on arrival) must not be
+// the reason its token stays in a report. A setting nobody set is "" and
+// contributes no rule.
+func ingressRedactionRules(config cardconfig.Tree) []redact.Rule {
+	credentials := []struct {
+		path  string
+		label string
+	}{
+		{cloudflaredTokenPath, "{ingress: cloudflared-token}"},
+		{tsfunnelAuthkeyPath, "{ingress: tailscale-funnel-authkey}"},
+	}
+
+	rules := make([]redact.Rule, 0, len(credentials))
+	for _, c := range credentials {
+		if value := config.Get(c.path); value != "" {
+			rules = append(rules, redact.Rule{Needle: value, Replacement: c.label})
+		}
 	}
 	return rules
 }

@@ -49,8 +49,8 @@ func TestRedact_ReplacesNeedles(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Redact(tc.body, tc.rules).Body; got != tc.want {
-				t.Errorf("Redact(%q) = %q, want %q", tc.body, got, tc.want)
+			if got := New(tc.rules).Apply(tc.body); got != tc.want {
+				t.Errorf("Apply(%q) = %q, want %q", tc.body, got, tc.want)
 			}
 		})
 	}
@@ -63,16 +63,16 @@ func TestRedact_MinNeedleLengthBoundary(t *testing.T) {
 	belowThreshold := strings.Repeat("y", MinNeedleLength-1)
 	body := atThreshold + " " + belowThreshold
 
-	res := Redact(body, []Rule{
+	r := New([]Rule{
 		{Needle: atThreshold, Replacement: "{$AT}"},
 		{Needle: belowThreshold, Replacement: "{$BELOW}"},
 	})
 
-	if want := "{$AT} " + belowThreshold; res.Body != want {
-		t.Errorf("Redact() = %q, want %q", res.Body, want)
+	if got, want := r.Apply(body), "{$AT} "+belowThreshold; got != want {
+		t.Errorf("Apply() = %q, want %q", got, want)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0] != "{$BELOW}" {
-		t.Errorf("Skipped = %v, want [{$BELOW}]", res.Skipped)
+	if skipped := r.Skipped(); len(skipped) != 1 || skipped[0] != "{$BELOW}" {
+		t.Errorf("Skipped() = %v, want [{$BELOW}]", skipped)
 	}
 }
 
@@ -83,16 +83,16 @@ func TestRedact_LongestNeedleFirst(t *testing.T) {
 	long := "sk_live_abcdef0123456789"
 	short := "abcdef0123456789" // a substring of long
 
-	got := Redact("token: "+long, []Rule{
+	got := New([]Rule{
 		{Needle: short, Replacement: "{$SHORT}"},
 		{Needle: long, Replacement: "{$LONG}"},
-	}).Body
+	}).Apply("token: " + long)
 
 	if want := "token: {$LONG}"; got != want {
-		t.Errorf("Redact() = %q, want %q", got, want)
+		t.Errorf("Apply() = %q, want %q", got, want)
 	}
 	if strings.Contains(got, "sk_live_") || strings.Contains(got, short) {
-		t.Errorf("Redact() left a fragment of the longer secret: %q", got)
+		t.Errorf("Apply() left a fragment of the longer secret: %q", got)
 	}
 }
 
@@ -104,37 +104,37 @@ func TestRedact_OverlappingNeedles(t *testing.T) {
 	second := "BBBBCCCC"
 	body := "prefix AAAABBBBCCCC suffix"
 
-	res := Redact(body, []Rule{
+	got := New([]Rule{
 		{Needle: first, Replacement: "{$FIRST}"},
 		{Needle: second, Replacement: "{$SECOND}"},
-	})
+	}).Apply(body)
 
-	if want := "prefix {$FIRST}CCCC suffix"; res.Body != want {
-		t.Errorf("Redact() = %q, want %q", res.Body, want)
+	if want := "prefix {$FIRST}CCCC suffix"; got != want {
+		t.Errorf("Apply() = %q, want %q", got, want)
 	}
-	if strings.Contains(res.Body, first) || strings.Contains(res.Body, second) {
-		t.Errorf("Redact() left an overlapping secret intact: %q", res.Body)
+	if strings.Contains(got, first) || strings.Contains(got, second) {
+		t.Errorf("Apply() left an overlapping secret intact: %q", got)
 	}
 }
 
 func TestRedact_SkippedNeverCarriesTheNeedle(t *testing.T) {
-	res := Redact("DEBUG=1 PORT=80", []Rule{
+	skipped := New([]Rule{
 		{Needle: "1", Replacement: "{$DEBUG}"},
 		{Needle: "80", Replacement: "{$PORT}"},
-	})
+	}).Skipped()
 
 	want := []string{"{$DEBUG}", "{$PORT}"}
-	if len(res.Skipped) != len(want) {
-		t.Fatalf("Skipped = %v, want %v", res.Skipped, want)
+	if len(skipped) != len(want) {
+		t.Fatalf("Skipped() = %v, want %v", skipped, want)
 	}
 	for i, r := range want {
-		if res.Skipped[i] != r {
-			t.Errorf("Skipped[%d] = %q, want %q", i, res.Skipped[i], r)
+		if skipped[i] != r {
+			t.Errorf("Skipped()[%d] = %q, want %q", i, skipped[i], r)
 		}
 	}
-	// Result.Skipped's type ([]string of Replacement) makes this
-	// structurally true, not just true for this input — there is no
-	// field on Result a caller could log to reach a Needle value.
+	// Skipped's type ([]string of Replacement) makes this structurally
+	// true, not just true for this input — there is nothing a caller can
+	// reach through it that would leak a Needle value.
 }
 
 // The negative claim this package exists to make: once a needle clears the
@@ -146,10 +146,10 @@ func TestRedact_SecretDoesNotSurvive(t *testing.T) {
 		"API key " + secret + " rejected\n" +
 		"retrying with " + secret + " again\n"
 
-	res := Redact(body, []Rule{{Needle: secret, Replacement: "{$STRIPE_KEY}"}})
+	got := New([]Rule{{Needle: secret, Replacement: "{$STRIPE_KEY}"}}).Apply(body)
 
-	if strings.Contains(res.Body, secret) {
-		t.Fatalf("secret survived redaction: %q", res.Body)
+	if strings.Contains(got, secret) {
+		t.Fatalf("secret survived redaction: %q", got)
 	}
 }
 
@@ -160,13 +160,13 @@ func TestRedact_SecretDoesNotSurvive(t *testing.T) {
 func TestRedact_DuplicateNeedleUsesFirstRule(t *testing.T) {
 	secret := "duplicatedsecret789"
 
-	res := Redact(secret, []Rule{
+	got := New([]Rule{
 		{Needle: secret, Replacement: "{$FIRST}"},
 		{Needle: secret, Replacement: "{$SECOND}"},
-	})
+	}).Apply(secret)
 
-	if want := "{$FIRST}"; res.Body != want {
-		t.Errorf("Redact() = %q, want %q", res.Body, want)
+	if want := "{$FIRST}"; got != want {
+		t.Errorf("Apply() = %q, want %q", got, want)
 	}
 }
 
@@ -177,10 +177,29 @@ func TestRedact_Deterministic(t *testing.T) {
 	}
 	body := "aaaaaaaa and bbbbbbbb"
 
-	want := Redact(body, rules).Body
+	want := New(rules).Apply(body)
 	for i := 0; i < 5; i++ {
-		if got := Redact(body, rules).Body; got != want {
-			t.Fatalf("Redact() is non-deterministic: %q vs %q", got, want)
+		if got := New(rules).Apply(body); got != want {
+			t.Fatalf("Apply() is non-deterministic: %q vs %q", got, want)
 		}
+	}
+}
+
+// The property internal/faultreport is built on: one prepared rule set
+// redacts any number of separate strings, and answers what it skipped once
+// for the set rather than once per string.
+func TestRedactorAppliesToEveryStringItIsGiven(t *testing.T) {
+	r := New([]Rule{
+		{Needle: "sk_live_abcdef01", Replacement: "{$API_KEY}"},
+		{Needle: "pin", Replacement: "{secret: pin}"},
+	})
+
+	for _, field := range []string{"AUTH-sk_live_abcdef01", "auth failed for sk_live_abcdef01"} {
+		if got := r.Apply(field); strings.Contains(got, "sk_live_abcdef01") {
+			t.Errorf("Apply(%q) = %q, want the secret gone", field, got)
+		}
+	}
+	if skipped := r.Skipped(); len(skipped) != 1 || skipped[0] != "{secret: pin}" {
+		t.Errorf("Skipped() = %v, want [{secret: pin}] once for the set", skipped)
 	}
 }

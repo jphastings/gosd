@@ -203,15 +203,15 @@ func (r *fatalReporter) setBootCount(count int) {
 	r.ctx.BootCount = count
 }
 
-// setSecrets records the redaction rules discovered from the app's own
-// environment (sequence.go's envRedactionRules) for every report written
+// setSecrets records the redaction rules discovered from the card — the
+// app's own environment (sequence.go's envRedactionRules) and the ingress
+// credentials it carries (ingressRedactionRules) — for every report written
 // from here on. Like setBootCount, this exists because the reporter is
-// constructed well before the app env is assembled — mergeUserEnv only
-// runs once the card's settings have been read — so there is no
-// single moment before both are ready. Rules registered through
-// fault.RegisterSecretString are NOT set this way: those are read fresh at
-// every record() call (see headerNow), since a registration made moments
-// before a crash has to count.
+// constructed well before either is assembled — both need the card's
+// settings read first — so there is no single moment before both are ready.
+// Rules registered through fault.RegisterSecretString are NOT set this way:
+// those are read fresh at every record() call (see headerNow), since a
+// registration made moments before a crash has to count.
 func (r *fatalReporter) setSecrets(rules []redact.Rule) {
 	if r == nil {
 		return

@@ -238,6 +238,20 @@ gosd-init's own reserved `GOSD_*` variables are never swept this way:
 `GOSD_DATA_FLUSH` is `0` or `1`, and redacting it would blank every digit in
 the technical detail.
 
+The tunnel credentials a card carries are swept too — a Cloudflare tunnel
+token becomes `{ingress: cloudflared-token}`, a Tailscale auth key
+`{ingress: tailscale-funnel-authkey}` — so the secrets gosd-init holds for
+itself are covered by the same net as the ones it holds for you.
+
+Scrubbing applies to everything the report carries in from your side: the
+error code in the header, all four written sections, the technical detail,
+and the app name, version and support URL baked into the image. It does not
+apply to gosd's own wording — the title, the explanation of what the file
+is, the instruction to send the whole thing — because those are fixed
+strings in gosd itself and cannot contain your secret. Redacting them could
+only damage the part of the file your user reads, which is what happened
+when an app's env value was the word `computer`.
+
 Anything you register explicitly becomes `{secret: your-label}`:
 
 ```go
@@ -271,7 +285,10 @@ Three limits worth knowing:
   rest. Register the handful of long-lived credentials your app holds, not
   one per request.
 - **The serial console is never redacted.** It's a channel for someone
-  already holding the board, not a file that travels.
+  already holding the board, not a file that travels. That covers the
+  output gosd-init relays from cloudflared and the Tailscale shim as well:
+  it reaches the console and nowhere else, since only your app's own output
+  is kept for a report.
 
 ## Building for it
 
