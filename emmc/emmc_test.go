@@ -116,22 +116,44 @@ func TestChooseEMMCIgnoresNonMMCStorage(t *testing.T) {
 	}
 }
 
-// TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions pins the sysfs quirk
-// chooseEMMC's doc comment relies on (see gosd-f226/gosd-ix38): a GP hardware
-// partition's gendisk reports no device/type, so Kind is "" rather than
-// "MMC" — accidentally, not by an explicit exclusion like disk.rank's. If a
-// future kernel or sysfs change ever gave these Kind == "MMC", this test
-// would start failing and say exactly why.
-func TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions(t *testing.T) {
-	devices := []blockmount.Device{
-		{Name: "mmcblk0", Kind: "MMC", Partitions: []string{"mmcblk0p1"}},
-		{Name: "mmcblk0gp0", Kind: ""},
-		{Name: "mmcblk0gp1", Kind: ""},
-	}
-	mounted := map[string]bool{"/dev/mmcblk0p1": true}
+// TestChooseEMMCNeverPicksAHardwarePartition is bean gosd-b6jl's regression
+// test. Every one of these devices reports Kind == "MMC" — the state the
+// kernel does NOT put them in today, which is the only reason chooseEMMC's
+// `Kind == "MMC"` rank stayed clear of them before this bean. That protection
+// was an undocumented sysfs quirk, never verified on the Rockchip boards GoSD
+// ships, and silent if it ever regressed: formatting boot0/boot1 leaves a
+// board that no longer boots and cannot be recovered from the SD card, and a
+// GP area typically holds vendor keys or calibration data. They are now
+// excluded by name, in blockmount.Usable and in this rank, so a kernel that
+// started populating device/type for them would change nothing.
+func TestChooseEMMCNeverPicksAHardwarePartition(t *testing.T) {
+	for _, name := range []string{"mmcblk0boot0", "mmcblk0boot1", "mmcblk0rpmb", "mmcblk0gp0", "mmcblk0gp3"} {
+		t.Run(name, func(t *testing.T) {
+			devices := []blockmount.Device{
+				present("mmcblk0", "MMC", "mmcblk0p1"), // the eMMC itself: booted from, so in use
+				present(name, "MMC"),
+			}
+			mounted := map[string]bool{"/dev/mmcblk0p1": true}
 
-	if _, err := chooseEMMC(devices, mounted); !errors.Is(err, ErrNoEMMC) {
-		t.Fatalf("chooseEMMC error = %v, want ErrNoEMMC", err)
+			if _, err := chooseEMMC(devices, mounted); !errors.Is(err, ErrNoEMMC) {
+				t.Fatalf("chooseEMMC = %v, want ErrNoEMMC — %s must never be a format target", err, name)
+			}
+		})
+	}
+}
+
+// TestChooseEMMCStillPicksTheUserArea is the other half: the exclusion is by
+// the kernel's hardware-partition naming, so it must not catch the eMMC's own
+// user-data device or an ordinary partition name.
+func TestChooseEMMCStillPicksTheUserArea(t *testing.T) {
+	devices := []blockmount.Device{present("mmcblk1", "MMC")}
+
+	got, err := chooseEMMC(devices, nil)
+	if err != nil {
+		t.Fatalf("chooseEMMC: %v", err)
+	}
+	if got != "/dev/mmcblk1" {
+		t.Errorf("chooseEMMC = %q, want /dev/mmcblk1", got)
 	}
 }
 
@@ -208,7 +230,7 @@ func TestFormatAndMountWithRejectsAnUnknownFilesystem(t *testing.T) {
 	}
 }
 
-// ext4Fake scripts the platform operations for the ext4 establishment/
+// ext4Fake scripts the platform operations for the establishment/
 // adoption/crash-debris/mismatch tests below, mirroring
 // internal/blockmount's own fakeDeps (bean gosd-1c0x) but driven through
 // emmc's own storage() helper (Pkg: "emmc", Noun: "eMMC") rather than a
@@ -252,7 +274,7 @@ func (f *ext4Fake) deps() blockmount.Deps {
 			f.calls = append(f.calls, "grow")
 			return nil
 		},
-		EstablishMarker: func(string) error {
+		EstablishMarker: func(_ string, _ diskfmt.FS) error {
 			f.calls = append(f.calls, "marker")
 			f.markerPresent = true
 			return nil
@@ -261,7 +283,7 @@ func (f *ext4Fake) deps() blockmount.Deps {
 			f.calls = append(f.calls, "check-marker")
 			return f.markerPresent, nil
 		},
-		RootHasOtherContent: func(string) (bool, error) {
+		RootHasOtherContent: func(_ string, _ diskfmt.FS) (bool, error) {
 			f.calls = append(f.calls, "check-root")
 			return f.rootHasOther, nil
 		},
@@ -406,5 +428,39 @@ func TestEXT4LabelCapIsSixteenBytes(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("calls = %v, want none — an invalid label must be caught before any device is touched", f.calls)
+	}
+}
+
+// TestRunFAT32EstablishesThroughTheSharedSequence proves emmc's own wiring
+// reaches the FAT32/exFAT half of the establishment machinery bean gosd-mm6q
+// added — the device sync and the marker, which this package's deps supply —
+// rather than the bare format-and-mount it used to get. The logic itself is
+// tested package-agnostically in internal/blockmount.
+func TestRunFAT32EstablishesThroughTheSharedSequence(t *testing.T) {
+	f := &ext4Fake{contents: diskfmt.Contents{Blank: true}}
+
+	if _, err := blockmount.Run(storage(f.deps()), diskfmt.FAT32, "APPDATA", "/storage", false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []string{"inspect", "format", "sync", "mount", "marker"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("call order = %v, want %v — no grow for FAT32, but a sync and a marker", f.calls, want)
+	}
+}
+
+// TestRunFAT32AdoptsALegacyVolumeWithContent is the compatibility case seen
+// from emmc: an eMMC formatted by an older release carries no marker, and
+// must be adopted on the evidence of its own contents rather than reformatted
+// out from under the app.
+func TestRunFAT32AdoptsALegacyVolumeWithContent(t *testing.T) {
+	f := &ext4Fake{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}, rootHasOther: true}
+
+	if _, err := blockmount.Run(storage(f.deps()), diskfmt.FAT32, "APPDATA", "/storage", false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, call := range f.calls {
+		if call == "format" {
+			t.Fatalf("reformatted a legacy eMMC volume; calls = %v", f.calls)
+		}
 	}
 }

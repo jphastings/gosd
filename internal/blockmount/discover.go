@@ -1,6 +1,9 @@
 package blockmount
 
-import "sort"
+import (
+	"regexp"
+	"sort"
+)
 
 // Device is one entry under /sys/block, as candidate selection sees it.
 type Device struct {
@@ -90,18 +93,52 @@ func InUse(dev Device, mountedSources map[string]bool) bool {
 }
 
 // Usable reports whether dev could ever be a legitimate format target,
-// independent of any package's class preference: a device reporting no
-// medium (SizeSectors == 0 — an empty card-reader slot still enumerates as a
-// block device) or one that is write-protected (ReadOnly) must never be
-// offered, no matter what a caller's Rank would otherwise say. This lives in
-// Candidates rather than in each package's Rank so the two public packages
-// (emmc and disk) cannot silently diverge on it again: disk.rank enforced
-// both checks explicitly while emmc's rank did not, relying only on a
-// sysfs-topology quirk (an eMMC's hardware partitions read Kind == "" rather
-// than "MMC") to stay safe against write-protected or medium-less
-// candidates it never actually excluded — see gosd-ix38. A package's Rank
-// now only ever needs to express its own class preference; present-medium
-// and writable are enforced here, once, for both.
+// independent of any package's class preference. Three things disqualify a
+// device no matter what a caller's Rank would otherwise say: no medium
+// (SizeSectors == 0 — an empty card-reader slot still enumerates as a block
+// device), write protection (ReadOnly), and being an eMMC hardware partition
+// (IsMMCHardwarePartition — boot code, replay-protected storage or
+// vendor-managed content, never general storage).
+//
+// All three live here, in Candidates, rather than in each package's Rank, so
+// the two public packages (emmc and disk) cannot silently diverge on them
+// again — and they had, twice, in the same direction: disk.rank enforced the
+// medium and write-protection checks explicitly while emmc's rank did not
+// (gosd-ix38), and disk.rank excluded hardware partitions by an explicit
+// pattern (gosd-f226) while emmc's stayed clear of them only by accident,
+// because those gendisks happen to report no device/type in sysfs so
+// `Kind == "MMC"` misses them (gosd-b6jl). That quirk is not a documented
+// kernel contract, was never verified on the Rockchip boards this project
+// ships, and would fail silently — formatting an eMMC's boot0 leaves a board
+// that no longer boots and cannot be recovered from the SD card. A package's
+// Rank now only ever needs to express its own class preference.
 func Usable(dev Device) bool {
-	return dev.SizeSectors != 0 && !dev.ReadOnly
+	return dev.SizeSectors != 0 && !dev.ReadOnly && !IsMMCHardwarePartition(dev.Name)
+}
+
+// mmcHardwarePartitionRE matches the block-device names the kernel's MMC
+// block driver registers for an eMMC's hardware partitions: boot0/boot1 (boot
+// code), rpmb (replay-protected storage) and gp0-gp3 (vendor general-purpose
+// areas — on a Rockchip board these typically hold DRM keys, calibration data
+// or other secure storage the vendor put there, per gosd-f226). Each is its
+// own /sys/block gendisk alongside the user-data area (e.g. mmcblk0gp0 next to
+// mmcblk0), so it must be excluded structurally rather than by growing a
+// suffix list: a suffix check risks a false positive against a plain
+// partition name that happens to end the same way, and would need a new entry
+// every time the kernel's naming grows. The digit groups use \d+ rather than
+// a literal 0-3/0-1 so an unexpected shape (a double-digit device number, an
+// index the kernel doesn't use today) is still caught defensively; the
+// anchors keep a name that merely contains "boot"/"rpmb"/"gp" from matching
+// by accident. Partitions of the user area (mmcblk0p1) are never mistaken for
+// a hardware partition — "p1" is not one of "boot\d+", "rpmb" or "gp\d+".
+var mmcHardwarePartitionRE = regexp.MustCompile(`^mmcblk\d+(boot\d+|rpmb|gp\d+)$`)
+
+// IsMMCHardwarePartition spots an eMMC's boot, replay-protected and
+// general-purpose hardware partitions, which the kernel exposes as their own
+// block devices alongside the user area. Usable rejects every one of them,
+// for both public packages; the packages' own Rank functions name it too, so
+// that a Rank read on its own is honest about what it does and does not
+// accept.
+func IsMMCHardwarePartition(name string) bool {
+	return mmcHardwarePartitionRE.MatchString(name)
 }

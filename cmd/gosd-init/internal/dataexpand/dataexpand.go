@@ -23,7 +23,7 @@
 // The MBR entry is the commit record of a completed first boot, written
 // only over a filesystem proven finished — FAT32's EstablishedMarker,
 // written directly to the raw partition device (see CreateMarker), or
-// ext4's own marker (blockmount.EXT4EstablishedMarker), which can only be
+// ext4's own marker (blockmount.EstablishedMarker), which can only be
 // written and checked through a live kernel mount (see EstablishEXT4 and
 // EXT4Established) since growing an ext4 filesystem needs one regardless.
 // Three states therefore cover every boot: no entry means first-boot work
@@ -206,7 +206,7 @@ type Deps struct {
 	FormatEXT4 func(partitionDevice, label string) error
 	// EstablishEXT4 mounts the partition's ext4 filesystem at a scratch
 	// mountpoint, grows it to fill the partition (EXT4_IOC_RESIZE_FS),
-	// writes and fsyncs blockmount.EXT4EstablishedMarker, then unmounts —
+	// writes and fsyncs blockmount.EstablishedMarker, then unmounts —
 	// on every return path, including an error one. Unlike FAT32's
 	// CreateMarker, this needs a live kernel mount: growing an
 	// already-formatted filesystem and writing into it both require one,
@@ -220,7 +220,7 @@ type Deps struct {
 	// doesn't need to be again.
 	EstablishEXT4 func(partitionDevice string) error
 	// EXT4Established reports whether the partition's ext4 filesystem
-	// already carries blockmount.EXT4EstablishedMarker, by mounting it
+	// already carries blockmount.EstablishedMarker, by mounting it
 	// briefly at a scratch mountpoint and unmounting again. A mount
 	// failure is reported as an error, never silently folded into a false
 	// result — survivorPresent and verifyEstablished, its two callers,
@@ -442,7 +442,8 @@ func Run(deps Deps, opts Options) error {
 // bytes beyond the boot partition. Adoption needs the derived offset,
 // opts.Filesystem, opts.DataLabel (matched case-insensitively, the gate
 // blockmount applies to every other mount decision) AND a completion
-// marker — FAT32's EstablishedMarker or ext4's EXT4EstablishedMarker,
+// marker — this package's own EstablishedMarker or, for ext4,
+// blockmount.EstablishedMarker,
 // whichever opts.Filesystem calls for — which is the only proof the format
 // that wrote that label ever finished. Anything else — blank space, a
 // foreign volume, a volume labelled for a *different* app (including a card

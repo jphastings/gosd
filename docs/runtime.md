@@ -858,9 +858,23 @@ you. Formatting writes a pristine, checked-in golden ext4 image
 binary, no pure-Go mke2fs — then grows it to the disk's actual size with
 a single online `EXT4_IOC_RESIZE_FS` ioctl, exactly once, at first
 establishment; a later mount of an already-established volume adopts it
-(gated on a hidden completion marker — see `internal/blockmount`'s
-package doc for the full crash-ordering argument) rather than re-growing
-or reformatting it.
+rather than re-growing or reformatting it.
+
+**Adoption is gated on a completion marker, on every filesystem.** GoSD
+writes an empty `.gosd-established` file into the root of a volume only
+once its format, the flush of that format to the medium, and (for ext4)
+the one-time grow have *all* completed; a later boot adopts the volume
+only if that marker is there. A matching label is not evidence: a format
+interrupted by a power cut can leave one behind over a filesystem that
+was never finished, and adopting that hands your app torn cluster
+chains. Leave the file alone — it costs no space worth counting, and
+removing it costs the volume its proof. A volume formatted by a release
+older than this marker carries none, and is adopted anyway on the
+evidence of the files already in it, so upgrading never reformats a card
+that has your data on it. The
+[full crash-ordering argument](../internal/blockmount/blockmount.go),
+including what each interruption point leaves behind, is in
+`internal/blockmount`'s package doc.
 
 **The journal is not a substitute for the fsync pattern above.** ext4's
 journal buys metadata crash-*consistency* (no half-written inodes or

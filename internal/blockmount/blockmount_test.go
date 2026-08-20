@@ -35,7 +35,7 @@ type fakeDeps struct {
 	mountTarget string
 	mountFS     diskfmt.FS
 
-	// ext4-only scripting: see runEXT4. Zero values are the common case
+	// Establishment scripting: see establish. Zero values are the common case
 	// (fresh format: no marker yet, empty root, everything succeeds).
 	mountErrs           []error // consumed in call order, one per Mount call; falls back to mountErr once exhausted
 	syncErr             error
@@ -109,7 +109,7 @@ func (f *fakeDeps) storage() Storage {
 				f.calls = append(f.calls, "grow")
 				return f.growErr
 			},
-			EstablishMarker: func(string) error {
+			EstablishMarker: func(_ string, _ diskfmt.FS) error {
 				f.calls = append(f.calls, "marker")
 				f.establishCalls++
 				return f.establishErr
@@ -118,7 +118,7 @@ func (f *fakeDeps) storage() Storage {
 				f.calls = append(f.calls, "check-marker")
 				return f.markerPresent, f.markerErr
 			},
-			RootHasOtherContent: func(string) (bool, error) {
+			RootHasOtherContent: func(_ string, _ diskfmt.FS) (bool, error) {
 				f.calls = append(f.calls, "check-root")
 				return f.rootHasOtherContent, f.rootContentErr
 			},
@@ -131,23 +131,35 @@ func (f *fakeDeps) storage() Storage {
 	}
 }
 
+// TestRunMountsOnlyWhenLabelAlreadyMatches covers both ways a FAT32 volume
+// can prove it was fully established by an earlier run — its marker, or (for
+// a volume flashed before the marker existed) files in its root — and pins
+// that neither is reformatted, which would wipe the app's own data.
 func TestRunMountsOnlyWhenLabelAlreadyMatches(t *testing.T) {
-	// A previous run of the same app already formatted the storage, so this run
-	// must mount it without reformatting (which would wipe the data).
-	f := &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}}
+	for _, tc := range []struct {
+		name string
+		f    *fakeDeps
+	}{
+		{"established by this version", &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}, markerPresent: true}},
+		{"legacy volume: no marker, but content", &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}, rootHasOtherContent: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := tc.f
 
-	device, err := Run(f.storage(), diskfmt.FAT32, "appdata", "/storage", false)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if device != fakeDevice {
-		t.Errorf("Run device = %q, want %q", device, fakeDevice)
-	}
-	if f.formatted {
-		t.Error("reformatted storage that already had the app's label")
-	}
-	if !f.didMount || f.mountTarget != "/storage" {
-		t.Errorf("mount = (%v, %q), want mounted at /storage", f.didMount, f.mountTarget)
+			device, err := Run(f.storage(), diskfmt.FAT32, "appdata", "/storage", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if device != fakeDevice {
+				t.Errorf("Run device = %q, want %q", device, fakeDevice)
+			}
+			if f.formatted {
+				t.Error("reformatted storage that already had the app's label")
+			}
+			if !f.didMount || f.mountTarget != "/storage" {
+				t.Errorf("mount = (%v, %q), want mounted at /storage", f.didMount, f.mountTarget)
+			}
+		})
 	}
 }
 
@@ -390,6 +402,11 @@ func (d *sharedFakeDevice) deps(t *testing.T) Deps {
 			d.mounted = true
 			return nil
 		},
+		SyncDevice:          func(string) error { return nil },
+		EstablishMarker:     func(string, diskfmt.FS) error { return nil },
+		MarkerEstablished:   func(string) (bool, error) { return false, nil },
+		RootHasOtherContent: func(string, diskfmt.FS) (bool, error) { return false, nil },
+		Unmount:             func(string) error { return nil },
 	}
 }
 
@@ -476,6 +493,272 @@ func TestRunNamesTheStorageInItsErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "widget") || !strings.Contains(err.Error(), fakeDevice) {
 		t.Errorf("Run error = %q, want it to name both the storage kind and the device", err)
+	}
+}
+
+// --- FAT32/exFAT: establishment, adoption and crash-debris (bean gosd-mm6q) ---
+
+// fatFilesystems are the two filesystems whose establishment differs from
+// ext4's only by having no grow step and by adopting unmarked legacy volumes.
+// Every test below runs against both, because the whole point of the change is
+// that neither is treated as "just a format" any more.
+var fatFilesystems = []diskfmt.FS{diskfmt.FAT32, diskfmt.ExFAT}
+
+// TestRunFATFreshFormatEstablishesInOrder pins the sequence bean gosd-mm6q
+// added: a FAT32/exFAT format is followed by a device sync (nothing diskfmt
+// writes is durable until it returns — see establish's ordering argument),
+// then the mount, then the marker last of all. Before this bean the whole
+// path was format-then-mount with no sync and no marker at all, so a power
+// cut left a volume whose label said "ready" over FATs that had never
+// reached the medium. Grow is ext4's alone and must not appear.
+func TestRunFATFreshFormatEstablishesInOrder(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{contents: diskfmt.Contents{Blank: true}}
+
+			device, err := Run(f.storage(), fs, "APPDATA", "/storage", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if device != fakeDevice {
+				t.Errorf("Run device = %q, want %q", device, fakeDevice)
+			}
+
+			want := []string{"inspect", "format", "sync", "mount", "marker"}
+			if !reflect.DeepEqual(f.calls, want) {
+				t.Errorf("call order = %v, want %v", f.calls, want)
+			}
+			if f.formatFS != fs || f.mountFS != fs {
+				t.Errorf("formatted as %s and mounted as %s, want %s for both", f.formatFS, f.mountFS, fs)
+			}
+		})
+	}
+}
+
+// TestRunFATAdoptsAnEstablishedVolume is the adoption half: label, filesystem
+// AND marker all match, so the volume is mounted as-is.
+func TestRunFATAdoptsAnEstablishedVolume(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{contents: diskfmt.Contents{FS: fs, Label: "APPDATA"}, markerPresent: true}
+
+			if _, err := Run(f.storage(), fs, "APPDATA", "/storage", false); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			want := []string{"inspect", "mount", "check-marker"}
+			if !reflect.DeepEqual(f.calls, want) {
+				t.Errorf("call order = %v, want %v — adoption must not format", f.calls, want)
+			}
+			if f.formatted {
+				t.Error("reformatted an already-established volume")
+			}
+		})
+	}
+}
+
+// TestRunFATCrashDebrisWithNoMarkerReformats is the bug bean gosd-mm6q
+// closes, stated as behaviour: a volume carrying the app's own label and
+// filesystem but neither a marker nor a single file in its root is exactly
+// what an interrupted format leaves — the label is written last, so it can
+// perfectly well be the only part that reached the medium. It used to be
+// adopted on that label alone, handing the app torn cluster chains. Now it is
+// repaired: unmounted, reformatted, and established properly. No consent is
+// needed, because no marker AND no files means this mountpoint was never
+// handed to an app.
+func TestRunFATCrashDebrisWithNoMarkerReformats(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{contents: diskfmt.Contents{FS: fs, Label: "APPDATA"}}
+
+			if _, err := Run(f.storage(), fs, "APPDATA", "/storage", false); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			want := []string{"inspect", "mount", "check-marker", "check-root", "unmount", "format", "sync", "mount", "marker"}
+			if !reflect.DeepEqual(f.calls, want) {
+				t.Errorf("call order = %v, want %v", f.calls, want)
+			}
+			if !f.didUnmount {
+				t.Error("never unmounted the unestablished debris before reformatting it")
+			}
+		})
+	}
+}
+
+// TestRunFATLegacyVolumeWithContentIsAdoptedAndMarked is the compatibility
+// half of the same rule, and the reason FAT32/exFAT diverge from ext4 here:
+// every card flashed before this marker existed carries a good volume with no
+// marker in it. Files in the root are independent evidence that a format once
+// finished — neither formatter creates a file, so anything there was written
+// through a mount an app was handed — so the volume is adopted, not
+// reformatted, and the marker is written in passing so the upgrade happens
+// exactly once.
+func TestRunFATLegacyVolumeWithContentIsAdoptedAndMarked(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{contents: diskfmt.Contents{FS: fs, Label: "APPDATA"}, rootHasOtherContent: true}
+
+			device, err := Run(f.storage(), fs, "APPDATA", "/storage", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if device != fakeDevice {
+				t.Errorf("Run device = %q, want %q", device, fakeDevice)
+			}
+
+			want := []string{"inspect", "mount", "check-marker", "check-root", "marker"}
+			if !reflect.DeepEqual(f.calls, want) {
+				t.Errorf("call order = %v, want %v — a legacy volume is adopted and marked, never reformatted", f.calls, want)
+			}
+			if f.formatted || f.didUnmount {
+				t.Errorf("touched the device (formatted=%v unmounted=%v) — this is a card already in the field", f.formatted, f.didUnmount)
+			}
+		})
+	}
+}
+
+// TestRunFATLegacyAdoptionIsUnaffectedByDestructive pins the compatibility
+// promise from the other direction: adopting the app's own volume has always
+// won over destructive=true (a matching label was mounted, never reformatted),
+// and an app that passes destructive=true to authorise wiping a stranger's
+// drive must not thereby lose its own data on the upgrade to this version.
+func TestRunFATLegacyAdoptionIsUnaffectedByDestructive(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"}, rootHasOtherContent: true}
+
+	if _, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", true); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if f.formatted {
+		t.Error("reformatted a legacy volume holding content because destructive=true was passed")
+	}
+}
+
+// TestRunFATLegacyAdoptionSurvivesAFailedMarkerWrite confirms the marker
+// write is best-effort on this path alone: the volume is adoptable on the
+// evidence of its own contents whether or not the marker lands, so a full
+// volume (or one the kernel has remounted read-only after an error) must
+// still mount exactly as it did before this bean, rather than failing an
+// adoption that used to work.
+func TestRunFATLegacyAdoptionSurvivesAFailedMarkerWrite(t *testing.T) {
+	f := &fakeDeps{
+		contents:            diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"},
+		rootHasOtherContent: true,
+		establishErr:        errors.New("ENOSPC creating the marker"),
+	}
+
+	device, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if device != fakeDevice {
+		t.Errorf("Run device = %q, want the volume adopted anyway", device)
+	}
+	if f.formatted {
+		t.Error("reformatted a legacy volume because its marker could not be written")
+	}
+}
+
+// TestRunEXT4NoMarkerButRealContentStillRefuses pins the deliberate asymmetry
+// against regression: the state FAT32/exFAT now adopt is the state ext4 must
+// keep refusing, because ext4 alone has a step after the format that nothing
+// else records (the one-time grow) and no legacy population to protect.
+func TestRunEXT4NoMarkerButRealContentStillRefuses(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{FS: diskfmt.EXT4, Label: "APPDATA"}, rootHasOtherContent: true}
+
+	_, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false)
+	if !errors.Is(err, ErrRefusedFormat) {
+		t.Fatalf("Run error = %v, want ErrRefusedFormat — ext4 must not inherit FAT's legacy adoption", err)
+	}
+}
+
+// TestRunFATMountFailureOnAdoptionAttemptRefusesWithoutDestructive extends
+// the ErrUnmountable contract to FAT32/exFAT: a volume whose label and
+// filesystem match but which cannot be mounted might hold real data that
+// cannot be read to check, so it is refused rather than guessed at. Before
+// this bean the FAT path returned a bare mount error here, matching neither
+// sentinel.
+func TestRunFATMountFailureOnAdoptionAttemptRefusesWithoutDestructive(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{
+				contents:  diskfmt.Contents{FS: fs, Label: "APPDATA"},
+				mountErrs: []error{errors.New("mount: wrong fs type, bad option, bad superblock")},
+			}
+
+			_, err := Run(f.storage(), fs, "APPDATA", "/storage", false)
+			if !errors.Is(err, ErrRefusedFormat) || !errors.Is(err, ErrUnmountable) {
+				t.Fatalf("Run error = %v, want both ErrRefusedFormat and ErrUnmountable", err)
+			}
+			if f.formatted || f.didUnmount {
+				t.Errorf("touched the device (formatted=%v unmounted=%v) despite refusing", f.formatted, f.didUnmount)
+			}
+		})
+	}
+}
+
+// TestRunFATMountFailureOnAdoptionAttemptReformatsWhenDestructive is the
+// other half, and the one genuinely new destructive path this bean adds to
+// FAT32/exFAT: an unmountable volume under the app's own label is reformatted
+// when the caller has said destructive=true, exactly as ext4 has done since
+// gosd-psj0. Unmount must not be attempted against a mount that never
+// succeeded.
+func TestRunFATMountFailureOnAdoptionAttemptReformatsWhenDestructive(t *testing.T) {
+	f := &fakeDeps{
+		contents:  diskfmt.Contents{FS: diskfmt.FAT32, Label: "APPDATA"},
+		mountErrs: []error{errors.New("mount: wrong fs type, bad option, bad superblock")},
+	}
+
+	if _, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", true); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := []string{"inspect", "mount", "format", "sync", "mount", "marker"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("call order = %v, want %v", f.calls, want)
+	}
+	if f.didUnmount {
+		t.Error("unmounted a device that was never successfully mounted")
+	}
+}
+
+// TestRunFATSyncFailureStopsBeforeTheMountAndTheMarker confirms the sync is
+// load-bearing rather than decorative: if the newly written filesystem cannot
+// be flushed to the medium, nothing downstream may pretend it was — no mount,
+// and above all no marker, which would claim durability that never happened.
+func TestRunFATSyncFailureStopsBeforeTheMountAndTheMarker(t *testing.T) {
+	f := &fakeDeps{contents: diskfmt.Contents{Blank: true}, syncErr: errors.New("EIO")}
+
+	_, err := Run(f.storage(), diskfmt.FAT32, "APPDATA", "/storage", false)
+	if err == nil {
+		t.Fatal("Run succeeded despite the device sync failing")
+	}
+	want := []string{"inspect", "format", "sync"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("call order = %v, want %v — nothing may follow a failed sync", f.calls, want)
+	}
+	if f.establishCalls != 0 {
+		t.Error("wrote the establishment marker despite the sync failing")
+	}
+}
+
+// TestRunNeverGrowsAnythingButEXT4 pins the one step that stays ext4-only, so
+// that merging the two establishment paths cannot start issuing an
+// EXT4_IOC_RESIZE_FS ioctl against a vfat or exfat mount.
+func TestRunNeverGrowsAnythingButEXT4(t *testing.T) {
+	for _, fs := range fatFilesystems {
+		t.Run(fs.String(), func(t *testing.T) {
+			f := &fakeDeps{contents: diskfmt.Contents{Blank: true}}
+
+			if _, err := Run(f.storage(), fs, "APPDATA", "/storage", false); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			for _, call := range f.calls {
+				if call == "grow" {
+					t.Fatalf("grew a %s filesystem; calls = %v", fs, f.calls)
+				}
+			}
+		})
 	}
 }
 
@@ -583,7 +866,7 @@ func TestRunEXT4CrashDebrisWithNoMarkerReformats(t *testing.T) {
 
 // TestRunEXT4NoMarkerButRealContentRefusesWithoutDestructive is the gap an
 // adversarial-review pass found (bean gosd-1c0x): unlike dataexpand's MBR-
-// entry gate, which an app can never reach or delete, EXT4EstablishedMarker
+// entry gate, which an app can never reach or delete, EstablishedMarker
 // is a plain file inside the very filesystem it gates — so "no marker" alone
 // is not trustworthy proof nothing is at risk if an app (accidentally or
 // otherwise) removed it from an otherwise fully established, data-bearing

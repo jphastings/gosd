@@ -341,21 +341,38 @@ func SyncDevice(device string) (err error) {
 	return f.Sync()
 }
 
-// EstablishEXT4Marker writes EXT4EstablishedMarker into the root of the
-// filesystem mounted at mountpoint, fsyncs the marker file itself, then
-// fsyncs mountpoint (its parent directory). Both fsyncs matter and neither
-// substitutes for the other: the first makes the file's own data (empty,
-// here, but the call is the same for any file) and inode durable; ext4, like
-// most Linux filesystems, does not guarantee a new directory entry is
-// durable just because the file it names is — the entry lives in the parent
-// directory's own data, which needs its own fsync. Skipping either one would
-// let a crash leave a marker that exists in the page cache but not on the
-// medium, or (subtler) a marker file that is itself durable but whose
-// directory entry is not — either way, a future boot's MarkerEstablished
-// check might see a marker that reboots back into nonexistence, precisely
-// the probe-is-not-proof failure this whole mechanism exists to avoid.
-func EstablishEXT4Marker(mountpoint string) error {
-	path := filepath.Join(mountpoint, EXT4EstablishedMarker)
+// EstablishMarker writes EstablishedMarker into the root of the filesystem
+// mounted at mountpoint and makes it durable. What "durable" takes differs by
+// filesystem, so fs decides:
+//
+// On ext4 it is an fsync of the marker file itself followed by an fsync of
+// mountpoint (its parent directory). Both matter and neither substitutes for
+// the other: the first makes the file's own data (empty, here, but the call
+// is the same for any file) and inode durable; ext4, like most Linux
+// filesystems, does not guarantee a new directory entry is durable just
+// because the file it names is — the entry lives in the parent directory's
+// own data, which needs its own fsync. Skipping either one would let a crash
+// leave a marker that exists in the page cache but not on the medium, or
+// (subtler) a marker file that is itself durable but whose directory entry is
+// not — either way, a future boot's MarkerEstablished check might see a
+// marker that reboots back into nonexistence, precisely the probe-is-not-proof
+// failure this whole mechanism exists to avoid.
+//
+// On FAT32 and exFAT it is syncfs(2) instead, and deliberately so. Those
+// filesystems have no journal and no notion of a file's metadata being
+// ordered against its directory entry: the entry, the FAT/bitmap chain it
+// points into and the free-space accounting are all plain metadata buffers,
+// and there is no per-file fsync that can promise a consistent subset of them
+// reached the medium. syncfs is the primitive that means exactly what the
+// marker claims — every dirty page belonging to this filesystem is on the
+// medium — and, unlike a directory fsync (whose availability is a per-driver
+// detail, not a VFS guarantee), it is defined for every mounted filesystem.
+// GrowEXT4 uses it for the same reason after an online resize.
+func EstablishMarker(mountpoint string, fs diskfmt.FS) error {
+	if fs != diskfmt.EXT4 {
+		return establishMarkerSyncfs(mountpoint)
+	}
+	path := filepath.Join(mountpoint, EstablishedMarker)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("creating the establishment marker at %s failed: %w", path, err)
@@ -379,10 +396,35 @@ func EstablishEXT4Marker(mountpoint string) error {
 	return nil
 }
 
-// EXT4MarkerEstablished reports whether the filesystem already mounted at
-// mountpoint carries EXT4EstablishedMarker.
-func EXT4MarkerEstablished(mountpoint string) (bool, error) {
-	_, err := os.Stat(filepath.Join(mountpoint, EXT4EstablishedMarker))
+// establishMarkerSyncfs is EstablishMarker's FAT32/exFAT half: create the
+// marker, then flush the whole filesystem. The file handle is closed before
+// the syncfs so the directory entry is final beforehand; syncfs is then
+// issued against the mountpoint itself, which needs no writable descriptor.
+func establishMarkerSyncfs(mountpoint string) error {
+	path := filepath.Join(mountpoint, EstablishedMarker)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("creating the establishment marker at %s failed: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing the establishment marker at %s failed: %w", path, err)
+	}
+
+	dir, err := os.Open(mountpoint)
+	if err != nil {
+		return fmt.Errorf("opening %s to flush the establishment marker failed: %w", mountpoint, err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := unix.Syncfs(int(dir.Fd())); err != nil {
+		return fmt.Errorf("flushing %s to the medium after creating the establishment marker failed: %w", mountpoint, err)
+	}
+	return nil
+}
+
+// MarkerEstablished reports whether the filesystem already mounted at
+// mountpoint carries EstablishedMarker.
+func MarkerEstablished(mountpoint string) (bool, error) {
+	_, err := os.Stat(filepath.Join(mountpoint, EstablishedMarker))
 	if err == nil {
 		return true, nil
 	}
@@ -399,20 +441,38 @@ func EXT4MarkerEstablished(mountpoint string) (bool, error) {
 // lost+found unconditionally (it is not one of the -O feature toggles the
 // golden's build pins, see build/ext4-golden/Dockerfile); nothing else is
 // pre-populated.
+//
+// FAT32 and exFAT have no equivalent: a freshly formatted volume of either
+// lists nothing at all. go-diskfs zeroes FAT32's whole root-directory cluster
+// before writing the volume label into it, exFAT's formatter writes a root
+// directory holding only the label, allocation-bitmap and up-case entries,
+// and the kernel's readdir for both filesystems emits only real file entries
+// — never the volume label or exFAT's metadata entries. If that were ever
+// untrue, the effect would be to make a fresh volume look used, which
+// adopts rather than reformats: the safe direction (see establish's doc).
+func reservedRootEntries(fs diskfmt.FS) map[string]bool {
+	if fs == diskfmt.EXT4 {
+		return ext4ReservedRootEntries
+	}
+	return nil
+}
+
 var ext4ReservedRootEntries = map[string]bool{"lost+found": true}
 
-// RootHasOtherContent reports whether the ext4 filesystem mounted at
-// mountpoint holds anything in its root directory beyond ext4ReservedRootEntries
-// and EXT4EstablishedMarker itself — see Deps.RootHasOtherContent's doc for
-// why runEXT4 needs this second opinion before ever reformatting a
-// no-marker volume.
-func RootHasOtherContent(mountpoint string) (bool, error) {
+// RootHasOtherContent reports whether the filesystem of kind fs mounted at
+// mountpoint holds anything in its root directory beyond what a fresh format
+// of that filesystem ships with (see reservedRootEntries) and
+// EstablishedMarker itself — see Deps.RootHasOtherContent's doc for why
+// establish needs this second opinion before ever reformatting, or adopting,
+// a no-marker volume.
+func RootHasOtherContent(mountpoint string, fs diskfmt.FS) (bool, error) {
 	entries, err := os.ReadDir(mountpoint)
 	if err != nil {
 		return false, fmt.Errorf("reading the root directory of %s failed: %w", mountpoint, err)
 	}
+	reserved := reservedRootEntries(fs)
 	for _, e := range entries {
-		if e.Name() == EXT4EstablishedMarker || ext4ReservedRootEntries[e.Name()] {
+		if e.Name() == EstablishedMarker || reserved[e.Name()] {
 			continue
 		}
 		return true, nil

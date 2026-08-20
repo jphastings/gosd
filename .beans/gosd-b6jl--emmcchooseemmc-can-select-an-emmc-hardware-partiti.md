@@ -1,10 +1,11 @@
 ---
 # gosd-b6jl
 title: 'emmc.chooseEMMC can select an eMMC hardware partition: the exclusion disk.rank has is missing here'
-status: todo
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-12T04:18:42Z
-updated_at: 2026-08-12T04:18:42Z
+updated_at: 2026-08-20T06:05:03Z
 ---
 
 **Severity: Medium.** Low likelihood today, but the blast radius is an
@@ -55,7 +56,62 @@ present-medium and write-protected checks into `blockmount.Usable`.
 
 ## Todos
 
-- [ ] Exclude MMC hardware partitions in `emmc.chooseEMMC` by explicit pattern, not by the Kind quirk
-- [ ] Prefer centralising the exclusion in `blockmount` so `disk` and `emmc` cannot diverge again
-- [ ] Test: a candidate list containing boot0/boot1/rpmb/gp0 never selects one, regardless of reported Kind
-- [ ] Update `internal/blockmount`'s package doc, which currently records the divergence as known and accepted
+- [x] Exclude MMC hardware partitions in `emmc.chooseEMMC` by explicit pattern, not by the Kind quirk
+- [x] Prefer centralising the exclusion in `blockmount` so `disk` and `emmc` cannot diverge again
+- [x] Test: a candidate list containing boot0/boot1/rpmb/gp0 never selects one, regardless of reported Kind
+- [x] Update `internal/blockmount`'s package doc, which currently records the divergence as known and accepted
+
+
+## Summary of Changes
+
+The exclusion moved into `internal/blockmount` rather than being copied into
+`emmc`, so the two packages cannot diverge on it again:
+
+- `mmcHardwarePartitionRE` / `IsMMCHardwarePartition` now live in
+  `internal/blockmount/discover.go` (moved verbatim from `disk`, regex
+  unchanged).
+- `blockmount.Usable` rejects them, alongside the existing no-medium and
+  write-protected checks. `Usable` is consulted inside `Candidates`, ahead of
+  any package's `Rank`, so **both** public packages inherit the exclusion
+  structurally — the same shape gosd-ix38 used for `SizeSectors`/`ReadOnly`.
+- `emmc.chooseEMMC`'s rank names it too
+  (`dev.Kind == "MMC" && !blockmount.IsMMCHardwarePartition(dev.Name)`), and
+  `disk.rank` keeps its existing call, now delegating to the shared predicate.
+  Belt-and-braces: it means reading either rank on its own tells the truth
+  about what it accepts, which was the bean's first todo.
+
+**`disk`'s behaviour is unchanged**, and that is pinned rather than asserted:
+`disk.rank` already rejected exactly this set via the same regex, so adding the
+check to `Usable` cannot change which devices `disk` offers.
+`TestChooseNeverPicksAnEMMCGeneralPurposeHardwarePartition` (untouched,
+end-to-end through `choose`/`candidates`) and
+`TestRankLeavesMediumAndWriteProtectionToBlockmount` both still pass. The
+exhaustive matcher-shape table moved to `internal/blockmount` with the matcher
+itself, so it now guards both packages instead of one.
+
+**The invariant relied on**, pinned by
+`TestCandidatesExcludesMMCHardwarePartitionsRegardlessOfRank`: `Usable` runs
+before `Rank` for every caller of `Candidates`/`Choose`, so an `acceptAll`
+rank — as permissive as `emmc`'s effectively was — still cannot surface
+`mmcblk0boot0`/`boot1`/`rpmb`/`gp0`, while the user area (`mmcblk0`) and an
+ordinary partition name (`mmcblk0p1`) survive.
+
+`TestChooseEMMCIgnoresGeneralPurposeHardwarePartitions` — which pinned the
+sysfs *quirk*, with devices reporting `Kind: ""` — is replaced by
+`TestChooseEMMCNeverPicksAHardwarePartition`, which reports `Kind: "MMC"` for
+every hardware partition. That is the state the kernel does not put them in
+today, and precisely the state the old code had no defence against; the test
+now proves the outcome no longer depends on it.
+`TestChooseEMMCStillPicksTheUserArea` is the other half.
+
+**Deliberately not changed:** `disk.verifyNamed` (behind
+`disk.FormatAndMountDevice`) still accepts an explicitly named hardware
+partition — it skips the class allowlist by design, "an explicit choice is an
+explicit choice", and it keeps the in-use rule that stops an app wiping its
+boot device. Widening that is a separate decision about a different API, not
+part of closing this discovery gap; worth its own bean if JP wants it.
+
+`internal/blockmount`'s package doc no longer records the divergence as known
+and accepted — it records it as closed, and says why the quirk was never
+acceptable as a defence (undocumented kernel behaviour, unverified on the
+Rockchip fleet, silent if it regresses, unrecoverable blast radius).
