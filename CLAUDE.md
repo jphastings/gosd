@@ -272,6 +272,22 @@ say so in the bean rather than silently diverging.
   Developers never *have to* compile a kernel themselves — `gosd build-kernel`
   (epic gosd-47rm) is an opt-in path for compiling in a driver GoSD's stock,
   trimmed kernels cut; see `docs/custom-kernels.md`.
+- **Kernels are monolithic forever: no loadable modules (decided 2026-08-20,
+  bean gosd-2k9p).** `CONFIG_MODULES=n` fleet-wide, and the question is closed
+  rather than deferred — don't design around a future `.ko` loader, and don't
+  read the reserved `[[module]]` table in `gosd-kernel.toml` as a planned
+  feature. The only capability modules add over `gosd build-kernel`'s
+  compile-in path is loading a driver without a rebuild, and those rebuilds are
+  content-addressed, cached and container-local. Saying yes would cost,
+  permanently: a fleet-wide kernel bump; a kernel-devel artifact (headers,
+  `.config`, `Module.symvers`, release string) per board per arch every
+  artifacts release, because vermagic and MODVERSIONS CRCs mean a `.ko` must be
+  built against GoSD's *exact* kernel and no distro's module can ever be
+  dropped in; and a module-signing decision that widens the trust boundary of
+  an appliance that deliberately has no interactive surface at all. It reopens
+  only for a case compiled-in drivers genuinely can't serve — proprietary
+  out-of-tree drivers, or ecosystems where *end users* rather than the
+  developer attach hardware the image was never compiled for.
 - **On-disk caches must stay bounded to the current working set (decided
   2026-08-08, bean gosd-gdro):** nothing gosd caches on a user's machine may
   grow in proportion to how many times or how many *versions* of gosd are run.
