@@ -1,5 +1,5 @@
 ---
-error_code: GOSD-APP-CRASH
+error_code: AUTH-FAIL-{$BROKER_TOKEN}
 timestamp: 2026-09-11T11:57:03Z
 clock: ntp-synced
 uptime: 4m12s

@@ -126,11 +126,16 @@ func TestRender(t *testing.T) {
 			}(),
 		},
 		{
-			// Secrets are scrubbed wherever they landed — an app is
-			// perfectly capable of interpolating one into its own prose.
+			// Secrets are scrubbed wherever the report carried them — an
+			// app is perfectly capable of interpolating one into its own
+			// prose, or into the error code the header renders. The third
+			// rule is the other half of the same property: "computer" is
+			// a word in gosd's own explanation of what this file is, and
+			// that sentence must come through untouched however ordinary
+			// an app's env value turns out to be.
 			name: "secrets-redacted",
 			report: Report{
-				Code:    "GOSD-APP-CRASH",
+				Code:    "AUTH-FAIL-sk-live-9f3c2b71",
 				Doing:   "publishing a reading",
 				Problem: "The broker rejected the token sk-live-9f3c2b71.",
 				Detail:  "connect: auth failed for sk-live-9f3c2b71\nsession=deadbeefcafe",
@@ -140,6 +145,7 @@ func TestRender(t *testing.T) {
 				c.Secrets = []redact.Rule{
 					{Needle: "sk-live-9f3c2b71", Replacement: "{$BROKER_TOKEN}"},
 					{Needle: "deadbeefcafe", Replacement: "{secret: session-token}"},
+					{Needle: "computer", Replacement: "{$WORKSTATION}"},
 				}
 				return c
 			}(),
@@ -153,13 +159,13 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestRenderScrubsSecretsFromEveryPartOfTheBody(t *testing.T) {
+func TestRenderScrubsSecretsFromEveryFieldTheReportCarries(t *testing.T) {
 	const secret = "sk-live-9f3c2b71"
 	ctx := pi()
 	ctx.Secrets = []redact.Rule{{Needle: secret, Replacement: "{$BROKER_TOKEN}"}}
 
 	got := Render(Report{
-		Code:    "GOSD-APP-CRASH",
+		Code:    "AUTH-FAIL-" + secret,
 		Doing:   "publishing with " + secret,
 		Problem: "the broker rejected " + secret,
 		Fix:     "replace " + secret + " in config/env/API_TOKEN",
@@ -169,8 +175,63 @@ func TestRenderScrubsSecretsFromEveryPartOfTheBody(t *testing.T) {
 	if strings.Contains(got.Markdown, secret) {
 		t.Errorf("the rendered report still contains the secret:\n%s", got.Markdown)
 	}
-	if n := strings.Count(got.Markdown, "{$BROKER_TOKEN}"); n != 4 {
-		t.Errorf("replaced the secret %d times, want 4 (Doing, Problem, Fix and Detail)", n)
+	if n := strings.Count(got.Markdown, "{$BROKER_TOKEN}"); n != 5 {
+		t.Errorf("replaced the secret %d times, want 5 (Code, Doing, Problem, Fix and Detail)", n)
+	}
+}
+
+// The error code is app-supplied text, not one of the header fields gosd
+// generates for itself, and it skipped redaction entirely for as long as a
+// comment claiming otherwise stood (bean gosd-ywsv).
+func TestRenderScrubsSecretsFromTheErrorCodeInTheHeader(t *testing.T) {
+	const secret = "sk_live_ABCDEFGHIJKLMNOP"
+	ctx := pi()
+	ctx.Secrets = []redact.Rule{{Needle: secret, Replacement: "{secret: stripe}"}}
+
+	header, _, _ := strings.Cut(Render(Report{Code: "AUTH-FAIL-" + secret}, ctx).Markdown, "\n---\n")
+
+	if strings.Contains(header, secret) {
+		t.Errorf("the frontmatter still contains the secret:\n%s", header)
+	}
+	if !strings.Contains(header, "{secret: stripe}") {
+		t.Errorf("the frontmatter is missing the redaction placeholder:\n%s", header)
+	}
+}
+
+// gosd's own prose can't hold a secret, so redacting it protects nothing
+// and damages the one part of the file a non-technical device owner reads
+// (bean gosd-fu1z). "computer" is exactly redact.MinNeedleLength bytes, so
+// an env value of it clears the floor and used to rewrite the sentence
+// explaining what this file is.
+func TestRenderLeavesGosdsOwnWordsAlone(t *testing.T) {
+	ctx := pi()
+	ctx.Secrets = []redact.Rule{{Needle: "computer", Replacement: "{$WORKSTATION}"}}
+
+	got := Render(Report{Code: "X", Problem: "The device could not reach the computer."}, ctx).Markdown
+
+	if !strings.Contains(got, "read it on any computer.") {
+		t.Errorf("redaction rewrote gosd's own explanation of the file:\n%s", got)
+	}
+	if !strings.Contains(got, "reach the {$WORKSTATION}.") {
+		t.Errorf("the same value in the app's own words wasn't redacted:\n%s", got)
+	}
+}
+
+// The image line's fields are the developer's strings rather than gosd's,
+// so they stay in the redacted set even though everything around them left
+// it: an app can bake a value it also holds as a secret.
+func TestRenderScrubsSecretsFromTheBakedImageFields(t *testing.T) {
+	const secret = "sk-live-9f3c2b71"
+	ctx := pi()
+	ctx.AppName = secret
+	ctx.AppVersion = secret
+	ctx.SupportURL = "https://example.com/" + secret
+	ctx.Secrets = []redact.Rule{{Needle: secret, Replacement: "{$BROKER_TOKEN}"}}
+
+	got := Render(Report{Code: "X", Problem: "the key was rejected"}, ctx).Markdown
+
+	if strings.Contains(got, secret) {
+		t.Errorf("the rendered report still contains the secret:\n%s", got)
 	}
 }
 

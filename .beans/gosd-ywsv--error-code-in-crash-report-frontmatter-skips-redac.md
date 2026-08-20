@@ -1,10 +1,11 @@
 ---
 # gosd-ywsv
 title: error_code in crash-report frontmatter skips redaction — it is app input, not a gosd-generated field
-status: todo
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-12T04:08:47Z
-updated_at: 2026-08-12T04:08:47Z
+updated_at: 2026-08-20T05:01:09Z
 parent: gosd-m6py
 ---
 
@@ -55,7 +56,38 @@ gosd-generated fields need no pass, but `error_code` is not one of them.
 
 ## Todos
 
-- [ ] Redact `Report.Code` before it reaches `frontmatter`
-- [ ] Fix the claim in `faultreport.Context.Secrets`' docstring
-- [ ] Record the correction in gosd-m6py's locked-decision list
-- [ ] Test: a registered secret interpolated into `Code` does not survive into the rendered frontmatter
+- [x] Redact `Report.Code` before it reaches `frontmatter`
+- [x] Fix the claim in `faultreport.Context.Secrets`' docstring
+- [x] Record the correction in gosd-m6py's locked-decision list
+- [x] Test: a registered secret interpolated into `Code` does not survive into the rendered frontmatter
+
+## Summary of Changes
+
+Fixed together with gosd-fu1z and gosd-tzd1 in one PR, because the three
+change the same boundary in opposite directions and only make sense as one
+rule: **redaction applies to every value a report carries in from outside
+gosd, wherever it lands — frontmatter included — and to nothing gosd wrote
+itself.**
+
+- `faultreport.Render` now prepares the rule set once (`redact.New`) and
+  scrubs the report's fields *before* `frontmatter` or `body` assembles
+  anything from them: `Report.Code`, `Doing`, `Problem`, `Fix`, `Detail`,
+  and `Context.AppName`/`AppVersion`/`SupportURL`. `error_code` is
+  therefore redacted like any other app-supplied string.
+- `internal/redact` gained the shape that makes per-field redaction
+  possible: `New(rules) Redactor` prepares the length floor and the
+  longest-needle-first ordering once, `Apply` runs it over each string, and
+  `Skipped()` answers for the rule set rather than per string. The one-shot
+  `Redact`/`Result` pair it replaces had no other caller.
+- `faultreport.Context.Secrets`' doc now states which fields are scrubbed
+  and which are deliberately not, and names gosd-m6py's false premise
+  outright — the wrong comment is what let this survive.
+- Tests: `TestRenderScrubsSecretsFromTheErrorCodeInTheHeader` asserts the
+  secret is gone from the header and the placeholder is there;
+  `TestRenderScrubsSecretsFromEveryFieldTheReportCarries` counts five
+  replacements (Code included); the `secrets-redacted` golden now renders
+  `error_code: AUTH-FAIL-{$BROKER_TOKEN}`, so the property is visible in a
+  fixture rather than only in an assertion.
+
+The correction is recorded in gosd-m6py's todo list, next to the sentence
+that was wrong.

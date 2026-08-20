@@ -1,10 +1,11 @@
 ---
 # gosd-tzd1
 title: Ingress tokens are never registered for crash-report redaction, unlike every app env value
-status: todo
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-12T04:18:42Z
-updated_at: 2026-08-12T04:18:42Z
+updated_at: 2026-08-20T05:02:15Z
 ---
 
 **Severity: Medium.** A missing safety net rather than an active leak — but
@@ -75,6 +76,61 @@ sanitised — see the crash-report Markdown-injection bean.
 
 ## Todos
 
-- [ ] `ingressRedactionRules` over Token and Authkey, wired into `setSecrets`
-- [ ] Test: a report whose detail contains the configured tunnel token does not carry it
-- [ ] Decide and record whether the two supervised children's relayed output should be redacted on the console
+- [x] `ingressRedactionRules` over Token and Authkey, wired into `setSecrets`
+- [x] Test: a report whose detail contains the configured tunnel token does not carry it
+- [x] Decide and record whether the two supervised children's relayed output should be redacted on the console
+
+## Summary of Changes
+
+Fixed together with gosd-ywsv and gosd-fu1z in one PR — see gosd-ywsv for the
+single rule the three of them settle on.
+
+- `ingressRedactionRules` (cmd/gosd-init/internal/boot/sequence.go) turns
+  the card's `ingress/cloudflared/token` and
+  `ingress/tailscale-funnel/authkey` into rules replacing each value with
+  `{ingress: cloudflared-token}` / `{ingress: tailscale-funnel-authkey}` —
+  the field's name, never its value. Wired into the existing seam:
+  `report.setSecrets(append(envRedactionRules(userEnv),
+  ingressRedactionRules(config)...))`.
+- Built where `Run` has the settled config tree, not inside the ingress
+  agents: an agent that never starts (no binary baked, network never up,
+  child dead on arrival) must not be the reason its token stays in a
+  report. A setting nobody set contributes no rule at all, so an
+  unconfigured card doesn't log a skip naming a credential it doesn't have.
+- Note on the bean's suggested source: the tokens no longer come from
+  `gosd.toml` — epic gosd-rw6n replaced it with the config tree — so the
+  rules read `cardconfig.Tree` paths. Same values, same moment in the boot
+  sequence.
+- Tests: `TestIngressRedactionRulesNameEachCredentialByItsField`,
+  `TestIngressRedactionRulesIgnoresCredentialsNobodySet`, and
+  `TestRunRedactsTheCardsTunnelTokenFromAnAppCrashReport` — the last drives
+  the whole of `Run`, with the app printing the configured token to its own
+  stdout, and asserts the written `LAST_FATAL_ERROR.md` carries the
+  placeholder and not the token.
+- Documented in the crash-report guide's Secrets section, alongside the env
+  sweep.
+
+## Decision: the supervised children's relayed output stays unredacted
+
+Recorded as this bean asked, with no code change.
+
+`cloudflared` and `gosd-tsfunnel` have their stdout/stderr wrapped in
+`logwriter.New(prefix, deps.Log)`, and `deps.Log` is gosd-init's console
+logger. That output reaches the serial console and **nowhere else**: the
+console tail that becomes a report's technical detail is teed from `/app`'s
+own stdout/stderr alone (sequence.go's `appOutput`), never from what
+gosd-init logs itself. So there is no path by which a child's line reaches
+the card today, and the console is deliberately unredacted per gosd-m6py's
+locked decision — a physically-attached debug channel for someone already
+holding the board, not a file that travels.
+
+Redacting the console would also cost the thing it exists for: it is the
+one place a developer can see what a child actually printed, and it is the
+channel gosd-init itself debugs through.
+
+Should that ever change — a future path that folds a supervised child's
+output into a report — this bean's rules now cover it by construction,
+which is the point: the token is registered at the moment it is read, not
+at the moment something decides to print it. The decision is recorded in
+the crash-report guide's "serial console is never redacted" bullet, which
+now names the two children explicitly.

@@ -144,14 +144,33 @@ type Context struct {
 	BootCount int
 
 	// Secrets are the (needle, replacement) pairs scrubbed from the
-	// rendered body before it is returned. The report tells its reader to
+	// report before it is rendered. The report tells its reader to
 	// forward the whole file to a support site, so this is applied to
 	// every producer's output by construction rather than at each call
-	// site. The frontmatter is generated here from known-safe fields and
-	// is deliberately left alone. See internal/redact, whose
-	// MinNeedleLength floor means a short value is skipped rather than
-	// applied — Result.SkippedSecrets reports which, without exposing any
-	// of them.
+	// site.
+	//
+	// What gets scrubbed is every value the report carries in from
+	// outside this package — the Report's own five fields and this
+	// Context's AppName, AppVersion and SupportURL — wherever each of
+	// them lands, frontmatter included. gosd-m6py's original premise,
+	// repeated here until bean gosd-ywsv, was that "the frontmatter is
+	// generated from known-safe fields and needs no pass"; that was
+	// false. error_code is Report.Code, arbitrary app-supplied text, and
+	// it skipped redaction entirely for as long as the comment saying it
+	// was safe went unchallenged.
+	//
+	// What is NOT scrubbed is anything this package writes itself: the
+	// prose in body(), the field names, and the header facts gosd
+	// measures rather than receives (timestamp, clock, uptime, boot
+	// count, board id, device model). Those are compile-time constants or
+	// gosd's own readings, so a rule can never remove a secret from them
+	// and can only damage the one document a non-technical device owner
+	// is asked to read — an app env value of "computer" used to rewrite
+	// the sentence explaining what the file is (bean gosd-fu1z).
+	//
+	// See internal/redact, whose MinNeedleLength floor means a short
+	// value is skipped rather than applied — Result.SkippedSecrets
+	// reports which, without exposing any of them.
 	Secrets []redact.Rule
 
 	// Preview marks a report rendered off a device: the developer preview
@@ -178,14 +197,45 @@ type Result struct {
 }
 
 // Render turns a report and its device context into the complete
-// LAST_FATAL_ERROR.md file contents, with every Context.Secrets rule applied
-// to the body.
+// LAST_FATAL_ERROR.md file contents, with every Context.Secrets rule
+// applied to every value the report carries in from outside — see
+// Context.Secrets for exactly which those are, and why the rest of the file
+// is deliberately left alone.
 func Render(r Report, c Context) Result {
-	redacted := redact.Redact(body(r, c), c.Secrets)
+	secrets := redact.New(c.Secrets)
+	r, c = scrub(secrets, r, c)
 	return Result{
-		Markdown:       frontmatter(r, c) + redacted.Body,
-		SkippedSecrets: redacted.Skipped,
+		Markdown:       frontmatter(r, c) + body(r, c),
+		SkippedSecrets: secrets.Skipped(),
 	}
+}
+
+// scrub redacts the report's variable fields, before either frontmatter or
+// body has assembled anything from them. Which fields, and why not the rest
+// of the document, is Context.Secrets' contract.
+//
+// Doing it here rather than to the finished Markdown has a second effect
+// worth keeping: Detail is redacted before detailText indents it, so a
+// replacement carrying its own line breaks is indented along with the rest
+// of the technical detail rather than landing at column 0 inside the code
+// block. That is half of what bean gosd-15ld needs; sanitising the
+// replacement text itself — which still reaches gosd's prose through Doing,
+// Problem and Fix — remains that bean's.
+func scrub(secrets redact.Redactor, r Report, c Context) (Report, Context) {
+	r.Code = secrets.Apply(r.Code)
+	r.Doing = secrets.Apply(r.Doing)
+	r.Problem = secrets.Apply(r.Problem)
+	r.Fix = secrets.Apply(r.Fix)
+	r.Detail = secrets.Apply(r.Detail)
+
+	// The image line's three fields are the developer's own strings,
+	// baked from config.json: an app can perfectly well hold a value it
+	// also bakes (a name, a versioned URL with a token in it), so they
+	// are scrubbed like anything else the report was handed.
+	c.AppName = secrets.Apply(c.AppName)
+	c.AppVersion = secrets.Apply(c.AppVersion)
+	c.SupportURL = secrets.Apply(c.SupportURL)
+	return r, c
 }
 
 // FoldConsoleTail folds a captured console tail into a declared report's

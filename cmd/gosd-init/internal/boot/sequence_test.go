@@ -1908,6 +1908,85 @@ func TestEnvRedactionRulesIgnoresMalformedEntries(t *testing.T) {
 	}
 }
 
+func TestIngressRedactionRulesNameEachCredentialByItsField(t *testing.T) {
+	tree := cardconfig.Tree{}
+	tree.Set(cloudflaredTokenPath, "eyJhIjoiZXhhbXBsZS10dW5uZWwifQ")
+	tree.Set(tsfunnelAuthkeyPath, "tskey-auth-kEXAMPLE-123456")
+
+	rules := ingressRedactionRules(tree)
+
+	want := []redact.Rule{
+		{Needle: "eyJhIjoiZXhhbXBsZS10dW5uZWwifQ", Replacement: "{ingress: cloudflared-token}"},
+		{Needle: "tskey-auth-kEXAMPLE-123456", Replacement: "{ingress: tailscale-funnel-authkey}"},
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("ingressRedactionRules() = %v, want %v", rules, want)
+	}
+	for i := range want {
+		if rules[i] != want[i] {
+			t.Errorf("rules[%d] = %+v, want %+v", i, rules[i], want[i])
+		}
+	}
+}
+
+func TestIngressRedactionRulesIgnoresCredentialsNobodySet(t *testing.T) {
+	// The overwhelmingly common card: ingress shipped in the image but
+	// never configured. An empty needle would match nothing anyway, but a
+	// rule for it would still be logged as skipped for being too short,
+	// naming a credential this device doesn't have.
+	if rules := ingressRedactionRules(cardconfig.Tree{}); len(rules) != 0 {
+		t.Errorf("ingressRedactionRules() = %v, want none for a card that configures no ingress", rules)
+	}
+}
+
+// The tunnel token is the one class of secret gosd-init holds ITSELF (bean
+// gosd-tzd1), and it reaches a report by exactly the route an app's env
+// value does: something printed it, and the console tail became the
+// report's technical detail.
+func TestRunRedactsTheCardsTunnelTokenFromAnAppCrashReport(t *testing.T) {
+	const token = "eyJhIjoiZXhhbXBsZS10dW5uZWwifQ"
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprintf(stdout, "tunnel refused token %s\n", token)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: appStarter,
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{ExitCode: 1}, nil
+		}),
+		Rebooter:       &fakeRebooter{},
+		OpenConsole:    func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:    func(string, ...any) {},
+		ReadConfig:     func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{cloudflaredTokenPath: token}),
+		FaultReport:    reports.deps(),
+		Sleep:          func(time.Duration) {},
+		Now:            time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	if strings.Contains(written, token) {
+		t.Errorf("LAST_FATAL_ERROR.md still contains the card's tunnel token:\n%s", written)
+	}
+	if !strings.Contains(written, "{ingress: cloudflared-token}") {
+		t.Errorf("LAST_FATAL_ERROR.md is missing the redaction placeholder:\n%s", written)
+	}
+}
+
 // equalEnv compares two env slices exactly, in order: mergeUserEnv's output
 // is fully deterministic (GOSD_* vars in the fixed order Run builds them,
 // then the merged user env sorted by key), so tests can assert on it
