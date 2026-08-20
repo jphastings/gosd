@@ -23,7 +23,11 @@ type Lease struct {
 	// ObtainedAt is when this lease (or, for a renewal, the renewed
 	// lease) was granted; RenewAfter/RebindAfter/ExpireAfter are
 	// durations relative to it (the lease's T1/T2/lease-time), per
-	// RFC 2131 Section 4.4.5.
+	// RFC 2131 Section 4.4.5, exactly as the server sent them —
+	// including values no client could survive acting on literally.
+	// Lease maintenance schedules from the bounded versions instead
+	// (see leasetimes.go), so nothing here may be used as a delay
+	// without going through leaseSchedule.
 	ObtainedAt  time.Time
 	RenewAfter  time.Duration
 	RebindAfter time.Duration
