@@ -1,11 +1,11 @@
 ---
 # gosd-1jjh
 title: 'The artifacts cache has no trust anchor: a poisoned manifest.json backdoors every image built after it'
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:18:42Z
-updated_at: 2026-08-20T05:30:11Z
+updated_at: 2026-08-20T05:51:32Z
 ---
 
 **Severity: Medium.** Requires local write access to the user's cache
@@ -147,3 +147,15 @@ digest is wrong, which is the check being asked for.
 people who install gosd rather than build it — is never committed. PR #306
 (the v0.10.2 bump) landed with no change file, confirming it. Filed as a
 follow-up rather than fixed here, since it is gosd-odx3's mechanism.
+
+
+### The committed digest is CI-verified
+
+`Verify artifacts pin` skips itself when the version doesn't move, so it
+proves nothing here — but the `qemu boot-to-HTTP smoke test` does. That job
+builds with no `--artifacts-dir`, so it downloads qemu-virt's kernel from the
+pinned release for real, and its artifact cache is keyed on
+`hashFiles('internal/artifacts/artifacts.go')` — which this change modifies,
+so the run started cold, fetched `manifest.json` from artifacts/v0.10.2, and
+had to satisfy the new anchor to get as far as booting. A wrong digest would
+have failed it at the build step. PR #334: green.
