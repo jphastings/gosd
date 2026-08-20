@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   GosdManifestFetchError,
   GosdManifestHashMismatchError,
   GosdManifestInvalidError,
 } from "./errors.js";
-import { deriveManifestURL, fetchManifest, parseManifest } from "./manifest.js";
+import { deriveManifestURL, fetchManifest, MAX_MANIFEST_BYTES, parseManifest } from "./manifest.js";
 import { Sha256 } from "./sha256.js";
 
 describe("deriveManifestURL", () => {
@@ -163,6 +163,58 @@ describe("fetchManifest", () => {
         fetch: fetchFn,
       }),
     ).rejects.toThrow(GosdManifestInvalidError);
+  });
+
+  it("gives up on a manifest past the size cap before buffering it", async () => {
+    // The pin can only catch a tampered manifest once its bytes are in
+    // memory, so an endless body has to be stopped on its way in.
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 64 * 1024;
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+    });
+    const fetchFn = async () => new Response(body);
+
+    await expect(
+      fetchManifest("https://dl.example.com/app.inject.json", { fetch: fetchFn }),
+    ).rejects.toThrow(GosdManifestFetchError);
+    // The body never ends, so finishing at all is the property; the bound
+    // is only here to catch a cap that stopped an order of magnitude late.
+    expect(sent).toBeLessThan(MAX_MANIFEST_BYTES * 2);
+  });
+
+  it("refuses a manifest whose Content-Length already exceeds the cap", async () => {
+    const fetchFn = async () =>
+      response(validManifest(), {
+        headers: { "content-length": String(MAX_MANIFEST_BYTES + 1) },
+      });
+
+    await expect(
+      fetchManifest("https://dl.example.com/app.inject.json", { fetch: fetchFn }),
+    ).rejects.toThrow(GosdManifestFetchError);
+  });
+
+  it("warns when an unpinned manifest is fetched over plain HTTP, but not over https or loopback", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchFn = async () => response(validManifest());
+
+    await fetchManifest("http://dl.example.com/app.inject.json", { fetch: fetchFn });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/manifestSha256/);
+
+    await fetchManifest("https://dl.example.com/app.inject.json", { fetch: fetchFn });
+    await fetchManifest("http://localhost:8080/app.inject.json", { fetch: fetchFn });
+    await fetchManifest("http://dl.example.com/app.inject.json", {
+      fetch: fetchFn,
+      manifestSha256: new Sha256()
+        .update(new TextEncoder().encode(JSON.stringify(validManifest())))
+        .digestHex(),
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
   });
 
   it("verifies manifestSha256 before parsing, and rejects on mismatch", async () => {

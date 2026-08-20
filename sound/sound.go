@@ -237,7 +237,25 @@ func OpenWith(opts Options) (Device, error) {
 	if _, err := opts.volume(); err != nil {
 		return nil, err
 	}
+	if err := opts.Format.validate(); err != nil {
+		return nil, err
+	}
 	return open(opts)
+}
+
+// validate rejects a Format the hardware could never be asked for. Both
+// fields reach the kernel as uint32 (see configure), where a negative value
+// would arrive as an enormous rate or channel count and come back as a bare
+// EINVAL from HW_PARAMS — technically safe, but indistinguishable from
+// hardware that merely doesn't support the format asked for.
+func (f Format) validate() error {
+	if f.Rate < 0 {
+		return fmt.Errorf("Options.Format.Rate is %d, but it is a sample rate in Hz: use a positive value such as 48000, or 0 to take whichever of 48000 and 44100 the device accepts", f.Rate)
+	}
+	if f.Channels < 0 {
+		return fmt.Errorf("Options.Format.Channels is %d, but it is a channel count: use 2 for stereo or 1 for mono, or 0 for the default of stereo", f.Channels)
+	}
+	return nil
 }
 
 // formats returns the stream shapes to try, in order: the caller's if it named

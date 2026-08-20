@@ -172,7 +172,7 @@ fragment = "path/to.fragment"    # Kconfig fragment, merged AFTER GoSD's own fra
 patches  = ["patches/*.patch"]   # device-tree patch paths/globs, applied AFTER GoSD's own
 
 [[firmware]]                     # zero or more: runtime firmware blobs your driver needs
-url    = "https://example.com/blob.fw"
+url    = "https://example.com/blob.fw"   # https (loopback may use http)
 sha256 = "<64-char lowercase hex sha256>"
 dest   = "vendor/blob.fw"        # relative path under /lib/firmware in the initramfs
 ```

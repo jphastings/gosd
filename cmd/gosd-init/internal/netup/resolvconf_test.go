@@ -71,9 +71,58 @@ func TestWriteResolvConfWithEmptyDNSLeavesExistingFileIntact(t *testing.T) {
 		t.Errorf("resolv.conf changed despite an empty DNS list: got %q, want %q", data, existing)
 	}
 
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf("stray temp file left behind for an empty DNS list: err=%v", err)
+	assertOnlyFile(t, path)
+}
+
+// assertOnlyFile reports any file beside path in its directory: the scratch
+// file WriteResolvConf renames into place must never outlive the call, on
+// any path through it.
+func assertOnlyFile(t *testing.T, path string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("reading %s: %v", filepath.Dir(path), err)
 	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(path) {
+			t.Errorf("stray file %q left beside %s", e.Name(), path)
+		}
+	}
+}
+
+// Both of a dual-interface board's DHCP loops (netup's and wifiup's) can
+// renew at once, so two WriteResolvConf calls can overlap. Each must publish
+// its own complete file, never a blend of the two, and neither may leave its
+// scratch file behind.
+func TestWriteResolvConfConcurrentWritersEachPublishAWholeFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resolv.conf")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ip := net.IPv4(8, 8, 8, byte(i))
+			for n := 0; n < 50; n++ {
+				if err := WriteResolvConf(path, []net.IP{ip}); err != nil {
+					t.Errorf("WriteResolvConf() = %v", err)
+					return
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Errorf("reading %s: %v", path, err)
+					return
+				}
+				if strings.Count(string(data), "nameserver ") != 1 {
+					t.Errorf("resolv.conf is not one writer's whole file: %q", data)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	assertOnlyFile(t, path)
 }
 
 func TestWriteResolvConfConcurrentReaderNeverSeesEmptyFile(t *testing.T) {

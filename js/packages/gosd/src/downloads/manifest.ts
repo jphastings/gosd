@@ -128,6 +128,16 @@ export function deriveManifestURL(imageURL: string | URL): URL {
   return url;
 }
 
+/** The most manifest bytes {@link fetchManifest} will read before giving up.
+ *
+ * `manifestSha256` makes a tampered manifest *detectable*, but only once its
+ * bytes are already in memory — so on its own it is no defence against the
+ * same untrusted host answering with an endless body, which would exhaust
+ * the tab long before there was anything to hash. A real manifest is a few
+ * KiB of JSON; even an image with hundreds of settings stays far inside
+ * this, so a response past it is a wrong URL or a hostile one either way. */
+export const MAX_MANIFEST_BYTES: number = 1024 * 1024;
+
 export interface FetchManifestOptions {
   /** Defaults to the global `fetch`. Override in tests, or to route through
    * a proxy/cache. */
@@ -162,7 +172,13 @@ export async function fetchManifest(
     );
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readCappedBody(response, url);
+
+  if (options.manifestSha256 === undefined && isOverPlainHTTP(url)) {
+    console.warn(
+      `gosd: the injection manifest at ${url} was fetched over plain HTTP with no manifestSha256 pin. The image itself is safe over http — every byte is hash-verified against the manifest — but the manifest is what those hashes come from, so anyone on the path can substitute both at once. Serve it over https, or pass manifestSha256 (e.g. your index's inject_sha256).`,
+    );
+  }
 
   if (options.manifestSha256 !== undefined) {
     const pin = options.manifestSha256.trim().toLowerCase();
@@ -189,6 +205,69 @@ export async function fetchManifest(
   }
 
   return parseManifest(data);
+}
+
+/** Reads the response body, refusing anything past {@link MAX_MANIFEST_BYTES}
+ * — by its declared `Content-Length` where there is one, and by counting
+ * bytes as they arrive regardless, since a host that would send an endless
+ * body is not one whose headers mean anything. */
+async function readCappedBody(response: Response, url: string | URL): Promise<Uint8Array> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null && Number(declared) > MAX_MANIFEST_BYTES) {
+    throw manifestTooLarge(url, `it declares ${declared} bytes`);
+  }
+
+  // A Response with no body at all (a fake, or a 204) has nothing to stream.
+  if (response.body === null) {
+    const whole = new Uint8Array(await response.arrayBuffer());
+    if (whole.length > MAX_MANIFEST_BYTES) {
+      throw manifestTooLarge(url, `it is ${whole.length} bytes`);
+    }
+    return whole;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > MAX_MANIFEST_BYTES) {
+      await reader.cancel();
+      throw manifestTooLarge(url, `it is still streaming past ${MAX_MANIFEST_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+function manifestTooLarge(url: string | URL, detail: string): GosdManifestFetchError {
+  return new GosdManifestFetchError(
+    `fetching the injection manifest at ${url} was abandoned because ${detail}, past the ${MAX_MANIFEST_BYTES}-byte limit; a gosd manifest is a few KiB of JSON, so check the URL names the .inject.json sidecar rather than the image itself`,
+  );
+}
+
+/** Whether url is plain `http:` somewhere a network can see. Loopback is
+ * exempt: a dev server on http://localhost has no path for anyone to sit on,
+ * and a warning every local run would only teach people to ignore it. */
+function isOverPlainHTTP(url: string | URL): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:") return false;
+  const host = parsed.hostname;
+  return !(host === "localhost" || host === "[::1]" || host === "::1" || host.startsWith("127."));
 }
 
 /** Structurally validates a parsed JSON value as a Manifest: every field is

@@ -35,11 +35,15 @@ type fakeOp struct {
 // file), matching real os.Symlink/configfs — unlike a naive fake that
 // silently overwrites, since a stranded symlink from a prior failed Apply is
 // exactly the state a re-Apply must fail loudly against, not paper over.
+// A path in refuse fails every WriteFile/Remove aimed at it, standing in
+// for a kernel that says no (a configfs rmdir of a still-bound gadget is
+// EBUSY) — the one thing this fake can't reach by modeling configfs alone.
 type fakeFS struct {
 	dirs          map[string]bool
 	files         map[string][]byte
 	links         map[string]string
 	defaultGroups map[string]bool
+	refuse        map[string]error
 	calls         []fakeOp
 }
 
@@ -49,6 +53,7 @@ func newFakeFS() *fakeFS {
 		files:         map[string][]byte{},
 		links:         map[string]string{},
 		defaultGroups: map[string]bool{},
+		refuse:        map[string]error{},
 	}
 }
 
@@ -85,6 +90,9 @@ func (f *fakeFS) markDefaultGroup(path string) {
 
 func (f *fakeFS) WriteFile(path string, data []byte, _ fs.FileMode) error {
 	f.calls = append(f.calls, fakeOp{"write", path})
+	if err := f.refuse[path]; err != nil {
+		return err
+	}
 	if !f.dirs[parentOf(path)] {
 		return fmt.Errorf("fakeFS: WriteFile %s: %w: parent directory not created", path, fs.ErrNotExist)
 	}
@@ -115,6 +123,9 @@ func (f *fakeFS) Symlink(oldname, newname string) error {
 func (f *fakeFS) Remove(path string) error {
 	f.calls = append(f.calls, fakeOp{"remove", path})
 
+	if err := f.refuse[path]; err != nil {
+		return err
+	}
 	if f.defaultGroups[path] {
 		return fmt.Errorf("fakeFS: Remove %s: %w: configfs default groups are removed with their parent, never directly", path, fs.ErrPermission)
 	}

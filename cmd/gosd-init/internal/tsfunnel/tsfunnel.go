@@ -31,12 +31,15 @@
 // imported here, not forked, so this module and cloudflared keep exactly
 // the same relay/backoff behavior without duplicating it a second time.
 //
-// This module ships UNWIRED: nothing in cmd/gosd-init/main.go calls Run
-// yet. Wiring Run into the boot sequence — including assigning
-// Deps.StartProcess to this package's own StartProcess and Deps.Wait to the
-// PID-1 reaper's Wait (see Deps.Wait's doc comment) — is a later bean in
-// the same epic (gosd-o68e), once this package has been reviewed in
-// isolation.
+// Run is live: cmd/gosd-init/main.go starts it on its own PanicGuard-ed
+// goroutine during StartNetworking, immediately before /app supervision
+// begins and alongside cloudflared, with Deps.StartProcess set to this
+// package's own StartProcess and Deps.Wait to the PID-1 reaper's Wait (see
+// tsfunnelDeps there, and Deps.Wait's doc comment below for why it is never
+// exec.Cmd.Wait). It runs on every image regardless: whether the shim
+// actually starts is decided by Options.Baked (gosd build --ingress
+// tailscale-funnel) and the card's own settings, resolved by Run itself —
+// see resolveMode.
 package tsfunnel
 
 import (
@@ -86,8 +89,9 @@ const (
 	DefaultTimeSyncedPollInterval = 2 * time.Second
 )
 
-// Deps bundles every dependency Run needs. Production wiring (the later
-// wiring bean's main.go) supplies real implementations; tests supply fakes.
+// Deps bundles every dependency Run needs. Production wiring (tsfunnelDeps
+// in cmd/gosd-init/main.go) supplies real implementations; tests supply
+// fakes.
 type Deps struct {
 	// StartProcess launches path with args and env, directing its
 	// stdout/stderr, and returns its pid without waiting for it to exit.
@@ -157,15 +161,15 @@ type Options struct {
 	// BinaryPath is where gosd build baked the gosd-tsfunnel shim for this
 	// board. Unused unless Config.Configured() and Baked are both true.
 	// Caller-supplied rather than computed here, mirroring
-	// cloudflared.Options.BinaryPath: the wiring bean passes in the build
-	// rail's own path for the baked binary.
+	// cloudflared.Options.BinaryPath: main.go passes in the build rail's
+	// own path for the baked binary.
 	BinaryPath string
 
 	// Baked reports whether gosd build --ingress tailscale-funnel baked
-	// the shim into this image at BinaryPath. Wired from a future
-	// config.json bit by the later wiring bean; resolveMode never probes
-	// the filesystem for the binary itself (locked decision: the "is it
-	// baked" bit lives in config.json, not on disk).
+	// the shim into this image at BinaryPath. Wired from config.json's own
+	// bit; resolveMode never probes the filesystem for the binary itself
+	// (locked decision: the "is it baked" bit lives in config.json, not on
+	// disk).
 	Baked bool
 
 	// Config is the Tailscale Funnel this device's card declares, read off

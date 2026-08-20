@@ -25,11 +25,14 @@
 // comment) — unlike boot/netup/wifiup/timesync, this package has no
 // platform_linux.go/platform_other.go split.
 //
-// This module ships UNWIRED: nothing in cmd/gosd-init/main.go calls Run
-// yet. Wiring Run into the boot sequence — including assigning
-// Deps.StartProcess to this package's own StartProcess and Deps.Wait to the
-// PID-1 reaper's Wait (see Deps.Wait's doc comment) — is a later bean in
-// the same epic, once this package has been reviewed in isolation.
+// Run is live: cmd/gosd-init/main.go starts it on its own PanicGuard-ed
+// goroutine during StartNetworking, immediately before /app supervision
+// begins, with Deps.StartProcess set to this package's own StartProcess and
+// Deps.Wait to the PID-1 reaper's Wait (see cloudflaredDeps there, and
+// Deps.Wait's doc comment below for why it is never exec.Cmd.Wait). It runs
+// on every image regardless: whether the tunnel actually starts is decided
+// by Options.Baked (gosd build --ingress cloudflared) and the card's own
+// settings, resolved by Run itself — see resolveMode.
 package cloudflared
 
 import (
@@ -90,8 +93,9 @@ var runArgs = []string{"tunnel", "--no-autoupdate", "--loglevel", "warn", "--con
 // instead of a nonexistent home directory.
 var runEnv = []string{"HOME=" + RuntimeDir}
 
-// Deps bundles every dependency Run needs. Production wiring (the later
-// wiring bean's main.go) supplies real implementations; tests supply fakes.
+// Deps bundles every dependency Run needs. Production wiring
+// (cloudflaredDeps in cmd/gosd-init/main.go) supplies real implementations;
+// tests supply fakes.
 type Deps struct {
 	// StartProcess launches path with args and env, directing its
 	// stdout/stderr, and returns its pid without waiting for it to exit.
@@ -160,10 +164,10 @@ type Options struct {
 	BinaryPath string
 
 	// Baked reports whether gosd build --ingress cloudflared baked a
-	// cloudflared binary into this image at BinaryPath. Wired from a
-	// future config.json bit by the later wiring bean; resolveMode never
-	// probes the filesystem for the binary itself (locked decision: the
-	// "is it baked" bit lives in config.json, not on disk).
+	// cloudflared binary into this image at BinaryPath. Wired from
+	// config.json's own bit; resolveMode never probes the filesystem for
+	// the binary itself (locked decision: the "is it baked" bit lives in
+	// config.json, not on disk).
 	Baked bool
 
 	// Config is the Cloudflare Tunnel this device's card declares, read

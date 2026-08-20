@@ -1,11 +1,11 @@
 ---
 # gosd-3dzc
-title: 'cloudflared and tsfunnel package docs still claim to ship UNWIRED — both are live in main.go'
-status: todo
+title: cloudflared and tsfunnel package docs still claim to ship UNWIRED — both are live in main.go
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T06:47:44Z
 ---
 
 **Severity: Medium.** No runtime effect — this is a documentation-only bug —
@@ -51,7 +51,25 @@ per-board support) but drop the "ships unwired" framing entirely.
 
 ## Todos
 
-- [ ] Rewrite the doc comment in `cloudflared.go:26-29`
-- [ ] Rewrite the doc comment in `tsfunnel.go:32-37`
-- [ ] Grep both files (and `docs/ingress.md`) for any other leftover
+- [x] Rewrite the doc comment in `cloudflared.go:26-29`
+- [x] Rewrite the doc comment in `tsfunnel.go:32-37`
+- [x] Grep both files (and `docs/ingress.md`) for any other leftover
       "not yet wired" / "unwired" language from the staged rollout
+
+## Summary of Changes
+
+Fixed as part of the gosd-wnyc / gosd-5lz2 hardening batch (same PR) —
+gosd-wnyc's ingress section carried the identical item, so it was done once
+and ticked in both rather than left open twice.
+
+Both package docs now open with what main.go actually does: `Run` is started
+on its own PanicGuard-ed goroutine during StartNetworking, immediately before
+/app supervision, with `Deps.StartProcess` and `Deps.Wait` wired from
+`cloudflaredDeps`/`tsfunnelDeps` — and the caveat that is still true (whether
+the tunnel or shim starts at all is `Options.Baked` plus the card's settings,
+resolved by `resolveMode`) is kept.
+
+The sweep for leftover staged-rollout tense found four more references to
+"the later wiring bean" — `Deps`' own doc comment and `Options.Baked` in each
+package, plus `tsfunnel.Options.BinaryPath` — all now naming the real wiring
+functions instead of a future one. `docs/ingress.md` had no such language.

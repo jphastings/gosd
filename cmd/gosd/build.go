@@ -109,7 +109,7 @@ not touch the cache at all.`,
 	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
-		"base URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog")
+		"absolute http(s) URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog, and validated at build time like --support-url so a broken (or plaintext-http) link can't reach an end user's Imager")
 	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
 	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
@@ -145,6 +145,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	if catalogFlag && publishBaseURL == "" {
 		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
+	}
+	resolvedPublishBaseURL, err := parsePublishBaseURL(publishBaseURL)
+	if err != nil {
+		return err
 	}
 
 	externalSpecs, err := parseWithExternalFlags(withExternal)
@@ -370,7 +374,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	pruneDownloadCaches(cmd, artifactsDir)
 
 	if catalogFlag {
-		if err := writeCatalog(cmd, selected, appName, outputs); err != nil {
+		if err := writeCatalog(cmd, selected, appName, outputs, resolvedPublishBaseURL); err != nil {
 			return err
 		}
 	}
@@ -760,6 +764,24 @@ func parseSupportURL(raw string) (string, error) {
 	return trimmed, nil
 }
 
+// parsePublishBaseURL validates --publish-base-url the same way
+// parseSupportURL validates --support-url: it must be an absolute http(s)
+// URL with a host, because every download link in the generated
+// os_list.json is built from it and lands in an end user's Raspberry Pi
+// Imager. Empty is valid — the flag is only required by --catalog, which
+// checks for it separately.
+func parsePublishBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("--publish-base-url %q is invalid; it must be an absolute http:// or https:// URL with a host, e.g. --publish-base-url=https://example.com/downloads", raw)
+	}
+	return trimmed, nil
+}
+
 // humanizeBinaryBytes renders a byte count the way a developer thinks about
 // partition sizes: whole-number MiB below 1GiB, two-decimal GiB above.
 func humanizeBinaryBytes(n int64) string {
@@ -798,7 +820,7 @@ func printBootVolumeUsage(cmd *cobra.Command, boardName string, report image.Wri
 // public artifact. A build of only internal boards (e.g. `--board=qemu-virt
 // --catalog`) is therefore a silent no-op: nothing to write isn't an error,
 // and --catalog on a normal, public-board build is unaffected either way.
-func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, outputs map[string]string) error {
+func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, outputs map[string]string, baseURL string) error {
 	images := make([]catalog.Image, 0, len(selected))
 	for _, b := range selected {
 		if boards.IsInternal(b.Name()) {
@@ -816,7 +838,7 @@ func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, o
 	}
 
 	dir := filepath.Dir(images[0].Path)
-	if _, err := catalog.WriteFiles(dir, images, catalog.Options{BaseURL: publishBaseURL}); err != nil {
+	if _, err := catalog.WriteFiles(dir, images, catalog.Options{BaseURL: baseURL}); err != nil {
 		return fmt.Errorf("writing the Imager catalog failed: %w", err)
 	}
 	return nil

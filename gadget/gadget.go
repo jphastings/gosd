@@ -16,6 +16,7 @@ package gadget
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 )
 
 // gadgetRoot is the configfs directory this package's gadget lives under.
@@ -112,12 +113,17 @@ func (g *Gadget) apply(fsys writableFS) error {
 // before returning applyErr — so a failed Apply leaves no state behind and,
 // per the documented contract, needs no Close. No UDC bind ever succeeded on
 // any path that reaches here, so there's nothing to unbind first, unlike
-// Close(). Any error removeConfigfsTree hits is discarded: applyErr is what
-// the caller needs to act on, and the sequence still attempts — and
-// completes — every remaining step regardless of one step's node never
+// Close(). applyErr stays the returned error (and what errors.Is/As see):
+// it is what the caller has to act on, and the sequence still attempts —
+// and completes — every remaining step regardless of one step's node never
 // having existed (e.g. because materialize() failed before reaching it).
+// An unwind that genuinely fails is appended to its message rather than
+// dropped, since it means the "needs no Close" contract did not hold and
+// configfs state was left behind for the next Apply to trip over.
 func (g *Gadget) failApply(fsys writableFS, applyErr error) error {
-	_ = removeConfigfsTree(fsys, g.Functions)
+	if unwindErr := removeConfigfsTree(fsys, g.Functions); unwindErr != nil {
+		return fmt.Errorf("%w (cleaning up the partly-created gadget then failed too, so configfs state was left behind: %v)", applyErr, unwindErr)
+	}
 	return applyErr
 }
 
@@ -199,6 +205,13 @@ func firstUDC(fsys writableFS) (string, error) {
 // still attempts every remaining step rather than stopping early, so a
 // partial failure doesn't strand extra configfs state; it returns the first
 // error encountered.
+//
+// A Close that returns an error leaves g marked as still applied, because
+// it is: the configfs tree and/or the UDC bind that Apply created outlived
+// the attempt to remove them. Calling Close again retries the whole
+// sequence, and a subsequent Apply refuses rather than walking into the
+// kernel's EBUSY/EEXIST for state this object had already claimed to have
+// released.
 func (g *Gadget) Close() error {
 	if g.fs == nil {
 		return nil
@@ -212,12 +225,15 @@ func (g *Gadget) Close() error {
 	unbindErr := fsys.WriteFile(gadgetRoot+"/UDC", []byte("\n"), 0o644)
 	teardownErr := removeConfigfsTree(fsys, g.Functions)
 
-	g.fs, g.udc = nil, ""
-
 	if unbindErr != nil {
 		return unbindErr
 	}
-	return teardownErr
+	if teardownErr != nil {
+		return teardownErr
+	}
+
+	g.fs, g.udc = nil, ""
+	return nil
 }
 
 // removeConfigfsTree removes every user-created directory/symlink under
@@ -232,13 +248,19 @@ func (g *Gadget) Close() error {
 // removing its parent tears it down for free, so none of the four are
 // rmdir'd here. Shared by Close() (tearing down a successfully applied
 // gadget) and failApply() (unwinding one that failed partway), it attempts
-// every step regardless of an earlier failure — including a step whose node
-// was never created — and returns the first error encountered, or nil if
-// every step succeeded.
+// every step regardless of an earlier failure and returns the first error
+// encountered, or nil if every step succeeded.
+//
+// A node that isn't there is not a failure: the step's whole purpose is for
+// it to be gone. failApply reaches this with most of the tree never
+// created, and a retried Close reaches it with most of the tree already
+// removed by the attempt that failed — in both cases every ENOENT is the
+// sequence working, so reporting one would make an unwind that did its job
+// indistinguishable from a kernel that refused.
 func removeConfigfsTree(fsys writableFS, fns []Function) error {
 	var firstErr error
 	fail := func(err error) {
-		if err != nil && firstErr == nil {
+		if err != nil && firstErr == nil && !errors.Is(err, fs.ErrNotExist) {
 			firstErr = err
 		}
 	}

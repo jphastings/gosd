@@ -425,6 +425,40 @@ dest = "vendor/blob.fw"
 	}
 }
 
+func TestParseFirmwarePlainHTTPURLErrorsActionably(t *testing.T) {
+	data := []byte(fmt.Sprintf(`
+[[firmware]]
+url = "http://example.com/blob.fw"
+sha256 = %q
+dest = "vendor/blob.fw"
+`, validSHA256))
+
+	_, err := kernelconfig.Parse(data)
+	if err == nil {
+		t.Fatal("Parse with a plain-http firmware url succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("error = %q, want it to name the scheme it wants", err.Error())
+	}
+}
+
+// A loopback host has no network path for anyone to sit on, and is how a
+// local fixture server gets pointed at.
+func TestParseFirmwareAllowsPlainHTTPToLoopback(t *testing.T) {
+	for _, host := range []string{"127.0.0.1:52497", "localhost:8080", "[::1]:9000"} {
+		data := []byte(fmt.Sprintf(`
+[[firmware]]
+url = "http://%s/blob.fw"
+sha256 = %q
+dest = "vendor/blob.fw"
+`, host, validSHA256))
+
+		if _, err := kernelconfig.Parse(data); err != nil {
+			t.Errorf("Parse with a loopback firmware url (%s) = %v, want nil", host, err)
+		}
+	}
+}
+
 func TestParseFirmwareMissingDestErrorsActionably(t *testing.T) {
 	data := []byte(fmt.Sprintf(`
 [[firmware]]
