@@ -128,7 +128,17 @@ jobs:
           fi
 
           git switch -c "$branch"
-          git add internal/artifacts/artifacts.go
+          git add internal/artifacts/artifacts.go .changeset
+          # pin-bump.sh writes .changeset/artifacts-pin-<version>.md precisely so
+          # this bump ships in a CLI release (bean gosd-odx3's whole point) - a
+          # `git commit` that only staged the Go file silently dropped that file
+          # as untracked, and every automated pin PR before gosd-osjp did exactly
+          # that (PR #306 / commit 072f66d landed with no change file). Fail loud
+          # rather than repeat it.
+          if ! git diff --cached --name-only | grep -q '^\.changeset/'; then
+            echo "::error::no .changeset/*.md staged for this commit; pin-bump.sh should have written one - refusing to open a PR whose bump would reach no release"
+            exit 1
+          fi
           git commit -m "Bump internal/artifacts.Version to $version" \
             -m "Opened automatically once artifacts/$version's assets were published, so the release a merged board fix rides in actually reaches builds (bean gosd-odx3). The doc-comment entry is spliced from that release's notes; polish it in review." \
             -m "The Verify artifacts pin workflow checks this on the pull request: every public board built from a real download of the release, an offline rebuild from cache, and a report of which boards actually move."

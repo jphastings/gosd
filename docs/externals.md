@@ -200,7 +200,9 @@ directory can hold more than one external's output side by side; a bare
 Builds are content-addressed and cached (script bytes + container image +
 arch + output name), mirroring `gosd build-kernel`: an unchanged recipe
 re-run is an instant cache hit, reported as such in `gosd build-external`'s
-summary line rather than re-running the container.
+summary line rather than re-running the container. The cache keeps only the
+8 most recently used entries, mirroring `gosd build-kernel`'s bound — see
+`gosd cache dir`/`size`/`clean --builds`.
 
 ## `gosd build-external` flags
 

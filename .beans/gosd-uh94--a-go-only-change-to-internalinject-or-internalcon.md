@@ -1,11 +1,11 @@
 ---
 # gosd-uh94
-title: 'A Go-only change to internal/inject or internal/configtree has no structural reason to run the js/ cross-implementation test that would catch it breaking'
-status: todo
+title: A Go-only change to internal/inject or internal/configtree has no structural reason to run the js/ cross-implementation test that would catch it breaking
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T05:50:19Z
 ---
 
 **Severity: Medium.** The safety net that exists is good; the gap is that
@@ -58,9 +58,32 @@ or, worse, once an end user's download hits
 
 ## Todos
 
-- [ ] Decide cheap-fix-now vs. CI-wiring, and record the choice
-- [ ] If CI wiring: add a path filter to the relevant workflow so
-      `internal/inject/**`, `internal/configtree/**`, and `internal/image/**`
-      changes trigger the `js` job even when no `js/` file changed
-- [ ] If doc-only for now: update CLAUDE.md's quality-gates section with the
-      explicit package list
+- [x] Decide cheap-fix-now vs. CI-wiring, and record the choice: cheap-fix-now (doc-only). Verified against the actual repo state first (see Summary of Changes) — CI wiring turned out to be unnecessary.
+- [x] N/A — CI wiring not needed. `ci.yml`'s `js` job has NO path filter\n      at all (its `on:` block is plain `pull_request:`/`push: branches: [main]`,\n      no `paths:` key, and the job carries no `if:`), so it already runs on\n      *every* PR unconditionally, Go-only changes included — confirmed against\n      PR #198 ("container: preflight-detect remote/SSH docker contexts", diff\n      is internal/container + docs only), whose `js (node 22)`/`js (node 24)`\n      checks both ran and passed. It is also a required status check\n      (`gh api repos/jphastings/gosd/branches/main/protection` lists\n      `js (node 24)` in `required_status_checks.contexts`). Adding a path\n      filter would be a regression (narrowing an unconditional, always-on gate\n      to a conditional one), not a fix.
+- [x] Doc-only: updated CLAUDE.md's quality-gates section with the explicit\n      package list (`internal/inject`, `internal/configtree`,\n      `internal/image`), and noted that this is a local-workflow convenience\n      layered on top of CI's already-unconditional `js` gate, not a\n      replacement for a missing structural check.
+
+## Summary of Changes
+
+**The bean's premise, as filed, does not match the repo's actual CI
+configuration.** `.github/workflows/ci.yml`'s `js` job has no `paths:`
+filter on the workflow's `on:` trigger and no job-level `if:` — it runs
+unconditionally on every `pull_request`/push to `main`, regardless of what
+changed, and `pnpm run test:integration` (the cross-implementation test this
+bean is about) is one of its steps. It is also listed in
+`required_status_checks.contexts` on the `main` branch, i.e. it already
+blocks merge. Confirmed empirically: PR #198, whose diff is
+`internal/container` + docs only, still ran and passed both `js (node 22)`
+and `js (node 24)`.
+
+So a Go-only change to `internal/inject`/`internal/configtree`/`internal/image`
+already cannot merge without the JS integration suite running and passing —
+the CI-layer gap this bean describes does not exist today. Per CLAUDE.md's own
+instruction to say so rather than silently diverge when a filed diagnosis
+doesn't hold up, this bean is closed on the cheap-fix option only: CLAUDE.md's
+quality-gates section now names `internal/inject`, `internal/configtree` and
+`internal/image` explicitly alongside `js/` as packages that warrant running
+the js gate *locally* before pushing (catching a break before CI does, not
+instead of it), and explicitly notes that CI's `js` job is already
+unconditional/required so this is a convenience, not a backstop being newly
+added. No workflow file was changed — adding a path filter would have made the
+gate conditional, i.e. strictly weaker than what already exists.

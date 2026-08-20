@@ -20,6 +20,12 @@ import (
 // cmd/gosd-init/internal/dataexpand caps a grown data partition at a round
 // 256 GiB. Both this guard and that cap can go once the go-diskfs pin carries
 // the upstream fix (bean gosd-8kdm).
+//
+// Bumping the github.com/diskfs/go-diskfs pin in go.mod requires re-deriving
+// fat32SectorsPerFAT/fat32SectorsPerCluster/maxFAT32Bytes against the new
+// version first (bean gosd-qvjs) — see fat32selfconsistent.go's doc comment
+// for why, and TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput below
+// for the test that pins today's version's real behavior.
 const (
 	// fat32ReservedSectors is the reserved area go-diskfs fixes every FAT32
 	// volume's layout on: boot sector, FSInfo and their backups, rounded up.

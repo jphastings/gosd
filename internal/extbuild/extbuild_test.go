@@ -3,6 +3,7 @@ package extbuild_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -342,6 +343,46 @@ func TestBuild_InterruptedBuildLeavesNoCacheEntry(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("cache dir has %d entries after an interrupted build, want 0: %v", len(entries), entries)
+	}
+}
+
+// TestBuild_BoundsCacheToTheMostRecentEntries exercises bean gosd-9o73 end
+// to end: distinct cache keys (here, distinct Image values standing in for
+// distinct external-binary/arch combinations) that never revisit an old key
+// must not make the cache directory grow forever.
+func TestBuild_BoundsCacheToTheMostRecentEntries(t *testing.T) {
+	spec := testSpec()
+	cacheDir := t.TempDir()
+
+	const distinctBuilds = 10 // more than extbuild's keepBuildCacheEntries (8)
+	var lastKey string
+	for i := 0; i < distinctBuilds; i++ {
+		rt := newSucceedingRunner(spec)
+		result, err := extbuild.Build(context.Background(), spec, extbuild.Options{
+			Runtime: rt, CacheDir: cacheDir, Image: fmt.Sprintf("image-%d", i),
+		})
+		if err != nil {
+			t.Fatalf("Build #%d: %v", i, err)
+		}
+		lastKey = result.CacheKey
+	}
+
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		t.Fatalf("reading cache dir: %v", err)
+	}
+	if len(entries) > 8 {
+		t.Errorf("cache dir has %d entries after %d distinct builds, want at most 8 (extbuild's keep-last-N bound): %v", len(entries), distinctBuilds, entries)
+	}
+
+	found := false
+	for _, e := range entries {
+		if e.Name() == lastKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the most recently built entry (%s) was pruned; entries = %v", lastKey, entries)
 	}
 }
 

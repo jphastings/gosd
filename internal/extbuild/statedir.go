@@ -25,6 +25,13 @@ func defaultBuildRoot() (string, error) {
 	return buildRootFor(runtime.GOOS, os.Getenv)
 }
 
+// BuildRoot returns the default external-build cache/staging directory (see
+// defaultBuildRoot), for callers that only need to locate it - `gosd cache
+// dir`/`size`/`clean --builds` (bean gosd-2jwa) - without running a build.
+func BuildRoot() (string, error) {
+	return defaultBuildRoot()
+}
+
 func buildRootFor(goos string, getenv func(string) string) (string, error) {
 	switch goos {
 	case "darwin":
