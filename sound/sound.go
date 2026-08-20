@@ -46,7 +46,8 @@
 // offers — there is no machine-readable "this is the mute" flag — so it is
 // deliberately narrow and would rather leave a control alone than flip a DSP
 // feature. Options.SkipMixer turns it off entirely, Options.Volume sets the
-// level, Device.SetControl overrides any single element, and Device.Mixer
+// level, Device.SetControl (or IndexedControl, for a same-named element at
+// another Control.Index) overrides any single element, and Device.Mixer
 // prints the lot when something is still not audible.
 //
 // # Virtual cards are never chosen
@@ -216,13 +217,26 @@ type Device interface {
 	// it when a board plays silence: it is the difference between "a
 	// control we did not set" and "the hardware is not wired up".
 	Mixer() (Mixer, error)
-	// SetControl sets one control element by name — the escape hatch for
-	// hardware the audibility pass gets wrong, and for an app that wants a
-	// specific level. Values are one per channel: 0 or 1 for a switch, the
-	// raw value for a volume, an index into Control.Items for an enum.
+	// SetControl sets one control element by name, at Control.Index 0 — the
+	// escape hatch for hardware the audibility pass gets wrong, and for an
+	// app that wants a specific level. Values are one per channel: 0 or 1
+	// for a switch, the raw value for a volume, an index into Control.Items
+	// for an enum. For a card with more than one element sharing this name
+	// (Control.Index != 0), type-assert the Device to IndexedControl.
 	SetControl(name string, values ...int) error
 	// Close releases the device.
 	Close() error
+}
+
+// IndexedControl is implemented by every Device Open and OpenWith return. It
+// is a separate interface rather than another method on Device, so a fake
+// Device written for an app's own tests (see Device's doc) is never forced
+// to implement more than SetControl asks for.
+type IndexedControl interface {
+	// SetControlIndexed is SetControl for a card with more than one element
+	// sharing a name — see Control.Index — which SetControl alone cannot
+	// address, since it only ever matches index 0.
+	SetControlIndexed(name string, index int, values ...int) error
 }
 
 // Open finds the board's best playback device and configures it for 48 kHz

@@ -1,6 +1,7 @@
 package sound
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -205,6 +206,57 @@ type Mixer struct {
 	// it. Empty when Options.SkipMixer was set, or when nothing needed
 	// changing.
 	Changed []Change
+}
+
+// controlWriter is the one real-hardware operation applyChanges needs, so its
+// error-collecting behaviour can be exercised by a fake on any host: no
+// /dev/snd/controlC<card> required. control_linux.go's *control satisfies it
+// with a real ELEM_WRITE ioctl.
+type controlWriter interface {
+	write(numid uint32, typ ControlType, values []int) error
+}
+
+// applyChanges writes every change in a pass rather than stopping at the
+// first failure: ALSA codecs boot muted, and the audibility pass is what
+// unmutes them, so one control a codec doesn't have (or a transient DAPM
+// power race) must not suppress every other, unrelated unmute that follows
+// it in the list. It returns the changes that succeeded, in the order they
+// were attempted, plus every failure joined into one error.
+func applyChanges(w controlWriter, byNumid map[int]ControlType, changes []Change) ([]Change, error) {
+	var done []Change
+	var errs []error
+	for _, ch := range changes {
+		if err := w.write(uint32(ch.Numid), byNumid[ch.Numid], ch.To); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", ch, err))
+			continue
+		}
+		done = append(done, ch)
+	}
+	return done, errors.Join(errs...)
+}
+
+// findControl locates the element named name at index among elements. Its
+// error says what SetControl/SetControlIndexed actually found, because "no
+// control named %q" reads as a typo when the real problem is Index — a card
+// with the same name at more than one index (Control.Index) can only be
+// addressed with the right one.
+func findControl(elements []Control, name string, index int) (Control, error) {
+	var otherIndexes []int
+	for _, e := range elements {
+		if e.Name != name {
+			continue
+		}
+		if e.Index == index {
+			return e, nil
+		}
+		otherIndexes = append(otherIndexes, e.Index)
+	}
+	if len(otherIndexes) == 0 {
+		return Control{}, fmt.Errorf("no control named %q among %d elements; Device.Mixer lists them all",
+			name, len(elements))
+	}
+	return Control{}, fmt.Errorf("no control named %q at index %d, but it exists at index %s; "+
+		"pass that index to SetControlIndexed", name, index, ints(otherIndexes))
 }
 
 // Word lists for the naming heuristic.
