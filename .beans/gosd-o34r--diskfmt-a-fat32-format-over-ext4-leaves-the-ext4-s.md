@@ -1,10 +1,11 @@
 ---
 # gosd-o34r
 title: 'diskfmt: a FAT32 format over ext4 leaves the ext4 superblock, so Inspect reports the dead filesystem and gosd-init halts'
-status: todo
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-16T19:10:14Z
-updated_at: 2026-08-16T19:10:14Z
+updated_at: 2026-08-20T04:32:41Z
 ---
 
 Found on the Cubie A5E bench (bean gosd-6pfn), but **not board-specific** —

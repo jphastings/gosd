@@ -1,11 +1,11 @@
 ---
 # gosd-ci98
 title: Assert the LED kernel symbols in every board fragment
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-17T20:10:44Z
-updated_at: 2026-08-17T20:25:04Z
+updated_at: 2026-08-20T04:32:41Z
 ---
 
 The boot-state LED (gosd-xtcs) depends on kernel symbols that no GoSD kernel
