@@ -130,11 +130,12 @@ type KernelSpec struct {
 	ConfigFragment []byte
 
 	// DTSPatches are device-tree patches applied, in order, before the
-	// config step. Populated for the three Rockchip-family boards
-	// (peripheral enablement) and for pi-zero-w (its mainline-style DT
-	// needs the downstream peripheral dma-ranges window — bean
-	// gosd-1ey5); empty for the arm64 Pi boards, which use the tree's
-	// downstream (bcm2710-prefixed) DTs unmodified.
+	// config step. Populated for the Rockchip-family boards (peripheral
+	// enablement) and cubie-a5e (a USB-gadget variant DTB), and for every
+	// Pi board and pi-zero-w (retain-state-shutdown/default-state on the
+	// status LED — bean gosd-54j8; pi-zero-w also carries its mainline-style
+	// DT's downstream peripheral dma-ranges window — bean gosd-1ey5). Empty
+	// only for qemu-virt, which has no DTB of its own to patch.
 	DTSPatches []Patch
 
 	// DTB is nil for boards with no device tree blob to build.
@@ -284,6 +285,11 @@ var specs = map[string]KernelSpec{
 
 		ConfigFragment: pizero2wmanifest.KernelFragment,
 
+		// Retains the ACT LED's steady level through kernel shutdown and
+		// flips its default-state to "off", so solid-on can only mean a
+		// reported fatal error (bean gosd-54j8; see docs/status-led.md).
+		DTSPatches: loadPatches(pizero2wmanifest.PatchesFS, "kernel/patches"),
+
 		// pi-zero-2w's kernel build builds every DTB ("make ... Image dtbs")
 		// and copies out bcm2710-rpi-zero-2-w.dtb, but
 		// internal/boards/pizero2w.Artifacts() does not currently list a
@@ -326,13 +332,16 @@ var specs = map[string]KernelSpec{
 
 		ConfigFragment: pizerowmanifest.KernelFragment,
 
-		// The rpi tree's downstream slave-DMA convention (clients pass
-		// CPU phys addresses; the DMA core translates them via the DT's
-		// dma-ranges) requires the VideoCore peripheral window that
-		// only the downstream bcm2708/bcm2710 DTs carry. This board
-		// ships the mainline-style bcm2835 DT, so the window is patched
-		// in — without it every sdhost DMA transfer fails and the SD
-		// card is unusable (bean gosd-1ey5).
+		// Two patches: (1) the rpi tree's downstream slave-DMA convention
+		// (clients pass CPU phys addresses; the DMA core translates them
+		// via the DT's dma-ranges) requires the VideoCore peripheral
+		// window that only the downstream bcm2708/bcm2710 DTs carry. This
+		// board ships the mainline-style bcm2835 DT, so the window is
+		// patched in — without it every sdhost DMA transfer fails and the
+		// SD card is unusable (bean gosd-1ey5). (2) Retains the ACT LED's
+		// steady level through kernel shutdown and flips its default-state
+		// to "off", so solid-on can only mean a reported fatal error (bean
+		// gosd-54j8; see docs/status-led.md).
 		DTSPatches: loadPatches(pizerowmanifest.PatchesFS, "kernel/patches"),
 
 		DTB: &DTB{
@@ -367,6 +376,16 @@ var specs = map[string]KernelSpec{
 		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
 
 		ConfigFragment: pi3bmanifest.KernelFragment,
+
+		// Retains the ACT LED's steady level through kernel shutdown and
+		// flips its default-state to "off", so solid-on can only mean a
+		// reported fatal error (bean gosd-54j8; see docs/status-led.md).
+		// Patches both bcm2710-rpi-3-b.dts and bcm2710-rpi-3-b-plus.dts -
+		// this LED sits on brcm,bcm2835-virtgpio (the firmware's mailbox
+		// GPIO, not the SoC GPIO), so whether the retained level survives
+		// past Linux's halt depends on the firmware; unverified until
+		// benched (the bean names pi-3b explicitly as the one to distrust).
+		DTSPatches: loadPatches(pi3bmanifest.PatchesFS, "kernel/patches"),
 
 		// The rpi tree builds both bcm2710-rpi-3-b.dtb (the rpi-style DT
 		// the Pi firmware loads by board match - same convention as the

@@ -137,20 +137,26 @@ func TestEmbeddedConfigFragmentsAreNonEmpty(t *testing.T) {
 // TestDTSPatchesOnlyOnExpectedBoards guards against DTS patches silently
 // appearing on (or vanishing from) a board: the Rockchip-family boards carry
 // peripheral-enablement patches, and pi-zero-w carries the peripheral
-// dma-ranges window its mainline-style DT lacks (bean gosd-1ey5). cubie-a5e
-// joins the fleet's non-Rockchip side with NO patches - not an oversight,
-// but a locked decision (bean gosd-axtv): header I2C/SPI enablement is
-// deferred to a post-bring-up follow-up, and at the pinned kernel tag the
-// dtsi has no SPI node at all for a patch to target. Every other board must
-// build its device tree unpatched.
+// dma-ranges window its mainline-style DT lacks (bean gosd-1ey5). Every Pi
+// board and every board with a status LED (all but qemu-virt) also carries
+// a retain-state-shutdown/default-state patch on its status LED node (bean
+// gosd-54j8 - see docs/status-led.md). cubie-a5e's header I2C/SPI enablement
+// remains deferred to a post-bring-up follow-up (locked decision, bean
+// gosd-axtv): at the pinned kernel tag the dtsi has no SPI node at all for
+// such a patch to target, but it still carries the LED patch below. Only
+// qemu-virt must build its device tree unpatched (it has no DTB of its own).
 func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 	wantPatched := map[string]bool{
 		"radxa-zero-3e": true,
 		"nanopi-zero2":  true,
 		"rock-4se":      true,
 		"pi-zero-w":     true,
+		"pi-zero-2w":    true,
+		"pi-3b":         true,
 		// Not peripheral enablement like the Rockchip boards: this one
-		// adds a second, USB-gadget variant DTB (bean gosd-3io0).
+		// adds a second, USB-gadget variant DTB (bean gosd-3io0), plus the
+		// status-LED retain-state-shutdown patch every board with an LED
+		// carries (bean gosd-54j8).
 		"cubie-a5e": true,
 	}
 

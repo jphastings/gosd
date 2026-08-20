@@ -1,0 +1,23 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2835-rpi-zero-w.dts
+@@ -109,6 +109,20 @@
+ 
+ &led_act {
+ 	gpios = <&gpio 47 GPIO_ACTIVE_LOW>;
++	/*
++	 * GoSD (github.com/jphastings/gosd): the ACT LED is GoSD's status
++	 * LED (bean gosd-n82u) - solid on means a fatal error was reported
++	 * (fault.Fatal, see docs/status-led.md). default-state = "off"
++	 * (this node otherwise inherits "keep" from
++	 * bcm283x-rpi-led-deprecated.dtsi) means solid-on can only be
++	 * gosd-init's fault report, never whatever level the GPIO comes up
++	 * in before gosd-init claims the LED. retain-state-shutdown stops
++	 * gpio_led_shutdown() clearing that report during
++	 * device_shutdown(), so a fatal error's steady level survives the
++	 * halt. See bean gosd-54j8.
++	 */
++	default-state = "off";
++	retain-state-shutdown;
+ };
+ 
+ &sdhci {

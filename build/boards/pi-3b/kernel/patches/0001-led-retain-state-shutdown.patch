@@ -1,0 +1,43 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2710-rpi-3-b.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2710-rpi-3-b.dts
+@@ -246,7 +246,21 @@
+ 
+ &led_act {
+ 	gpios = <&virtgpio 0 GPIO_ACTIVE_HIGH>;
++	/*
++	 * GoSD (github.com/jphastings/gosd): the ACT LED is GoSD's status
++	 * LED (bean gosd-n82u) - solid on means a fatal error was reported
++	 * (fault.Fatal, see docs/status-led.md). default-state is already
++	 * "off" here; retain-state-shutdown stops gpio_led_shutdown()
++	 * clearing that report during device_shutdown(). This LED lives on
++	 * brcm,bcm2835-virtgpio (the firmware's mailbox GPIO, not the SoC
++	 * GPIO): the retain flag means Linux itself won't write at
++	 * shutdown, but whether the firmware reasserts its own behaviour
++	 * once Linux halts is unverified until benched on real hardware
++	 * (bean gosd-54j8 - pi-3b is explicitly the board to distrust
++	 * here).
++	 */
+ 	default-state = "off";
++	retain-state-shutdown;
+ 	linux,default-trigger = "mmc0";
+ };
+ 
+--- a/arch/arm/boot/dts/broadcom/bcm2710-rpi-3-b-plus.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2710-rpi-3-b-plus.dts
+@@ -235,7 +235,16 @@
+ 
+ &led_act {
+ 	gpios = <&gpio 29 GPIO_ACTIVE_HIGH>;
++	/*
++	 * GoSD (github.com/jphastings/gosd): the ACT LED is GoSD's status
++	 * LED (bean gosd-n82u) - solid on means a fatal error was reported
++	 * (fault.Fatal, see docs/status-led.md). default-state is already
++	 * "off" here; retain-state-shutdown stops gpio_led_shutdown()
++	 * clearing that report during device_shutdown(), so a fatal
++	 * error's steady level survives the halt. See bean gosd-54j8.
++	 */
+ 	default-state = "off";
++	retain-state-shutdown;
+ 	linux,default-trigger = "mmc0";
+ };
+ 

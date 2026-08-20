@@ -1,0 +1,19 @@
+--- a/arch/arm/boot/dts/broadcom/bcm2710-rpi-zero-2-w.dts
++++ b/arch/arm/boot/dts/broadcom/bcm2710-rpi-zero-2-w.dts
+@@ -215,7 +215,16 @@
+ 
+ &led_act {
+ 	gpios = <&gpio 29 GPIO_ACTIVE_LOW>;
++	/*
++	 * GoSD (github.com/jphastings/gosd): the ACT LED is GoSD's status
++	 * LED (bean gosd-n82u) - solid on means a fatal error was reported
++	 * (fault.Fatal, see docs/status-led.md). default-state is already
++	 * "off" here; retain-state-shutdown stops gpio_led_shutdown()
++	 * clearing that report during device_shutdown(), so a fatal
++	 * error's steady level survives the halt. See bean gosd-54j8.
++	 */
+ 	default-state = "off";
++	retain-state-shutdown;
+ 	linux,default-trigger = "actpwr";
+ };
+ 
