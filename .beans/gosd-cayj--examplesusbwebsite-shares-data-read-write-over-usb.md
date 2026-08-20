@@ -1,11 +1,11 @@
 ---
 # gosd-cayj
 title: examples/usbwebsite shares /data read-write over USB, exposing the WiFi PSK and ingress tokens to any host
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:15:09Z
-updated_at: 2026-08-20T06:04:44Z
+updated_at: 2026-08-20T06:56:27Z
 ---
 
 **Severity: High.** GoSD's own reference example hands plaintext credentials
@@ -67,7 +67,7 @@ No case to open, no card to remove, no credentials required.
 
 - [x] `ReadOnly: true` (or a non-secret-bearing backing store) in examples/usbwebsite — resolved as *don't share the volume at all* without consent; see "Shape chosen"
 - [x] Decide on inverting the MassStorage write default; if kept, document the zero value loudly on the field — **kept**, documented loudly; reasoning in "Decisions"
-- [ ] Refuse the boot/root disk explicitly in gadget/massstorage.go — **deferred to `gosd-ix0r`**; not implementable from the signals available today, see "Deferred"
+- [x] Refuse the boot/root disk explicitly in gadget/massstorage.go — **deferred to `gosd-ix0r`**; not implementable from the signals available today, see "Deferred"
 - [x] docs/runtime.md: call out that sharing /data shares the snapshot's plaintext secrets
 
 
@@ -175,3 +175,60 @@ portably. A real fix needs `gosd-init` to *publish* the disk it booted from
 that is a gosd-init feature, not an example fix. The incidental protection
 noted in the bean does hold in practice today — gosd-init keeps `/boot`
 mounted for the life of the device — but it remains incidental.
+
+
+## Summary of Changes
+
+PR #342.
+
+- **`examples/usbwebsite/main.go`** — `storage` now carries `contentDir` (the
+  only directory served) and `shareDevice` (set only for a volume that may be
+  handed to a USB host), replacing the old `mountpoint`/`device` pair where
+  both roles were the same path.
+  - eMMC path: `contentDir` is the mount root and `shareDevice` is the block
+    device, exactly as before — the app owns that volume outright.
+  - Data-partition path: `contentDir` is `/data/website`, and `shareDevice` is
+    empty unless `WEBSITE_SHARE_DATA` is set, in which case the app first logs
+    what the drive exposes. The decision is a small pure function,
+    `dataStorage(device, consented)`, so it is unit-testable.
+  - New `prepareContent` creates the content directory and seeds the starter
+    page *before* the share/serve decision, so a shared drive already shows
+    the folder the files belong in.
+  - The `gadget.MassStorage` literal writes `ReadOnly: false` explicitly, with
+    a comment on why that is right only for a volume the app owns.
+  - Starter page and package doc rewritten for the two routes.
+- **`examples/usbwebsite/main_test.go`** — `TestDataStorage` pins the three
+  security-relevant behaviours (never serves the mount root; no drive without
+  consent, with an explanation and no mount closures; drive plus closures once
+  consented) and `TestPrepareContent` covers the fresh-card case.
+- **`examples/usbwebsite/README.md`** — new "Only publish a volume that is
+  yours alone" section explaining *why*: the eMMC/data-partition ownership
+  difference, `http.FileServer`'s lack of dotfile filtering, and why a LUN
+  cannot be scoped to a subdirectory. This is the deliverable a developer
+  copying the example needs.
+- **`gadget/massstorage.go`** — "A LUN is the whole volume" section on the
+  type, and a loud note on `ReadOnly` that its zero value grants an
+  unauthenticated host write access and that it is not a confidentiality
+  control. No behaviour change.
+- **`docs/runtime.md`** — two new bullets in the USB gadget section: only
+  share a volume you own, and do not share (or serve the root of) the data
+  partition, naming what is on it.
+- **`.changeset/usbwebsite-data-partition-disclosure.md`** — `gosd: patch`,
+  written as a release note including the behaviour change eMMC-less users
+  will notice.
+- **Follow-up filed:** `gosd-ix0r` for the library-level boot-disk refusal.
+
+**Not changed, deliberately:** `gadget.MassStorage.ReadOnly` keeps its name and
+polarity (see "Decisions"), and the data partition remains *shareable on
+request* rather than refused outright, so `gosd-4ajn`'s Pi Zero bring-up
+vehicle survives.
+
+**`gosd-cgpr` (usbwebsite restart loop) is unaffected** — neither fixed nor
+worsened. Its fix (idle instead of exit on the paths that need outside action)
+lives in `main`/`claimStorage` and is untouched; every path added here either
+idles or serves, and nothing new exits.
+
+**Verified:** `go test ./...`, `go vet ./...`, `gofmt -l .` (clean),
+`golangci-lint run ./...` and `GOOS=linux golangci-lint run ./...`, plus
+`GOOS=linux GOARCH=arm64` and `GOOS=linux GOARCH=arm GOARM=6` builds of the
+example. All 15 CI checks green on #342.
