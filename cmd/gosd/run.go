@@ -96,6 +96,9 @@ place and prints its path instead.`,
 
 func runRun(cmd *cobra.Command, args []string) error {
 	pkgPath := args[0]
+	if err := validatePkgPath(pkgPath); err != nil {
+		return err
+	}
 
 	// Fail fast, before spending any time cross-compiling or assembling
 	// an image, if there's nothing to boot the result with.

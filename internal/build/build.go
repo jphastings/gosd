@@ -36,7 +36,13 @@ func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
 	if tags != "" {
 		args = append(args, "-tags", tags)
 	}
-	args = append(args, pkgPath)
+	// "--" is what stops the toolchain reading pkgPath as another build
+	// flag: without it a pkgPath of "-toolexec=/tmp/payload" would run an
+	// arbitrary program in place of the compiler on the build host (bean
+	// gosd-jc24). cmd/gosd rejects such a pkgPath before it reaches here;
+	// this terminator is what makes that a second line of defence rather
+	// than the only one.
+	args = append(args, "--", pkgPath)
 
 	cmd := exec.Command("go", args...)
 	cmd.Env = archEnv(arch)
@@ -51,11 +57,11 @@ func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
 	return nil
 }
 
-// archEnv returns the env every gosd cross-compile runs with: the host's own
-// environment plus CGO disabled and GOOS/GOARCH/GOARM set for arch (GOARM
-// omitted when arch doesn't set one, e.g. arm64).
+// archEnv returns the env every gosd cross-compile runs with: toolchainEnv
+// plus CGO disabled and GOOS/GOARCH/GOARM set for arch (GOARM omitted when
+// arch doesn't set one, e.g. arm64).
 func archEnv(arch boards.Arch) []string {
-	env := append(os.Environ(),
+	env := append(toolchainEnv(),
 		"CGO_ENABLED=0",
 		"GOOS="+targetGOOS,
 		"GOARCH="+arch.GOARCH,
@@ -66,8 +72,34 @@ func archEnv(arch boards.Arch) []string {
 	return env
 }
 
+// toolchainEnv is the host environment every `go` subprocess gosd starts
+// inherits: os.Environ() with GOFLAGS removed. GOFLAGS can carry -toolexec,
+// -ldflags and friends, so an ambient one - a direnv .envrc picked up on
+// entering a cloned repo, a poisoned shell profile, an inherited CI variable
+// - would otherwise reach the compiler and execute arbitrary code on the
+// build host without the attacker ever touching gosd's argv (bean
+// gosd-jc24). Nothing gosd builds needs a caller's GOFLAGS: every flag that
+// matters is set explicitly here and in each command's argv. GOPROXY,
+// GOPRIVATE and the other module-fetch variables deliberately stay - they
+// select where source is fetched from, which corporate proxies and offline
+// caches legitimately need to control, and none of them names a program to
+// run.
+func toolchainEnv() []string {
+	env := os.Environ()
+	kept := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GOFLAGS=") {
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return kept
+}
+
 func requireMainPackage(pkgPath string) error {
-	cmd := exec.Command("go", "list", "-f", "{{.Name}}", pkgPath)
+	// "--" for the same reason CrossCompile passes it: pkgPath must reach
+	// the toolchain as an operand, never as a flag.
+	cmd := exec.Command("go", "list", "-f", "{{.Name}}", "--", pkgPath)
 	// Inspect the package under the same GOOS every gosd build actually
 	// targets (targetGOOS, always "linux"), not the host's own GOOS: a
 	// package gated with a `//go:build linux` tag (as a dependency on a
@@ -75,7 +107,7 @@ func requireMainPackage(pkgPath string) error {
 	// examples/gpioinfo) is a real main package under the build gosd
 	// performs, even though `go list` would otherwise report it has no Go
 	// files at all when run unmodified on a macOS host.
-	cmd.Env = append(os.Environ(), "GOOS="+targetGOOS)
+	cmd.Env = append(toolchainEnv(), "GOOS="+targetGOOS)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
