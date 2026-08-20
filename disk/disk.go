@@ -35,6 +35,18 @@
 // changed across an upgrade) is treated like any other foreign content: see
 // destructive, below.
 //
+// Adoption is gated on a reserved marker file, not on what the volume looks
+// like: GoSD writes an empty ".gosd-established" into the root of a volume
+// only once the format, the flush of that format to the medium and (for
+// ext4) the one-time grow have all completed, and a later run adopts the
+// volume only if that marker is there. A matching label proves nothing on
+// its own — an interrupted format can leave one over a filesystem that was
+// never finished. Apps must leave that file alone; deleting it does not
+// destroy anything, but it costs the volume its proof (see
+// internal/blockmount for exactly what happens then, which differs between
+// ext4 and FAT32/exFAT). Volumes formatted by a release older than the
+// marker carry no marker and are adopted anyway, on the evidence of the
+// files already in them.
 // Formatting is destructive, so it is gated: FormatAndMount will format a blank
 // disk freely, but refuses to overwrite anything else (a volume with a
 // different label, or a filesystem GoSD cannot read) unless the caller
@@ -44,7 +56,6 @@ package disk
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -389,11 +400,15 @@ var deviceClasses = []string{
 // others. Beyond the class allowlist it rejects an eMMC's boot/RPMB/GP
 // hardware partitions (which hold boot code, replay-protected data or
 // vendor-managed content such as DRM keys and calibration — never general
-// storage). Present-medium and write-protected exclusion is not this
-// package's concern any more: blockmount.Usable enforces both, for every
-// caller of Candidates/Choose, before rank is ever consulted — see gosd-ix38.
+// storage). That rejection, and present-medium/write-protected exclusion, are
+// blockmount.Usable's job now, applied to every caller of Candidates/Choose
+// before rank is ever consulted (gosd-ix38 moved the first two there,
+// gosd-b6jl the hardware partitions, so emmc could not keep relying on a
+// sysfs quirk for the same protection). The hardware-partition call is kept
+// here as well so that reading this function tells the truth about what it
+// accepts.
 func rank(dev blockmount.Device) (int, bool) {
-	if isMMCHardwarePartition(dev.Name) {
+	if blockmount.IsMMCHardwarePartition(dev.Name) {
 		return 0, false
 	}
 	for i, prefix := range deviceClasses {
@@ -408,31 +423,6 @@ func rank(dev blockmount.Device) (int, bool) {
 // something after the prefix so a bare "sd" or "nvme" never matches.
 func hasClassPrefix(name, prefix string) bool {
 	return len(name) > len(prefix) && strings.HasPrefix(name, prefix)
-}
-
-// mmcHardwarePartitionRE matches the block-device names the kernel's MMC
-// block driver registers for an eMMC's hardware partitions: boot0/boot1 (boot
-// code), rpmb (replay-protected storage) and gp0-gp3 (vendor general-purpose
-// areas — on a Rockchip board these typically hold DRM keys, calibration data
-// or other secure storage the vendor put there, per gosd-f226). Each is its
-// own /sys/block gendisk alongside the user-data area (e.g. mmcblk0gp0 next to
-// mmcblk0), so it must be excluded structurally rather than by growing a
-// suffix list: a suffix check risks a false positive against a plain
-// partition name that happens to end the same way, and would need a new entry
-// every time the kernel's naming grows. The digit groups use \d+ rather than
-// a literal 0-3/0-1 so an unexpected shape (a double-digit device number, an
-// index the kernel doesn't use today) is still caught defensively; the
-// anchors keep a name that merely contains "boot"/"rpmb"/"gp" from matching
-// by accident. Partitions of the user area (mmcblk0p1) are never mistaken for
-// a hardware partition — "p1" is not one of "boot\d+", "rpmb" or "gp\d+" —
-// though they are excluded from candidacy for other reasons (see rank).
-var mmcHardwarePartitionRE = regexp.MustCompile(`^mmcblk\d+(boot\d+|rpmb|gp\d+)$`)
-
-// isMMCHardwarePartition spots an eMMC's boot, replay-protected and
-// general-purpose hardware partitions, which the kernel exposes as their own
-// block devices alongside the user area.
-func isMMCHardwarePartition(name string) bool {
-	return mmcHardwarePartitionRE.MatchString(name)
 }
 
 // choose picks the disk to format from the block devices present: the

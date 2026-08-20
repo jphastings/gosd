@@ -9,11 +9,10 @@ import (
 
 // newPlatformDeps wires the real eMMC operations. inspect and format come from
 // internal/diskfmt (pure go-diskfs, no syscalls); discovery, the mount-state
-// check, and the mount itself are Linux syscalls/sysfs reads from
-// internal/blockmount. The last six fields are ext4-only (see
-// blockmount.Deps): unused whenever FormatAndMountWith is called with FAT32
-// or exFAT, wired here regardless since emmc (as of gosd-9sc4, mirroring
-// disk) can be asked for ext4.
+// check, the mount itself and the whole establishment sequence (sync, marker,
+// unmount) are Linux syscalls/sysfs reads from internal/blockmount. Only Grow
+// is ext4-only (see blockmount.Deps); everything else runs for every
+// filesystem emmc can be asked for.
 func newPlatformDeps() blockmount.Deps {
 	return blockmount.Deps{
 		MountedAt:           blockmount.MountedAt,
@@ -25,8 +24,8 @@ func newPlatformDeps() blockmount.Deps {
 		MountedSources:      blockmount.MountedSources,
 		SyncDevice:          blockmount.SyncDevice,
 		Grow:                blockmount.GrowEXT4,
-		EstablishMarker:     blockmount.EstablishEXT4Marker,
-		MarkerEstablished:   blockmount.EXT4MarkerEstablished,
+		EstablishMarker:     blockmount.EstablishMarker,
+		MarkerEstablished:   blockmount.MarkerEstablished,
 		RootHasOtherContent: blockmount.RootHasOtherContent,
 		Unmount:             blockmount.Unmount,
 	}

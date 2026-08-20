@@ -80,14 +80,96 @@ func TestUsable(t *testing.T) {
 		dev  Device
 		want bool
 	}{
-		{"present and writable", Device{SizeSectors: 1 << 20}, true},
-		{"no medium", Device{SizeSectors: 0}, false},
-		{"write-protected", Device{SizeSectors: 1 << 20, ReadOnly: true}, false},
-		{"no medium and write-protected", Device{SizeSectors: 0, ReadOnly: true}, false},
+		{"present and writable", Device{Name: "sda", SizeSectors: 1 << 20}, true},
+		{"no medium", Device{Name: "sda", SizeSectors: 0}, false},
+		{"write-protected", Device{Name: "sda", SizeSectors: 1 << 20, ReadOnly: true}, false},
+		{"no medium and write-protected", Device{Name: "sda", SizeSectors: 0, ReadOnly: true}, false},
+		{"eMMC boot hardware partition", Device{Name: "mmcblk0boot0", SizeSectors: 1 << 20}, false},
+		{"eMMC RPMB hardware partition", Device{Name: "mmcblk0rpmb", SizeSectors: 1 << 20}, false},
+		{"eMMC GP hardware partition", Device{Name: "mmcblk0gp0", SizeSectors: 1 << 20}, false},
+		{"the eMMC user area itself", Device{Name: "mmcblk0", SizeSectors: 1 << 20}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Usable(tc.dev); got != tc.want {
 				t.Errorf("Usable(%+v) = %v, want %v", tc.dev, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCandidatesExcludesMMCHardwarePartitionsRegardlessOfRank pins the
+// invariant bean gosd-b6jl relies on, and the reason the exclusion moved here
+// from disk: Usable is consulted for every caller of Candidates/Choose,
+// before that caller's Rank is ever asked, so neither public package can
+// offer an eMMC's boot/RPMB/GP hardware partition however permissive its own
+// Rank is. acceptAll is as permissive as a Rank gets — it stands in for
+// emmc's, which before this bean accepted anything reporting Kind == "MMC"
+// and stayed clear of these devices only because sysfs happens not to give
+// them a device/type. Formatting boot0 leaves a board that no longer boots
+// and cannot be recovered from the SD card, so this must not depend on a
+// kernel behaviour nobody has verified.
+func TestCandidatesExcludesMMCHardwarePartitionsRegardlessOfRank(t *testing.T) {
+	devices := []Device{
+		present("mmcblk0"),
+		present("mmcblk0boot0"),
+		present("mmcblk0boot1"),
+		present("mmcblk0rpmb"),
+		present("mmcblk0gp0"),
+		present("mmcblk0p1"), // an ordinary partition name must not be caught by mistake
+	}
+
+	got := Candidates(devices, nil, acceptAll)
+	if want := []string{"/dev/mmcblk0", "/dev/mmcblk0p1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Candidates = %v, want %v (every hardware partition excluded, the user area and a plain partition kept)", got, want)
+	}
+}
+
+// TestIsMMCHardwarePartition proves the matcher is structural (a regex
+// anchored on the kernel's actual naming), not a suffix list: it must reject
+// every hardware-partition shape the MMC block driver creates without also
+// rejecting a plain device or one of its ordinary partitions.
+func TestIsMMCHardwarePartition(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		// The kernel's real hardware-partition gendisks.
+		{"mmcblk0boot0", true},
+		{"mmcblk0boot1", true},
+		{"mmcblk0rpmb", true},
+		{"mmcblk0gp0", true},
+		{"mmcblk0gp1", true},
+		{"mmcblk0gp2", true},
+		{"mmcblk0gp3", true},
+		// A double-digit device number must not change the outcome.
+		{"mmcblk10boot0", true},
+		{"mmcblk10rpmb", true},
+		{"mmcblk10gp0", true},
+		// Plain devices and their ordinary partitions must never be rejected —
+		// a suffix check on "p1" or a bare device number risks exactly this
+		// false positive.
+		{"mmcblk0", false},
+		{"mmcblk10", false},
+		{"mmcblk0p1", false},
+		{"mmcblk0p10", false},
+		{"mmcblk10p1", false},
+		{"nvme0n1", false},
+		{"sda", false},
+		// Adversarial/defensive shapes: an index the kernel doesn't use today
+		// (gp only ever goes 0-3) is still the GP hardware-partition class, so
+		// it is rejected rather than trusted to never occur.
+		{"mmcblk0gp10", true},
+		// Shapes that merely contain the words, but aren't the kernel's naming
+		// at all, must not match.
+		{"mmcblk0gpx", false},
+		{"mmcblkboot0", false},
+		{"mmcblk0bootx", false},
+		{"mmcblk0rpmbx", false},
+		{"xmmcblk0boot0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsMMCHardwarePartition(tc.name); got != tc.want {
+				t.Errorf("IsMMCHardwarePartition(%q) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}

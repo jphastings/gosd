@@ -41,7 +41,7 @@ type fakeCard struct {
 	nodeAppearsOnAdd bool
 
 	// ext4Marked is marked's ext4 equivalent: whether
-	// blockmount.EXT4EstablishedMarker is already there, as reported by
+	// blockmount.EstablishedMarker is already there, as reported by
 	// Deps.EXT4Established (which EstablishEXT4 also sets once it
 	// "succeeds", mirroring CreateMarker setting marked above).
 	// ext4CheckErr simulates EXT4Established failing to mount the

@@ -10,27 +10,33 @@
 // drift apart. Both emmc and disk pass a typed Filesystem token through to
 // Run — emmc gained the same token disk already had (bean gosd-9sc4,
 // mirroring gosd-1c0x/PR #192), both defaulting to EXT4 — so every code path
-// below, including runEXT4, is reachable from either caller; neither package
-// pins a single diskfmt.FS any more. What still differs between the two is
-// candidate *selection*, not filesystem: emmc addresses exactly one device
-// (chooseEMMC, keyed on Kind == "MMC") with no equivalent of disk's
-// multi-class ranking or FormatAndMountDevice/Devices, and disk's rank
-// explicitly excludes an eMMC's hardware partitions (isMMCHardwarePartition)
-// where emmc's selection stays safe against them only via a sysfs-topology
-// quirk (see emmc.chooseEMMC's doc and gosd-ix38) — that divergence predates
-// gosd-9sc4 and is unrelated to, and unchanged by, which filesystem is
-// requested.
+// below is reachable from either caller; neither package pins a single
+// diskfmt.FS any more. What still differs between the two is candidate
+// *selection*, not filesystem: emmc addresses exactly one device (chooseEMMC,
+// keyed on Kind == "MMC") with no equivalent of disk's multi-class ranking or
+// FormatAndMountDevice/Devices. The one part of that divergence that could
+// destroy something — disk excluding an eMMC's boot/RPMB/GP hardware
+// partitions explicitly, where emmc stayed away from them only by accident,
+// via a sysfs-topology quirk — is closed: IsMMCHardwarePartition lives here
+// and Usable applies it to every candidate of either package, so neither can
+// pick one however its own Rank is written (bean gosd-b6jl, finishing what
+// gosd-ix38 deliberately scoped out).
 //
-// ext4 (see emmc.Options.Filesystem / disk.Options.Filesystem) is the one
-// filesystem here that is grown and crash-gated rather than just formatted: Run's
-// establishment sequence is write → sync → mount → grow → marker → sync,
-// mirroring the write → sync → marker → sync convention every other
-// on-disk commit in this codebase follows (cmd/gosd-init/internal/
-// dataexpand's EstablishedMarker is the FAT32 sibling of this idea). A
-// device is only ever grown once, at first establishment; adopting an
-// already-established volume mounts it and stops — see runEXT4's doc for
-// the full ordering argument and EXT4EstablishedMarker's doc for why a
-// probe or even a successful mount is not, on its own, proof of anything.
+// Every volume this package creates is established through one crash-safe
+// sequence — format → sync → mount → (grow, ext4 only) → marker — and a
+// volume found on a later boot is adopted only against the marker that
+// sequence writes last, never against a filesystem probe: a matching
+// signature, a matching label, even a successful mount are none of them proof
+// that a format ever finished (gosd-lirl's lesson; extending it from ext4 to
+// FAT32 and exFAT is bean gosd-mm6q). That mirrors the write → sync → marker
+// → sync convention every other on-disk commit in this codebase follows —
+// cmd/gosd-init/internal/dataexpand's EstablishedMarker is the same idea
+// applied to the SD card's own data partition. ext4 alone is also grown, once,
+// at first establishment. See establish's doc for the full ordering argument,
+// filesystem by filesystem, including the one deliberate exception: a
+// FAT32/exFAT volume that predates the marker is adopted on the evidence of
+// its own contents, because reformatting every card already in the field
+// would be a far worse bug than the one the marker closes.
 package blockmount
 
 import (
@@ -89,39 +95,57 @@ const maxLabelLen = 11
 // touched — the same as every other label rule in this file.
 const ext4MaxLabelLen = 16
 
-// EXT4EstablishedMarker is an empty file EstablishMarker writes into the root
-// of an ext4 filesystem it has just formatted, grown AND fsynced, and that
-// Run looks for before adopting an existing ext4 volume whose label and
-// filesystem already match what was asked for (see runEXT4). It exists
-// because neither a probe-passing superblock nor a successful mount is proof
-// a format finished: diskfmt.FormatEXT4 streams a ~512MiB golden image onto
-// the device before this package ever sees it, and a crash partway through
-// that stream — or between the online grow and this marker — leaves a
-// filesystem that inspects, and often even mounts, perfectly fine over
-// truncated or unwritten backing data (the same probe-vs-proof lesson
-// dataexpand.EstablishedMarker's doc comment records, and the specific
-// failure mode gosd-lirl's review caught: a probe is never proof a format
-// completed). Adopting that debris would hand an app a filesystem it never
-// finished growing, forever. The marker means "the write, the sync, the
-// grow, and the fsync of this file and its parent directory all reached the
-// medium, in that order" — see runEXT4's doc for the full ordering argument.
+// EstablishedMarker is an empty file EstablishMarker writes into the root of
+// a volume this package has just formatted, fsynced and — for ext4 — grown,
+// and that Run looks for before adopting an existing volume whose label and
+// filesystem already match what was asked for (see establish). It exists
+// because on none of the three filesystems is a probe-passing signature, or
+// even a successful mount, proof that a format finished:
+//
+//   - ext4: diskfmt.FormatEXT4 streams a ~512MiB golden image onto the device
+//     before this package ever sees it, and a crash partway through that
+//     stream — or between the online grow and this marker — leaves a
+//     filesystem that inspects, and often even mounts, perfectly fine over
+//     truncated or unwritten backing data.
+//   - FAT32 and exFAT: diskfmt never fsyncs mid-format (see
+//     diskfmt.eraseLeadingRegion's doc, which states that policy), so until
+//     the caller's own SyncDevice returns, ANY SUBSET of a format's writes
+//     may have reached the medium — writeback order is not program order.
+//     The volume label, which is all Run's adoption check used to read,
+//     lives in the root directory (FAT32) or a root-directory entry (exFAT)
+//     and says nothing whatever about whether the FATs, the allocation
+//     bitmap or the up-case table underneath it are complete. Adopting on
+//     the label alone hands an app torn cluster chains that corrupt on first
+//     write; refusing to adopt because a half-written label did NOT land
+//     wedges the storage forever, on every boot, with no data ever having
+//     been at risk. Both were live bugs until bean gosd-mm6q.
+//
+// That is the same probe-vs-proof lesson dataexpand.EstablishedMarker's doc
+// comment records, and the specific failure mode gosd-lirl's review caught: a
+// probe is never proof a format completed. The marker means "the format, the
+// sync that made it durable, the mount, and (for ext4) the grow all reached
+// the medium, in that order" — see establish's doc for the full ordering
+// argument.
 //
 // It is reserved: apps must leave it alone. A leading dot hides it from a
 // casual `ls`; unlike dataexpand's FAT32 marker (written raw, unmounted, via
 // go-diskfs, which cannot see a leading-dot name it writes — see
 // diskfmt.CreateEmptyFile), this one is written through the kernel's own
-// mounted ext4, which has no such limitation.
+// mounted filesystem, which has no such limitation on any of the three. The
+// corollary is that diskfmt.RootFileExists can never be used to look for
+// THIS marker on a FAT32 volume: only a mounted read finds it.
 //
 // Unlike dataexpand's marker, this one is not the *sole* gate: dataexpand's
 // "established" record is an MBR partition-table entry, which nothing
 // running on that partition can reach or delete, so its mere absence is
 // unconditional proof nothing has ever been handed to an app. This marker
 // lives inside the very filesystem it gates, reachable by anything with
-// write access to the mounted volume — so runEXT4 treats its absence as a
+// write access to the mounted volume — so establish treats its absence as a
 // strong, but not sole, signal: see Deps.RootHasOtherContent for the second
 // opinion that keeps an app's accidental (or deliberate) removal of this
-// file from looking identical to genuine crash debris.
-const EXT4EstablishedMarker = ".gosd-established"
+// file — and, on FAT32/exFAT, every volume formatted before this marker
+// existed at all — from looking identical to genuine crash debris.
+const EstablishedMarker = ".gosd-established"
 
 // Deps are the side-effecting operations Run needs, injected so the
 // orchestration can be tested without real storage.
@@ -150,42 +174,48 @@ type Deps struct {
 	// enough.
 	MountedSources func() (map[string]bool, error)
 
-	// The fields below are ext4-only: Run never calls them for FAT32 or
-	// exFAT, so a Deps value that leaves them nil (any emmc or disk caller
-	// that never asks for diskfmt.EXT4) is exactly as valid as it always
-	// was — see runEXT4.
-
 	// SyncDevice flushes device's page-cache-buffered writes to the medium.
-	// Called once, right after Format writes ext4's golden image and before
-	// the first Mount is asked to trust it.
+	// Called once, right after Format has written the new filesystem and
+	// before the first Mount is asked to trust it. diskfmt never fsyncs
+	// mid-format on any filesystem, so this call is the only thing that makes
+	// a format durable — see establish's ordering argument.
 	SyncDevice func(device string) error
+	// EstablishMarker writes EstablishedMarker into the root of the
+	// filesystem mounted at mountpoint and makes it durable, along with
+	// everything written before it. Called exactly once, as the last step of
+	// establishing a volume — see EstablishedMarker's doc. fs is passed
+	// because what "durable" takes differs by filesystem (see the Linux
+	// implementation).
+	EstablishMarker func(mountpoint string, fs diskfmt.FS) error
+	// MarkerEstablished reports whether the filesystem already mounted at
+	// mountpoint carries EstablishedMarker.
+	MarkerEstablished func(mountpoint string) (bool, error)
+	// RootHasOtherContent reports whether the filesystem mounted at
+	// mountpoint holds anything in its root directory beyond what a freshly
+	// formatted volume of kind fs ships with (nothing at all for FAT32 and
+	// exFAT; lost+found for diskfmt's golden ext4 image) — i.e., whether an
+	// app has plausibly written real data here. Only consulted when
+	// EstablishedMarker is absent: see establish's doc for why a missing
+	// marker alone is neither proof that nothing of value is at risk (ext4)
+	// nor proof that a format never finished (FAT32/exFAT, where volumes
+	// predating the marker are still in the field).
+	RootHasOtherContent func(mountpoint string, fs diskfmt.FS) (bool, error)
+	// Unmount releases mountpoint. Only called when a volume that looked
+	// adoptable (matching label and filesystem) turns out to be crash debris
+	// rather than an established volume: establish unmounts it so the repair
+	// can reformat the raw device underneath.
+	Unmount func(mountpoint string) error
+
+	// The field below is ext4-only: establish never calls it for FAT32 or
+	// exFAT, so a Deps value that leaves it nil (any emmc or disk caller that
+	// never asks for diskfmt.EXT4) is valid.
+
 	// Grow expands the ext4 filesystem already mounted at mountpoint (backed
 	// by device) to fill the device's actual size, via the kernel's
 	// EXT4_IOC_RESIZE_FS ioctl. Called exactly once, immediately after the
 	// first Mount of a freshly Format-ed volume — never again once
 	// EstablishMarker has recorded that grow as done.
 	Grow func(device, mountpoint string) error
-	// EstablishMarker writes EXT4EstablishedMarker into the root of the
-	// filesystem mounted at mountpoint and fsyncs both the marker file and
-	// its parent directory. Called exactly once, as the last step of
-	// establishing a fresh ext4 volume — see EXT4EstablishedMarker's doc.
-	EstablishMarker func(mountpoint string) error
-	// MarkerEstablished reports whether the filesystem already mounted at
-	// mountpoint carries EXT4EstablishedMarker.
-	MarkerEstablished func(mountpoint string) (bool, error)
-	// RootHasOtherContent reports whether the filesystem mounted at
-	// mountpoint holds anything in its root directory beyond what
-	// diskfmt's golden ext4 image itself ships with (empty except
-	// lost+found) — i.e., whether an app has plausibly written real data
-	// here. Only consulted when EXT4EstablishedMarker is absent: see
-	// runEXT4's doc for why a missing marker alone is not, by itself,
-	// trustworthy proof that nothing of value is at risk.
-	RootHasOtherContent func(mountpoint string) (bool, error)
-	// Unmount releases mountpoint. Only called when an ext4 volume that
-	// looked adoptable (matching label and filesystem) turns out to lack
-	// EXT4EstablishedMarker: runEXT4 unmounts it so the crash-debris repair
-	// can reformat the raw device underneath.
-	Unmount func(mountpoint string) error
 }
 
 // runMu serialises every call to Run, across both public packages: emmc and
@@ -286,55 +316,124 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 		return "", fmt.Errorf("the %s at %s needs %s, but this board's kernel has no %s support: %w — %s", s.Noun, device, fs, fs, ErrUnsupportedFS, remedyFor(fs))
 	}
 
-	if fs == diskfmt.EXT4 {
-		return runEXT4(s, device, fs, label, mountpoint, format, action, destructive)
-	}
-
-	if format {
-		// runMu only rules out a sibling call to Run; it says nothing about
-		// something outside blockmount entirely — a udev rule, another
-		// process — mounting device in the window since Discover chose it.
-		// Re-checking here, right before the write that would corrupt
-		// whatever that mount is using, is the second half of the fix.
-		if mountedSources, err := s.Deps.MountedSources(); err != nil {
-			return "", err
-		} else if mountedSources[device] {
-			return "", fmt.Errorf("the %s at %s was mounted by something else while it was being prepared; refusing to format it — retry once whatever mounted it is done", s.Noun, device)
-		}
-		if err := s.Deps.Format(device, label, fs); err != nil {
-			return "", fmt.Errorf("%s the %s at %s as %s failed: %w", action, s.Noun, device, fs, err)
-		}
-	}
-
-	if err := s.Deps.Mount(device, mountpoint, fs); err != nil {
-		return "", fmt.Errorf("mounting the %s at %s onto %s failed: %w", s.Noun, device, mountpoint, err)
-	}
-	return device, nil
+	return establish(s, device, fs, label, mountpoint, format, action, destructive)
 }
 
-// runEXT4 is Run's ext4-specific tail, reached once the label rules, the
+// establish is Run's tail, reached once the label rules, the
 // format-vs-mount-only decision and the kernel preflight have already
-// passed. ext4 alone needs two things nothing else in this package does: an
-// online grow to the partition's real size (diskfmt.FormatEXT4's golden
-// image is a fixed ~512MiB seed, never the partition's actual size) and a
-// crash-safe establishment marker, because neither a probe-passing
-// superblock nor even a successful mount is proof a format finished (see
-// EXT4EstablishedMarker's doc — this is gosd-lirl's lesson generalised past
-// the superblock probe itself to the mount that follows it).
+// passed: it either adopts the volume that is already there, or writes a new
+// one through the crash-safe establishment sequence below, and hands back the
+// mounted device either way.
 //
 // format and action are the format-vs-mount-only decision and its verb
-// ("formatting"/"reformatting"), exactly as Run computed them — but for
-// ext4, format=false is only a tentative "this looks adoptable", confirmed
-// or overturned below by the marker check. destructive is threaded through
+// ("formatting"/"reformatting"), exactly as Run computed them — but
+// format=false is only a tentative "this looks adoptable", confirmed or
+// overturned below by the marker check. destructive is threaded through
 // unchanged from Run: it governs the RootHasOtherContent fallback, and the
 // mount-failure fallback right after it, the same way it governs every other
-// "something is already here" decision in this package: when what is
-// already on the device cannot be read well enough to tell debris from real
-// data, GoSD refuses rather than guesses. Only a provably-empty device (Blank
+// "something is already here" decision in this package: when what is already
+// on the device cannot be read well enough to tell debris from real data,
+// GoSD refuses rather than guesses. Only a provably-empty device (Blank
 // content, which never reaches this function with format=false — see Run's
 // switch) or provably-never-handed-to-an-app debris (the no-marker,
 // empty-root case below) is ever touched without destructive=true.
-func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, format bool, action string, destructive bool) (string, error) {
+//
+// # The establishment sequence, and what each step makes durable
+//
+//  1. Format writes the whole new filesystem to the raw device. diskfmt
+//     fsyncs nothing mid-format, on any of the three filesystems — it says so
+//     outright in diskfmt.eraseLeadingRegion's doc ("this package never
+//     fsyncs mid-format; durability is the caller's job, once, at the end of
+//     a whole establish sequence"). So at this point NOTHING is durable, and
+//     no ordering among Format's own writes is durable either: writeback
+//     order is not program order, so an arbitrary SUBSET of them may be on
+//     the medium.
+//  2. SyncDevice fsyncs the device node. When it returns, every byte Format
+//     wrote is on the medium. This is the step that turns "the filesystem is
+//     complete" from a hope into a fact, and the step the FAT32/exFAT path
+//     did not have at all before bean gosd-mm6q.
+//  3. Mount asks the kernel to interpret what step 2 has just made durable —
+//     never something that could still evaporate.
+//  4. Grow (ext4 only; EXT4_IOC_RESIZE_FS) is only meaningful against a
+//     mounted filesystem, which step 3 just proved trustworthy. FAT32 and
+//     exFAT are formatted to the device's real size in step 1 and have
+//     nothing to grow.
+//  5. EstablishMarker writes EstablishedMarker into the root and makes it
+//     durable — see the Linux implementation for what that takes per
+//     filesystem. It is the commit record: the one fact on the volume a
+//     later boot is willing to treat as proof, and it is only written once
+//     every step above it has already returned.
+//
+// # What an interruption leaves, and what the next boot does with it
+//
+// A crash before step 2 completes leaves an arbitrary subset of the format on
+// the medium, so the next boot's Inspect can find any of:
+//
+//   - Nothing identifiable. FAT32's formatter erases the whole 1MiB window
+//     Inspect probes before writing anything into it, and exFAT's rewrites
+//     all of it (see diskfmt.eraseLeadingRegion), so a boot sector that never
+//     landed leaves Contents.Blank — which Run formats freely, no consent
+//     needed, nothing lost.
+//   - The new filesystem under a label that is not the caller's. Both
+//     formatters write the volume label into the root directory (go-diskfs
+//     reads FAT32's label from there, not from the BPB), which is late in the
+//     write set and easily the part that did not land. This is the one
+//     interrupted-format outcome the marker cannot improve: an unlabelled or
+//     wrongly-labelled volume is indistinguishable from a stranger's stick,
+//     so it is refused without destructive=true exactly as it was before —
+//     GoSD does not wipe volumes it cannot show are its own.
+//   - The new filesystem under the caller's own label. This is the case the
+//     marker settles, and the case that used to be adopted on the label
+//     alone: no marker means step 5 never ran, which means this mountpoint
+//     was never handed to an app, which means nothing here is worth keeping.
+//
+// A crash after step 5 completes leaves an established volume: the marker is
+// durable only because everything before it already was.
+//
+// # FAT32 and exFAT volumes that predate the marker
+//
+// Cards flashed before this marker existed carry perfectly good FAT32 and
+// exFAT volumes with no marker in them, and reformatting every one of them on
+// the next boot would be a far worse bug than the one the marker closes. A
+// legacy volume cannot be told apart from crash debris with certainty — both
+// read as "my label, my filesystem, no marker" — so the two are separated on
+// the one signal that does differ: what is in the root directory.
+//
+// A file in the root of a FAT32/exFAT volume can only have got there through
+// a mounted filesystem, written by an app (or by a host, over USB mass
+// storage) that was handed this mountpoint — which only ever happens after a
+// format completed. Neither formatter creates a single file: go-diskfs zeroes
+// the whole root-directory cluster before writing the label into it, exFAT
+// writes a root directory holding only the label, bitmap and up-case entries,
+// and the kernel lists none of those as directory entries. So content in the
+// root is independent evidence that a format once finished, and such a volume
+// is adopted — writing the marker as it goes, so the upgrade happens exactly
+// once and a later boot needs no second opinion. An empty root is what an
+// interrupted establishment leaves, and reformatting it destroys nothing that
+// exists: no marker AND no files means nothing was ever written here.
+//
+// The deliberate asymmetry is that "no marker, root has files" ADOPTS on
+// FAT32/exFAT where the identical state REFUSES on ext4. That is not an
+// oversight:
+//
+//   - ext4 has a step after the format that nothing else records: the
+//     one-time grow. Adopting an unmarked ext4 volume could hand an app a
+//     512MiB golden image on a 1TB disk, permanently, so the marker's
+//     absence must dominate there.
+//   - ext4 has no legacy population to protect: its marker shipped with its
+//     default (epic gosd-lfu0), so an unmarked ext4 volume holding content is
+//     genuinely anomalous. FAT32 was GoSD's default for both packages long
+//     before any of this existed.
+//   - Refusing would not repair a FAT32/exFAT volume anyway — there is no
+//     grow to have missed and no journal to replay — it would only make
+//     storage that has been working for months unusable until a human
+//     intervened, on a device with no interactive surface.
+//
+// The net effect on already-deployed cards is deliberately one-directional:
+// every state this function adopts was already adopted before this bean (the
+// old code adopted on the label alone), so nothing that used to be adopted
+// stops being adopted except the one state that provably holds no files.
+func establish(s Storage, device string, fs diskfmt.FS, label, mountpoint string, format bool, action string, destructive bool) (string, error) {
 	if !format {
 		// The label and filesystem both already match — mount it and look
 		// for proof it was ever fully established.
@@ -353,28 +452,40 @@ func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, 
 			// shaped one): dataexpand's gate is an MBR partition-table
 			// entry, which an app running on that partition can never
 			// reach or delete, so "no entry yet" is unconditional proof
-			// nothing has ever been handed to an app. EXT4EstablishedMarker
+			// nothing has ever been handed to an app. EstablishedMarker
 			// is a plain file *inside* the filesystem it gates — an app
 			// with a "clear my hidden files too" bug (or anything else that
 			// removes it) can make an otherwise perfectly established,
 			// data-bearing volume look identical to fresh debris on the
-			// next boot. RootHasOtherContent is the second opinion that
-			// closes that gap: a root directory holding nothing beyond what
-			// the golden image itself ships with is exactly what an
-			// interrupted establishment leaves (an app can only write here
-			// after Run has already handed the mountpoint back, which never
-			// happened this run), so that case still self-heals with no
-			// consent needed, same as blank media. Real content with no
-			// marker gets the same explicit-consent treatment as any other
-			// foreign content instead of a silent wipe.
-			used, err := s.Deps.RootHasOtherContent(mountpoint)
+			// next boot, and on FAT32/exFAT every volume formatted before
+			// this marker existed looks exactly the same way.
+			// RootHasOtherContent is the second opinion that closes that
+			// gap: a root directory holding nothing beyond what a fresh
+			// format itself ships with is exactly what an interrupted
+			// establishment leaves (an app can only write here after Run
+			// has already handed the mountpoint back, which never happened
+			// this run), so that case still self-heals with no consent
+			// needed, same as blank media.
+			used, err := s.Deps.RootHasOtherContent(mountpoint, fs)
 			if err != nil {
 				return "", fmt.Errorf("checking whether the %s at %s already holds real content failed: %w", s.Noun, mountpoint, err)
 			}
-			if used && !destructive {
+			switch {
+			case used && fs != diskfmt.EXT4:
+				// A FAT32/exFAT volume with files in it but no marker: the
+				// legacy card this function's doc argues about. Adopt it,
+				// and record the marker so the next boot needs no second
+				// opinion — the upgrade happens once, in place, and a
+				// failure to write it costs only that (the volume is
+				// adoptable on the evidence of its own contents either
+				// way), so it must never fail an adoption that a full
+				// volume, or one the kernel has remounted read-only, would
+				// otherwise have completed exactly as before.
+				_ = s.Deps.EstablishMarker(mountpoint, fs)
+				return device, nil
+			case used && !destructive:
 				return "", fmt.Errorf("the %s at %s already holds a %s volume labelled %q with content in it, but no establishment marker (either an interrupted format, or something removed the marker); %w it without permission — pass destructive=true to overwrite it", s.Noun, device, fs, label, ErrRefusedFormat)
-			}
-			if used {
+			case used:
 				action = "reformatting"
 			}
 			if err := s.Deps.Unmount(mountpoint); err != nil {
@@ -409,25 +520,16 @@ func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, 
 		return "", fmt.Errorf("the %s at %s was mounted by something else while it was being prepared; refusing to format it — retry once whatever mounted it is done", s.Noun, device)
 	}
 
-	// The crash-safe establishment sequence. Every step is provably durable,
-	// in program order, before the next one is trusted:
-	//  1. Format writes the golden image plus a fresh label/UUID to the raw
-	//     device — buffered in the page cache, not yet durable.
-	//  2. SyncDevice flushes that write to the medium, so step 3 never asks
-	//     the kernel to trust anything that could still vanish in a crash.
-	//  3. Mount asks the kernel to interpret what step 2 just made durable.
-	//  4. Grow (EXT4_IOC_RESIZE_FS) is only meaningful against a mounted
-	//     filesystem — which step 3 just proved trustworthy.
-	//  5. EstablishMarker writes EXT4EstablishedMarker and fsyncs first the
-	//     marker file, then its parent directory — recording, as the last
-	//     durable fact, that every step above it reached the medium.
-	// A crash before step 5 leaves debris with no marker: the next boot's
-	// Inspect+Mount still finds a label/filesystem match, finds no marker,
-	// and repeats this whole sequence from step 1 — including the grow,
-	// even if step 4 had already completed once, because an ungrown-again
-	// reformat has overwritten it with the pristine golden image regardless.
-	// That is correct, not merely tolerated: the grow left no trace a future
-	// boot could trust either, so redoing it costs time, never correctness.
+	// The crash-safe establishment sequence — steps 1 to 5 of this function's
+	// doc, which argues what each one makes durable and what an interruption
+	// between any two of them leaves behind. A crash before the marker lands
+	// leaves debris with no marker: the next boot's Inspect+Mount still finds
+	// a label/filesystem match, finds no marker, and repeats this whole
+	// sequence from the format — including ext4's grow, even if it had
+	// already completed once, because the reformat has overwritten its result
+	// with the pristine golden image regardless. That is correct, not merely
+	// tolerated: the grow left no trace a future boot could trust either, so
+	// redoing it costs time, never correctness.
 	if err := s.Deps.Format(device, label, fs); err != nil {
 		return "", fmt.Errorf("%s the %s at %s as %s failed: %w", action, s.Noun, device, fs, err)
 	}
@@ -437,10 +539,12 @@ func runEXT4(s Storage, device string, fs diskfmt.FS, label, mountpoint string, 
 	if err := s.Deps.Mount(device, mountpoint, fs); err != nil {
 		return "", fmt.Errorf("mounting the %s at %s onto %s failed: %w", s.Noun, device, mountpoint, err)
 	}
-	if err := s.Deps.Grow(device, mountpoint); err != nil {
-		return "", fmt.Errorf("growing the newly formatted %s at %s to its partition size failed: %w", s.Noun, device, err)
+	if fs == diskfmt.EXT4 {
+		if err := s.Deps.Grow(device, mountpoint); err != nil {
+			return "", fmt.Errorf("growing the newly formatted %s at %s to its partition size failed: %w", s.Noun, device, err)
+		}
 	}
-	if err := s.Deps.EstablishMarker(mountpoint); err != nil {
+	if err := s.Deps.EstablishMarker(mountpoint, fs); err != nil {
 		return "", fmt.Errorf("recording the completed format on the %s at %s failed: %w", s.Noun, device, err)
 	}
 	return device, nil

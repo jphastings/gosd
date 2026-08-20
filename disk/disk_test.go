@@ -108,7 +108,12 @@ func TestChooseReportsErrNoDisk(t *testing.T) {
 }
 
 // TestChooseNeverPicksAnEMMCGeneralPurposeHardwarePartition pins the exact
-// failure scenario gosd-f226 found: a Rockchip board booted from its eMMC (so
+// failure scenario gosd-f226 found, and now doubles as disk's half of
+// gosd-b6jl's regression check: the exclusion moved into blockmount.Usable so
+// emmc could inherit it, and disk's own behaviour must be untouched by that
+// move. The matcher's exhaustive shape table lives with it, in
+// internal/blockmount.
+// a Rockchip board booted from its eMMC (so
 // mmcblk0 itself is in use and already excluded), whose vendor-configured GP
 // hardware partition — its own /sys/block gendisk, with a medium and no
 // size==0/ReadOnly signal to catch it — must still never become the chosen
@@ -144,57 +149,6 @@ func TestRankLeavesMediumAndWriteProtectionToBlockmount(t *testing.T) {
 		if _, ok := rank(dev); !ok {
 			t.Errorf("rank(%+v) ok = false, want true — medium/write-protection filtering belongs to blockmount.Usable now, not rank", dev)
 		}
-	}
-}
-
-// TestIsMMCHardwarePartition proves the matcher is structural (a regex
-// anchored on the kernel's actual naming), not a suffix list: it must reject
-// every hardware-partition shape the MMC block driver creates without also
-// rejecting a plain device or one of its ordinary partitions.
-func TestIsMMCHardwarePartition(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		want bool
-	}{
-		// The kernel's real hardware-partition gendisks.
-		{"mmcblk0boot0", true},
-		{"mmcblk0boot1", true},
-		{"mmcblk0rpmb", true},
-		{"mmcblk0gp0", true},
-		{"mmcblk0gp1", true},
-		{"mmcblk0gp2", true},
-		{"mmcblk0gp3", true},
-		// A double-digit device number must not change the outcome.
-		{"mmcblk10boot0", true},
-		{"mmcblk10rpmb", true},
-		{"mmcblk10gp0", true},
-		// Plain devices and their ordinary partitions must never be rejected —
-		// a suffix check on "p1" or a bare device number risks exactly this
-		// false positive.
-		{"mmcblk0", false},
-		{"mmcblk10", false},
-		{"mmcblk0p1", false},
-		{"mmcblk0p10", false},
-		{"mmcblk10p1", false},
-		{"nvme0n1", false},
-		{"sda", false},
-		// Adversarial/defensive shapes: an index the kernel doesn't use today
-		// (gp only ever goes 0-3) is still the GP hardware-partition class, so
-		// it is rejected rather than trusted to never occur.
-		{"mmcblk0gp10", true},
-		// Shapes that merely contain the words, but aren't the kernel's naming
-		// at all, must not match.
-		{"mmcblk0gpx", false},
-		{"mmcblkboot0", false},
-		{"mmcblk0bootx", false},
-		{"mmcblk0rpmbx", false},
-		{"xmmcblk0boot0", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isMMCHardwarePartition(tc.name); got != tc.want {
-				t.Errorf("isMMCHardwarePartition(%q) = %v, want %v", tc.name, got, tc.want)
-			}
-		})
 	}
 }
 

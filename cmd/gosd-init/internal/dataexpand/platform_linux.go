@@ -77,14 +77,14 @@ func establishEXT4(partitionDevice, mountpoint string) (err error) {
 	if err := blockmount.GrowEXT4(partitionDevice, mountpoint); err != nil {
 		return fmt.Errorf("growing %s's ext4 filesystem to its partition size: %w", partitionDevice, err)
 	}
-	if err := blockmount.EstablishEXT4Marker(mountpoint); err != nil {
+	if err := blockmount.EstablishMarker(mountpoint, diskfmt.EXT4); err != nil {
 		return fmt.Errorf("recording the completed establishment of %s's ext4 filesystem: %w", partitionDevice, err)
 	}
 	return nil
 }
 
 // ext4Established mounts partitionDevice's ext4 filesystem at mountpoint
-// just long enough to check for blockmount.EXT4EstablishedMarker, then
+// just long enough to check for blockmount.EstablishedMarker, then
 // unmounts. A mount failure is reported as an error rather than folded into
 // a false "not established" result — see Deps.EXT4Established's doc for why
 // that distinction matters to its two callers.
@@ -93,7 +93,7 @@ func ext4Established(partitionDevice, mountpoint string) (bool, error) {
 		return false, fmt.Errorf("mounting %s at %s to check whether its ext4 filesystem was established: %w", partitionDevice, mountpoint, err)
 	}
 	defer func() { _ = blockmount.Unmount(mountpoint) }()
-	return blockmount.EXT4MarkerEstablished(mountpoint)
+	return blockmount.MarkerEstablished(mountpoint)
 }
 
 func readMBR(device string) ([]byte, error) {

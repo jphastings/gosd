@@ -31,6 +31,18 @@
 // FormatAndMountWith(Options{Filesystem: ...}) choice) is treated like any
 // other foreign content: see destructive, below.
 //
+// Adoption is gated on a reserved marker file, not on what the volume looks
+// like: GoSD writes an empty ".gosd-established" into the root of a volume
+// only once the format, the flush of that format to the medium and (for
+// ext4) the one-time grow have all completed, and a later run adopts the
+// volume only if that marker is there. A matching label proves nothing on
+// its own — an interrupted format can leave one over a filesystem that was
+// never finished. Apps must leave that file alone; deleting it does not
+// destroy anything, but it costs the volume its proof (see
+// internal/blockmount for exactly what happens then, which differs between
+// ext4 and FAT32/exFAT). Volumes formatted by a release older than the
+// marker carry no marker and are adopted anyway, on the evidence of the
+// files already in them.
 // Formatting is destructive, so it is gated: FormatAndMount will format a blank
 // eMMC freely, but refuses to overwrite anything else (a volume with a
 // different label, or a filesystem GoSD cannot read) unless the caller
@@ -256,21 +268,26 @@ func storage(d blockmount.Deps) blockmount.Storage {
 // mounted (e.g. "/dev/mmcblk1p1"), so booting from the eMMC safely yields
 // ErrNoEMMC rather than a wiped system.
 //
-// Unlike disk.rank (see gosd-f226), this has no explicit exclusion for an
-// eMMC's hardware partitions (boot0/boot1/rpmb/gp0-gp3). It does not need one
-// today only because of a sysfs-topology quirk: those gendisks' device/type
-// attribute reads empty, not "MMC", so Kind == "MMC" already excludes them.
-// That quirk is the only thing standing between this rank and a hardware
-// partition; present-medium and write-protected exclusion no longer depend
-// on any such quirk — blockmount.Usable enforces both structurally, for
-// every caller of Choose/Candidates, so this rank need only express eMMC's
-// own class preference (see gosd-ix38, which found disk enforcing
-// SizeSectors/ReadOnly and this rank not). This selection logic is
-// independent of which Filesystem is requested (gosd-9sc4 changed the
-// latter, not the former): chooseEMMC never widens to disk's multi-class
-// ranking, and there remains no emmc equivalent of disk's named-device
-// selection.
+// An eMMC's boot0/boot1/rpmb/gp0-gp3 hardware partitions are rejected by
+// name, exactly as disk.rank rejects them (gosd-f226). Until gosd-b6jl this
+// rank had no such exclusion and relied instead on a sysfs-topology quirk —
+// those gendisks' device/type attribute reads empty, not "MMC", so
+// `Kind == "MMC"` misses them by accident. That is not a documented kernel
+// contract, was never verified on the Rockchip boards GoSD ships, and would
+// fail silently: formatting boot0 leaves a board that no longer boots and
+// cannot be recovered from the SD card. blockmount.Usable now rejects them
+// for every caller of Choose/Candidates, so this call is belt-and-braces —
+// it is here so that reading this rank on its own tells the truth about what
+// it accepts, the way disk.rank's does.
+//
+// Present-medium and write-protection are likewise blockmount.Usable's job
+// rather than this rank's (gosd-ix38). This selection logic is independent of
+// which Filesystem is requested (gosd-9sc4 changed the latter, not the
+// former): chooseEMMC never widens to disk's multi-class ranking, and there
+// remains no emmc equivalent of disk's named-device selection.
 func chooseEMMC(devices []blockmount.Device, mountedSources map[string]bool) (string, error) {
-	rank := func(dev blockmount.Device) (int, bool) { return 0, dev.Kind == "MMC" }
+	rank := func(dev blockmount.Device) (int, bool) {
+		return 0, dev.Kind == "MMC" && !blockmount.IsMMCHardwarePartition(dev.Name)
+	}
 	return blockmount.Choose(devices, mountedSources, rank, ErrNoEMMC)
 }
