@@ -1,8 +1,8 @@
 // Command usbwebsite turns a GoSD board into a tiny self-contained website
-// appliance that you edit by USB. On a standalone boot it serves its storage
-// volume's contents as a static website over HTTP; plugged into a computer it
-// presents that same volume as a removable USB drive, so you can drop or edit
-// the site's files, then power it standalone again to serve them.
+// appliance that you edit by USB. On a standalone boot it serves the site's
+// files as a static website over HTTP; plugged into a computer it can present
+// the volume holding them as a removable USB drive, so you can drop or edit
+// those files, then power it standalone again to serve them.
 //
 // The volume is the onboard eMMC on boards that have one fitted, and
 // otherwise the SD card's data partition — so eMMC-less boards like the
@@ -24,6 +24,28 @@
 // emmcOptions): the whole "plug in, drag files, eject" workflow depends on
 // the volume being natively readable from macOS and Windows, which ext4
 // is not.
+//
+// # Only share a volume that is yours alone
+//
+// Both halves of this app publish files, so both are scoped to a directory
+// this app owns rather than to whatever the volume happens to hold — the
+// rule worth copying out of this example.
+//
+// The HTTP server is pointed at a content directory, never at a mount point
+// that something else also writes to. That matters on the SD-card path:
+// gosd-init keeps this device's own settings on the data partition, under
+// /data/.gosd, and http.FileServer has no notion of a hidden file, so
+// serving /data itself would publish the WiFi passphrase and any ingress
+// token — in plain text, to anyone who can reach port 80. The site lives in
+// /data/website instead, and only that is served.
+//
+// A USB mass-storage LUN cannot be scoped that way at all: it is a block
+// device, so the host gets the whole volume, every file on it. The eMMC is
+// this app's alone and is shared freely. The data partition is not, so it is
+// shared only when the operator has explicitly asked for it with
+// shareDataEnv — the same shape of consent gate as wipeConsentEnv below,
+// because handing a stranger's computer the credentials of the network the
+// board is sitting on deserves an answer, not a default.
 //
 // A board whose eMMC already holds other content (a vendor image, a prior
 // project) needs explicit consent before this app claims it: set the
@@ -61,11 +83,28 @@ const (
 	dataMountpoint = "/data"
 	bootMountpoint = "/boot"
 
+	// websiteDir is the folder the site's files live in on a volume this app
+	// shares with gosd-init, and dataContentDir is that folder on the data
+	// partition. The whole of /data is never served: gosd-init keeps this
+	// device's settings in /data/.gosd, and http.FileServer would hand them
+	// out like any other file.
+	websiteDir     = "website"
+	dataContentDir = dataMountpoint + "/" + websiteDir
+
 	// wipeConsentEnv is the config/env/ setting (see docs/runtime.md's "App
 	// environment variables") a user sets to let usbwebsite claim an eMMC
 	// that already holds other content. Unset, the app only ever formats an
 	// eMMC that's blank or already carries its own label.
 	wipeConsentEnv = "WEBSITE_WIPE_EMMC"
+
+	// shareDataEnv is the config/env/ setting a user sets to let usbwebsite
+	// offer the SD card's data partition as a USB drive. Unset, it never
+	// does: a LUN is the whole volume, and this one also carries gosd-init's
+	// copy of this device's settings — the WiFi passphrase and any ingress
+	// token among them, in plain text — so the drive would hand those to
+	// whatever computer the cable reaches, read-write. The eMMC needs no
+	// such gate; nothing but the website is ever on it.
+	shareDataEnv = "WEBSITE_SHARE_DATA"
 
 	udcDir = "/sys/class/udc"
 
@@ -86,15 +125,30 @@ const (
 	readHeaderTimeout = 10 * time.Second
 )
 
-// storage is the volume this boot serves and shares: where its filesystem is
-// mounted, the block device behind it (handed raw to gadget.MassStorage),
-// and how to release and restore the mount when switching between the two —
-// which differs between the eMMC and data-partition backings.
+// storage is the volume this boot serves from and may share: the directory
+// the site's files live in, the block device behind it (handed raw to
+// gadget.MassStorage), and how to release and restore the mount when
+// switching between the two — which differs between the eMMC and
+// data-partition backings.
 type storage struct {
-	mountpoint string
-	device     string
+	// contentDir is the directory the site's files live in, and the only
+	// directory served. It is the volume's own mount point when this app
+	// owns the whole volume, and a subdirectory of it when it doesn't.
+	contentDir string
 	// source names the backing for log lines, e.g. "onboard eMMC".
-	source  string
+	source string
+
+	// shareDevice is the block device to hand to a connected computer, set
+	// only for a volume that may be shared as a whole. "" means this boot
+	// serves and never offers a drive, and noShareReason says so.
+	shareDevice string
+	// noShareReason tells the operator, once per boot, why no drive is on
+	// offer and what to do about it. Set exactly when shareDevice is "".
+	noShareReason string
+
+	// unmount and remount release and restore the local mount around a USB
+	// share. Both nil when shareDevice is "": nothing is ever released for a
+	// volume this app will not share.
 	unmount func() error
 	remount func() error
 }
@@ -107,9 +161,18 @@ func main() {
 		// doesn't crash-loop us while we wait for it.
 		idleForever()
 	}
-	fmt.Printf("gosd usbwebsite: %s ready at %s (device %s)\n", st.source, st.mountpoint, st.device)
+	fmt.Printf("gosd usbwebsite: %s ready, website files in %s\n", st.source, st.contentDir)
 
-	if presentedAsDrive(st) {
+	// Prepare the content directory before deciding which mode to be: a
+	// drive handed to a computer should already show the folder (and starter
+	// page) the files belong in, and once the LUN is live this app must not
+	// touch the volume at all.
+	prepareContent(st.contentDir)
+
+	switch {
+	case st.shareDevice == "":
+		fmt.Println(st.noShareReason)
+	case presentedAsDrive(st):
 		// A computer is editing the files; stay a drive until it is unplugged
 		// and the board reboots. Serving now would fight the host for the
 		// device.
@@ -118,7 +181,7 @@ func main() {
 		idleForever()
 	}
 
-	serveWebsite(st.mountpoint)
+	serveWebsite(st.contentDir)
 }
 
 // emmcOptions pins the eMMC to FAT32 rather than emmc's ext4 default
@@ -143,10 +206,13 @@ func claimStorage() (storage, bool) {
 	switch {
 	case res.Err == nil:
 		return storage{
-			mountpoint: res.MountPoint,
-			device:     res.BlockDevice,
-			source:     "onboard eMMC (" + emmcLabel + ")",
-			unmount:    func() error { return emmc.Unmount(res.MountPoint) },
+			// The whole eMMC is this app's: it is formatted for the website
+			// and nothing else ever writes to it, so the site is its root
+			// and sharing it discloses nothing but the site.
+			contentDir:  res.MountPoint,
+			source:      "onboard eMMC (" + emmcLabel + ")",
+			shareDevice: res.BlockDevice,
+			unmount:     func() error { return emmc.Unmount(res.MountPoint) },
 			// FormatAndMountWith is idempotent here: it only remounts, never
 			// reformats, an eMMC that already carries this app's label as
 			// FAT32.
@@ -175,6 +241,11 @@ func claimStorage() (storage, bool) {
 // Nothing on this path ever formats or relabels the partition — it was
 // created for app data by `gosd build`, and hosts only ever see the
 // filesystem it already carries.
+//
+// This partition is shared with gosd-init, which is what makes it different
+// from the eMMC in both directions: the site gets a subdirectory of its own
+// rather than the volume's root, and the volume is offered as a USB drive
+// only when the operator has set shareDataEnv.
 func claimDataPartition() (storage, bool) {
 	part, err := findDataPartition()
 	if err != nil {
@@ -190,14 +261,38 @@ func claimDataPartition() (storage, bool) {
 			return storage{}, false
 		}
 	}
-	return storage{
-		mountpoint: dataMountpoint,
-		device:     part.device,
-		source:     "SD card data partition",
-		unmount:    func() error { return unmountVFAT(dataMountpoint) },
-		remount:    func() error { return mountVFAT(part.device, dataMountpoint) },
-	}, true
+	return dataStorage(part.device, shareDataConsented()), true
 }
+
+// dataStorage describes what this app may do with the SD card's data
+// partition. The site always gets dataContentDir — a folder of its own on a
+// volume gosd-init also writes to — and the volume itself is offered as a
+// USB drive only when consented, because a LUN is the whole partition and
+// this one holds gosd-init's copy of the device's settings.
+func dataStorage(device string, consented bool) storage {
+	st := storage{
+		contentDir: dataContentDir,
+		source:     "SD card data partition",
+	}
+	if !consented {
+		st.noShareReason = dataNotSharedReason
+		return st
+	}
+	fmt.Printf("gosd usbwebsite: %s is set, so the data partition will be offered as a USB drive — everything on it, %s/.gosd included, is readable and writable by whatever computer the cable reaches\n", shareDataEnv, dataMountpoint)
+	st.shareDevice = device
+	st.unmount = func() error { return unmountVFAT(dataMountpoint) }
+	st.remount = func() error { return mountVFAT(device, dataMountpoint) }
+	return st
+}
+
+// dataNotSharedReason says why an eMMC-less board offers no USB drive and
+// what the two ways forward are. It prints on every such board that hasn't
+// been given shareDataEnv — which is the default — so it reads as an
+// explanation rather than an error.
+const dataNotSharedReason = "gosd usbwebsite: not offering a USB drive — the SD card's data partition isn't this app's alone\n" +
+	"gosd usbwebsite: gosd-init keeps this device's own settings on it (" + dataMountpoint + "/.gosd), the WiFi passphrase and any ingress token among them in plain text, and a USB drive is the whole volume rather than a folder on it\n" +
+	"gosd usbwebsite: to edit the site, power the board down and put its card in a computer — the files are in the " + websiteDir + " folder\n" +
+	"gosd usbwebsite: to offer the drive anyway, accepting that disclosure, write yes into config/env/" + shareDataEnv + " on the boot partition and reboot"
 
 // dataPartition locates the data partition: the device node backing it
 // and whether it is currently mounted at dataMountpoint.
@@ -278,6 +373,13 @@ func wipeConsented() bool {
 	return isAffirmative(os.Getenv(wipeConsentEnv))
 }
 
+// shareDataConsented reports whether the user has opted in, via shareDataEnv,
+// to letting usbwebsite offer the SD card's data partition as a USB drive,
+// gosd-init's plaintext settings and all.
+func shareDataConsented() bool {
+	return isAffirmative(os.Getenv(shareDataEnv))
+}
+
 // isAffirmative recognizes the usual "yes" spellings for a boolean app
 // setting, case-insensitively; anything else, including unset or empty,
 // means no — the safe default.
@@ -323,7 +425,7 @@ func presentedAsDrive(st storage) bool {
 	// Give up our mount of the device before exposing it: a mass-storage LUN
 	// and a local mount of the same block device must never be live at once.
 	if err := st.unmount(); err != nil {
-		fmt.Printf("gosd usbwebsite: could not release %s to share it (%v); serving instead\n", st.mountpoint, err)
+		fmt.Printf("gosd usbwebsite: could not release the website volume to share it (%v); serving instead\n", err)
 		return false
 	}
 
@@ -334,7 +436,17 @@ func presentedAsDrive(st storage) bool {
 		Product:      "GoSD Website Storage",
 		Serial:       "usbwebsite-example",
 		Functions: []gadget.Function{
-			gadget.MassStorage{Path: st.device, Removable: true},
+			gadget.MassStorage{
+				Path: st.shareDevice,
+				// Spelled out rather than left to the zero value. A LUN is
+				// read-write unless you say otherwise, and how much a host
+				// may do to a volume is not a thing to leave implicit.
+				// Read-write is right here — dropping files on the drive is
+				// the whole feature — but only because claimStorage has
+				// already established that this volume may be shared at all.
+				ReadOnly:  false,
+				Removable: true,
+			},
 		},
 	}
 	if err := g.Apply(); err != nil {
@@ -355,10 +467,22 @@ func presentedAsDrive(st storage) bool {
 	return false
 }
 
-// serveWebsite serves dir as a static site forever. A brand-new volume has no
-// index.html, so it drops in a starter page first.
-func serveWebsite(dir string) {
+// prepareContent makes sure the site's content directory exists and has
+// something in it, so a fresh board serves a page that explains itself and a
+// fresh drive shows the folder the files belong in. A failure here is logged
+// and survived: an empty site is a much better outcome than an app that
+// exits and gets restarted forever.
+func prepareContent(dir string) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "gosd usbwebsite: could not create the website folder %s: %v\n", dir, err)
+		return
+	}
 	ensureStarterPage(dir)
+}
+
+// serveWebsite serves dir — the site's content directory, never a whole
+// volume — as a static site forever.
+func serveWebsite(dir string) {
 	fmt.Printf("gosd usbwebsite: serving %s on %s\n", dir, httpAddr)
 
 	srv := &http.Server{
@@ -378,11 +502,17 @@ const starterPage = `<!doctype html>
 <title>GoSD usbwebsite</title>
 <h1>It works!</h1>
 <p>This page is served by a GoSD board from its website storage.</p>
-<p>Plug the board into a computer over USB and it appears as a removable drive
-(labelled WEBSITE when backed by onboard eMMC, or usbweb-data — derived from
-this app's name — when backed by the SD card). Replace this index.html (and
-add whatever else you like), eject the drive, then power the board on its
-own again to serve your site.</p>
+<p><strong>On a board with onboard eMMC:</strong> plug it into a computer over
+USB and a removable drive named WEBSITE appears. Replace this index.html (and
+add whatever else you like), eject the drive, then power the board on its own
+again to serve your site.</p>
+<p><strong>On a board without eMMC</strong> the site lives in the
+<code>website</code> folder of the SD card's data partition (labelled
+usbweb-data by default, after this app's name). Power the board down, put the
+card in a computer, and edit that folder. The board does not offer this
+partition over USB unless you ask it to, because gosd-init also keeps this
+device's own settings on it — the WiFi passphrase included — and a USB drive
+would be the whole partition, not just the website folder.</p>
 `
 
 // ensureStarterPage writes the placeholder index.html when the site has none,
@@ -524,6 +654,6 @@ func awaitConfigured(udc string, timeout time.Duration) bool {
 // the fall-back-to-serving path has a filesystem to serve.
 func remount(st storage) {
 	if err := st.remount(); err != nil {
-		fmt.Fprintf(os.Stderr, "gosd usbwebsite: remounting %s failed: %v\n", st.mountpoint, err)
+		fmt.Fprintf(os.Stderr, "gosd usbwebsite: remounting the website volume failed: %v\n", err)
 	}
 }

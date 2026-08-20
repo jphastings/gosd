@@ -73,6 +73,49 @@ func TestDataPartitionFromMounts(t *testing.T) {
 	}
 }
 
+func TestDataStorage(t *testing.T) {
+	const device = "/dev/mmcblk0p2"
+
+	t.Run("serves a folder of its own, never the whole partition", func(t *testing.T) {
+		// gosd-init keeps this device's settings — the WiFi passphrase
+		// included — under /data/.gosd, and http.FileServer hands out
+		// dot-prefixed files like any other, so serving the mount point
+		// itself would publish them to anyone who can reach port 80.
+		for _, consented := range []bool{false, true} {
+			st := dataStorage(device, consented)
+			if st.contentDir == dataMountpoint {
+				t.Errorf("consented=%v: contentDir = %q, which serves gosd-init's settings in %s/.gosd", consented, st.contentDir, dataMountpoint)
+			}
+			if want := dataMountpoint + "/website"; st.contentDir != want {
+				t.Errorf("consented=%v: contentDir = %q, want %q", consented, st.contentDir, want)
+			}
+		}
+	})
+
+	t.Run("offers no USB drive unless asked to", func(t *testing.T) {
+		st := dataStorage(device, false)
+		if st.shareDevice != "" {
+			t.Errorf("shareDevice = %q, want \"\": an unconsented board must not hand the partition to a host", st.shareDevice)
+		}
+		if st.noShareReason == "" {
+			t.Error("noShareReason is empty; the operator gets no explanation for the missing drive")
+		}
+		if st.unmount != nil || st.remount != nil {
+			t.Error("a volume that is never shared must not carry unmount/remount closures")
+		}
+	})
+
+	t.Run("offers the drive once consented", func(t *testing.T) {
+		st := dataStorage(device, true)
+		if st.shareDevice != device {
+			t.Errorf("shareDevice = %q, want %q", st.shareDevice, device)
+		}
+		if st.unmount == nil || st.remount == nil {
+			t.Error("a shared volume needs unmount/remount: the LUN and a local mount must never be live at once")
+		}
+	})
+}
+
 func TestSecondPartition(t *testing.T) {
 	tests := map[string]string{
 		"/dev/mmcblk0p1": "/dev/mmcblk0p2",
@@ -142,6 +185,15 @@ func TestEnsureStarterPage(t *testing.T) {
 		ensureStarterPage(dir)
 		assertIndexContent(t, dir, userContent)
 	})
+}
+
+func TestPrepareContent(t *testing.T) {
+	// A freshly flashed card has no website folder at all: the app makes it,
+	// so the first boot serves something and a shared drive shows the folder
+	// the files belong in.
+	dir := filepath.Join(t.TempDir(), "website")
+	prepareContent(dir)
+	assertIndexContent(t, dir, starterPage)
 }
 
 func writeIndex(t *testing.T, dir, content string) {
