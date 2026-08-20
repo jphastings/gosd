@@ -14,6 +14,7 @@
 package gadget
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -27,6 +28,16 @@ const gadgetRoot = "/sys/kernel/config/usb_gadget/gosd"
 // the first entry, matching the bean's locked decision — neither supported
 // board ever exposes more than one.
 const udcClassDir = "/sys/class/udc"
+
+// ErrNoController reports that the board has no USB peripheral controller
+// available to bind a gadget to: either the board's USB port isn't in
+// peripheral mode yet (most commonly, the image needs `gosd build
+// --usb-gadget`), or the board has no such controller at all. Apply's
+// returned error wraps it, so an app that can run without USB gadget mode
+// can match it with errors.Is and degrade gracefully, the same way
+// sound.ErrNoDevice, emmc.ErrNoEMMC, and disk.ErrNoDisk already let callers
+// do for their own missing-device cases.
+var ErrNoController = errors.New("no USB peripheral controller found")
 
 // Function is a USB gadget function that can be linked into a Gadget's
 // config, such as ACM (CDC-ACM serial). It's implemented by this package's
@@ -177,7 +188,7 @@ func (g *Gadget) materialize(fsys writableFS) error {
 func firstUDC(fsys writableFS) (string, error) {
 	entries, err := fsys.ReadDir(udcClassDir)
 	if err != nil || len(entries) == 0 {
-		return "", fmt.Errorf("gadget: no USB peripheral controller found under %s; is the board's USB port in peripheral mode? (Pi Zero 2W: build with --usb-gadget; Radxa Zero 3E: no flag needed)", udcClassDir)
+		return "", fmt.Errorf("gadget: %w under %s; is the board's USB port in peripheral mode? (Pi Zero 2W: build with --usb-gadget; Radxa Zero 3E: no flag needed)", ErrNoController, udcClassDir)
 	}
 	return entries[0].Name(), nil
 }

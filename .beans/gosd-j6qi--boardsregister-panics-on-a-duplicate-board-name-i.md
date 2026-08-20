@@ -1,11 +1,11 @@
 ---
 # gosd-j6qi
-title: 'boards.Register panics on a duplicate board name instead of failing with an actionable message'
-status: todo
+title: boards.Register panics on a duplicate board name instead of failing with an actionable message
+status: completed
 type: task
 priority: low
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T06:26:33Z
 ---
 
 **Severity: Low.** Narrow blast radius — this only fires if a new board
@@ -52,7 +52,15 @@ with no behavior change otherwise.
 
 ## Todos
 
-- [ ] Reword the panic message in `boards.go:283`
-- [ ] Consider whether `internal/boards`' own tests already cover the
+- [x] Reword the panic message in `boards.go:283`
+- [x] Consider whether `internal/boards`' own tests already cover the
       duplicate-registration path (a quick grep suggests they don't) and add
       one if not — asserting the panic fires and its message names the cause
+
+## Summary of Changes
+
+Reworded the duplicate-registration panic message in `internal/boards/boards.go`'s `register` to name the likely cause (a `Name()` constant copy-pasted when scaffolding a new board package from an existing one) and the fix, keeping the panic itself.
+
+Deliberate choice on audience, per this PR's guidance: this is a programmer-error invariant tripped only when a GoSD contributor adds a board with a duplicate name — it fires at package init, before any CLI command runs, so no end user running `gosd build` can ever reach it. A panic (with a diagnostic, actionable message) is therefore still the right shape; converting it to a returned error would only matter if an end user could trigger it, which they can't. Contrast with gosd-2maa's board-panic recovery, which exists precisely because *that* panic (from `BootFiles`/`RawWrites`) fires mid-build, reachable by any end user whose board's artifacts are misconfigured.
+
+Extended `TestRegisterPanicsOnDuplicateName` (`internal/boards/boards_test.go`) — which already asserted a panic occurs but not its content — to also assert the panic message names both the duplicate board and the copy-paste cause.

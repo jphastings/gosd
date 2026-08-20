@@ -369,6 +369,53 @@ func TestParseDataSizeRefusesMoreThanFAT32CanHold(t *testing.T) {
 	}
 }
 
+// TestParseDataSizeRefusesSubSectorSizes is bean gosd-4k5k's guard: a
+// --data-size between 1 and 511 bytes rounds down to zero whole 512-byte
+// sectors and can never back a partition (image.computeLayout refuses it
+// too, but only after a full cross-compile and artifact fetch for every
+// board) - parseDataSize must catch it immediately, symmetric with the
+// 256GiB ceiling check above. 0 itself stays valid (disables the data
+// partition) for either filesystem.
+func TestParseDataSizeRefusesSubSectorSizes(t *testing.T) {
+	for _, fs := range []diskfmt.FS{diskfmt.FAT32, diskfmt.EXT4} {
+		for _, tc := range []struct {
+			name    string
+			in      string
+			refused bool
+		}{
+			// 0 disables the data partition for FAT32, but ext4 already
+			// refuses it for its own, unrelated reason (no partition to
+			// format) - see TestParseDataSizeEXT4RequiresANonZeroSize.
+			{"zero", "0", fs == diskfmt.EXT4},
+			{"one byte", "1", true},
+			{"just below one sector", "511", true},
+			{"exactly one sector", "512", fs == diskfmt.EXT4}, // still below ext4's own much larger floor
+		} {
+			t.Run(string(fs)+"/"+tc.name, func(t *testing.T) {
+				_, _, err := parseDataSize(tc.in, fs)
+				if (err != nil) != tc.refused {
+					t.Fatalf("parseDataSize(%q, %s) error = %v, want refused = %v", tc.in, fs, err, tc.refused)
+				}
+			})
+		}
+	}
+}
+
+// TestParseDataSizeSubSectorRefusalNamesTheSector confirms the sub-sector
+// refusal's message names both the sector size and the likely mistake,
+// rather than just the raw byte count.
+func TestParseDataSizeSubSectorRefusalNamesTheSector(t *testing.T) {
+	_, _, err := parseDataSize("100", diskfmt.FAT32)
+	if err == nil {
+		t.Fatal("parseDataSize(\"100\", fat32) succeeded, want a refusal")
+	}
+	for _, want := range []string{"100", "512", "sector", "unit suffix"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err, want)
+		}
+	}
+}
+
 // TestParseDataSizeEXT4RequiresANonZeroSize confirms --data-filesystem=ext4
 // refuses --data-size=0 (the default): there is no partition for it to
 // format at all.

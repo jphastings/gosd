@@ -67,6 +67,15 @@ import (
 const (
 	sectorSizeBytes = 512
 
+	// SectorSizeBytes mirrors the unexported sectorSizeBytes above,
+	// exported so a caller that must reject a too-small size before Write
+	// ever sees it (e.g. cmd/gosd's --data-size floor check, which fails
+	// fast rather than letting a sub-sector size survive a full build
+	// only to be refused here by computeLayout) can name the same
+	// boundary this package enforces internally, instead of duplicating
+	// the number.
+	SectorSizeBytes = sectorSizeBytes
+
 	// mbrSizeBytes is the region the MBR itself occupies, at the very
 	// start of the image.
 	mbrSizeBytes = sectorSizeBytes

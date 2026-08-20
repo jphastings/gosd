@@ -659,12 +659,16 @@ enforces it: `--data-size=400GiB` is refused at the flag, before anything is
 compiled or written, naming the maximum. `--data-size=expand` caps itself at a
 round 256GiB on a larger card and logs how much of the card it left unused.
 
-Below that ceiling, any size works — though the volume that gets written may be
-up to two clusters (at most 32.5KiB) smaller than the size you asked for. The
-formatter trims to the largest size it can lay a self-consistent FAT out for;
-without that, roughly one whole-GiB size in nine — 16, 32, 64, 128 and 256GiB
-among them — produces a volume that macOS First Aid and Windows chkdsk report
-as damaged (bean `gosd-e3e3`).
+Below that ceiling, any size of at least one sector (512 bytes) works —
+though the volume that gets written may be up to two clusters (at most
+32.5KiB) smaller than the size you asked for. The formatter trims to the
+largest size it can lay a self-consistent FAT out for; without that,
+roughly one whole-GiB size in nine — 16, 32, 64, 128 and 256GiB among them
+— produces a volume that macOS First Aid and Windows chkdsk report as
+damaged (bean `gosd-e3e3`). A size below one sector is refused at the flag
+too, for the same reason as the ceiling: it can never back a real
+partition, and is almost always a missing unit suffix (`--data-size=100`
+meaning 100 bytes rather than 100MiB) rather than an intentional choice.
 
 The reason for the ceiling is GoSD's pure-Go FAT32 formatter, which counts the
 sectors in each file allocation table in 16 bits: past that size the volume
