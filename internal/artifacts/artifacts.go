@@ -66,7 +66,9 @@ import (
 //   - v0.10.2: The Cubie A5E kernel build now produces a USB-gadget
 //     variant device tree; Cubie A5E U-Boot no longer scans USB on every
 //     boot.
-const Version = "v0.10.2"
+//   - v0.10.3: The status LED's fatal signal now survives kernel
+//     shutdown; SPI now works on the Raspberry Pi Zero W.
+const Version = "v0.10.3"
 
 // ManifestSHA256 is the SHA-256 (lowercase hex) of the manifest.json
 // published with the artifacts/<Version> release. It is the trust anchor for
@@ -80,7 +82,7 @@ const Version = "v0.10.2"
 // rewrites both (see docs/artifacts.md); by hand, it is
 //
 //	curl -sfL https://github.com/jphastings/gosd/releases/download/artifacts/<Version>/manifest.json | shasum -a 256
-const ManifestSHA256 = "d071808117052b7691409379a669e678157d14edef0bcc2cb42ede8ff15104fe"
+const ManifestSHA256 = "a8afb4aa407a0f2051ee81644b270ef086630a9b9640bb21b1c2c8b1ef5f5149"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
