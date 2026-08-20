@@ -1,11 +1,11 @@
 ---
 # gosd-7m9y
 title: The provisioning snapshot in /data is unauthenticated, so a planted one survives reflash and re-provisions the device
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:15:07Z
-updated_at: 2026-08-20T04:39:58Z
+updated_at: 2026-08-20T07:19:34Z
 ---
 
 **Severity: High.** Defeats reflashing — the owner's primary and most drastic

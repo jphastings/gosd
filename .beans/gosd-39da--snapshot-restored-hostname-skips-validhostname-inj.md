@@ -1,11 +1,11 @@
 ---
 # gosd-39da
 title: Snapshot-restored hostname skips validHostname, injecting arbitrary lines into /etc/hosts
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-12T04:13:59Z
-updated_at: 2026-08-20T04:39:59Z
+updated_at: 2026-08-20T07:19:35Z
 ---
 
 **Severity: High.** A one-line inconsistency in a single function, reachable
