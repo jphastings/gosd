@@ -1,6 +1,7 @@
 # Build outputs that land in the repo root during gate checks
 /gosd-init
 /gosd
+/tio_*
 
 # nix build's output symlink
 /result
