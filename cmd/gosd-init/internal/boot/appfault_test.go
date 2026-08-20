@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/internal/faultreport"
 )
 
@@ -109,7 +110,7 @@ func TestSupervisionEndsWhenTheExitHookAsksItTo(t *testing.T) {
 		Wait:        func(int) (ExitStatus, error) { return ExitStatus{ExitCode: 70}, nil },
 		Sleep:       func(time.Duration) { t.Error("the supervisor waited to restart an app that declared a fatal fault") },
 		Now:         newFakeClock(time.Unix(0, 0)).Now,
-		Backoff:     NewBackoff(time.Second, time.Minute),
+		Backoff:     childbackoff.NewBackoff(time.Second, time.Minute),
 		StableAfter: 30 * time.Second,
 		OnExit:      func(ExitStatus, time.Duration) bool { return true },
 		Log:         func(string, ...any) {},

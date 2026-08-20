@@ -1,6 +1,10 @@
 package boot
 
-import "time"
+import (
+	"time"
+
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
+)
 
 // Supervisor runs /app, restarting it with exponential backoff whenever it
 // exits, for as long as PID 1 lives. Every dependency is injected so the
@@ -22,7 +26,7 @@ type Supervisor struct {
 	// don't wait out StableAfter in real time. Defaults to time.After.
 	After func(time.Duration) <-chan time.Time
 	// Backoff computes the delay before each restart attempt.
-	Backoff *Backoff
+	Backoff *childbackoff.Backoff
 	// StableAfter is how long /app must run before its next exit resets
 	// Backoff back to its base delay.
 	StableAfter time.Duration

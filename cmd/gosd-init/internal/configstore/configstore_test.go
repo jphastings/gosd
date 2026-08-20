@@ -117,6 +117,30 @@ func TestAReFlashedCardGetsItsSettingsBack(t *testing.T) {
 	}
 }
 
+// TestAHandEditedDataFlushSurvivesAReFlash pins gosd-1kw1: data_flush is an
+// ordinary config-tree setting like hostname or wifi/ssid, not a build-flag-
+// only value, so a hand-edit to it must survive a re-flash exactly the same
+// way.
+func TestAHandEditedDataFlushSurvivesAReFlash(t *testing.T) {
+	store := t.TempDir()
+	card, digests := flash(t, defaults)
+	edit(t, card, "data_flush", "yes")
+	boot(t, store, card, "image-a", digests)
+
+	next, nextDigests := flash(t, defaults)
+	result, tree := boot(t, store, next, "image-b", nextDigests)
+
+	if !slices.Equal(result.Restored, []string{"data_flush"}) {
+		t.Errorf("restored %v, want the data_flush somebody set", result.Restored)
+	}
+	if got := onCard(t, next, "data_flush"); got != "yes" {
+		t.Errorf("data_flush on the card = %q, want it put back", got)
+	}
+	if got := tree.Get("data_flush"); got != "yes" {
+		t.Errorf("data_flush this boot = %q, want the restored value", got)
+	}
+}
+
 func TestTheSameImageReFlashedRestoresNothing(t *testing.T) {
 	store := t.TempDir()
 	card, digests := flash(t, defaults)

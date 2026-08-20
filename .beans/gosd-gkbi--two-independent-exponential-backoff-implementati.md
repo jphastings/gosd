@@ -1,11 +1,11 @@
 ---
 # gosd-gkbi
 title: 'Two independent exponential-backoff implementations: boot.Backoff never migrated onto childbackoff'
-status: todo
+status: completed
 type: task
 priority: low
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T05:39:32Z
 ---
 
 **Severity: Low.** Both implementations are correct and tested — this is
@@ -44,9 +44,38 @@ should still pass unchanged against the shared implementation's behavior.
 
 ## Todos
 
-- [ ] Replace `boot.Backoff` usage in `cmd/gosd-init/internal/boot/supervisor.go`
+- [x] Replace `boot.Backoff` usage in `cmd/gosd-init/internal/boot/supervisor.go`
       with `childbackoff.NewBackoff`
-- [ ] Delete `cmd/gosd-init/internal/boot/backoff.go`'s duplicate `Backoff`
+- [x] Delete `cmd/gosd-init/internal/boot/backoff.go`'s duplicate `Backoff`
       type (keep `StableRunThreshold` and the `Default*` constants)
-- [ ] Confirm `boot`'s existing backoff tests still pass, or fold them into
+- [x] Confirm `boot`'s existing backoff tests still pass, or fold them into
       `childbackoff`'s if they've become redundant
+
+## Summary of Changes
+
+Consolidated `/app`'s restart backoff onto `childbackoff.Backoff`, the same
+engine `cloudflared` and `tsfunnel` already share:
+
+- `boot/backoff.go`: deleted the duplicate `Backoff` type, `NewBackoff`, and
+  its `Next`/`Reset` methods. Kept `DefaultBackoffBase` (1s), `DefaultBackoffCap`
+  (10s) and `StableRunThreshold` (30s) — `/app`'s own restart-policy
+  constants, unchanged.
+- `boot/supervisor.go`: `Supervisor.Backoff` is now `*childbackoff.Backoff`.
+- `boot/sequence.go`: constructs it via
+  `childbackoff.NewBackoff(DefaultBackoffBase, DefaultBackoffCap)` —
+  identical bounds, so identical timing.
+- `boot/interfaces.go`: package doc updated to stop listing `Backoff` as
+  living in this package.
+- Test call sites (`supervisor_test.go`, `appfault_test.go`) updated to
+  construct `childbackoff.NewBackoff` directly; behavior/assertions
+  unchanged.
+- `backoff_test.go` rewritten (not folded away, since `childbackoff`'s own
+  tests use cloudflared's 1s/30s bounds, not boot's 1s/10s) to pin `/app`'s
+  own `DefaultBackoffBase`/`DefaultBackoffCap` against the shared engine —
+  a regression test for boot's specific bounds, not the doubling/capping
+  algorithm itself.
+
+No behavior change: bounds (1s base, 10s cap, 30s stable-run threshold) are
+byte-for-byte what `boot.Backoff` already produced, and the full `boot`
+package test suite (including the escalating-backoff and stable-reset
+supervisor tests) passes unchanged.

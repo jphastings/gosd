@@ -475,13 +475,6 @@ var specs = map[string]KernelSpec{
 		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
 	},
 
-	// "rock-4se" is scaffolding-only as of bean gosd-iosp: this board isn't
-	// registered in internal/boards yet (bean gosd-0vvh), so
-	// TestBoardIDsListsExactlyTheFiveKernelBuildingBoards in
-	// kernelspec_test.go fails until that board profile lands and the test
-	// is updated to include it - a known, reported cross-bean coupling, not
-	// silently worked around here. See the bean body's "Scaffolding status"
-	// note.
 	"rock-4se": {
 		BoardID: "rock-4se",
 		Source: Source{

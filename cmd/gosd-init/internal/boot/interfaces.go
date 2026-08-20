@@ -3,9 +3,12 @@
 // supervision with restart backoff and zombie reaping.
 //
 // The sequencing and decision logic in this package (Run, Supervisor,
-// Backoff, MountBootPartition) takes every syscall-touching dependency as a
-// thin interface, so it has no build tags and is fully unit-testable with
-// fakes on any OS. The real implementations of those interfaces, which do
+// MountBootPartition) takes every syscall-touching dependency as a thin
+// interface, so it has no build tags and is fully unit-testable with fakes
+// on any OS. The restart backoff itself is childbackoff.Backoff, shared
+// with the other gosd-init-supervised agents (bean gosd-gkbi); boot only
+// picks its own base/max bounds (DefaultBackoffBase/DefaultBackoffCap in
+// backoff.go). The real implementations of those interfaces, which do
 // touch Linux syscalls (mount, sethostname, wait4, reboot, /dev/console),
 // live in platform_linux.go behind a "linux" build tag; platform_other.go
 // provides stub implementations so the package still builds on non-Linux

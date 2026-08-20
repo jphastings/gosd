@@ -3,10 +3,18 @@ package boot
 import (
 	"testing"
 	"time"
+
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 )
 
-func TestBackoffDoublesAndCaps(t *testing.T) {
-	b := NewBackoff(1*time.Second, 10*time.Second)
+// These pin /app's own restart-backoff bounds (1s base, 10s cap) against
+// the shared childbackoff engine boot.Supervisor actually uses in
+// production (see sequence.go) — a regression test for DefaultBackoffBase/
+// DefaultBackoffCap themselves, not for the doubling/capping algorithm,
+// which childbackoff's own tests already cover.
+
+func TestSupervisorBackoffDoublesAndCaps(t *testing.T) {
+	b := childbackoff.NewBackoff(DefaultBackoffBase, DefaultBackoffCap)
 
 	want := []time.Duration{
 		1 * time.Second,
@@ -23,8 +31,8 @@ func TestBackoffDoublesAndCaps(t *testing.T) {
 	}
 }
 
-func TestBackoffReset(t *testing.T) {
-	b := NewBackoff(1*time.Second, 10*time.Second)
+func TestSupervisorBackoffReset(t *testing.T) {
+	b := childbackoff.NewBackoff(DefaultBackoffBase, DefaultBackoffCap)
 	b.Next()
 	b.Next()
 	b.Reset()

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/configstore"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/consoletail"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
@@ -472,7 +473,7 @@ func Run(deps Deps, opts Options) error {
 		Sleep:       deps.Sleep,
 		Now:         deps.Now,
 		After:       deps.After,
-		Backoff:     NewBackoff(DefaultBackoffBase, DefaultBackoffCap),
+		Backoff:     childbackoff.NewBackoff(DefaultBackoffBase, DefaultBackoffCap),
 		StableAfter: StableRunThreshold,
 		Log:         log,
 	}

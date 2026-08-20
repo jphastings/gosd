@@ -166,6 +166,9 @@ builder  = "docker"
 
 [kernel.<board-id>]              # one section per board you customize, keyed by board ID
 fragment = "path/to.fragment"    # Kconfig fragment, merged AFTER GoSD's own fragment
+# fragments = ["common.fragment", "hdmi.fragment"]  # a list instead, merged in order — see
+                                  # "Sharing a fragment between variants" below (mutually
+                                  # exclusive with fragment)
 patches  = ["patches/*.patch"]   # device-tree patch paths/globs, applied AFTER GoSD's own
 
 [[firmware]]                     # zero or more: runtime firmware blobs your driver needs
@@ -207,13 +210,35 @@ build fails, naming the missing symbol) — see `build/boards/*/kernel.fragment`
 and the Rockchip boards' `RequiredY` lists in `internal/kernelspec` for
 what's asserted per board.
 
+### Sharing a fragment between variants
+
+Two recipe variants of the same board — a cheap one and an expensive one
+that additionally enables DRM, say — often share most of a fragment's
+content. `fragments` accepts a list instead of a single path, merged in the
+order given, each one after the last, exactly as GoSD's own board fragment
+and your single `fragment` are merged today: a later file's line wins a
+conflict with an earlier one. List the shared file first and the variant-
+specific one last, so it wins:
+
+```toml
+[kernel.rock-4se]
+fragments = ["common.fragment", "hdmi.fragment"]
+```
+
+`fragment` and `fragments` are mutually exclusive on the same board — use
+`fragments` (even with a single entry) the moment a second file needs to
+join it. There is no merge across boards or across files gosd-kernel.toml
+doesn't list explicitly: this is one board's own fragments, still applied
+after GoSD's board fragment, never a general include mechanism.
+
 ### Caching
 
 Kernel builds are content-addressed: the cache key covers every board and
 overlay input that affects the generated build script — the kernel ref, the
 container image, defconfig, toolchain, GoSD's own fragment/patches, your
-overlay's fragment/patches, and the kernel/DTB build targets and output
-paths. An unchanged input set skips the container run entirely.
+overlay's fragment(s)/patches (in `fragments` order when more than one is
+given), and the kernel/DTB build targets and output paths. An unchanged
+input set skips the container run entirely.
 Cache entries live under a durable GoSD-managed directory under your home
 (not a system temp or evictable-cache location, so a long-running build's
 bind mounts and cached outputs survive OS cache purges) — see

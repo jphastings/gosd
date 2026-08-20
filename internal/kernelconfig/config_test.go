@@ -109,6 +109,116 @@ patches = ["patches/*.patch"]
 	}
 }
 
+func TestParseFragmentsList(t *testing.T) {
+	data := []byte(`
+[kernel.radxa-zero-3e]
+fragments = ["common.config", "hdmi.config"]
+`)
+	cfg, err := kernelconfig.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	board, ok := cfg.Kernel["radxa-zero-3e"]
+	if !ok {
+		t.Fatal("Parse did not produce a [kernel.radxa-zero-3e] entry")
+	}
+	if len(board.Fragments) != 2 || board.Fragments[0] != "common.config" || board.Fragments[1] != "hdmi.config" {
+		t.Errorf("Fragments = %v, want [common.config hdmi.config]", board.Fragments)
+	}
+}
+
+func TestParseFragmentAndFragmentsAreMutuallyExclusive(t *testing.T) {
+	_, err := kernelconfig.Parse([]byte(`
+[kernel.radxa-zero-3e]
+fragment = "dvb.config"
+fragments = ["common.config"]
+`))
+	if err == nil {
+		t.Fatal("Parse with both fragment and fragments succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "fragment") || !strings.Contains(err.Error(), "fragments") {
+		t.Errorf("error = %q, want it to mention both fragment and fragments", err.Error())
+	}
+}
+
+// TestOverlayFragmentsMergeInListOrder pins gosd-vk8s: two recipe variants
+// can each list a shared fragment first, so a later entry's option wins a
+// conflict with an earlier one, exactly as merge_config.sh -m already does
+// merging one fragment onto another.
+func TestOverlayFragmentsMergeInListOrder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.config"), []byte("CONFIG_A=y\nCONFIG_B=y\n"), 0o644); err != nil {
+		t.Fatalf("writing fixture fragment: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hdmi.config"), []byte("CONFIG_B=n\n"), 0o644); err != nil {
+		t.Fatalf("writing fixture fragment: %v", err)
+	}
+
+	cfg, err := kernelconfig.Parse([]byte(`[kernel.radxa-zero-3e]
+fragments = ["common.config", "hdmi.config"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	overlay, err := cfg.Overlay("radxa-zero-3e", dir)
+	if err != nil {
+		t.Fatalf("Overlay: %v", err)
+	}
+	want := "CONFIG_A=y\nCONFIG_B=y\nCONFIG_B=n\n"
+	if string(overlay.ConfigFragment) != want {
+		t.Errorf("ConfigFragment = %q, want %q", overlay.ConfigFragment, want)
+	}
+}
+
+// TestOverlayFragmentsInsertsAMissingTrailingNewline pins that a fragment
+// file without its own trailing newline can't glue its last option onto the
+// next file's first line.
+func TestOverlayFragmentsInsertsAMissingTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.config"), []byte("CONFIG_A=y"), 0o644); err != nil {
+		t.Fatalf("writing fixture fragment: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.config"), []byte("CONFIG_B=y\n"), 0o644); err != nil {
+		t.Fatalf("writing fixture fragment: %v", err)
+	}
+
+	cfg, err := kernelconfig.Parse([]byte(`[kernel.radxa-zero-3e]
+fragments = ["a.config", "b.config"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	overlay, err := cfg.Overlay("radxa-zero-3e", dir)
+	if err != nil {
+		t.Fatalf("Overlay: %v", err)
+	}
+	want := "CONFIG_A=y\nCONFIG_B=y\n"
+	if string(overlay.ConfigFragment) != want {
+		t.Errorf("ConfigFragment = %q, want %q", overlay.ConfigFragment, want)
+	}
+}
+
+func TestOverlayFragmentsMissingFileErrorsNamingThePath(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := kernelconfig.Parse([]byte(`[kernel.radxa-zero-3e]
+fragments = ["does-not-exist.config"]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	_, err = cfg.Overlay("radxa-zero-3e", dir)
+	if err == nil {
+		t.Fatal("Overlay with a missing fragments entry succeeded, want an error")
+	}
+	wantPath := filepath.Join(dir, "does-not-exist.config")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("error = %q, want it to contain the missing path %q", err.Error(), wantPath)
+	}
+}
+
 func TestOverlayMissingFragmentErrorsNamingThePath(t *testing.T) {
 	dir := t.TempDir()
 	cfg, err := kernelconfig.Parse([]byte(`[kernel.radxa-zero-3e]
