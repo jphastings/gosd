@@ -1,10 +1,11 @@
 ---
 # gosd-7frv
 title: 'gosd version: report the CLI version and which artifacts it will download'
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-08-17T12:50:00Z
-updated_at: 2026-08-17T12:50:00Z
+updated_at: 2026-08-20T04:32:41Z
 ---
 
 `gosd` has no `version` command and no `--version` flag. The only way to know

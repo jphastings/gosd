@@ -1,10 +1,11 @@
 ---
 # gosd-n82u
 title: Remap the status LED states so failure survives the halt
-status: todo
+status: completed
 type: task
+priority: normal
 created_at: 2026-08-18T12:24:23Z
-updated_at: 2026-08-18T12:24:23Z
+updated_at: 2026-08-20T04:32:51Z
 ---
 
 Bench-proven on nanopi-zero2 (2026-08-18): the fatal state's fast blink is
@@ -74,3 +75,8 @@ Docs, README and COMPATIBILITY carry the new mapping, and the status LED
 guide records the known limitation: until bean gosd-54j8 ships
 `retain-state-shutdown` in each board's device tree, the LED still goes dark
 at halt, exactly as it does today.
+
+Real-hardware verification of the remapped LED states themselves (fatal
+reading as steady on, running as a visible blip) is tracked separately by
+gosd-ftw7 and gosd-54j8, not by this bean — the code shipped and is unit- and
+QEMU-tested, but is not yet bench-proven.

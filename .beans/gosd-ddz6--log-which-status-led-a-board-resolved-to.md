@@ -1,10 +1,11 @@
 ---
 # gosd-ddz6
 title: Log which status LED a board resolved to
-status: todo
+status: completed
 type: task
+priority: normal
 created_at: 2026-08-17T21:09:22Z
-updated_at: 2026-08-17T21:09:22Z
+updated_at: 2026-08-20T04:32:41Z
 ---
 
 The boot-state LED (gosd-xtcs) logs only on failure. It never says which LED
