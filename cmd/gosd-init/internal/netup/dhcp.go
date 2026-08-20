@@ -61,10 +61,16 @@ func RunDHCP(ctx context.Context, deps Deps, iface string, onLease func(*Lease))
 // maintainLease renews lease at T1, retries at T2 (rebinding) if that
 // renewal failed, and reports lease loss (a non-nil error) if rebinding
 // also fails — the caller (RunDHCP) then restarts discovery from scratch.
-// It returns nil only when ctx is cancelled.
+// It returns nil only when ctx is cancelled. T1 and T2 come from the
+// server, so both are taken through leaseSchedule (see leasetimes.go)
+// rather than used as sent.
 func maintainLease(ctx context.Context, deps Deps, iface string, lease *Lease, onLease func(*Lease)) error {
+	schedule := newLeaseSchedule(deps, iface)
+
 	for {
-		if !waitUntil(ctx, deps.Clock, lease.ObtainedAt.Add(lease.RenewAfter)) {
+		renewAt, rebindAt := schedule.times(lease)
+
+		if !waitForLeaseTimer(ctx, deps.Clock, renewAt) {
 			return nil
 		}
 
@@ -79,7 +85,7 @@ func maintainLease(ctx context.Context, deps Deps, iface string, lease *Lease, o
 		}
 		deps.Log("renewing lease on %s failed: %v; will retry at rebind", iface, err)
 
-		if !waitUntil(ctx, deps.Clock, lease.ObtainedAt.Add(lease.RebindAfter)) {
+		if !waitForLeaseTimer(ctx, deps.Clock, rebindAt) {
 			return nil
 		}
 
@@ -95,14 +101,18 @@ func maintainLease(ctx context.Context, deps Deps, iface string, lease *Lease, o
 	}
 }
 
-// waitUntil blocks until deps.Clock reaches target, ctx is cancelled, or
-// (if target is already in the past) returns immediately. It reports
-// whether it returned because target was reached (true) as opposed to ctx
-// being cancelled (false).
-func waitUntil(ctx context.Context, clock Clock, target time.Time) bool {
+// waitForLeaseTimer blocks until deps.Clock reaches target or ctx is
+// cancelled, and reports whether it returned because target was reached
+// (true) as opposed to ctx being cancelled (false). It never returns
+// sooner than minLeaseTimer from now, whatever target says: a deadline
+// already in the past — from lease timers leaseSchedule couldn't make
+// sense of, or a clock that timesync stepped forwards after the lease was
+// obtained — must not turn lease maintenance into a tight DHCP loop
+// against the server (bean gosd-8lw0).
+func waitForLeaseTimer(ctx context.Context, clock Clock, target time.Time) bool {
 	d := target.Sub(clock.Now())
-	if d < 0 {
-		d = 0
+	if d < minLeaseTimer {
+		d = minLeaseTimer
 	}
 	select {
 	case <-ctx.Done():

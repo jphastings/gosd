@@ -80,7 +80,7 @@ func TestRunDHCPRetriesDiscoveryWithBackoffUntilSuccess(t *testing.T) {
 func TestRunDHCPRenewsAtT1(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	log := &testLog{}
-	first := leaseAt(clock, 10*time.Second, 20*time.Second, 30*time.Second)
+	first := leaseAt(clock, 10*time.Minute, 20*time.Minute, 30*time.Minute)
 	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: first}}}
 	renewed := &leaseBox{}
 	dhcp.renewFn = func(iface string, lease *Lease, call int) (*Lease, error) {
@@ -101,7 +101,7 @@ func TestRunDHCPRenewsAtT1(t *testing.T) {
 	}()
 
 	waitForPending(t, clock, 1)
-	clock.Advance(10 * time.Second)
+	clock.Advance(10 * time.Minute)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for dhcp.renewCallCount() == 0 && time.Now().Before(deadline) {
@@ -126,7 +126,7 @@ func TestRunDHCPRenewsAtT1(t *testing.T) {
 func TestRunDHCPFallsBackToRebindWhenRenewFails(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	log := &testLog{}
-	first := leaseAt(clock, 10*time.Second, 20*time.Second, 30*time.Second)
+	first := leaseAt(clock, 10*time.Minute, 20*time.Minute, 30*time.Minute)
 	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: first}}}
 	rebound := &leaseBox{}
 	dhcp.renewFn = func(iface string, lease *Lease, call int) (*Lease, error) {
@@ -150,14 +150,14 @@ func TestRunDHCPFallsBackToRebindWhenRenewFails(t *testing.T) {
 	}()
 
 	waitForPending(t, clock, 1) // wait until T1
-	clock.Advance(10 * time.Second)
+	clock.Advance(10 * time.Minute)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for dhcp.renewCallCount() < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	waitForPending(t, clock, 1) // wait until T2 after the failed renew
-	clock.Advance(10 * time.Second)
+	clock.Advance(10 * time.Minute)
 
 	deadline = time.Now().Add(2 * time.Second)
 	for dhcp.renewCallCount() < 2 && time.Now().Before(deadline) {
@@ -181,7 +181,7 @@ func TestRunDHCPFallsBackToRebindWhenRenewFails(t *testing.T) {
 func TestRunDHCPRestartsDiscoveryWhenRebindFails(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	log := &testLog{}
-	first := leaseAt(clock, 10*time.Second, 20*time.Second, 30*time.Second)
+	first := leaseAt(clock, 10*time.Minute, 20*time.Minute, 30*time.Minute)
 	second := leaseAt(clock, time.Hour, 2*time.Hour, 3*time.Hour)
 	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: first}, {lease: second}}}
 	dhcp.renewFn = func(iface string, lease *Lease, call int) (*Lease, error) {
@@ -200,13 +200,13 @@ func TestRunDHCPRestartsDiscoveryWhenRebindFails(t *testing.T) {
 	}()
 
 	waitForPending(t, clock, 1) // T1
-	clock.Advance(10 * time.Second)
+	clock.Advance(10 * time.Minute)
 	deadline := time.Now().Add(2 * time.Second)
 	for dhcp.renewCallCount() < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	waitForPending(t, clock, 1) // T2
-	clock.Advance(10 * time.Second)
+	clock.Advance(10 * time.Minute)
 	deadline = time.Now().Add(2 * time.Second)
 	for dhcp.requestCallCount() < 2 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -298,6 +298,100 @@ func TestRunDHCPKeepsPersistentFailureVisibleWithoutSpamming(t *testing.T) {
 	}
 	if !log.contains("still failing after 15s") || !log.contains("still failing after 35s") {
 		t.Errorf("missing expected elapsed-time status lines: %v", lines)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunDHCP did not return after ctx was cancelled")
+	}
+}
+
+// TestRunDHCPNeverRenewsFasterThanTheLeaseTimerFloor pins the defence
+// against a rogue DHCP server that ACKs every request with lease timers of
+// zero (or a second): acting on those literally renews as fast as the LAN
+// round trip allows, rewriting the interface's address, route and
+// resolv.conf every time, on a device with no shell to intervene from
+// (bean gosd-8lw0). No lease, initial or renewed, may schedule the next
+// DHCP conversation sooner than minLeaseTimer — and the console must say
+// so once, not once per renewal.
+func TestRunDHCPNeverRenewsFasterThanTheLeaseTimerFloor(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	log := &testLog{}
+	hostile := func() *Lease { return leaseAt(clock, time.Second, 0, 0) }
+	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: hostile()}}}
+	dhcp.renewFn = func(iface string, lease *Lease, call int) (*Lease, error) {
+		return hostile(), nil
+	}
+	deps := testDeps(clock, dhcp, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = RunDHCP(ctx, deps, "eth0", func(*Lease) {})
+		close(done)
+	}()
+
+	for renewal := 1; renewal <= 2; renewal++ {
+		// A wait of zero never reaches the clock at all, so a busy loop
+		// shows up here as a timer that never appears.
+		waitForPending(t, clock, 1)
+		delay := clock.nextDelay(t)
+		if delay < minLeaseTimer {
+			t.Fatalf("renewal %d scheduled %s after the lease, want no sooner than %s", renewal, delay, minLeaseTimer)
+		}
+		clock.Advance(delay)
+		waitForRenews(t, dhcp, renewal)
+	}
+
+	if got := log.count("unusable lease timers"); got != 1 {
+		t.Errorf("logged the unusable-timer warning %d times, want exactly 1: %v", got, log.snapshot())
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunDHCP did not return after ctx was cancelled")
+	}
+}
+
+// TestRunDHCPFloorsLeaseTimersThatTurnHostileOnRenewal covers a server
+// that turns hostile mid-stream: the first lease is ordinary, and the
+// renewal it hands back demands a renewal every second. The floor applies
+// to every lease, not just the one discovery obtained.
+func TestRunDHCPFloorsLeaseTimersThatTurnHostileOnRenewal(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	log := &testLog{}
+	first := leaseAt(clock, time.Hour, 2*time.Hour, 3*time.Hour)
+	dhcp := &fakeDHCP{requestResults: []requestResult{{lease: first}}}
+	dhcp.renewFn = func(iface string, lease *Lease, call int) (*Lease, error) {
+		return leaseAt(clock, time.Second, 0, 0), nil
+	}
+	deps := testDeps(clock, dhcp, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = RunDHCP(ctx, deps, "eth0", func(*Lease) {})
+		close(done)
+	}()
+
+	waitForPending(t, clock, 1)
+	if delay := clock.nextDelay(t); delay != time.Hour {
+		t.Fatalf("first renewal scheduled %s after an ordinary lease, want its T1 of 1h", delay)
+	}
+	clock.Advance(time.Hour)
+	waitForRenews(t, dhcp, 1)
+
+	waitForPending(t, clock, 1)
+	if delay := clock.nextDelay(t); delay < minLeaseTimer {
+		t.Fatalf("renewal after a hostile renewed lease scheduled %s later, want no sooner than %s", delay, minLeaseTimer)
 	}
 
 	cancel()

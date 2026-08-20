@@ -382,3 +382,47 @@ func waitForPending(t *testing.T, clock *fakeClock, n int) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// count reports how many recorded log lines contain substr, so a test can
+// assert that a repeating condition is reported without being repeated.
+func (l *testLog) count(substr string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, line := range l.lines {
+		if strings.Contains(line, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+// waitForRenews polls (using real, short sleeps) until dhcp has recorded
+// at least n Renew calls, the counterpart to waitForPending for tests that
+// advance a fake clock and then need the goroutine under test to have
+// acted on it.
+func waitForRenews(t *testing.T, dhcp *fakeDHCP, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for dhcp.renewCallCount() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d Renew call(s), got %d", n, dhcp.renewCallCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// nextDelay returns how much longer the one pending timer has to run, so
+// a test can assert on the delay the code under test actually asked the
+// clock for — how soon it intends to act, which advancing the clock and
+// watching for the effect can only ever answer racily — and then advance
+// exactly that far.
+func (c *fakeClock) nextDelay(t *testing.T) time.Duration {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pending) != 1 {
+		t.Fatalf("want exactly one pending timer to read a delay from, got %d", len(c.pending))
+	}
+	return c.pending[0].at.Sub(c.now)
+}

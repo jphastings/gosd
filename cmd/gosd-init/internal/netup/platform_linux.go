@@ -176,7 +176,9 @@ func (nclient4Client) Renew(ctx context.Context, iface string, lease *Lease) (*L
 
 // fromDHCPLease translates an nclient4 lease into netup's own Lease type.
 // T1/T2 default to the RFC 2131 Section 4.4.5 fallbacks (0.5x / 0.875x the
-// lease time) when the server didn't send explicit values.
+// lease time) when the server didn't send explicit values. Every one of
+// these three timers is whatever the server chose to send; the state
+// machine bounds them before scheduling anything (see leasetimes.go).
 func fromDHCPLease(lease *nclient4.Lease) *Lease {
 	ack := lease.ACK
 
@@ -187,7 +189,9 @@ func fromDHCPLease(lease *nclient4.Lease) *Lease {
 	}
 	result.ExpireAfter = ack.IPAddressLeaseTime(0)
 	result.RenewAfter = ack.IPAddressRenewalTime(result.ExpireAfter / 2)
-	result.RebindAfter = ack.IPAddressRebindingTime(result.ExpireAfter * 7 / 8)
+	// Divided before multiplied: ExpireAfter * 7 overflows int64 (into a
+	// negative offset) for the lease times a server is free to send.
+	result.RebindAfter = ack.IPAddressRebindingTime(result.ExpireAfter / 8 * 7)
 
 	mask := net.IPMask(ack.SubnetMask())
 	if mask == nil {
