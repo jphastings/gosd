@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -137,6 +139,9 @@ not touch the cache at all.`,
 
 func runBuild(cmd *cobra.Command, args []string) error {
 	pkgPath := args[0]
+	if err := validatePkgPath(pkgPath); err != nil {
+		return err
+	}
 
 	if catalogFlag && publishBaseURL == "" {
 		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
@@ -371,6 +376,53 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// validatePkgPath checks that the positional operand `gosd build` and `gosd
+// run` were handed really is a path to a Go package, before anything hands
+// it to the Go toolchain.
+//
+// It exists because cobra honours "--" as a flag terminator, so `gosd build
+// -- -toolexec=/tmp/payload` puts an arbitrary Go build flag in args[0];
+// unterminated, `go build` reads it as a flag, and -toolexec runs a program
+// of the attacker's choosing on the build host before the app is even
+// compiled (bean gosd-jc24). Any wrapper forwarding a value it doesn't fully
+// control - a CI job templating a branch-derived path, a Makefile's
+// `gosd build $(PKG)` - is how such a value arrives.
+//
+// The check is an allow-list on the shape of a package path, never a
+// blacklist of flag names: -toolexec is only today's worst flag, and
+// -ldflags, -exec, -overlay and whatever the toolchain gains next would each
+// have to be remembered. Anything not recognisably a package path is
+// refused.
+func validatePkgPath(pkgPath string) error {
+	if packagePathLike(pkgPath) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q is not a path to a Go package, so gosd won't hand it to the Go toolchain (an argument starting with \"-\" is read as a build flag rather than a package, and flags such as -toolexec run arbitrary programs on this machine); "+
+			"pass the directory holding your app's main package instead: \".\" for the working directory, \"./cmd/myapp\", or an absolute path",
+		pkgPath)
+}
+
+// packagePathLike reports whether s has the shape of a Go package operand: a
+// relative path (".", "..", "./x", "../x"), an absolute path, or an import
+// path ("github.com/you/app"). The Go toolchain forbids a leading dash in
+// every import path element ("malformed import path: leading dash"), so
+// requiring a package path to begin the way one legitimately can is that
+// same rule stated positively.
+func packagePathLike(s string) bool {
+	if s == "." || s == ".." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
+		return true
+	}
+	if filepath.IsAbs(s) {
+		return true
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 || r == utf8.RuneError {
+		return false
+	}
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 // deriveAppName computes the default app name gosd uses for the device
