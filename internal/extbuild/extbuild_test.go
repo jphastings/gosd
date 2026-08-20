@@ -406,12 +406,13 @@ func TestBuild_RequiresName(t *testing.T) {
 	}
 }
 
-func TestBuild_RejectsNameWithSlash(t *testing.T) {
-	spec := testSpec()
-	spec.Name = "sub/mpv"
-	_, err := buildWithFakeRunner(t, spec, extbuild.Options{})
-	if err == nil {
-		t.Fatal("Build succeeded with a Spec.Name containing a slash")
+func TestBuild_RejectsNameThatIsNotASinglePathComponent(t *testing.T) {
+	for _, name := range []string{"sub/mpv", "sub\\mpv", ".", ".."} {
+		spec := testSpec()
+		spec.Name = name
+		if _, err := buildWithFakeRunner(t, spec, extbuild.Options{}); err == nil {
+			t.Errorf("Build succeeded with Spec.Name %q", name)
+		}
 	}
 }
 

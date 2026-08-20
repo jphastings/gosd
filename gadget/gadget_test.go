@@ -330,6 +330,54 @@ func TestCloseRemovesOnlyUserCreatedNodesInCanonicalOrder(t *testing.T) {
 	}
 }
 
+// A Close whose teardown fails leaves the gadget marked applied, because it
+// is: the configfs state Apply created outlived the attempt to remove it.
+func TestFailedCloseKeepsTheGadgetApplied(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	g := testGadget(ACM{})
+	if err := applyWithFake(t, g, f); err != nil {
+		t.Fatalf("Apply() = %v, want nil", err)
+	}
+
+	f.refuse[gadgetRoot] = errors.New("device or resource busy")
+	if err := g.Close(); err == nil {
+		t.Fatal("Close() = nil, want the error from the refused teardown")
+	}
+
+	if err := applyWithFake(t, g, f); err == nil {
+		t.Fatal("Apply() after a failed Close = nil, want a refusal: the gadget's configfs state is still there")
+	}
+
+	delete(f.refuse, gadgetRoot)
+	if err := g.Close(); err != nil {
+		t.Fatalf("retried Close() = %v, want nil once the kernel stops refusing", err)
+	}
+	if err := applyWithFake(t, g, f); err != nil {
+		t.Fatalf("Apply() after a successful retry = %v, want nil", err)
+	}
+}
+
+// Apply's contract is that a failure leaves nothing behind and needs no
+// Close, so an unwind that cannot hold up its end has to say so rather than
+// let the caller believe a clean slate it doesn't have.
+func TestApplyReportsAnUnwindItCouldNotComplete(t *testing.T) {
+	f := newFakeFS()
+	f.refuse[gadgetRoot] = errors.New("device or resource busy")
+	g := testGadget(ACM{})
+
+	err := applyWithFake(t, g, f)
+	if err == nil {
+		t.Fatal("Apply() = nil, want the no-UDC error")
+	}
+	if !strings.Contains(err.Error(), udcClassDir) {
+		t.Errorf("Apply() = %q, want it to still lead with the failure the caller has to act on", err)
+	}
+	if !strings.Contains(err.Error(), "device or resource busy") {
+		t.Errorf("Apply() = %q, want it to also report the unwind it could not complete", err)
+	}
+}
+
 func TestCloseThenApplyRoundTrips(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")

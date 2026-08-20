@@ -94,9 +94,25 @@ pinned via `options.manifestSha256`). Concretely:
 - A save fails closed: the fs-access and memory tiers never leave a file behind on failure
   (see "Save tiers"); a bit flipped anywhere in the image aborts the whole download.
 
+- The manifest is read with a hard size cap rather than buffered whole: a pin only makes a
+  bad manifest _detectable_, and detecting it is no use if the tab has already run out of
+  memory taking delivery of it. Fetching an unpinned manifest over plain `http://` (loopback
+  aside) logs a `console.warn`, because that is the one fetch here whose integrity nothing
+  downstream can re-derive.
+
 No secret data is ever hashed here — image bytes and the manifest are both meant to be
 public — so this package doesn't attempt to be constant-time; that would be solving a
 problem that doesn't exist here at the cost of real streaming performance.
+
+### Escaping is yours, not ours
+
+Every value you pass in `files` or `config` is written to the card **verbatim** — a
+placeholder is a whole pre-rendered file, and a setting is exactly what someone would have
+typed into it — so this package has no template to inject into and nothing to escape on your
+behalf. That also means the quickstart's `renderConfigYaml(userInput)` is where the
+responsibility lives: if you interpolate user-supplied text into YAML, JSON, or an `env/`
+value, escape it there with a real serializer for that format. Text the device then parses as
+structure it wasn't meant to be is a bug in the rendering, and one this library cannot see.
 
 ## Save tiers
 

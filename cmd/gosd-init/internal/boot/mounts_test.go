@@ -263,6 +263,33 @@ func TestMountDataPartitionMountsEXT4WithoutFlushEvenWhenRequested(t *testing.T)
 	}
 }
 
+func TestDataMountsRefuseSetuidDeviceNodesAndExecution(t *testing.T) {
+	// /data is rewritable from a laptop and exposable over USB mass
+	// storage, and nothing on a GoSD image ever executes from it, so both
+	// the real partition and the read-only fallback that stands in for it
+	// carry nosuid/nodev/noexec.
+	m := &fakeMounter{}
+	clock := newFakeClock(time.Unix(0, 0))
+
+	if err := MountDataPartition(m, "/data", []string{"/dev/mmcblk0p2"}, 10*time.Second, diskfmt.FAT32, false, clock.Sleep, clock.Now); err != nil {
+		t.Fatalf("MountDataPartition() = %v, want nil", err)
+	}
+	if err := MountDataReadOnlyFallback(m, "/data"); err != nil {
+		t.Fatalf("MountDataReadOnlyFallback() = %v, want nil", err)
+	}
+
+	for _, call := range m.calls {
+		for _, want := range []struct {
+			flag uintptr
+			name string
+		}{{msNoSuid, "nosuid"}, {msNoDev, "nodev"}, {msNoExec, "noexec"}} {
+			if call.flags&want.flag == 0 {
+				t.Errorf("%s mount of %s is missing %s", call.fstype, call.target, want.name)
+			}
+		}
+	}
+}
+
 func TestMountDataReadOnlyFallbackMountsReadOnlyTmpfs(t *testing.T) {
 	m := &fakeMounter{}
 

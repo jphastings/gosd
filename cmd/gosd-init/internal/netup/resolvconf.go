@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -57,6 +58,12 @@ var ErrNoDNSServers = errors.New("no DNS servers in lease; resolv.conf left unch
 // wait up to ~30s for writeback; tmpfs has no such delayed-writeback
 // window; a rename is immediately visible and atomic to readers. Only the
 // rename's atomicity is needed here, not its durability.
+//
+// The temporary file gets a unique name rather than a fixed path + ".tmp".
+// A board with both Ethernet and WiFi (pi-3b) runs two DHCP loops, each of
+// which writes this file on its own lease: sharing one scratch path would
+// let one caller's partial write land under the other's rename, so the
+// winner of the race could publish a file neither of them assembled.
 func WriteResolvConf(path string, dns []net.IP) error {
 	if len(dns) == 0 {
 		return ErrNoDNSServers
@@ -68,14 +75,39 @@ func WriteResolvConf(path string, dns []net.IP) error {
 		fmt.Fprintf(&b, "nameserver %s\n", ip)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", tmp, err)
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("renaming %s to %s: %w", tmp, path, err)
+	tmp, err := os.CreateTemp(dir, base+".tmp*")
+	if err != nil {
+		return fmt.Errorf("creating a temporary file beside %s: %w", path, err)
+	}
+	name := tmp.Name()
+
+	if err := writeAndClose(tmp, b.String()); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("writing %s: %w", name, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("renaming %s to %s: %w", name, path, err)
 	}
 	return nil
+}
+
+// writeAndClose fills f with content and closes it, world-readable:
+// os.CreateTemp opens at 0600, and resolv.conf is read by every process.
+func writeAndClose(f *os.File, content string) error {
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // MarkNetworkUp creates the (empty) marker file at path, and the

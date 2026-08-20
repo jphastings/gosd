@@ -213,7 +213,16 @@ func dataMountOption(filesystem diskfmt.FS, flush bool) string {
 // MountDataPartition mounts the data partition (filesystem — FAT32 or
 // ext4; see config.json's dataFilesystem) read-write at target, trying each
 // candidate device in turn with the same retry pattern as
-// MountBootPartition. flush selects the vfat "flush" mount option, which
+// MountBootPartition.
+//
+// It is mounted nosuid/nodev/noexec: /data is the one filesystem on the
+// device whose contents an operator can rewrite from a laptop (and which an
+// app can expose over USB mass storage), and nothing on a GoSD image is ever
+// executed from it — /app and every gosd-shipped helper live in the
+// initramfs rootfs — so the kernel may as well refuse outright, matching the
+// early mounts above.
+//
+// flush selects the vfat "flush" mount option, which
 // pushes a file's data and metadata to storage promptly on close(2) — FAT
 // has no journal, so the less time dirty data sits in RAM on a device with
 // no clean-shutdown story, the better — at a real write-throughput cost;
@@ -242,7 +251,7 @@ func MountDataPartition(m Mounter, target string, devices []string, timeout time
 	for {
 		allMissing := true
 		for _, dev := range devices {
-			err := m.Mount(dev, target, filesystem.MountType(), msNoSuid|msNoDev, dataMountOption(filesystem, flush))
+			err := m.Mount(dev, target, filesystem.MountType(), msNoSuid|msNoDev|msNoExec, dataMountOption(filesystem, flush))
 			if err == nil {
 				return nil
 			}
@@ -271,5 +280,5 @@ func MountDataPartition(m Mounter, target string, devices []string, timeout time
 // /data would be a plain writable directory on the RAM-backed rootfs and any
 // write would appear to succeed yet vanish on the next reboot.
 func MountDataReadOnlyFallback(m Mounter, target string) error {
-	return m.Mount("tmpfs", target, "tmpfs", msRdOnly|msNoSuid|msNoDev, "")
+	return m.Mount("tmpfs", target, "tmpfs", msRdOnly|msNoSuid|msNoDev|msNoExec, "")
 }

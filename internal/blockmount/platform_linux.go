@@ -111,7 +111,10 @@ func Unmount(mountpoint string) error {
 }
 
 // Mount mounts device read-write at mountpoint as a filesystem of kind fs,
-// creating the mountpoint if it does not exist.
+// creating the mountpoint if it does not exist. The volume is mounted
+// nosuid/nodev/noexec: it holds an app's data on media an operator can
+// rewrite from a laptop, nothing on a GoSD image is ever executed from it,
+// and the same flags are what gosd-init gives /data.
 func Mount(device, mountpoint string, fs diskfmt.FS) error {
 	fsType := fs.MountType()
 	if fsType == "" {
@@ -120,7 +123,7 @@ func Mount(device, mountpoint string, fs diskfmt.FS) error {
 	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return fmt.Errorf("creating mountpoint %s failed: %w", mountpoint, err)
 	}
-	if err := unix.Mount(device, mountpoint, fsType, unix.MS_NOSUID|unix.MS_NODEV, mountData(fs)); err != nil {
+	if err := unix.Mount(device, mountpoint, fsType, unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, mountData(fs)); err != nil {
 		return fmt.Errorf("mount(%s, %s, %s) failed: %w", device, mountpoint, fsType, err)
 	}
 	return nil

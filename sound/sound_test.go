@@ -317,3 +317,33 @@ func TestNoDeviceErrorNamesTheFix(t *testing.T) {
 		t.Errorf("error %q tells the user to rebuild a kernel that already has sound", noCard)
 	}
 }
+
+// A negative rate or channel count would reach the kernel as a uint32, where
+// HW_PARAMS rejects it as just another unsupported format — the same EINVAL a
+// caller gets for asking a device for something it genuinely can't do. Open
+// says which field is wrong instead, as it already does for Volume.
+func TestOpenWithRejectsANegativeFormat(t *testing.T) {
+	for _, tc := range []struct {
+		bad   Format
+		field string
+	}{
+		{Format{Rate: -48000}, "Rate"},
+		{Format{Channels: -2}, "Channels"},
+	} {
+		_, err := OpenWith(Options{Format: tc.bad})
+		if err == nil {
+			t.Errorf("OpenWith accepted Format%+v", tc.bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.field) {
+			t.Errorf("OpenWith(Format%+v) = %q, want it to name Options.Format.%s", tc.bad, err, tc.field)
+		}
+	}
+
+	if err := (Format{Rate: 44100, Channels: 1}).validate(); err != nil {
+		t.Errorf("a mono 44.1 kHz format was rejected: %v", err)
+	}
+	if err := (Format{}).validate(); err != nil {
+		t.Errorf("the zero Format was rejected: %v", err)
+	}
+}

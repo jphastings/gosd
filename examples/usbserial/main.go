@@ -49,9 +49,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gosd usbserial: applying USB gadget failed: %v\n", err)
 		os.Exit(1)
 	}
-	// Best-effort: this only runs on process exit, and there's nothing
-	// more the app can do if the kernel refuses to unbind.
-	defer func() { _ = g.Close() }()
+	// This only runs on process exit, so there's nothing more the app can
+	// do if the kernel refuses to unbind — but say so on the console:
+	// gosd-init restarts /app, and a gadget whose configfs tree outlived
+	// this process is exactly what makes the next Apply fail with EBUSY.
+	defer func() {
+		if err := g.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "gosd usbserial: tearing down the USB gadget failed, so its configfs state is still present: %v\n", err)
+		}
+	}()
 
 	fmt.Println("gosd usbserial: gadget applied, waiting for", ttyPath)
 	go reportUDCState(udcPollInterval)

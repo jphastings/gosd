@@ -519,6 +519,41 @@ func TestParseSupportURLRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestParsePublishBaseURLAcceptsEmptyAndAbsoluteURLs(t *testing.T) {
+	got, err := parsePublishBaseURL("")
+	if err != nil || got != "" {
+		t.Errorf("parsePublishBaseURL(\"\") = %q, %v; want \"\", nil: the flag is only required by --catalog", got, err)
+	}
+	got, err = parsePublishBaseURL(" https://example.com/downloads ")
+	if err != nil {
+		t.Fatalf("parsePublishBaseURL: %v", err)
+	}
+	if got != "https://example.com/downloads" {
+		t.Errorf("parsePublishBaseURL = %q, want the trimmed URL", got)
+	}
+}
+
+func TestParsePublishBaseURLRejectsInvalidValues(t *testing.T) {
+	// Every download link in the generated os_list.json is built from this,
+	// so a value Imager can't follow has to fail at build time.
+	for name, bad := range map[string]string{
+		"no scheme":          "example.com/downloads",
+		"non-http(s) scheme": "ftp://example.com/downloads",
+		"no host":            "https://",
+		"not a URL at all":   "not a url",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parsePublishBaseURL(bad)
+			if err == nil {
+				t.Fatalf("parsePublishBaseURL(%q) succeeded, want an error", bad)
+			}
+			if !strings.Contains(err.Error(), "--publish-base-url") {
+				t.Errorf("error = %q, want it to mention --publish-base-url", err.Error())
+			}
+		})
+	}
+}
+
 func TestValidateDataFlushExt4ConflictSkippedWithoutBoth(t *testing.T) {
 	if err := validateDataFlushExt4Conflict(diskfmt.FAT32, true); err != nil {
 		t.Errorf("validateDataFlushExt4Conflict(fat32, flush=true) = %v, want nil: only ext4+flush conflicts", err)

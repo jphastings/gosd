@@ -110,8 +110,13 @@ func Build(ctx context.Context, spec Spec, opts Options) (Result, error) {
 	if spec.Name == "" {
 		return Result{}, fmt.Errorf("extbuild: Spec.Name is required")
 	}
-	if strings.ContainsAny(spec.Name, "/\\") {
-		return Result{}, fmt.Errorf("extbuild: Spec.Name %q must be a single path component (no slashes)", spec.Name)
+	// Name becomes a directory name and a path element under the cache
+	// root, so anything that isn't a plain single component — a separator,
+	// or a relative-path element that would resolve to somewhere else
+	// entirely — is refused here rather than left to whatever the joined
+	// path happens to mean.
+	if strings.ContainsAny(spec.Name, "/\\") || spec.Name == "." || spec.Name == ".." {
+		return Result{}, fmt.Errorf("extbuild: Spec.Name %q must be a single path component (no slashes, and not %q or %q)", spec.Name, ".", "..")
 	}
 	if len(spec.Script) == 0 {
 		return Result{}, fmt.Errorf("extbuild: Spec.Script is required")

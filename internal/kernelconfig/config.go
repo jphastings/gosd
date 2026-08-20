@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,7 +65,13 @@ type BoardOverlay struct {
 // from url and verified against sha256, landing at dest under /lib/firmware
 // in the initramfs.
 type FirmwareFile struct {
-	// URL is the upstream location to fetch the file from. Required.
+	// URL is the upstream location to fetch the file from. Required, and
+	// must be https unless it names a loopback host: the digest below
+	// already makes tampering detectable, but every in-repo board manifest
+	// fetches over https, and a plaintext URL would leak which firmware a
+	// developer's image carries to anyone on the path. Loopback is exempt
+	// because there is no path to be on — that is how a local fixture
+	// server is pointed at in a test.
 	URL string
 	// SHA256 is the expected digest of the fetched file (64 lowercase or
 	// uppercase hex characters). Required.
@@ -220,6 +228,9 @@ func decodeFirmware(raw []rawFirmware) ([]FirmwareFile, error) {
 		if f.URL == "" {
 			return nil, fmt.Errorf("gosd-kernel.toml [[firmware]] entry %d: url is required", i)
 		}
+		if err := validFirmwareURL(f.URL); err != nil {
+			return nil, fmt.Errorf("gosd-kernel.toml [[firmware]] entry %d: %w", i, err)
+		}
 		if f.Dest == "" {
 			return nil, fmt.Errorf("gosd-kernel.toml [[firmware]] entry %d (url %q): dest is required", i, f.URL)
 		}
@@ -234,6 +245,32 @@ func decodeFirmware(raw []rawFirmware) ([]FirmwareFile, error) {
 		firmware = append(firmware, FirmwareFile(f))
 	}
 	return firmware, nil
+}
+
+// validFirmwareURL requires https, so a blob a developer's image will ship
+// can't be swapped or watched in transit, and so that a gosd-kernel.toml is
+// held to the same standard as the board manifests in this repo. A loopback
+// host is exempt: there is no network path to sit on, and it is how a test
+// or a local mirror points at a fixture server.
+func validFirmwareURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("url %q is not an absolute URL with a host", raw)
+	}
+	if u.Scheme == "https" || isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("url %q must be an https:// URL, matching every board manifest gosd ships (a loopback host may use http, for a local fixture server)", raw)
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func validSHA256(s string) bool {
