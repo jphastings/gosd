@@ -13,10 +13,36 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
+
+// DefaultClient is the http.Client used when a caller passes nil, here and
+// in internal/artifacts. It is http.DefaultClient plus stall timeouts:
+// http.DefaultClient waits forever to connect, to complete a TLS handshake,
+// and for a response header, so an upstream that accepts the connection and
+// then goes quiet hangs gosd build indefinitely with nothing on screen and
+// no way to tell it from a slow download (bean gosd-1jjh).
+//
+// There is deliberately no overall Client.Timeout: it would apply to the
+// whole response body too, and a board tarball or CA bundle on a slow link
+// is a legitimately long transfer — a deadline big enough to never fail an
+// honest download is too big to catch anything.
+var DefaultClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	},
+}
 
 // File pins a single downloadable artifact: where to fetch it, and the
 // SHA-256 digest (lowercase hex) its content must match.
@@ -38,13 +64,13 @@ type File struct {
 // temporary file is removed and cacheDir/name is left untouched.
 //
 // ToDir is safe to call repeatedly (e.g. once per board) with a shared
-// cacheDir and http.Client; a nil client uses http.DefaultClient.
+// cacheDir and http.Client; a nil client uses DefaultClient.
 func ToDir(ctx context.Context, client *http.Client, f File, cacheDir, name string) (string, error) {
 	if f.SHA256 == "" {
 		return "", fmt.Errorf("fetch %s: no SHA-256 checksum pinned; refusing to download unverified content", f.URL)
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = DefaultClient
 	}
 
 	dest := filepath.Join(cacheDir, name)

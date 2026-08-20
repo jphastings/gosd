@@ -457,6 +457,14 @@ say so in the bean rather than silently diverging.
   Full procedure in `docs/artifacts.md`. Releases are cheap — cut an interim one
   rather than queueing bench-blocking fixes for a planned window (v0.7.0 and
   v0.8.0 shipped hours apart, 2026-07-26).
+- **`internal/artifacts.Version` never moves alone.** `ManifestSHA256` beside
+  it pins that release's `manifest.json`, which is the trust anchor every
+  per-file digest is read through (bean gosd-1jjh): the manifest's bytes are
+  re-hashed against it on download AND on every cache read, so a self-
+  consistent poisoned pair in `~/.cache/gosd/` can no longer backdoor every
+  image built afterwards. `build/artifacts/pin-bump.sh` writes both; a
+  hand-edit that moves one fails every build (deliberately — it fails closed).
+  `--artifacts-dir` is checked before any of this and is untouched by it.
 - **Verify an artifact bump three ways, recorded in the bean:** clean-machine
   build (fresh `HOME`, no `--board`/`--artifacts-dir` → all public images from
   a real download), offline re-run (dead proxy → succeeds entirely from cache),

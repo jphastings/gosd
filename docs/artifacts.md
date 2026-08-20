@@ -156,7 +156,10 @@ the same tarballs + manifest.json the workflow publishes.
 4. A follow-up PR bumping `internal/artifacts.Version` to the new tag —
    so newly-built `gosd` binaries pick it up — **opens itself**. Once the
    asset upload above succeeds, `.github/workflows/pin-artifacts-version.yml`
-   rewrites the constant, splices the notes of every release between the old
+   rewrites the constant *and* `ManifestSHA256` beside it (downloading the
+   release's `manifest.json` to hash it — see
+   [how the anchor works](#the-manifest-is-anchored-in-source-bean-gosd-1jjh)
+   below), splices the notes of every release between the old
    pin and the new one into its doc comment, **writes a change file** so the
    bump ships in a CLI release, and opens the PR (bean gosd-odx3). The change
    file matters: knope cuts a release only from accumulated change files, so a
@@ -170,7 +173,10 @@ the same tarballs + manifest.json the workflow publishes.
    as its input (`v0.10.2`), or locally with
    `build/artifacts/pin-bump.sh v0.10.2` and open the PR yourself. The
    workflow refuses to pin a release whose assets aren't attached yet, and
-   does nothing if the constant already names that version.
+   does nothing if the constant already names that version. Editing the two
+   constants by hand works too, but never edit one of them: a version
+   pointing at a release whose manifest digest wasn't updated with it fails
+   every build.
 5. **CI verifies that PR for you.** `Verify artifacts pin` runs on any pull
    request touching `internal/artifacts/artifacts.go` and does what used to
    be a manual checklist:
@@ -211,6 +217,11 @@ determines which kernels a `gosd build` run fetches — there is no
 environment variable or flag to override it, so that every copy of a given
 `gosd` binary behaves identically.
 
+Beside it, `internal/artifacts.ManifestSHA256` pins the SHA-256 of that
+release's `manifest.json`. The two only ever move together — see
+[how the anchor works](#the-manifest-is-anchored-in-source-bean-gosd-1jjh)
+below for why.
+
 To find out what a given binary will fetch, ask it:
 
 ```console
@@ -231,13 +242,16 @@ found in `--artifacts-dir`, `internal/boards.ResolveArtifacts` falls back to
 `internal/artifacts.EnsureBoard`, which:
 
 1. Checks whether that board's files are already cached (see below) and
-   still verify against a previously-cached `manifest.json`. If so, it
-   returns immediately — no network request at all.
-2. Otherwise, downloads `manifest.json` from the pinned release, then the
-   requested board's `.tar.zst`, extracts it, and verifies every file the
-   manifest lists against its sha256. Only once every file verifies is the
-   result made visible in the cache (a corrupted or tampered download never
-   contaminates it).
+   still verify against a previously-cached `manifest.json` — which is
+   itself re-hashed against `ManifestSHA256` first. If so, it returns
+   immediately — no network request at all.
+2. Otherwise, downloads `manifest.json` from the pinned release, checks its
+   bytes against `ManifestSHA256`, then downloads the requested board's
+   `.tar.zst`, extracts it, and verifies every file the manifest lists
+   against its sha256. Only once every file verifies is the result made
+   visible in the cache (a corrupted or tampered download never contaminates
+   it), and the manifest is cached exactly as published so the check above
+   can be repeated on it later.
 
 Cache location: `os.UserCacheDir()/gosd/artifacts/<version>/<board>/`, e.g.
 `~/Library/Caches/gosd/artifacts/v0.1.0/pi-zero-2w/` on macOS or
@@ -245,6 +259,37 @@ Cache location: `os.UserCacheDir()/gosd/artifacts/<version>/<board>/`, e.g.
 pinned to the same `internal/artifacts.Version` shares this cache; a second
 build (same or a different board) after the first successful one works
 fully offline.
+
+### The manifest is anchored in source (bean gosd-1jjh)
+
+Every digest `EnsureBoard` verifies a downloaded or cached file against is
+read out of `manifest.json`, which makes the manifest the one file in the
+scheme that cannot vouch for itself. `internal/artifacts.ManifestSHA256` is
+the anchor: a compiled-in SHA-256 of the pinned release's manifest, checked
+against the manifest's bytes every time they are read — over the network and
+out of the cache alike — before any entry inside is believed. It is the same
+shape as `internal/cacerts`'s pinned CA bundle and every board manifest's
+blob pin: the value that decides what is acceptable lives in the binary, not
+next to the bytes it describes.
+
+Without it, the cache directory was a place to install a backdoor. Anything
+running as the developer — a compromised editor extension, an npm or pip
+postinstall — could write a backdoored kernel into
+`~/.cache/gosd/artifacts/<version>/<board>/` alongside a `manifest.json`
+listing that kernel's digest. The pair verified against itself, so every
+later `gosd build` took the offline cache-hit branch, made no network
+request that might have noticed, and baked the backdoor into every image
+flashed from then on — outliving removal of whatever planted it, since
+pruning only ever removes *superseded* versions.
+
+With the anchor, tampering with the cache costs a re-download and nothing
+else: the mismatch drops gosd onto the normal download path, which replaces
+the poisoned files with the genuine release. Offline, it is a hard failure
+rather than a silent compromise — which is the right way round.
+
+`--artifacts-dir` is unaffected, deliberately. A directory you point gosd at
+is checked before any of this, and a developer aiming the CLI at their own
+`gosd build-kernel` output is not the threat this defends against.
 
 ### The cache is self-bounding, not append-only (bean gosd-gdro)
 
@@ -274,6 +319,10 @@ Failure modes are reported actionably rather than as a bare error chain:
 - **Checksum mismatch** — a downloaded file doesn't match the manifest's
   pinned sha256 (corrupted transfer, or a tampered release). The download is
   rejected outright; nothing is cached, and the message says so.
+- **Manifest checksum mismatch** — the `manifest.json` served for the pinned
+  release isn't the one this `gosd` was built against (an intercepted
+  download, or a release whose assets were replaced after the fact). Nothing
+  inside it is read, and nothing is cached.
 - **Offline with no cache** — the manifest can't be downloaded and nothing
   is cached yet for that board. The error explains that either a working
   network connection is needed for the first build, or the artifacts can be

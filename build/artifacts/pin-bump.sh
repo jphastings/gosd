@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Rewrites internal/artifacts.Version onto a published artifacts release and
-# splices that release's notes into the constant's doc comment (bean
-# gosd-odx3). This is the "bump" half of the tag-first/bump-second procedure
+# Rewrites internal/artifacts.Version onto a published artifacts release,
+# records that release's manifest.json digest in ManifestSHA256, and splices
+# the release's notes into the constant's doc comment (bean gosd-odx3). This is the "bump" half of the tag-first/bump-second procedure
 # in docs/artifacts.md: knope tags and publishes the release, CI builds and
 # attaches its assets, and only then may gosd point at it.
 #
@@ -14,6 +14,13 @@
 #
 # version is the release to pin, with or without the tag prefix: "v0.10.2",
 # "0.10.2" and "artifacts/v0.10.2" are all accepted.
+#
+# The two constants move together, which is why one script writes both:
+# ManifestSHA256 is the trust anchor every artifact digest is read through
+# (bean gosd-1jjh), so a Version pointing at a release whose manifest digest
+# was not updated with it fails every build rather than silently trusting
+# whatever arrives. Downloading that manifest is also a second check that the
+# release really is published.
 #
 # Edits internal/artifacts/artifacts.go in place, writes a change file so the
 # bump actually ships in a CLI release, and prints what it did. It does NOT
@@ -46,9 +53,17 @@ if [ "$current" = "$version" ]; then
 	exit 3
 fi
 
-export PIN_VERSION="$version" PIN_CURRENT="$current"
+manifest="$(mktemp)"
+trap 'rm -f "$manifest"' EXIT
+manifest_url="https://github.com/jphastings/gosd/releases/download/artifacts/$version/manifest.json"
+if ! curl -fsSL -o "$manifest" "$manifest_url"; then
+	echo "pin-bump.sh: could not download $manifest_url; a release can only be pinned once its manifest.json is published" >&2
+	exit 2
+fi
+
+export PIN_VERSION="$version" PIN_CURRENT="$current" PIN_MANIFEST="$manifest"
 changefile="$(python3 - "$source_file" "$changelog" "$repo_root/.changeset" <<'PYEOF'
-import os, re, sys, textwrap
+import hashlib, os, re, sys, textwrap
 
 source_file, changelog_path, changeset_dir = sys.argv[1:4]
 current = os.environ["PIN_CURRENT"]
@@ -83,6 +98,16 @@ src = open(source_file).read()
 m = re.search(r'^const Version = "v\d+\.\d+\.\d+"$', src, re.M)
 if not m:
     sys.exit("pin-bump.sh: could not find the Version constant")
+
+# The manifest digest is what every per-file digest is trusted through, so it
+# is rewritten in the same edit as the version it belongs to.
+with open(os.environ["PIN_MANIFEST"], "rb") as f:
+    digest = hashlib.sha256(f.read()).hexdigest()
+src, count = re.subn(r'^const ManifestSHA256 = "[0-9a-f]*"$',
+                     f'const ManifestSHA256 = "{digest}"', src, flags=re.M)
+if count != 1:
+    sys.exit("pin-bump.sh: could not find the ManifestSHA256 constant")
+m = re.search(r'^const Version = "v\d+\.\d+\.\d+"$', src, re.M)
 
 # Releases the comment already describes are not described twice: this can
 # legitimately run again over a tree a previous run already annotated.
@@ -125,4 +150,5 @@ PYEOF
 
 gofmt -w "$source_file"
 echo "pin-bump.sh: pinned $current -> $version"
+echo "pin-bump.sh: manifest.json digest $(grep -oE 'const ManifestSHA256 = "[0-9a-f]+"' "$source_file" | grep -oE '[0-9a-f]{64}')"
 echo "pin-bump.sh: wrote .changeset/$changefile so the bump ships in a release"

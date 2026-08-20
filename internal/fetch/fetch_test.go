@@ -146,3 +146,22 @@ func TestToDir_RequiresPinnedChecksum(t *testing.T) {
 		t.Fatal("ToDir() error = nil, want error for missing checksum")
 	}
 }
+
+// The stall timeouts are asserted rather than exercised because provoking
+// them takes as long as they last; what matters is the shape of the pair —
+// give up on a connection that goes quiet, never on one that is merely slow.
+func TestDefaultClientGivesUpOnAStalledUpstreamButNotOnASlowOne(t *testing.T) {
+	tr, ok := DefaultClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("DefaultClient.Transport is %T, want an *http.Transport carrying stall timeouts", DefaultClient.Transport)
+	}
+	if tr.ResponseHeaderTimeout == 0 || tr.TLSHandshakeTimeout == 0 {
+		t.Error("DefaultClient waits forever for a response header or a TLS handshake: an upstream that accepts the connection and then goes quiet hangs gosd build with nothing on screen")
+	}
+	if tr.Proxy == nil {
+		t.Error("DefaultClient ignores the proxy environment, which gosd's own offline checks rely on")
+	}
+	if DefaultClient.Timeout != 0 {
+		t.Error("DefaultClient has an overall deadline: it would apply to the response body too, failing a legitimately slow board-tarball download as readily as a stalled one")
+	}
+}
