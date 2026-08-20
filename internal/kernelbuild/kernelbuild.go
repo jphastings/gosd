@@ -92,6 +92,7 @@ func Build(ctx context.Context, spec kernelspec.KernelSpec, overlay Overlay, opt
 		if err := collectOutputs(entryDir, spec, opts.Outputs); err != nil {
 			return Result{}, err
 		}
+		touchAndPruneCache(cacheRoot, key, opts.Stderr)
 		return Result{CacheKey: key, Skipped: true, CacheDir: entryDir}, nil
 	}
 
@@ -106,6 +107,7 @@ func Build(ctx context.Context, spec kernelspec.KernelSpec, overlay Overlay, opt
 	if err := collectOutputs(entryDir, spec, opts.Outputs); err != nil {
 		return Result{}, err
 	}
+	touchAndPruneCache(cacheRoot, key, opts.Stderr)
 	return Result{CacheKey: key, Skipped: false, CacheDir: entryDir}, nil
 }
 

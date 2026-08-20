@@ -27,6 +27,20 @@ package diskfmt
 // go-diskfs's arithmetic stays exactly as it is: this file derives from that
 // mirror rather than correcting it, because the MaxFAT32Bytes ceiling guard
 // depends on it modelling what go-diskfs actually does.
+//
+// This whole file, and fat32limit.go, are a bet that go-diskfs v1.9.3's
+// internal arithmetic stays fixed (bean gosd-qvjs): nothing here would fail
+// to compile or fail fast if a future go-diskfs bump changed
+// sectorsPerFAT's formula or its cluster-size table. Before bumping the
+// go.mod pin, re-run TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput
+// (fat32limit_test.go) — it formats real go-diskfs FAT32 volumes and checks
+// the on-disk BPB against fat32SectorsPerFAT/fat32SectorsPerCluster's
+// predictions, so a changed formula fails there first, before it can ship
+// as a silently-wrong LargestSelfConsistentFAT32Bytes/MaxFAT32Bytes. A
+// passing re-run does not by itself mean this file is still correct for
+// the new version — it only proves the specific sizes that test covers;
+// re-derive the arithmetic in this file's and fat32limit.go's doc comments
+// against the new version's source before trusting it further.
 
 // LargestSelfConsistentFAT32Bytes returns the largest size no greater than
 // sizeBytes for which go-diskfs's own sectors-per-FAT formula yields a FAT big

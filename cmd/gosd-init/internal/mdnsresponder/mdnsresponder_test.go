@@ -29,9 +29,16 @@ func TestRunStartsResponderOnceAtStartup(t *testing.T) {
 
 	go Run(Deps{NewServer: ns.NewServer, Changed: changed, Log: log.Printf}, Options{Hostname: "my-device", Stop: stop})
 
-	waitFor(t, func() bool { return ns.callCount() == 1 }, "NewServer was never called")
-	if !log.contains("answering as my-device.local") {
-		t.Errorf("log missing start message: %v", log.snapshot())
+	// Wait on the log line itself, not on ns.callCount() reaching 1 followed
+	// by an unguarded check of the log: restart() calls NewServer (which
+	// bumps callCount) and only then logs, as two separate statements, so
+	// polling callCount and immediately checking the log without waiting on
+	// it races against that gap. Under CI scheduler contention that race is
+	// observable (bean gosd-f352) - waiting on the actual condition removes
+	// it entirely rather than papering over it with a longer timeout.
+	waitFor(t, func() bool { return log.contains("answering as my-device.local") }, "responder never logged starting up")
+	if got := ns.callCount(); got != 1 {
+		t.Errorf("NewServer called %d times, want 1", got)
 	}
 }
 
@@ -58,6 +65,19 @@ func TestRunRestartsAndClosesPreviousResponderOnChange(t *testing.T) {
 	}
 }
 
+// TestRunRetriesOnNextChangeAfterInitialFailure was timing-flaky on macOS CI
+// runners (bean gosd-f352). The apparent culprit was minRestartInterval's
+// 250ms floor, but the real race was in the test itself: it polled
+// ns.callCount() reaching a target value and then, with no further
+// synchronization, immediately checked a log line that restart() only
+// writes in the statement AFTER the one that bumps callCount. Nothing
+// enforces a happens-before between "callCount observed" and "the log line
+// exists" - under CI scheduler contention (most likely right as the
+// minRestartInterval-gated retry's goroutine wakes from its timer, which is
+// exactly the ~0.25s mark the flake was observed at) the log check could
+// run before restart() reached its Log call. Waiting on the log line
+// itself - the actual condition each assertion cares about - removes the
+// race rather than widening a timeout or retrying.
 func TestRunRetriesOnNextChangeAfterInitialFailure(t *testing.T) {
 	ns := &fakeNewServer{}
 	ns.script(serverResult{err: errBoom}, serverResult{srv: &fakeServer{}})
@@ -68,16 +88,16 @@ func TestRunRetriesOnNextChangeAfterInitialFailure(t *testing.T) {
 
 	go Run(Deps{NewServer: ns.NewServer, Changed: changed, Log: log.Printf}, Options{Hostname: "my-device", Stop: stop})
 
-	waitFor(t, func() bool { return ns.callCount() == 1 }, "initial NewServer call never happened")
-	if !log.contains("will retry on the next network change") {
-		t.Errorf("log missing initial-failure message: %v", log.snapshot())
+	waitFor(t, func() bool { return log.contains("will retry on the next network change") }, "initial failure was never logged")
+	if got := ns.callCount(); got != 1 {
+		t.Errorf("NewServer called %d times before the first change notification, want 1", got)
 	}
 
 	changed <- struct{}{}
 
-	waitFor(t, func() bool { return ns.callCount() == 2 }, "NewServer was not retried after a change notification")
-	if !log.contains("answering as my-device.local") {
-		t.Errorf("log missing eventual success message: %v", log.snapshot())
+	waitFor(t, func() bool { return log.contains("answering as my-device.local") }, "responder never came up after being retried")
+	if got := ns.callCount(); got != 2 {
+		t.Errorf("NewServer called %d times after a change notification, want 2", got)
 	}
 }
 

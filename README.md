@@ -121,7 +121,9 @@ for what's shipped; per-board verification status lives in
   `~/Library/Caches/gosd` on macOS, `~/.cache/gosd` on Linux) so repeat
   builds work offline; a successful build automatically prunes anything left
   over from an older gosd version or pin, so the cache holds only the
-  current version's assets instead of growing forever:
+  current version's assets instead of growing forever. `gosd cache
+  dir`/`size`/`clean` inspect or manually clear these (and, with
+  `--builds`, the separate `build-kernel`/`build-external` cache):
   [`docs/artifacts.md`](docs/artifacts.md)
 - **The runtime contract** your app runs under once booted — supervision,
   environment variables, networking timing, storage, logging, and what

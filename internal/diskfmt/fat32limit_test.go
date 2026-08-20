@@ -81,3 +81,50 @@ func TestFormatFAT32RefusesTooLargeADeviceWithoutTouchingIt(t *testing.T) {
 		t.Errorf("device after the refusal = %+v, want it untouched (blank)", contents)
 	}
 }
+
+// TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput locks in go-diskfs
+// v1.9.3's actual sectors-per-FAT and sectors-per-cluster behavior for a
+// size in each cluster-size class, by formatting a real FAT32 volume and
+// reading its BPB straight back off disk - not just re-checking this
+// package's own re-derivation of go-diskfs's formula against itself.
+// Nothing else in this package would fail to compile, or fail fast, if a
+// future go-diskfs version bump changed either piece of arithmetic (bean
+// gosd-qvjs): this test exists so that bump fails here first, instead of
+// silently invalidating LargestSelfConsistentFAT32Bytes and MaxFAT32Bytes.
+func TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput(t *testing.T) {
+	const gib = 1 << 30
+	for _, tc := range []struct {
+		name string
+		size int64
+	}{
+		{"512-byte clusters", 256 << 20},
+		{"4 KiB clusters", 1 * gib},
+		{"8 KiB clusters", 12 * gib},
+		{"16 KiB clusters", 24 * gib},
+		{"32 KiB clusters", 64 * gib},
+		{"the largest volume GoSD will create", maxFAT32Bytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := backingFile(t, tc.size) // sparse: only the FATs cost real bytes
+			if err := FormatFAT32(path, "GOSD-DATA"); err != nil {
+				t.Fatalf("FormatFAT32: %v", err)
+			}
+
+			bpb := readFAT32BPB(t, path)
+			// The size go-diskfs actually laid the volume out at, after
+			// LargestSelfConsistentFAT32Bytes's trim - not tc.size itself,
+			// which FormatFAT32 may have shortened by up to two clusters.
+			actualSize := bpb.totalSectors * sectorSizeBytes
+
+			if got, want := bpb.reservedSectors, int64(fat32ReservedSectors); got != want {
+				t.Errorf("go-diskfs's reserved sectors = %d, this package's mirror assumes %d", got, want)
+			}
+			if got, want := bpb.sectorsPerCluster, fat32SectorsPerCluster(actualSize); got != want {
+				t.Errorf("go-diskfs's real sectors per cluster = %d, fat32SectorsPerCluster predicts %d for a %d-byte volume", got, want, actualSize)
+			}
+			if got, want := bpb.sectorsPerFAT, fat32SectorsPerFAT(actualSize); got != want {
+				t.Errorf("go-diskfs's real sectors per FAT = %d, fat32SectorsPerFAT predicts %d for a %d-byte volume — go-diskfs's formula has changed and every mirror in this package needs re-deriving", got, want, actualSize)
+			}
+		})
+	}
+}

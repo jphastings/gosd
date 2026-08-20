@@ -309,10 +309,26 @@ is exactly what's kept. Pruning is best-effort (a failure is logged, never
 a build failure) and is skipped entirely on an `--artifacts-dir` build,
 which may not touch this cache at all.
 
-This does **not** cover `gosd build-kernel`'s durable build-state cache
-(content-addressed, opt-in, expensive to rebuild - see
-`internal/kernelbuild`) or offer a manual `gosd cache` inspection/clean
-command; both are tracked as follow-ups on bean gosd-gdro.
+`gosd build-kernel`/`gosd build-external`'s durable build-state cache
+(content-addressed, opt-in, expensive to rebuild - 20-75 minutes per entry -
+see `internal/kernelbuild`/`internal/extbuild`) is bounded separately, by
+keep-last-N rather than keep-current-only: it has no single "current
+version" the way a pinned download does, and every distinct board/overlay
+combination a developer has ever built is worth keeping around for a while,
+not just the most recent one. Each package's `Build` call prunes its own
+cache root to its 8 most recently used entries after a successful build or
+cache hit, marking the entry it just resolved as used first so a
+board that's only ever cache-hit doesn't look stale next to one rebuilt
+more recently (bean gosd-9o73).
+
+`gosd cache dir`/`size`/`clean` (bean gosd-2jwa) give manual visibility and
+control on top of both of the above - `dir` prints every cache location,
+`size` reports what each is using, and `clean` deletes the download caches
+(always safe: every file is a re-fetchable, sha256-verified pin).
+`clean`'s one piece of care is that it never touches the
+build-kernel/build-external cache by default, since unlike the download
+caches an entry there isn't a fetch away - `--builds` opts into deleting
+that too.
 
 Failure modes are reported actionably rather than as a bare error chain:
 

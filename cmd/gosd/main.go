@@ -20,6 +20,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newBuildKernelCmd())
 	cmd.AddCommand(newBuildExternalCmd())
+	cmd.AddCommand(newCacheCmd())
 	cmd.AddCommand(newVersionCmd())
 
 	// --version is what people try first, so it prints exactly what the

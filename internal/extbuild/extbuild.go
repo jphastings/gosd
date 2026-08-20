@@ -147,6 +147,7 @@ func Build(ctx context.Context, spec Spec, opts Options) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		touchAndPruneCache(cacheRoot, key, opts.Stderr)
 		return Result{CacheKey: key, Skipped: true, CacheDir: entryDir, OutputPath: outPath}, nil
 	}
 
@@ -162,6 +163,7 @@ func Build(ctx context.Context, spec Spec, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	touchAndPruneCache(cacheRoot, key, opts.Stderr)
 	return Result{CacheKey: key, Skipped: false, CacheDir: entryDir, OutputPath: outPath}, nil
 }
 

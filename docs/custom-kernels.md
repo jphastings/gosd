@@ -249,7 +249,11 @@ Cache entries live under a durable GoSD-managed directory under your home
 bind mounts and cached outputs survive OS cache purges) — see
 `internal/kernelbuild`'s package doc comment for the exact, current path;
 it isn't repeated here since it's changed once already as the design
-firmed up and a stale path in prose would go stale silently.
+firmed up and a stale path in prose would go stale silently. It keeps only
+the 8 most recently used entries, so it doesn't grow forever either — see
+`gosd cache dir`/`size` to inspect it, and `gosd cache clean --builds` to
+clear it manually (an ordinary `gosd cache clean` leaves it alone, since
+unlike a downloaded artifact an entry here costs 20-75 minutes to rebuild).
 
 ### GPL provenance
 

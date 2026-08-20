@@ -5,7 +5,7 @@ status: in-progress
 type: bug
 priority: normal
 created_at: 2026-07-30T20:28:52Z
-updated_at: 2026-07-31T03:37:04Z
+updated_at: 2026-08-20T05:53:54Z
 ---
 
 Found while designing --data-size=expand (bean gosd-6sac): go-diskfs v1.9.3's `fat32.Create` computes `sectorsPerFat := uint16((4*(totalSectors-reserved) + fatEntryDenom - 1) / fatEntryDenom)` — a straight uint16 cast. With the 32KiB clusters the >32GB size class uses, the value exceeds 65535 once the volume passes roughly 256GiB, silently truncating: the FAT is laid out far too small for the cluster count and the resulting filesystem is corrupt. `Fat32MaxSize` (2TiB) doesn't catch it.
@@ -233,3 +233,7 @@ Description to paste into the upstream PR:
       large anyway, so there is no size worth quietly rounding down. The reason
       clause is now `diskfmt.FAT32SizeLimitReason`, shared with the runtime
       refusal above so the two tell one story (bean `gosd-mt53`).
+
+## Cross-reference
+
+gosd-qvjs added a regression test (TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput, internal/diskfmt/fat32limit_test.go) that pins go-diskfs v1.9.3's real sectors-per-FAT/sectors-per-cluster behavior against this package's mirrored formulas. Landing this bean's upstream fix removes the need for that mirror (and the test) entirely — extra motivation beyond upstream cleanliness.

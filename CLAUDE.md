@@ -571,10 +571,18 @@ say so in the bean rather than silently diverging.
 - If `golangci-lint` reports a finding referencing a path in a worktree that no
   longer exists, it's a stale-cache false positive from a removed sibling
   worktree: `golangci-lint cache clean` and re-run before believing it.
-- When a change touches `js/`: also run `cd js && pnpm install --frozen-lockfile
-  && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run
-  build && pnpm test && pnpm run test:integration` (the last needs Go, for the
-  fixture generator).
+- When a change touches `js/`, **or `internal/inject`, `internal/configtree`
+  or `internal/image`** (their build-time injection manifest / config-tree
+  padding / byte-range logic is mirrored independently by the TypeScript
+  downloader, `js/packages/gosd`, and only `test:integration` below exercises
+  both sides against each other — bean gosd-uh94): also run
+  `cd js && pnpm install --frozen-lockfile && pnpm run format:check && pnpm
+  run lint && pnpm run typecheck && pnpm run build && pnpm test && pnpm run
+  test:integration` (the last needs Go, for the fixture generator). This is a
+  local-workflow shortcut, not the only backstop: `ci.yml`'s `js` job has no
+  path filter and is a required status check, so it already runs (and can
+  already block merge) on every PR regardless of what changed — running it
+  locally first just catches a break before pushing instead of after.
 - Run the gates — and any `gh pr checks` polling — in the FOREGROUND and read
   the results directly. Agents that parked on background monitors for a test
   run or CI watch stalled repeatedly (2026-08: six separate stalls, each
