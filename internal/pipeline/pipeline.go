@@ -279,7 +279,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	initramfsPlaceholder := &bytes.Buffer{}
 	resolved.Initramfs = initramfsPlaceholder
 
-	bootFiles, err := opts.Board.BootFiles(opts.Config, resolved)
+	bootFiles, err := callBootFiles(opts.Board, opts.Config, resolved)
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("assembling boot files for %s: %w", opts.Board.Name(), err)
 	}
@@ -440,9 +440,14 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	resolved.Initramfs = &initramfsBuf
 	bootFiles[initramfsKey] = &initramfsBuf
 
+	rawWrites, err := callRawWrites(opts.Board, resolved)
+	if err != nil {
+		return image.WriteReport{}, fmt.Errorf("computing raw writes for %s: %w", opts.Board.Name(), err)
+	}
+
 	report, err := image.Write(opts.OutputPath, image.Spec{
 		BootFiles:      bootFiles,
-		RawWrites:      opts.Board.RawWrites(resolved),
+		RawWrites:      rawWrites,
 		BootLabel:      opts.Labels.Boot,
 		DataLabel:      opts.Labels.Data,
 		DataSizeBytes:  opts.DataSizeBytes,
@@ -476,6 +481,39 @@ func checkLabels(labels naming.PartitionLabels) error {
 		}
 	}
 	return nil
+}
+
+// callBootFiles invokes board.BootFiles, converting an invariant-violation
+// panic into a normal error. Board packages deliberately panic rather than
+// return an error for conditions that can only be programmer/build-config
+// mistakes (an artifact the board's own Artifacts() didn't declare, an
+// output too big for its locked layout - see e.g. Artifacts.MustOpen and
+// radxazero3e's u-boot.itb size check), and those panics already carry an
+// actionable message. Without this, that message never reaches the user:
+// it unwinds straight past cmd/gosd's cobra Execute() as a raw Go stack
+// trace instead of the single-line CLI error every other failure here
+// produces.
+func callBootFiles(board boards.Board, cfg boards.BuildConfig, art boards.Artifacts) (bootFiles map[string]io.Reader, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return board.BootFiles(cfg, art)
+}
+
+// callRawWrites is callBootFiles's counterpart for board.RawWrites, which
+// has no error return at all - a board invariant violation there (e.g.
+// radxazero3e's u-boot.itb-too-big check) can only panic, so recovering it
+// here is the only way it reaches the user as an actionable error rather
+// than a raw stack trace.
+func callRawWrites(board boards.Board, art boards.Artifacts) (writes []image.RawWrite, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return board.RawWrites(art), nil
 }
 
 // fetchBoardArtifacts is the boards.BoardArtifactsFunc every real build uses:

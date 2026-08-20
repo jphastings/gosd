@@ -478,14 +478,21 @@ func syncDir(dir string) error {
 }
 
 // firstUDC returns the board's first USB peripheral controller under
-// /sys/class/udc, or an error naming why gadget mode is unavailable.
+// /sys/class/udc, or an error naming why gadget mode is unavailable. It
+// wraps gadget.ErrNoController on the not-found case (rather than just a
+// bespoke string) so this pre-check participates in the same errors.Is
+// contract as a direct gadget.Gadget.Apply() call would - the worked
+// example for gosd-ctkj's sentinel, even though this app also needs the
+// controller's name up front (to skip the unmount/Apply cycle entirely
+// when no cable is attached - see presentedAsDrive), so it can't just call
+// Apply and inspect its error the way an app with no such pre-check could.
 func firstUDC() (string, error) {
 	entries, err := os.ReadDir(udcDir)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", udcDir, err)
 	}
 	if len(entries) == 0 {
-		return "", fmt.Errorf("no USB peripheral controller under %s; build with `gosd build --usb-gadget`", udcDir)
+		return "", fmt.Errorf("%w under %s; build with `gosd build --usb-gadget`", gadget.ErrNoController, udcDir)
 	}
 	return entries[0].Name(), nil
 }

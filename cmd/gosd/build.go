@@ -539,7 +539,10 @@ const dataSizeLimitDocsURL = "https://github.com/jphastings/gosd/blob/main/docs/
 // mistake. "expand" is valid for either filesystem and is resolved before
 // either bound is checked, since it carries no --data-size number to compare
 // against a ceiling or floor - a --data-size=expand ext4 image genuinely
-// fills the whole card, floor included.
+// fills the whole card, floor included. Both filesystems also share a
+// sub-sector floor (image.SectorSizeBytes): a size that rounds down to zero
+// whole sectors is refused here too, up front, rather than deep inside
+// image.computeLayout after a full build.
 func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error) {
 	trimmed := strings.TrimSpace(s)
 	if strings.EqualFold(trimmed, "expand") {
@@ -549,6 +552,17 @@ func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error
 	size, err := parseSizeBytes("--data-size", s)
 	if err != nil {
 		return 0, false, fmt.Errorf("%w, 'expand' to fill the card on first boot, or 0 to disable the data partition", err)
+	}
+
+	// A size that rounds down to zero whole sectors can never back a
+	// partition - image.computeLayout refuses it too, but only after a
+	// full cross-compile and artifact fetch for every board. Catching it
+	// here keeps that refusal instant, matching the ceiling check below
+	// and the ext4 floor's own "fail before any image bytes exist"
+	// contract.
+	if size > 0 && size < image.SectorSizeBytes {
+		return 0, false, fmt.Errorf("--data-size %q (%d bytes) is smaller than one sector (%d bytes), which GoSD's image writer can never format as a partition; double-check you didn't forget a unit suffix (e.g. --data-size=100MiB, not --data-size=100), or pass --data-size=0 to disable the data partition entirely",
+			s, size, image.SectorSizeBytes)
 	}
 
 	if fs == diskfmt.EXT4 {

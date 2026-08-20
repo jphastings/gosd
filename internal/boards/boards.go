@@ -280,7 +280,15 @@ func RegisterInternal(b Board) {
 func register(b Board, internal bool) {
 	name := b.Name()
 	if _, exists := registry[name]; exists {
-		panic(fmt.Sprintf("boards: %q is already registered", name))
+		// This is a programmer error (see Register's doc comment), not a
+		// runtime condition, so panicking at package init is defensible -
+		// but a bare panic still reaches a developer as a raw Go stack
+		// trace. The most likely way to trip this is scaffolding a new
+		// board by copying an existing package and forgetting to change
+		// its Name() constant, so the message names that fix directly
+		// rather than leaving a stack trace to decode.
+		panic(fmt.Sprintf("boards: %q is already registered - if you're adding a new board, "+
+			"check its Name() wasn't copy-pasted from the board you scaffolded it from", name))
 	}
 	registry[name] = b
 	if internal {

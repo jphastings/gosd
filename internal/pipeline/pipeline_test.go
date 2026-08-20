@@ -37,10 +37,12 @@ var testLabels = naming.LabelsFor("test")
 // it, so tests can assert on build order and data flow without needing a
 // real cross-compiled binary or firmware manifest.
 type fakeBoard struct {
-	name         string
-	firmware     map[string]io.Reader
-	rawWrites    []image.RawWrite
-	bootFilesErr error
+	name           string
+	firmware       map[string]io.Reader
+	rawWrites      []image.RawWrite
+	bootFilesErr   error
+	bootFilesPanic any
+	rawWritesPanic any
 
 	gotConfig    boards.BuildConfig
 	gotInitramfs io.Reader
@@ -52,6 +54,9 @@ func (b *fakeBoard) Arch() boards.Arch               { return boards.Arch{GOARCH
 func (b *fakeBoard) Artifacts() []boards.ArtifactRef { return nil }
 
 func (b *fakeBoard) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
+	if b.bootFilesPanic != nil {
+		panic(b.bootFilesPanic)
+	}
 	b.gotConfig = cfg
 	b.gotInitramfs = art.Initramfs
 	if b.bootFilesErr != nil {
@@ -60,7 +65,12 @@ func (b *fakeBoard) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map
 	return map[string]io.Reader{"initramfs.cpio.zst": art.Initramfs}, nil
 }
 
-func (b *fakeBoard) RawWrites(boards.Artifacts) []image.RawWrite { return b.rawWrites }
+func (b *fakeBoard) RawWrites(boards.Artifacts) []image.RawWrite {
+	if b.rawWritesPanic != nil {
+		panic(b.rawWritesPanic)
+	}
+	return b.rawWrites
+}
 
 func (b *fakeBoard) FirmwareFiles(boards.Artifacts) map[string]io.Reader { return b.firmware }
 
@@ -759,6 +769,56 @@ func TestAssembleSurfacesBoardBootFilesError(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Assemble() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestAssembleTurnsABoardBootFilesPanicIntoAnActionableError covers board
+// packages' documented convention (e.g. Artifacts.MustOpen, radxazero3e's
+// u-boot.itb size check) of panicking on an invariant violation rather than
+// returning an error - Assemble must recover it into a normal CLI-facing
+// error carrying the panic's own message, not let it escape as a raw Go
+// stack trace.
+func TestAssembleTurnsABoardBootFilesPanicIntoAnActionableError(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board", bootFilesPanic: "boards: fake-board artifact \"kernel\" was never resolved"}
+
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: filepath.Join(dir, "out.img"),
+	})
+	if err == nil {
+		t.Fatal("Assemble() error = nil, want the recovered panic surfaced as an error")
+	}
+	if !strings.Contains(err.Error(), "boards: fake-board artifact \"kernel\" was never resolved") {
+		t.Errorf("Assemble() error = %q, want it to contain the board's panic message", err.Error())
+	}
+}
+
+// TestAssembleTurnsABoardRawWritesPanicIntoAnActionableError is
+// TestAssembleTurnsABoardBootFilesPanicIntoAnActionableError's counterpart
+// for RawWrites, which has no error return at all - panicking is the only
+// way a board package can refuse there.
+func TestAssembleTurnsABoardRawWritesPanicIntoAnActionableError(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	b := &fakeBoard{name: "fake-board", rawWritesPanic: "boards: fake-board u-boot.itb is too big for its locked offset"}
+
+	_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+		Labels: testLabels,
+		Board:  b, AppBinaryPath: appPath, InitBinaryPath: initPath,
+		OutputPath: filepath.Join(dir, "out.img"),
+	})
+	if err == nil {
+		t.Fatal("Assemble() error = nil, want the recovered panic surfaced as an error")
+	}
+	if !strings.Contains(err.Error(), "boards: fake-board u-boot.itb is too big for its locked offset") {
+		t.Errorf("Assemble() error = %q, want it to contain the board's panic message", err.Error())
 	}
 }
 

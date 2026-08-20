@@ -149,6 +149,9 @@ func TestApplyFailsWithNoUDC(t *testing.T) {
 	if err == nil {
 		t.Fatal("Apply() = nil, want error when no UDC is present")
 	}
+	if !errors.Is(err, ErrNoController) {
+		t.Errorf("Apply() error = %v, want it to wrap ErrNoController so callers can errors.Is and degrade gracefully", err)
+	}
 	if len(f.callsOfKind("write")) == 0 {
 		t.Fatal("expected identity/function files to be written before the UDC lookup fails")
 	}

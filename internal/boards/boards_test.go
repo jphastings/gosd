@@ -2,6 +2,7 @@ package boards_test
 
 import (
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/boards"
@@ -75,8 +76,19 @@ func TestRegisterPanicsOnDuplicateName(t *testing.T) {
 	boards.Register(fakeBoard{name: "test-board-duplicate"})
 
 	defer func() {
-		if r := recover(); r == nil {
+		r := recover()
+		if r == nil {
 			t.Fatal("Register with an already-registered name did not panic")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic value = %#v, want a string naming the cause and the fix", r)
+		}
+		if !strings.Contains(msg, "test-board-duplicate") {
+			t.Errorf("panic message = %q, want it to name the duplicate board", msg)
+		}
+		if !strings.Contains(msg, "copy-pasted") {
+			t.Errorf("panic message = %q, want it to name the likely cause (a copy-pasted Name())", msg)
 		}
 	}()
 	boards.Register(fakeBoard{name: "test-board-duplicate"})
