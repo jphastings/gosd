@@ -1328,16 +1328,38 @@ interface, no WiFi/cable needed at all) is planned for later.
   loudly instead of corrupting the volume. It needs
   `CONFIG_USB_CONFIGFS_MASS_STORAGE=y` in the board kernel; see
   COMPATIBILITY.md's USB gadget footnote for per-board status.
-- See `examples/usbwebsite` for a worked example: it serves a storage
-  volume as a static website, but presents that same volume as a USB
-  drive when plugged into a computer so the site can be edited. The
-  volume is the onboard eMMC where one is fitted
-  (`emmc.FormatAndMount` returns the device backing the mount, and
-  `emmc.Unmount` releases it so `gadget.MassStorage` can take it
-  exclusively) and otherwise the SD card's data partition
-  (build with `--data-size`), which is how the eMMC-less Pi Zeros run
-  it. The `disk` package pairs with `gadget.MassStorage` the same way,
-  for an app that wants to share an attached SSD or USB drive instead.
+- **A LUN is the whole volume — only share one your app owns
+  outright.** There is no way to expose a subdirectory: the host gets
+  every file on the backing device, dot-prefixed or not, and unless you
+  set `ReadOnly` it may write to all of them. `ReadOnly`'s zero value is
+  `false`, so an omitted field means read-write; write it out rather
+  than letting it be assumed.
+- **Do not share the data partition.** `gosd-init` keeps this device's
+  own settings on it, under `/data/.gosd`, so that re-flashing the card
+  doesn't lose them — and those settings include, in plain text, the
+  passphrase of the WiFi network the board is on, any ingress token, and
+  the Tailscale node's private key. Handing that partition to a USB host
+  discloses all of it to whatever computer the cable reaches, with no
+  case to open and no card to remove, and read-write access lets that
+  computer write into `/data/.gosd` too — where it survives the owner's
+  next re-flash. The same goes for serving it: `http.FileServer` has no
+  notion of a hidden file, so `http.Dir("/data")` publishes
+  `/.gosd/config/values/wifi/passphrase` to anyone who can reach the
+  port. Give your app a directory of its own under `/data` and serve
+  that.
+- See `examples/usbwebsite` for a worked example: it serves a static
+  website, and presents the volume holding it as a USB drive when
+  plugged into a computer so the site can be edited. The volume is the
+  onboard eMMC where one is fitted (`emmc.FormatAndMount` returns the
+  device backing the mount, and `emmc.Unmount` releases it so
+  `gadget.MassStorage` can take it exclusively), which the app owns
+  outright and shares freely. Otherwise it is the SD card's data
+  partition (build with `--data-size`), which is how the eMMC-less Pi
+  Zeros run it — and which the app serves from a `website` folder of its
+  own and never offers over USB unless the operator sets a documented
+  app setting to accept the disclosure above. The `disk` package pairs
+  with `gadget.MassStorage` the same way, for an app that wants to share
+  an attached SSD or USB drive instead.
 
 ## Testing your app under qemu (no hardware needed)
 

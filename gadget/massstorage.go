@@ -20,11 +20,33 @@ import (
 // what to Unmount first. A single LUN covers GoSD's use cases today;
 // f_mass_storage itself supports additional lun.N directories, a possible
 // future extension.
+//
+// # A LUN is the whole volume
+//
+// This is block-level sharing: the host gets every byte of Path, so every
+// file on it, whether or not the app meant to publish it and whether or not
+// its name starts with a dot. There is no way to expose a subdirectory.
+// Only back a LUN with a volume the app owns outright — in particular, not
+// the data partition GoSD mounts at /data, which carries gosd-init's copy
+// of this device's settings (the WiFi passphrase and any ingress token
+// among them, in plain text) so that they survive a re-flash. Sharing that
+// hands them to whatever computer the cable reaches, and read-write access
+// lets that computer plant files that outlive the owner's next re-flash.
+// See the USB gadget section of GoSD's runtime documentation, and
+// examples/usbwebsite for how an app can hold that line and still be
+// editable over USB.
 type MassStorage struct {
 	// Path is the block device (e.g. /dev/nvme0n1p1) or disk-image file
 	// backing the LUN. Required.
 	Path string
 	// ReadOnly write-protects the LUN: the host can read but not modify it.
+	//
+	// Its zero value is false, so an omitted field grants an unauthenticated
+	// host write access to the whole backing store — the same as a blank USB
+	// stick, which is what a mass-storage gadget is. That is often what you
+	// want, but it should never be what you got by accident: write the field
+	// out either way. ReadOnly is not a confidentiality control — it stops
+	// writes, not reads, and the host can still read everything on Path.
 	ReadOnly bool
 	// Removable reports the medium as removable (like a USB thumb drive),
 	// so the host offers a clean eject.
