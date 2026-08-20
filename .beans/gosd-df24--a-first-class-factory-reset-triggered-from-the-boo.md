@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-08-20T08:36:08Z
-updated_at: 2026-08-20T08:36:08Z
+updated_at: 2026-08-20T09:39:15Z
 ---
 
 **Why this exists.** Bean `gosd-7m9y` established that `/data` is a trust
@@ -175,3 +175,24 @@ expected. Nothing ever logs a value the store held.
 - [ ] Test: a wrong/blank/junk trigger value is an inert no-op
 - [ ] qemu-virt end-to-end: settings and credentials present, reset, reboot, card's own settings only
 - [ ] Document in docs/config.md, replacing "clear or reformat the data partition" as the advised remedy, and update the trust-boundary sections in configstore's package doc and docs/design/upgrade-path.md §3a
+
+
+
+---
+
+## Amendment (2026-08-20): reset targets the config partition
+
+JP decided the config store moves to a partition of its own ([[gosd-onjv]]). That
+changes this bean for the better and does not remove the need for it:
+
+- **Better:** the reset wipes the *config* partition and leaves `/data`
+  alone, so "reset my settings" stops meaning "destroy the app's data".
+  That is what people actually mean by the phrase, and it makes the
+  confirmation far less frightening to give.
+- **Still needed:** an ext4 config partition is no more clearable from macOS
+  or Windows than an ext4 `/data`. The boot-partition trigger remains the
+  only reset mechanism an owner can actually operate.
+
+Sequence this AFTER [[gosd-onjv]] if both are in flight, or write the trigger
+against `/data` and re-point it — the trigger mechanism and its
+crash-ordering argument are unaffected by which volume gets cleared.
