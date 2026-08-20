@@ -12,6 +12,46 @@ the artifacts documentation for the full tag-first, bump-second procedure.
 
 This file is maintained by knope from the change files in `.changeset/`; new
 versions are added below this heading.
+## 0.10.3 (2026-08-20)
+
+### Features
+
+#### The status LED's fatal signal now survives kernel shutdown
+
+Every board's status LED device-tree node now carries
+`retain-state-shutdown`, so `gpio_led_shutdown()` no longer clears the LED's
+level during `device_shutdown()`. Without it, a fatal error's steady on
+signal (see [the status LED docs](docs/status-led.md)) went dark the moment
+the kernel halted — the same halt that made the signal necessary in the
+first place.
+
+The same patch also flips the LED's `default-state` to `"off"` wherever it
+wasn't already, so solid-on can only mean a recorded fatal error, never
+whatever level the GPIO comes up in before `gosd-init` claims the LED.
+
+One board's ACT LED sits on the Raspberry Pi 3B/3B+'s firmware-owned mailbox
+GPIO rather than the SoC's own, so whether its retained level survives past
+Linux's own halt depends on the firmware too — bench verification on real
+hardware is tracked separately per board.
+
+#### SPI now works on the Raspberry Pi Zero W
+
+The Pi Zero W's SPI0 controller is now enabled directly in its device tree,
+giving `/dev/spidev0.0`/`/dev/spidev0.1` at boot the same as every other
+board. `config.txt`'s `dtparam=spi=on` has always been a silent no-op on
+this board: it's the one GoSD board built from the mainline-style DTS chain
+(`bcm2835-rpi-zero-w.dts`), which — unlike the downstream-style DTBs the
+other Pi boards use — carries no `__overrides__` node for the Raspberry Pi
+firmware's `dtparam` mechanism to patch, so the parameter was accepted and
+silently discarded.
+
+`dtparam=i2c_arm=on` in the same file has the identical problem, but it
+happens not to matter: I2C is already enabled unconditionally by this
+board's own device tree, independent of that line.
+
+Bench verification on real hardware is tracked separately (bean
+`gosd-dkqb`).
+
 ## 0.10.2 (2026-08-17)
 
 ### Features
