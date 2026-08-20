@@ -1,11 +1,11 @@
 ---
 # gosd-ilv8
-title: 'build/boards/*/kernel.config is a hand-regenerated snapshot with nothing verifying it matches the real build'
-status: todo
+title: build/boards/*/kernel.config is a hand-regenerated snapshot with nothing verifying it matches the real build
+status: completed
 type: task
 priority: low
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T06:07:12Z
 ---
 
 **Severity: Low.** Purely a trust/process gap — the file is documented as
@@ -50,8 +50,25 @@ requires the same 20-60 minute Docker build regardless). Cheaper options:
 
 ## Todos
 
-- [ ] Decide whether an automated drift check is worth the cost, or whether
-      this stays a documentation-only fix
-- [ ] If documentation-only: add the "don't trust this for capability claims,
-      see the fragment / a released artifact instead" caveat to each
-      `build/boards/*/README.md`
+- [x] Decided: an automated check IS worth it, and is cheap enough to run in
+      every `go test ./...` without needing a real Docker build - it checks
+      the committed snapshot against kernelspec's CURRENT
+      RequiredY/ForbiddenY/ModulesDisabled assertions (not byte-identity
+      with a fresh build, which does need Docker), which is exactly the
+      class of staleness that bit gosd-95yu. This does NOT make the
+      snapshot authoritative - the fragment stays the assertion; the test
+      only checks the snapshot AGAINST the assertion.
+- [x] Implemented `TestKernelConfigSnapshotMatchesAssertions` (new file
+      internal/kernelspec/kernelconfigsnapshot_test.go): for every
+      kernel-building board, every RequiredY entry must be =y in the
+      committed kernel.config, every ForbiddenY entry must not be =y/=m,
+      and CONFIG_MODULES must read "is not set". Running this for real
+      immediately found six boards' snapshots ALREADY stale (see Summary) -
+      exactly the failure mode this bean predicted. Since fixing those
+      needs real Docker builds (out of scope here, see CLAUDE.md), the
+      known instances are recorded in a `knownKernelConfigSnapshotDrift`
+      ratchet map (same pattern as kernelspec_test.go's
+      `dtbExemptFromArtifacts`): the test fails on any NEW drift beyond
+      what's listed, and also fails if a listed entry stops reproducing
+      (forcing the map to be kept in sync, so it can only shrink). Bean
+      gosd-dcov tracks actually regenerating the six stale snapshots.

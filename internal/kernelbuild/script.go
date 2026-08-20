@@ -174,11 +174,30 @@ func writeCloneSteps(b *strings.Builder, src kernelspec.Source) {
 
 // writePatchLoop emits a loop applying every *.patch file in dir, in glob
 // (i.e. writePatches' zero-padded index) order.
+//
+// Every patch here targets a freshly cloned, exactly-pinned kernel source
+// tree, so a hunk can never legitimately be "already applied", nor need
+// fuzzy matching to find its context - if it ever needs either, something
+// (most likely a kernel-tag bump shifting nearby .dts lines) has silently
+// changed what the patch actually does, and the build must not ship the
+// result unnoticed (bean gosd-7acd: a silently-skipped DTS patch means a
+// board ships without the peripheral it was meant to enable). --fuzz=0
+// refuses any hunk whose context doesn't match verbatim, removing the one
+// way `patch` could otherwise apply a hunk at a merely similar-looking,
+// wrong location. The explicit grep on patch's own output, on top of
+// checking its exit status, is defense in depth against `patch` reporting
+// a skipped/reversed/ignored hunk yet an overall success exit code -
+// `set -euo pipefail` alone only catches the latter.
 func writePatchLoop(b *strings.Builder, dir string) {
 	fmt.Fprint(b, "shopt -s nullglob\n")
 	fmt.Fprintf(b, "for patch in %s/*.patch; do\n", dir)
 	fmt.Fprint(b, "  echo \"    $patch\"\n")
-	fmt.Fprint(b, "  patch -p1 --forward <\"$patch\"\n")
+	fmt.Fprint(b, "  patch_out=\"$(patch -p1 --fuzz=0 <\"$patch\" 2>&1)\" || { echo \"$patch_out\" >&2; echo \"FATAL: $patch failed to apply\" >&2; exit 1; }\n")
+	fmt.Fprint(b, "  echo \"$patch_out\"\n")
+	fmt.Fprint(b, "  if grep -qiE 'revers|ignored|already applied' <<<\"$patch_out\"; then\n")
+	fmt.Fprint(b, "    echo \"FATAL: $patch reported a reversed/already-applied/ignored hunk against a freshly cloned pinned source tree - that can never legitimately happen, treating it as a hard failure\" >&2\n")
+	fmt.Fprint(b, "    exit 1\n")
+	fmt.Fprint(b, "  fi\n")
 	fmt.Fprint(b, "done\n\n")
 }
 

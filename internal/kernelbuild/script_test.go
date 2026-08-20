@@ -220,6 +220,31 @@ func TestScript_AdditionalDTBsCopiedSharedMakeTargetBuiltOnce(t *testing.T) {
 	}
 }
 
+// TestScript_PatchApplicationFailsLoudlyOnAnyDeviation is the guard bean
+// gosd-7acd calls for: --fuzz=0 refuses any hunk that doesn't match its
+// context verbatim (a fresh clone of the pinned source can never
+// legitimately need fuzzy matching), and the generated script explicitly
+// greps patch's own output for a reversed/already-applied/ignored hunk and
+// exits 1 even if patch itself somehow reported success - defense in depth
+// on top of `set -euo pipefail` catching a nonzero exit.
+func TestScript_PatchApplicationFailsLoudlyOnAnyDeviation(t *testing.T) {
+	s := captureBuild(t, testSpec(), kernelbuild.Overlay{}).script
+
+	for _, want := range []string{
+		"patch -p1 --fuzz=0 <",
+		"FATAL: $patch failed to apply",
+		"grep -qiE 'revers|ignored|already applied'",
+		"FATAL: $patch reported a reversed/already-applied/ignored hunk",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("script missing expected patch-loop content %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "--forward") {
+		t.Error("script still passes --forward to patch; --fuzz=0 plus explicit failure handling replaced it (bean gosd-7acd)")
+	}
+}
+
 func TestScript_PatchFilesWrittenInOrder(t *testing.T) {
 	c := captureBuild(t, testSpec(), testOverlay())
 	if len(c.gosdPatchFiles) != 2 {

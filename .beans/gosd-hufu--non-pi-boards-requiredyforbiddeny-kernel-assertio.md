@@ -1,11 +1,11 @@
 ---
 # gosd-hufu
-title: 'Non-Pi boards'' RequiredY/ForbiddenY kernel assertions are hand-copied with no cross-check, unlike the Pi fragment-derived list'
-status: todo
+title: Non-Pi boards' RequiredY/ForbiddenY kernel assertions are hand-copied with no cross-check, unlike the Pi fragment-derived list
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-16T04:43:32Z
-updated_at: 2026-08-16T04:43:32Z
+updated_at: 2026-08-20T06:06:48Z
 ---
 
 **Severity: Medium.** Nothing is wrong today — this is a process gap, not a
@@ -56,9 +56,26 @@ fragment, so there's no single file to derive from automatically the way
 
 ## Todos
 
-- [ ] Decide a verification mechanism (see options above) and record the
-      choice in this bean before implementing
-- [ ] Apply it to `radxa-zero-3e`, `nanopi-zero2`, `rock-4se`, `cubie-a5e`
-- [ ] Note in `kernelspec.go`'s package doc why Pi and non-Pi boards use
-      different mechanisms, so a future board addition knows which pattern
-      to follow
+- [x] Decided: option 1 from the fix direction (a test asserting every
+      hand-written RequiredY/ForbiddenY entry appears/doesn't appear as a
+      literal =y line in the board's own ConfigFragment), not full
+      derivation - a Rockchip/Allwinner/qemu-virt fragment deliberately
+      restates `make defconfig` baseline symbols alongside GoSD's own
+      requirements, so "every =y line is required" (the Pi mechanism) isn't
+      true there and would over-assert.
+- [x] Applied to `radxa-zero-3e`, `nanopi-zero2`, `rock-4se`, `cubie-a5e`
+      (and qemu-virt, which also hand-writes RequiredY/ForbiddenY) via
+      `TestNonPiRequiredYForbiddenYAppearInOwnFragment` in
+      internal/kernelspec/kernelspec_test.go. All five boards currently
+      pass with no drift.
+- [x] Noted in `kernelspec.go`'s package doc (new paragraph explaining the
+      Pi-derives-fully vs non-Pi-hand-writes-and-cross-checks split, and
+      pointing a future board at the right pattern).
+
+## Summary of Changes
+
+Added `TestNonPiRequiredYForbiddenYAppearInOwnFragment` (internal/kernelspec/kernelspec_test.go): for every board whose RequiredY/ForbiddenY is hand-maintained (radxa-zero-3e, nanopi-zero2, rock-4se, cubie-a5e, qemu-virt), every RequiredY entry must appear as a literal `CONFIG_FOO=y` line in that board's own ConfigFragment, and every ForbiddenY entry must not. DTS patches never touch Kconfig, so the fragment is confirmed (by inspection, for every board) to be the sole source of every RequiredY/ForbiddenY symbol - this cross-check catches a typo'd CONFIG_ name or a dead assertion for a config the board's fragment never sets, without over-asserting (unlike the Pi boards, these fragments deliberately restate `make defconfig` baseline symbols, so full derivation would be wrong).
+
+Also extended kernelspec.go's package doc explaining why Pi boards derive RequiredY fully from the fragment while every other board hand-writes-and-cross-checks, so a future board addition knows which pattern to follow.
+
+No drift found: all five boards currently pass.
