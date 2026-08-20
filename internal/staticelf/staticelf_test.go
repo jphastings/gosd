@@ -170,6 +170,30 @@ func TestVerifyRejectsDynamicallyLinkedBinary(t *testing.T) {
 	}
 }
 
+// TestVerifyCannotDistinguishGOARM documents the known gap bean gosd-aur4
+// found: an ELFCLASS32/EM_ARM binary built for the wrong GOARM (e.g. Go's
+// default GOARM=7 instead of pi-zero-w's real armv6 hardware) passes
+// Verify, because nothing at the ELF level Verify inspects varies with
+// GOARM - confirmed experimentally against real go1.26 linux/arm
+// cross-builds (identical e_flags across GOARM=5/6/7, and no
+// .ARM.attributes section in any of them; see staticelf.go's package doc).
+// A single hand-crafted ELFCLASS32/EM_ARM fixture stands in for every GOARM
+// value here for exactly that reason: a real GOARM=6 and a real GOARM=7
+// binary are indistinguishable at this level, so there is nothing a second,
+// differently-built fixture would add. This test passing is not a bug
+// fix's "expected to fail" marker - it is pinning today's real, asserted
+// behavior, so a future Go toolchain change that starts encoding GOARM
+// somewhere Verify could read would flip this test red and get noticed,
+// instead of the gap just persisting silently.
+func TestVerifyCannotDistinguishGOARM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "static-armv7-mislabeled-as-armv6")
+	writeELF(t, path, elf.ELFCLASS32, elf.EM_ARM, false)
+
+	if err := staticelf.Verify(openFixture(t, path), path, armv6); err != nil {
+		t.Fatalf("Verify(GOARM-mismatched armv binary) = %v, want nil (documents the known gap - see staticelf.go's package doc)", err)
+	}
+}
+
 func TestExpectationsErrorsOnUnknownGOARCH(t *testing.T) {
 	_, _, err := staticelf.Expectations(boards.Arch{GOARCH: "riscv64"})
 	if err == nil {

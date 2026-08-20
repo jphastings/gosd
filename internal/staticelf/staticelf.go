@@ -12,6 +12,27 @@
 // specific, audience-facing wording (e.g. cmd/gosd's "--with-external"/
 // "--board" phrasing) inspect the returned error's concrete type and format
 // their own message from its fields; Verify's own error text is generic.
+//
+// Known gap (bean gosd-aur4): Verify cannot detect a GOARM mismatch within
+// the same ELF class/machine - e.g. an arm/GOARM=7 binary (Go's default arm
+// build) passes verification aimed at pi-zero-w, the fleet's only 32-bit
+// board, whose real BCM2835 silicon is armv6 and can take an
+// illegal-instruction fault on an armv7 instruction. This was investigated,
+// not just left unaddressed: GOARM is not encoded in e_flags (verified
+// empirically - GOARM=5/6/7 builds of the same program all produce the
+// identical value 0x5000002), and - contrary to what might be assumed of
+// other ARM toolchains - Go's linker does not emit an .ARM.attributes
+// section at all (checked against go1.26 linux/arm cross-builds for every
+// GOARM value; readelf/objdump show no such section in the output), so
+// there is no ELF-level field for Verify to read a GOARM out of short of
+// disassembling the instruction stream, which this package deliberately
+// does not attempt. TestVerifyCannotDistinguishGOARM documents this as
+// asserted, current behavior rather than a silent gap, precisely so a
+// future Go toolchain change that starts encoding GOARM somewhere gets
+// noticed (the test would start failing) instead of the gap just
+// persisting unnoticed. Until then, callers must get GOARM right at the
+// cross-compile step (gosd build already does, via boards.Arch) rather
+// than relying on Verify to catch a wrong one.
 package staticelf
 
 import (
@@ -58,6 +79,10 @@ func GOARMSuffix(arch boards.Arch) string {
 // It only reads r's headers (elf.NewFile never calls Read on anything but
 // an io.ReaderAt), so a caller handing it an *os.File can keep using that
 // file's untouched read position afterwards.
+//
+// Verify does not check arch.GOARM: class/machine (and, for arm, nothing
+// else in the ELF file) can't distinguish GOARM=5/6/7 - see the package
+// doc's "Known gap" note.
 func Verify(r io.ReaderAt, subject string, arch boards.Arch) error {
 	ef, err := elf.NewFile(r)
 	if err != nil {

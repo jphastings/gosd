@@ -15,6 +15,26 @@
 // anymore (they used to be compared against docker-build.sh's required_y/
 // forbidden_y arrays via TestRockchipRequiredYMatchesScript, removed along
 // with those scripts).
+//
+// RequiredY/ForbiddenY are populated two different ways, and a new board
+// should match whichever family it joins (bean gosd-hufu):
+//   - The Pi boards' RequiredY is mechanically DERIVED from ConfigFragment
+//     (requiredYFromFragment: every literal "CONFIG_FOO=y" line, collected
+//     automatically) because every =y line in a Pi fragment is meant as an
+//     explicit GoSD requirement - the fragment has no "baseline default"
+//     lines mixed in.
+//   - Every other board's RequiredY/ForbiddenY is a hand-maintained literal
+//     list, because those fragments deliberately restate `make defconfig`
+//     baseline symbols alongside GoSD's own requirements (for
+//     documentation/diffing purposes - see e.g. radxa-zero-3e's fragment
+//     header), so "every =y line is required" isn't true there and full
+//     derivation would over-assert. kernelspec_test.go's
+//     TestNonPiRequiredYForbiddenYAppearInOwnFragment still cross-checks
+//     these against their own ConfigFragment (every RequiredY entry must
+//     appear as =y in it, every ForbiddenY entry must not) so a typo'd
+//     CONFIG_ name or an assertion for a config the board never sets fails
+//     `go test ./...` instead of surviving unnoticed to a bench boot - it
+//     just can't derive the list outright the way the Pi mechanism does.
 package kernelspec
 
 import (

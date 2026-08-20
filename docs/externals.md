@@ -119,6 +119,19 @@ out at `gosd build-external` time, not three steps later when `gosd build
 --with-external` (which re-checks the same properties against your
 `--board`) or, worse, the booted device rejects it.
 
+**Known gap: this check cannot catch a wrong GOARM.** For `pi-zero-w`, the
+fleet's only 32-bit board (`GOARCH=arm`, real BCM2835 silicon is armv6),
+the class/machine/PT_INTERP check above passes an `arm/GOARM=7` binary just
+as readily as a correct `arm/GOARM=6` one — GOARM isn't recorded anywhere
+in an ELF file's class, machine, or flags, and Go's linker doesn't emit an
+`.ARM.attributes` section either, so there's no field for GoSD to read a
+GOARM out of short of disassembling the instruction stream (verified for
+bean gosd-aur4; see `internal/staticelf`'s package doc). A binary built
+with the wrong GOARM can hit an illegal-instruction fault on real
+pi-zero-w hardware despite passing this check. Get GOARM right at your
+cross-compile step: `$GOSD_CROSS_COMPILE`/`$GOSD_ARCH` already encode it
+correctly for whichever arch your script targets — don't override it.
+
 Getting a real static binary out of an upstream build system is usually the
 hard part, not the GoSD side:
 

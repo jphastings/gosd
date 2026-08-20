@@ -196,11 +196,16 @@ Your fragment is merged with `scripts/kconfig/merge_config.sh -m` **after**
 GoSD's own board fragment has already been merged, so a line in your
 fragment always wins if it conflicts with GoSD's. Device-tree patches from
 `patches` are applied, in sorted-glob order, after every one of GoSD's own
-patches. The mechanism is a plain `patch -p1` at the root of the kernel tree,
-so `patches` is not actually limited to device trees — `examples/chime` uses a
-one-line driver patch to change a module parameter's default, because a
-monolithic kernel has no other portable way to set one (see that example's
+patches. The mechanism is `patch -p1 --fuzz=0` at the root of the kernel
+tree, so `patches` is not actually limited to device trees — `examples/chime`
+uses a one-line driver patch to change a module parameter's default, because
+a monolithic kernel has no other portable way to set one (see that example's
 README). Device trees are simply what needs patching most of the time.
+`--fuzz=0` refuses any hunk whose context doesn't match the pinned source
+verbatim, and a reversed/already-applied/ignored hunk is treated as a hard
+build failure rather than a silent skip — a fresh, exactly-pinned clone can
+never legitimately need fuzzy matching, so write your patch against the
+pinned kernel tag, not a nearby one (bean `gosd-7acd`).
 
 A single `make olddefconfig` runs once, after both fragments are merged and
 both patch sets applied — then GoSD's own required-`=y` assertions for that

@@ -255,6 +255,65 @@ func TestPiRequiredYIsDerivedFromFragment(t *testing.T) {
 	}
 }
 
+// nonPiBoardsWithHandWrittenRequiredY lists every board whose
+// RequiredY/ForbiddenY is a hand-maintained literal list rather than
+// requiredYFromFragment-derived (see TestPiRequiredYIsDerivedFromFragment
+// for the Pi boards - bean gosd-hufu). Unlike the Pi boards, a Rockchip/
+// Allwinner/qemu-virt fragment routinely sets a symbol =y as a baseline
+// default (inherited from `make defconfig`) without that symbol being part
+// of GoSD's own requirement list, so this can't assert exact equality with
+// the fragment's CONFIG_*=y lines the way the Pi test does. It can still
+// catch the two concrete error classes the bean names: a RequiredY/
+// ForbiddenY entry that's a typo'd CONFIG_ name, and a RequiredY entry for a
+// config this board's own fragment never actually sets.
+var nonPiBoardsWithHandWrittenRequiredY = []string{
+	"radxa-zero-3e", "nanopi-zero2", "rock-4se", "cubie-a5e", "qemu-virt",
+}
+
+// TestNonPiRequiredYForbiddenYAppearInOwnFragment is the cross-check bean
+// gosd-hufu calls for: every hand-written RequiredY entry must appear as a
+// literal "CONFIG_FOO=y" line somewhere in that board's own ConfigFragment
+// (device-tree patches never touch Kconfig, so every RequiredY/ForbiddenY
+// symbol's source is the fragment - verified by inspection for every board
+// this covers), and every hand-written ForbiddenY entry must NOT appear as
+// a literal "CONFIG_FOO=y" line in it (a forbidden symbol the fragment
+// itself turns on would be a self-contradictory spec). This doesn't derive
+// the lists the way the Pi boards' RequiredY is derived - see the var doc
+// above for why not - but it does mean a typo'd or dead assertion fails
+// `go test ./...` instead of surviving unnoticed until a bench boot.
+func TestNonPiRequiredYForbiddenYAppearInOwnFragment(t *testing.T) {
+	for _, id := range nonPiBoardsWithHandWrittenRequiredY {
+		t.Run(id, func(t *testing.T) {
+			spec, ok := kernelspec.Get(id)
+			if !ok {
+				t.Fatalf("Get(%q) not found", id)
+			}
+
+			setY := make(map[string]bool)
+			for _, line := range strings.Split(string(spec.ConfigFragment), "\n") {
+				line = strings.TrimRight(line, "\r")
+				if configYLine.MatchString(line) {
+					setY[line] = true
+				}
+			}
+
+			for _, want := range spec.RequiredY {
+				sym := strings.TrimSuffix(strings.TrimSuffix(want, "=y"), "=m")
+				if !setY[sym+"=y"] {
+					t.Errorf("RequiredY entry %q does not appear as %q in %s's own ConfigFragment; typo, or an assertion for a config this board's fragment doesn't set", want, sym+"=y", id)
+				}
+			}
+
+			for _, forbidden := range spec.ForbiddenY {
+				sym := strings.TrimSuffix(strings.TrimSuffix(forbidden, "=y"), "=m")
+				if setY[sym+"=y"] {
+					t.Errorf("ForbiddenY entry %q contradicts its own fragment: %s's ConfigFragment sets %q", forbidden, id, sym+"=y")
+				}
+			}
+		})
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
