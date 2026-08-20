@@ -63,9 +63,55 @@ const MinNeedleLength = 8
 // ("{$STRIPE_KEY}", "{secret: stripe-api-key}"), never a second value that
 // itself needs protecting. This package relies on that: [Redactor.Skipped]
 // reports Replacement, never Needle, for exactly this reason.
+//
+// It is a label, not content, and [New] enforces that shape rather than
+// trusting it (see safeReplacement) because neither producer of one is in
+// gosd's hands. gosd-init builds "{$NAME}" from a file name in the card's
+// config/env/ directory, which is whatever the person holding the card
+// named it; the fault package builds "{secret: label}" from an argument the
+// app passed. A label carrying a newline would place text at column 0 of a
+// document whose headings and indented code block were decided by gosd's
+// own prose, and a label long enough to be content is no longer naming a
+// value.
 type Rule struct {
 	Needle      string
 	Replacement string
+}
+
+// MaxReplacementBytes is the longest label a Redactor will place into a
+// document. A crash report's prose is hand-wrapped to fit a narrow
+// terminal, so a label that fits inside one of those lines can only ever
+// substitute a value in-line; a longer one would reflow the paragraph it
+// landed in. Every honest label is far shorter — "{$" plus an environment
+// variable name plus "}", or "{secret: }" around a word or two.
+const MaxReplacementBytes = 64
+
+// FallbackReplacement is what stands in for a label [New] won't take as
+// given (see safeReplacement). It still says a value was removed, which is
+// the part that matters, and it cannot be mistaken for a name because it
+// isn't one.
+const FallbackReplacement = "{redacted}"
+
+// safeReplacement renders one label the way a document may hold it: control
+// characters removed, and anything left that is empty or longer than
+// MaxReplacementBytes swapped for FallbackReplacement rather than truncated
+// — half a label reads as a name, and the wrong one.
+//
+// The needle is still replaced either way. Losing the label's precision
+// costs a reader some context; letting it through costs the document its
+// structure.
+func safeReplacement(replacement string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, replacement)
+
+	if cleaned == "" || len(cleaned) > MaxReplacementBytes {
+		return FallbackReplacement
+	}
+	return cleaned
 }
 
 // Redactor is a rule set prepared for use, holding the rules long enough to
@@ -77,7 +123,10 @@ type Redactor struct {
 }
 
 // New prepares rules for application, applying [MinNeedleLength] and
-// ordering the survivors longest needle first.
+// ordering the survivors longest needle first. Every Replacement — applied
+// or skipped, and [Redactor.Skipped] is logged to a console — goes through
+// safeReplacement first, so a rule can substitute a value inside a document
+// but never restructure one.
 //
 // Needles are applied longest first, regardless of their position in rules.
 // This is what keeps a secret that contains a shorter secret as a substring
@@ -100,6 +149,7 @@ type Redactor struct {
 func New(rules []Rule) Redactor {
 	r := Redactor{applied: make([]Rule, 0, len(rules))}
 	for _, rule := range rules {
+		rule.Replacement = safeReplacement(rule.Replacement)
 		if len(rule.Needle) < MinNeedleLength {
 			r.skipped = append(r.skipped, rule.Replacement)
 			continue

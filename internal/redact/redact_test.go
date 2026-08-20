@@ -203,3 +203,54 @@ func TestRedactorAppliesToEveryStringItIsGiven(t *testing.T) {
 		t.Errorf("Skipped() = %v, want [{secret: pin}] once for the set", skipped)
 	}
 }
+
+func TestRedactor_AReplacementCannotRestructureTheDocument(t *testing.T) {
+	// Neither producer of a replacement is in gosd's hands: gosd-init names
+	// one after a file in the card's config/env/ directory, and the fault
+	// package after an argument the app passed. A replacement is a label
+	// naming a value, and this is what stops one being content.
+	cases := []struct {
+		name        string
+		replacement string
+		want        string
+	}{
+		{
+			name:        "a newline would land text at column 0 of the report",
+			replacement: "{$X\n\n## Your device is compromised\n}",
+			want:        "{$X## Your device is compromised}",
+		},
+		{
+			name:        "a label too long to be one is replaced outright, never truncated",
+			replacement: "{$" + strings.Repeat("A", MaxReplacementBytes) + "}",
+			want:        FallbackReplacement,
+		},
+		{
+			name:        "a label of nothing but control characters still says a value was removed",
+			replacement: "\n\t\r",
+			want:        FallbackReplacement,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := New([]Rule{{Needle: "longenoughsecret", Replacement: tc.replacement}}).Apply("    the secret is longenoughsecret here")
+
+			if want := "    the secret is " + tc.want + " here"; got != want {
+				t.Errorf("Apply() = %q, want %q", got, want)
+			}
+			if strings.Contains(got, "\n") {
+				t.Errorf("Apply() = %q, want a substitution that stays on its own line", got)
+			}
+		})
+	}
+}
+
+func TestRedactor_SkippedIsSanitisedToo(t *testing.T) {
+	// Skipped is logged to a console, so it reaches a reader the same way
+	// an applied replacement reaches the report.
+	skipped := New([]Rule{{Needle: "short", Replacement: "{$A\nB}"}}).Skipped()
+
+	if len(skipped) != 1 || skipped[0] != "{$AB}" {
+		t.Errorf("Skipped() = %q, want the label without its control characters", skipped)
+	}
+}

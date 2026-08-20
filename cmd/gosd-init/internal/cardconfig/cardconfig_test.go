@@ -1,6 +1,7 @@
 package cardconfig_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -113,6 +114,58 @@ func TestReadSkipsAFileTooLargeToBeASetting(t *testing.T) {
 	}
 	if len(logged) != 1 {
 		t.Errorf("logged %d lines, want exactly one naming the file that was skipped", len(logged))
+	}
+}
+
+func TestReadStopsOnceTheTreeCostsMoreThanTheDeviceWillSpend(t *testing.T) {
+	// A boot partition is hundreds of megabytes anyone holding the card can
+	// fill with settings, each one small enough to pass MaxValueBytes on its
+	// own; the device reading them is PID 1 with its root filesystem in RAM.
+	// The ceiling is on the tree, not just on each file.
+	files := map[string]string{"a-hostname": "kitchen-pi"}
+	for i := range 1 + cardconfig.MaxTreeBytes/cardconfig.MaxValueBytes {
+		files[fmt.Sprintf("z-filler/%02d", i)] = strings.Repeat("x", cardconfig.MaxValueBytes)
+	}
+	dir := writeTree(t, files)
+	var logged []string
+	tree := cardconfig.Read(dir, func(format string, args ...any) { logged = append(logged, format) })
+
+	if tree.Get("a-hostname") != "kitchen-pi" {
+		t.Error("the settings read before the ceiling were lost")
+	}
+	var total int
+	for _, value := range tree {
+		total += len(value.Content)
+	}
+	if total > cardconfig.MaxTreeBytes {
+		t.Errorf("read %d bytes of settings, want no more than the %d-byte ceiling", total, cardconfig.MaxTreeBytes)
+	}
+	if len(logged) != 1 {
+		t.Errorf("logged %d lines, want exactly one saying it stopped: %v", len(logged), logged)
+	}
+}
+
+func TestReadStopsDescendingBeforeATreeWithNoBottom(t *testing.T) {
+	// The walk is recursive and the directories are on a card somebody else
+	// wrote; a boot that never ends is as effective a brick as one that
+	// panics.
+	deep := strings.Repeat("down/", cardconfig.MaxDepth+2)
+	dir := writeTree(t, map[string]string{
+		"hostname":          "kitchen-pi",
+		deep + "buried":     "never-read",
+		"down/near-the-top": "read",
+	})
+	var logged []string
+	tree := cardconfig.Read(dir, func(format string, args ...any) { logged = append(logged, format) })
+
+	if _, ok := tree[deep+"buried"]; ok {
+		t.Error("a setting past the depth ceiling was read")
+	}
+	if tree.Get("hostname") != "kitchen-pi" || tree.Get("down/near-the-top") != "read" {
+		t.Error("settings above the depth ceiling were lost")
+	}
+	if len(logged) != 1 {
+		t.Errorf("logged %d lines, want exactly one naming where it stopped: %v", len(logged), logged)
 	}
 }
 

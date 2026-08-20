@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // fixtureDir points at a scenario captured off a real Raspberry Pi Imager
@@ -148,6 +150,50 @@ func TestReadFallsBackOnMalformedNetworkConfig(t *testing.T) {
 	}
 	if !containsSubstring(logs, "network-config") {
 		t.Errorf("logs = %v, want a warning naming network-config", logs)
+	}
+}
+
+func TestReadIgnoresASeedTooLargeToBeOne(t *testing.T) {
+	// A seed is a file on the FAT boot partition, so anyone holding the
+	// card writes one of any size, and yaml.v3 turns each byte of it into
+	// roughly forty of node. gosd-init is PID 1 on a board whose root
+	// filesystem is RAM, and Linux panics rather than killing init — so a
+	// card that could do this once would do it on every boot after, too.
+	dir := t.TempDir()
+	writeFile(t, dir, "user-data", "#cloud-config\nhostname: fixture-one\n#"+strings.Repeat("x", MaxSeedBytes))
+
+	var logs []string
+	result := Read(dir, collectLog(&logs))
+
+	if result.Hostname != "" {
+		t.Errorf("Hostname = %q, want empty: an oversized seed is never parsed", result.Hostname)
+	}
+	if !containsSubstring(logs, "user-data") {
+		t.Errorf("logs = %v, want a line naming the file that was ignored", logs)
+	}
+}
+
+func TestReadIgnoresASeedThatIsntAnOrdinaryFile(t *testing.T) {
+	// Opening a named pipe blocks until something writes to it, which in
+	// PID 1 is a device that never finishes booting and never says why.
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "user-data"), 0o644); err != nil {
+		t.Skipf("this platform can't make a fifo to test with: %v", err)
+	}
+
+	done := make(chan Result, 1)
+	go func() {
+		var logs []string
+		done <- Read(dir, collectLog(&logs))
+	}()
+
+	select {
+	case result := <-done:
+		if result.Hostname != "" {
+			t.Errorf("Hostname = %q, want empty", result.Hostname)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read() blocked on a named pipe; on a device that is a boot that never ends")
 	}
 }
 
