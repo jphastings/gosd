@@ -113,3 +113,55 @@ func TestWriteLeavesNoStrayTempFileOnSuccess(t *testing.T) {
 		t.Errorf("stray temp file left behind: err=%v", err)
 	}
 }
+
+func TestRenderGivesNoHostnameLineToAValueThatCouldForgeOne(t *testing.T) {
+	// The injection bean gosd-39da's payload: a hostname carrying a newline
+	// and a second, attacker-chosen mapping. Go's pure resolver reads this
+	// file ahead of DNS for every lookup an app makes, so an extra line here
+	// is a redirected API endpoint on a device its owner just re-flashed.
+	forged := "evil\n1.2.3.4 api.vendor.example"
+
+	got := Render(forged)
+
+	if got != Static() {
+		t.Errorf("Render(%q) = %q, want only the static lines", forged, got)
+	}
+	if strings.Contains(got, "api.vendor.example") {
+		t.Errorf("Render(%q) let an attacker-chosen mapping into /etc/hosts: %q", forged, got)
+	}
+}
+
+func TestRenderRefusesEveryHostnameTheConfigTreeGateWouldRefuse(t *testing.T) {
+	for _, name := range []string{
+		"",
+		"has space",
+		"UPPER",
+		"trailing\n",
+		"nul\x00byte",
+		"under_score",
+		strings.Repeat("a", 64),
+	} {
+		if got := Render(name); got != Static() {
+			t.Errorf("Render(%q) = %q, want only the static lines", name, got)
+		}
+	}
+}
+
+func TestWriteKeepsTheStaticLinesWhenTheHostnameIsRefused(t *testing.T) {
+	// A refused hostname must cost the device its 127.0.1.1 line and
+	// nothing else: "localhost" still has to resolve, which is the whole
+	// reason this file exists.
+	path := filepath.Join(t.TempDir(), "hosts")
+
+	if err := Write(path, "evil\n1.2.3.4 api.vendor.example"); err != nil {
+		t.Fatalf("Write() = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	if string(got) != Static() {
+		t.Errorf("hosts file = %q, want exactly the static lines", got)
+	}
+}

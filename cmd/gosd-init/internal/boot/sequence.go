@@ -757,6 +757,13 @@ const reservedEnvPrefix = "GOSD_"
 // and leave its author wondering. The survivors are returned as sorted
 // NAME=VALUE strings, for deterministic env ordering. Only names and where
 // they came from are ever logged, never values: they may be secrets.
+//
+// A name that isn't shaped like an environment variable's is dropped here
+// too (configtree.ValidEnvName). The build refuses one outright, but a
+// config/env/ file is created on the card — or restored onto it from the
+// unauthenticated copy on /data — long after the build had its say, so the
+// runtime holds both sources to the same rule the build does rather than
+// handing execve(2) something it will reject for the whole app.
 func mergeUserEnv(baked, card map[string]string, log func(format string, args ...any)) []string {
 	fromCard := make(map[string]bool, len(card))
 	merged := make(map[string]string, len(baked)+len(card))
@@ -779,6 +786,10 @@ func mergeUserEnv(baked, card map[string]string, log func(format string, args ..
 	for _, key := range keys {
 		if strings.HasPrefix(key, reservedEnvPrefix) {
 			log("ignoring %s: gosd-init owns the %s namespace, so a setting can't be named that", envSourceOf(key, fromCard[key]), reservedEnvPrefix)
+			continue
+		}
+		if !configtree.ValidEnvName(key) {
+			log("ignoring %s: %q isn't a usable environment variable name (letters, digits and underscores only, not starting with a digit)", envSourceOf(key, fromCard[key]), key)
 			continue
 		}
 		env = append(env, key+"="+merged[key])
@@ -1064,15 +1075,17 @@ func fatal(deps Deps, log func(format string, args ...any), report *fatalReporte
 	return wrapped
 }
 
-// validHostname reports whether name is safe to hand to SetHostname as-is:
-// non-empty and unchanged by naming.Sanitize, meaning it already satisfies
-// both of Sanitize's constraints — the [a-z0-9-] charset and the
-// naming.MaxLength byte cap that sethostname(2) enforces. A hostname from
-// the card that fails this check is never silently rewritten to fit (see
-// gosd-jeaw): mangling a value somebody typed would only confuse them, so it's rejected outright and the previous hostname —
+// validHostname reports whether name is safe to hand to SetHostname as-is.
+// The rule itself is naming.ValidHostname's, shared with the /etc/hosts
+// renderer that the same value reaches a few lines later: one definition,
+// so a value this refuses can never be one that file accepts.
+//
+// A hostname from the card that fails this check is never silently
+// rewritten to fit (see gosd-jeaw): mangling a value somebody typed would
+// only confuse them, so it's rejected outright and the previous hostname —
 // always itself a value that once passed this same check — is kept.
 func validHostname(name string) bool {
-	return name != "" && naming.Sanitize(name) == name
+	return naming.ValidHostname(name)
 }
 
 // applyHostname calls SetHostname and reports the outcome without ever

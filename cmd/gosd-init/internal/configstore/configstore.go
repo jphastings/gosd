@@ -109,12 +109,61 @@
 //     card costs a device one boot's reconciliation rather than every
 //     setting it ever had.
 //
-// Nothing here authenticates the store. Anything with write access to the
-// data partition can put a setting on the card, exactly as anything with
-// write access to the card itself can (bean gosd-7m9y tracks /data as a
-// trust boundary that survives a re-flash). What this package guarantees is
-// that a value it acts on was written completely, not that it was written
-// by the device's owner.
+// # /data is a trust boundary, and this store cannot close it
+//
+// The digest beside every value proves that value was written COMPLETELY.
+// It proves nothing whatever about WHO wrote it: it is an unkeyed SHA-256,
+// stored beside the bytes it covers, so anything able to write one file can
+// write the other. Integrity, not authenticity — two different properties,
+// and only the first is available here.
+//
+// The second is not available at any price within this architecture, and it
+// is worth being exact about why rather than shipping something that looks
+// like it. A keyed MAC needs a key that the code verifying it can read and
+// an attacker cannot, and there is nowhere on these boards to put one:
+//
+//   - The boot partition is wiped by the very re-flash this store exists to
+//     survive, so a key kept there is gone at the moment it would be used.
+//   - The data partition is what the attacker is writing, so a key kept
+//     beside the values it vouches for vouches for the attacker's values
+//     too.
+//   - No board GoSD supports has a TPM or a secure element, so there is no
+//     third place.
+//   - A key derived from the hardware (an SoC serial, the card's CID) would
+//     stop someone who only ever holds the card, and not the attacker who
+//     matters most: a compromised /app runs as root on the device and can
+//     read anything the derivation reads, then compute the MAC itself.
+//
+// So this package does not pretend, and it does not narrow what it keeps
+// either. EVERY setting is kept and restored, credentials included: putting
+// back the settings somebody put on the card is the entire reason this
+// package exists, and a store that dropped the values hardest to retype
+// would fail at the job while still carrying all of the risk (decided
+// 2026-08-20, bean gosd-7m9y). What the store does instead is refuse to be
+// a privileged path, and be loud:
+//
+//   - Every restored value goes back onto the card and is then read out of
+//     the tree again, through the identical gates a hand-edited card goes
+//     through (boot's validHostname, cloudflared's own hostname check,
+//     configtree.ValidEnvName). There is no restore path that reaches a
+//     sink without passing what the card's own path passes — which is the
+//     property bean gosd-39da's /etc/hosts injection broke, and the reason
+//     that gate belongs at the reader rather than at each writer. Restoring
+//     a value is no more powerful than typing it onto the card.
+//   - A restore says so, loudly, naming the partition it came from, so that
+//     somebody reading a console log after a re-flash can see that the
+//     re-flash did not reach these values.
+//
+// What remains true, and is documented for users in docs/config.md: a plain
+// re-flash is not a factory reset, and anything with write access to /data
+// — someone who has had the card, or the app itself, which runs as root and
+// whose storage /data is — can put a setting onto a freshly flashed card.
+// The operation that resets a device is clearing the data partition, not
+// re-flashing the boot one; on an ext4 /data that needs a Linux host today,
+// because a macOS or Windows machine can neither read nor clear it. Making
+// that remedy performable from any host — a reset an owner triggers from
+// the boot partition, which is the only one they can always edit — is bean
+// gosd-df24.
 //
 // # Failure is never fatal
 //
@@ -342,6 +391,16 @@ func restore(deps Deps, config cardconfig.Tree, opts Options, stored map[string]
 	}
 
 	restored := sortedKeys(p.values)
+	if len(restored) > 0 {
+		// Said once, before the list, and said plainly: this card was
+		// flashed moments ago and is nonetheless about to act on values
+		// that came from somewhere else. Anyone reading a console log
+		// after re-flashing a device to reset it needs to see that the
+		// reset did not reach these, and that /data is not a partition
+		// gosd can vouch for (see the package doc's trust-boundary
+		// section).
+		deps.Log("this card was flashed with a different image, so %d setting(s) kept on the data partition are being put back onto it; /data survives a re-flash and gosd cannot tell who wrote what it holds, so these are the settings to check first if this device has ever been out of your hands", len(restored))
+	}
 	for _, path := range restored {
 		deps.Log("%s restored from the copy kept on the data partition", cardconfig.OnCard(path))
 	}
@@ -532,6 +591,11 @@ func load(dir string, log func(format string, args ...any)) (map[string]string, 
 			if err := deleteEntry(dir, rel); err != nil {
 				log("dropping it failed, and it will be dropped again next boot: %v", err)
 			}
+		case entryNotASetting:
+			log("the kept copy of %s isn't a value any settings file could hold, so it is dropped rather than put onto a card", cardconfig.OnCard(rel))
+			if err := deleteEntry(dir, rel); err != nil {
+				log("dropping it failed, and it will be dropped again next boot: %v", err)
+			}
 		case entryUnreadable:
 			log("the kept copy of %s can't be read, so this boot leaves the settings kept on the data partition alone", cardconfig.OnCard(rel))
 			readable = false
@@ -554,9 +618,9 @@ func load(dir string, log func(format string, args ...any)) (map[string]string, 
 	return stored, identity, readable && ok
 }
 
-// entryState is what one file under values/ turned out to be. The middle
-// case is the whole point of keeping three: a value that can't be READ is
-// not a value that was never fully WRITTEN, and treating the first as the
+// entryState is what one file under values/ turned out to be. Torn and
+// unreadable are kept apart deliberately: a value that can't be READ is not
+// a value that was never fully WRITTEN, and treating the first as the
 // second would let one unlucky read delete somebody's setting.
 type entryState int
 
@@ -564,21 +628,35 @@ const (
 	entryOK entryState = iota
 	entryTorn
 	entryUnreadable
+	// entryNotASetting is a complete, readable file that could not be a
+	// setting whatever was intended by it — a device node, a symlink, a
+	// file far larger than any card could hold, or one carrying a NUL.
+	// Distinct from entryTorn because it is not a crash artefact: nothing
+	// was interrupted, this simply isn't a value, and saying "wasn't
+	// finished being written" about it would send somebody looking for a
+	// power cut that never happened.
+	entryNotASetting
 )
 
 // readEntry reads one stored value and the digest vouching for it. It is
-// torn when the digest disagrees, when it never arrived at all, or when
-// what's there could not be a setting in the first place — a device node or
-// symlink somebody put in the store, or a file far larger than any card
+// torn when the digest disagrees or never arrived at all, and not a setting
+// when what's there could not be one however it got there — a device node
+// or symlink somebody put in the store, a file far larger than any card
 // could hold (cardconfig.MaxValueBytes), which on a device whose entire
-// root filesystem is RAM is worth refusing outright.
+// root filesystem is RAM is worth refusing outright, or one carrying a NUL
+// (configtree.PlausibleValue).
+//
+// The digest proves the value was written completely; it proves nothing
+// about who wrote it (see the trust-boundary section in the package doc),
+// which is why these shape checks are applied to a digest-consistent entry
+// rather than trusted away by one.
 func readEntry(dir, rel, path string, entry fs.DirEntry) (string, entryState) {
 	info, err := entry.Info()
 	if err != nil {
 		return "", entryUnreadable
 	}
 	if !info.Mode().IsRegular() || info.Size() > cardconfig.MaxValueBytes {
-		return "", entryTorn
+		return "", entryNotASetting
 	}
 
 	value, err := os.ReadFile(path)
@@ -593,6 +671,9 @@ func readEntry(dir, rel, path string, entry fs.DirEntry) (string, entryState) {
 		return "", entryUnreadable
 	case strings.TrimSpace(string(digest)) != digestOf([]byte(value)):
 		return "", entryTorn
+	}
+	if !configtree.PlausibleValue(value) {
+		return "", entryNotASetting
 	}
 	return string(value), entryOK
 }

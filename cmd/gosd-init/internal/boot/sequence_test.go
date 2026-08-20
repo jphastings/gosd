@@ -19,6 +19,7 @@ import (
 	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultreport"
+	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/provision"
@@ -2666,4 +2667,100 @@ func readCardValue(t *testing.T, root, path string) string {
 		t.Fatalf("reading %s off the card: %v", cardconfig.OnCard(path), err)
 	}
 	return configtree.TrimValue(content)
+}
+
+func TestRunRefusesARestoredHostnameThatWouldForgeAnEtcHostsLine(t *testing.T) {
+	// Bean gosd-39da's attack, end to end and through the real
+	// /etc/hosts renderer: something with write access to /data leaves a
+	// hostname carrying a newline behind, and waits for the owner to
+	// re-flash believing that resets the device. Go's pure resolver reads
+	// /etc/hosts ahead of DNS for every lookup the app makes, so an extra
+	// line here would silently re-point the app's API endpoint.
+	store := t.TempDir()
+	baked := bakedDigests("hostname")
+	forged := "evil\n1.2.3.4 api.vendor.example"
+
+	// Boot one plants it: a hand-edited card is exactly how a value enters
+	// the store, and it differs from what the image ships, so it is kept.
+	bootOnce(t, store, t.TempDir(), "image-a", baked, map[string]string{"hostname": forged})
+
+	// Boot two is the re-flash: a different image, a card back at its
+	// defaults, and the kept value put onto it.
+	hosts := filepath.Join(t.TempDir(), "hosts")
+	hostname := bootOnceWritingHosts(t, store, t.TempDir(), "image-b", baked, map[string]string{"hostname": ""}, hosts)
+
+	content, err := os.ReadFile(hosts)
+	if err != nil {
+		t.Fatalf("reading the rendered /etc/hosts: %v", err)
+	}
+	if strings.Contains(string(content), "api.vendor.example") {
+		t.Errorf("/etc/hosts gained an attacker-chosen mapping:\n%s", content)
+	}
+	if !strings.Contains(string(content), hostsfile.Static()) {
+		t.Errorf("/etc/hosts lost its static localhost lines:\n%s", content)
+	}
+	if slices.Contains(hostname.set, forged) {
+		t.Errorf("SetHostname calls = %q, want the forged name refused", hostname.set)
+	}
+}
+
+func TestRunIgnoresARestoredEnvNameThatIsNotOne(t *testing.T) {
+	// A config/env/ file's name becomes an environment variable's name.
+	// The build refuses a malformed one, but the store is written long
+	// after the build had its say and nothing authenticates it, so the
+	// runtime holds it to the same rule rather than handing execve(2)
+	// something it will reject for the whole app.
+	store := t.TempDir()
+	baked := bakedDigests("hostname")
+
+	bootOnce(t, store, t.TempDir(), "image-a", baked, map[string]string{"env/NOT A NAME": "x", "env/FINE": "y"})
+	_, env := bootOnce(t, store, t.TempDir(), "image-b", baked, map[string]string{"hostname": ""})
+
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "NOT A NAME=") {
+			t.Errorf("app env = %v, want the malformed name dropped", env)
+		}
+	}
+	if !slices.Contains(env, "FINE=y") {
+		t.Errorf("app env = %v, want the well-formed name beside it still restored", env)
+	}
+}
+
+// bootOnceWritingHosts is bootOnce with /etc/hosts really rendered, to the
+// given path, by the same package main wires in — so what a test asserts is
+// the file a device would actually resolve against.
+func bootOnceWritingHosts(t *testing.T, store, root, identity string, baked, card map[string]string, hostsPath string) *fakeHostname {
+	t.Helper()
+	stop := make(chan struct{})
+	hostname := &fakeHostname{}
+
+	deps := Deps{
+		Mounter:  &fakeMounter{},
+		Hostname: hostname,
+		Reaper:   fakeReaper{},
+		Rebooter: &fakeRebooter{},
+		AppStarter: funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+			close(stop)
+			return 1, nil
+		}),
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Hostname: "hello", Identity: identity, ConfigDigests: baked}, nil
+		},
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(card),
+		EditBoot:       func(edit func(root string) error) error { return edit(root) },
+		WriteHosts:     func(h string) error { return hostsfile.Write(hostsPath, h) },
+		Sleep:          func(time.Duration) {},
+		Now:            time.Now,
+	}
+	opts := testOptions()
+	opts.ConfigStoreDir = store
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	return hostname
 }

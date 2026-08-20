@@ -311,8 +311,49 @@ credential you can revoke over one you can't.
 
 The copy the store keeps on `/data` to survive a reflash (above) is the same
 plaintext, just on a different partition — **a reflash is never a
-credentials wipe**, because the value comes right back. If you actually
-need to remove a secret from a device, clearing `/data` (or reformatting it)
-is the operation that does it; reflashing the boot partition alone does not.
-Every log line the store or the tree ever writes names a *path*
-(`config/ingress/cloudflared/token`), never the value that path holds.
+credentials wipe**, because the value comes right back, deliberately (see
+[why a reflash is not a reset](#a-reflash-is-not-a-factory-reset) below). If
+you actually need to remove a secret from a device, clearing `/data` (or
+reformatting it) is the operation that does it; reflashing the boot
+partition alone does not. Every log line the store or the tree ever writes
+names a *path* (`config/ingress/cloudflared/token`), never the value that
+path holds.
+
+### A reflash is not a factory reset
+
+The data partition is untouched by reflashing — that is the whole point of
+it, and it is what lets your settings come back — but it means `/data` is
+**a place things survive the one remediation most people reach for**. GoSD
+cannot tell who wrote what it finds there. The digest beside each kept value
+proves the value was written *completely*; nothing proves it was written by
+you. There is no key anywhere on these boards to prove it with: the boot
+partition is erased by the very reflash the store exists to survive, `/data`
+is the partition in question, and no board GoSD supports has a TPM or secure
+element.
+
+So take the restore for what it is. Anything with write access to `/data` —
+someone who has had the card, or your own app, which runs as root and whose
+storage `/data` is — can leave a setting there and have a freshly flashed
+card pick it up.
+
+Every setting comes back, credentials included: putting back what you put on
+the card is the entire point of the store, and one that dropped the values
+hardest to retype would fail at that job while still carrying every bit of
+the risk. What `gosd-init` does instead is refuse to make the restore a
+privileged path, and be loud about it:
+
+- **Restored values go through the same checks a hand-edited card does** —
+  they are written onto the card and read back out of it, so there is no
+  route into the device that skips the gates the card's own values pass.
+  A restored value can do nothing that typing the same value onto the card
+  couldn't.
+- **A restore says so on the console**, naming the partition it came from,
+  and says how many settings it put back — so if you reflashed to reset a
+  device, you can see that it didn't.
+
+**The operation that resets a device is clearing the data partition**, not
+reflashing the boot one. On an ext4 `/data`
+(`gosd build --data-filesystem ext4`) that currently means a Linux machine:
+macOS and Windows can neither read it nor clear it. A reset you can trigger
+from the boot partition — the one partition every OS can edit — is designed
+and not yet built (bean `gosd-df24`).

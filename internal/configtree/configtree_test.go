@@ -308,3 +308,17 @@ func TestIgnoredNameCoversEveryNameTheBuildRefusesAsJunk(t *testing.T) {
 		}
 	}
 }
+
+func TestPlausibleValueRefusesOnlyANul(t *testing.T) {
+	// A multi-line value is a real thing somebody pastes into config/env/,
+	// so the gate has to let one through; a NUL cannot survive execve(2)
+	// and so is never a value anybody meant.
+	for _, ok := range []string{"", "plain", "line one\nline two\n", "  spaced  "} {
+		if !PlausibleValue([]byte(ok)) {
+			t.Errorf("PlausibleValue(%q) = false, want true", ok)
+		}
+	}
+	if PlausibleValue([]byte("before\x00after")) {
+		t.Error("PlausibleValue accepted a NUL byte")
+	}
+}

@@ -40,3 +40,22 @@ func Sanitize(s string) string {
 	}
 	return trimmed
 }
+
+// ValidHostname reports whether name can be used as a device's hostname
+// exactly as written: non-empty, and left unchanged by Sanitize — which
+// means it already satisfies both of Sanitize's constraints, the [a-z0-9-]
+// charset and the MaxLength byte cap that sethostname(2) enforces.
+//
+// It lives here, beside Sanitize, so that every place a hostname crosses
+// from something somebody typed into something the device acts on shares
+// one definition of "valid": gosd-init's config-tree gate and
+// internal/hostsfile's /etc/hosts renderer both call it. Two copies of this
+// rule is how a hostname carrying a newline reached /etc/hosts unescaped
+// (bean gosd-39da); one copy is how it stays out.
+//
+// A name that fails is never silently rewritten to fit (see gosd-jeaw):
+// mangling what somebody typed only confuses them, so callers refuse the
+// value and say which file to fix.
+func ValidHostname(name string) bool {
+	return name != "" && Sanitize(name) == name
+}
