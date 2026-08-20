@@ -132,7 +132,8 @@ func Read(dir string, log func(format string, args ...any)) Tree {
 // readValue reads one setting file, reporting ok=false for anything that
 // isn't a setting a person could have typed: a device node or symlink
 // somebody put in the tree, a file too big to be a value (see
-// MaxValueBytes), or one that won't read at all.
+// MaxValueBytes), one holding a NUL byte (see configtree.PlausibleValue),
+// or one that won't read at all.
 func readValue(dir, path string, entry fs.DirEntry, log func(format string, args ...any)) (configtree.Value, bool) {
 	rel := treePath(dir, path)
 
@@ -153,6 +154,10 @@ func readValue(dir, path string, entry fs.DirEntry, log func(format string, args
 	content, err := os.ReadFile(path)
 	if err != nil {
 		log("skipping %s, it can't be read: %v", OnCard(rel), err)
+		return configtree.Value{}, false
+	}
+	if !configtree.PlausibleValue(content) {
+		log("skipping %s: it holds a NUL byte, which is not something anybody typed into a settings file and which nothing this value is handed to can carry", OnCard(rel))
 		return configtree.Value{}, false
 	}
 	return configtree.Value{Path: rel, Content: content, Value: configtree.TrimValue(content)}, true

@@ -35,3 +35,29 @@ func TestSanitizeCapsLength(t *testing.T) {
 		t.Errorf("Sanitize(%q) = %q, want no trailing hyphen after truncation", hyphenAtBoundary, got)
 	}
 }
+
+func TestValidHostnameAcceptsWhatACardCanLegitimatelyHold(t *testing.T) {
+	for _, name := range []string{"kitchen-pi", "a", "device-2", strings.Repeat("a", MaxLength)} {
+		if !ValidHostname(name) {
+			t.Errorf("ValidHostname(%q) = false, want true", name)
+		}
+	}
+}
+
+func TestValidHostnameRefusesAnythingSanitizeWouldHaveToChange(t *testing.T) {
+	for _, name := range []string{
+		"",
+		"Kitchen-Pi",
+		"kitchen pi",
+		"kitchen.pi",
+		"-leading",
+		"trailing-",
+		"line\nbreak",
+		"nul\x00byte",
+		strings.Repeat("a", MaxLength+1),
+	} {
+		if ValidHostname(name) {
+			t.Errorf("ValidHostname(%q) = true, want false", name)
+		}
+	}
+}

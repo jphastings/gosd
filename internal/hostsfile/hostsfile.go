@@ -32,6 +32,8 @@ package hostsfile
 import (
 	"fmt"
 	"os"
+
+	"github.com/jphastings/gosd/internal/naming"
 )
 
 // Path is /etc/hosts' location: both the path gosd build writes into the
@@ -64,7 +66,22 @@ func Static() string {
 // whatever gosd build baked — which is what guarantees the static lines
 // above always survive untouched, even across a hostname that later turns
 // out invalid or unchanged.
+//
+// A hostname this file could not represent on one line — anything
+// naming.ValidHostname refuses, which is anything outside [a-z0-9-] or
+// past naming.MaxLength — gets no line at all rather than a mangled or
+// forged one. Callers are expected to have refused such a value long
+// before this point (gosd-init resolves the card's hostname setting
+// through the same gate), but /etc/hosts is the format an injected
+// newline actually targets, so this is the component that must not
+// depend on being called correctly: one "\n" in a hostname would
+// otherwise append an attacker-chosen address for an attacker-chosen
+// name, which Go's pure resolver consults ahead of DNS for every lookup
+// the app makes (bean gosd-39da).
 func Render(hostname string) string {
+	if !naming.ValidHostname(hostname) {
+		return staticLines
+	}
 	return staticLines + fmt.Sprintf("127.0.1.1 %s\n", hostname)
 }
 

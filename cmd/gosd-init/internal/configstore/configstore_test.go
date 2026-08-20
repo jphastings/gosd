@@ -1,6 +1,8 @@
 package configstore_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
@@ -211,9 +213,12 @@ func TestTheImagesOwnValueIsLeftBesideARestoredOneOnlyWhenItSaysSomething(t *tes
 
 func TestASettingThisImageNoLongerHasIsHandedBackOnTheCard(t *testing.T) {
 	store := t.TempDir()
-	withTunnel := map[string]string{"hostname": "", "ingress/cloudflared/token": ""}
+	// The tunnel's hostname, not its token: a credential is never kept in
+	// the first place, so it can never be an orphan either (see the
+	// trust-boundary tests below).
+	withTunnel := map[string]string{"hostname": "", "ingress/cloudflared/hostname": ""}
 	card, digests := flash(t, withTunnel)
-	edit(t, card, "ingress/cloudflared/token", "a-tunnel-token")
+	edit(t, card, "ingress/cloudflared/hostname", "app.example.com")
 	boot(t, store, card, "image-a", digests)
 
 	// The next image was built without that ingress agent, so its whole
@@ -221,8 +226,8 @@ func TestASettingThisImageNoLongerHasIsHandedBackOnTheCard(t *testing.T) {
 	next, nextDigests := flash(t, map[string]string{"hostname": ""})
 	result, _ := boot(t, store, next, "image-b", nextDigests)
 
-	unused := "ingress/cloudflared/token" + configtree.UnusedSuffix
-	if got, ok := fileOnCard(t, next, unused); !ok || got != "a-tunnel-token\n" {
+	unused := "ingress/cloudflared/hostname" + configtree.UnusedSuffix
+	if got, ok := fileOnCard(t, next, unused); !ok || got != "app.example.com\n" {
 		t.Errorf("%s = %q (present: %t), want the value handed back on the card", unused, got, ok)
 	}
 	if len(result.Restored) != 0 {
@@ -385,5 +390,141 @@ func TestWithNoStoreDirectoryNothingHappensAtAll(t *testing.T) {
 
 	if len(result.Restored) != 0 {
 		t.Errorf("restored %v, want nothing: an image with no data partition keeps nothing", result.Restored)
+	}
+}
+
+// withIngress is the config tree an image built with a Cloudflare tunnel
+// ships: the token file among the ordinary settings, empty like the rest.
+var withIngress = map[string]string{
+	"hostname":                  "",
+	"wifi/ssid":                 "",
+	"data_flush":                "",
+	"ingress/cloudflared/token": "",
+}
+
+// storeHolds reports the value the store keeps for path, and whether it
+// keeps one at all.
+func storeHolds(t *testing.T, store, path string) (string, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(store, "values", filepath.FromSlash(path)))
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+func TestATunnelCredentialIsNeverKeptForTheNextReFlash(t *testing.T) {
+	// A token is the authorisation to reach this device from anywhere, so
+	// it is the one class of setting that never travels on the data
+	// partition — see the package doc's trust-boundary section.
+	store := t.TempDir()
+	card, digests := flash(t, withIngress)
+	edit(t, card, "ingress/cloudflared/token", "a-real-tunnel-token")
+	edit(t, card, "hostname", "kitchen-pi")
+
+	boot(t, store, card, "image-a", digests)
+
+	if got, kept := storeHolds(t, store, "ingress/cloudflared/token"); kept {
+		t.Errorf("the store kept the tunnel token (%q); it must never be copied to the data partition", got)
+	}
+	if _, kept := storeHolds(t, store, "hostname"); !kept {
+		t.Error("the hostname stopped being kept; only credentials are refused, not every setting")
+	}
+}
+
+func TestAPlantedTunnelCredentialIsNotRestoredOntoAFreshlyFlashedCard(t *testing.T) {
+	// The attack bean gosd-7m9y describes: something with write access to
+	// /data leaves a token behind, with a digest that agrees with it
+	// (unkeyed SHA-256 — anyone who can write one file can write both), and
+	// waits for the owner to re-flash believing that resets the device.
+	store := t.TempDir()
+	plant(t, store, "ingress/cloudflared/token", "attacker-tunnel-token")
+	plant(t, store, "hostname", "kitchen-pi")
+
+	card, digests := flash(t, withIngress)
+	result, tree := boot(t, store, card, "image-b", digests)
+
+	if got := onCard(t, card, "ingress/cloudflared/token"); got != "" {
+		t.Errorf("token on the freshly flashed card = %q, want nothing put back", got)
+	}
+	if got := tree.Get("ingress/cloudflared/token"); got != "" {
+		t.Errorf("token this boot = %q, want the tunnel never opened", got)
+	}
+	if slices.Contains(result.Restored, "ingress/cloudflared/token") {
+		t.Errorf("restored %v, want the token left out", result.Restored)
+	}
+	if !slices.Contains(result.Restored, "hostname") {
+		t.Errorf("restored %v, want the ordinary settings still put back", result.Restored)
+	}
+}
+
+func TestACredentialLeftInTheStoreByAnOlderGosdIsDeleted(t *testing.T) {
+	// Upgrading is the moment the value already on /data has to go: leaving
+	// it there would keep it one downgrade away from being restored.
+	store := t.TempDir()
+	plant(t, store, "ingress/tailscale-funnel/authkey", "tskey-auth-planted")
+
+	card, digests := flash(t, defaults)
+	boot(t, store, card, "image-a", digests)
+
+	if got, kept := storeHolds(t, store, "ingress/tailscale-funnel/authkey"); kept {
+		t.Errorf("the store still holds the authkey (%q) after a boot that saw it", got)
+	}
+}
+
+func TestAStoredValueThatCouldNotBeASettingIsDroppedRatherThanPutOnTheCard(t *testing.T) {
+	// A NUL makes execve(2) fail, so one planted here would stop /app
+	// starting on every boot — and go on doing so through the re-flash
+	// somebody performed to fix it.
+	store := t.TempDir()
+	plant(t, store, "env/GREETING", "hello\x00world")
+	plant(t, store, "hostname", "kitchen-pi")
+
+	card, digests := flash(t, defaults)
+	result, tree := boot(t, store, card, "image-b", digests)
+
+	if slices.Contains(result.Restored, "env/GREETING") {
+		t.Errorf("restored %v, want the NUL-carrying value left out", result.Restored)
+	}
+	if got := tree.Get("env/GREETING"); got != "" {
+		t.Errorf("env/GREETING this boot = %q, want it never applied", got)
+	}
+	if _, kept := storeHolds(t, store, "env/GREETING"); kept {
+		t.Error("the store still holds the NUL-carrying value; it can never be legitimately restored, so it is dropped")
+	}
+	if !slices.Contains(result.Restored, "hostname") {
+		t.Errorf("restored %v, want the settings beside it unaffected", result.Restored)
+	}
+}
+
+// plant writes an entry into the store the way anything with write access
+// to the data partition can: the value, and a digest that agrees with it.
+// That the pair is self-consistent is the point — the digest proves the
+// write finished, never who made it.
+func plant(t *testing.T, store, path, value string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(value))
+	write(t, filepath.Join(store, "values", filepath.FromSlash(path)), value)
+	write(t, filepath.Join(store, "digests", filepath.FromSlash(path)), hex.EncodeToString(sum[:])+"\n")
+}
+
+func TestATunnelCredentialPlantedUnderADifferentCapitalizationIsStillRefused(t *testing.T) {
+	// Both partitions can be FAT, where "Token" and "token" are one file:
+	// restoring the first would write the second, which is the file the
+	// device reads.
+	store := t.TempDir()
+	plant(t, store, "ingress/cloudflared/Token", "attacker-tunnel-token")
+
+	card, digests := flash(t, withIngress)
+	result, tree := boot(t, store, card, "image-b", digests)
+
+	if len(result.Restored) != 0 {
+		t.Errorf("restored %v, want nothing put back", result.Restored)
+	}
+	if got := tree.Get("ingress/cloudflared/token"); got != "" {
+		t.Errorf("token this boot = %q, want the tunnel never opened", got)
+	}
+	if _, kept := storeHolds(t, store, "ingress/cloudflared/Token"); kept {
+		t.Error("the store still holds the credential under its alternative spelling")
 	}
 }

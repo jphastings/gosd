@@ -274,6 +274,12 @@ default" below.
   Nothing appears for a setting whose shipped default is empty (which is
   every secret-shaped setting gosd ships), since there's nothing useful to
   show.
+- **A tunnel credential is never restored, because it was never kept.**
+  `config/ingress/cloudflared/token` and
+  `config/ingress/tailscale-funnel/authkey` are the one class of setting
+  `gosd-init` refuses to copy to `/data` at all — see [why a reflash is not
+  a reset](#a-reflash-is-not-a-factory-reset) below. Write yours onto the
+  card again after reflashing, the same way you wrote it the first time.
 - **A setting the new image no longer has a file for at all** is handed
   back onto the card as `<name>.unused` and then forgotten — you get exactly
   one reflash to notice and retrieve it before it's gone for good. The one
@@ -310,9 +316,39 @@ secret on the card only where that's an acceptable trade, and prefer a
 credential you can revoke over one you can't.
 
 The copy the store keeps on `/data` to survive a reflash (above) is the same
-plaintext, just on a different partition — **a reflash is never a
-credentials wipe**, because the value comes right back. If you actually
-need to remove a secret from a device, clearing `/data` (or reformatting it)
-is the operation that does it; reflashing the boot partition alone does not.
-Every log line the store or the tree ever writes names a *path*
+plaintext, just on a different partition. If you actually need to remove a
+secret from a device, clearing `/data` (or reformatting it) is the operation
+that does it; reflashing the boot partition alone does not. Every log line
+the store or the tree ever writes names a *path*
 (`config/ingress/cloudflared/token`), never the value that path holds.
+
+### A reflash is not a factory reset
+
+The data partition is untouched by reflashing — that is the whole point of
+it, and it is what lets your settings come back — but it means `/data` is
+**a place things survive the one remediation most people reach for**. GoSD
+cannot tell who wrote what it finds there. The digest beside each kept value
+proves the value was written *completely*; nothing proves it was written by
+you. There is no key anywhere on these boards to prove it with: the boot
+partition is erased by the very reflash the store exists to survive, `/data`
+is the partition in question, and no board GoSD supports has a TPM or secure
+element.
+
+So take the restore for what it is. Anything with write access to `/data` —
+someone who has had the card, or your own app, which runs as root and whose
+storage `/data` is — can leave a setting there and have a freshly flashed
+card pick it up. `gosd-init` narrows that as far as it honestly can:
+
+- **Tunnel credentials are never kept and never restored.** Every other
+  setting says what the device should *do*; a tunnel token or a tailnet
+  authkey *is* the authorisation to reach the device, from anywhere. One of
+  those coming back after a reflash would hand that reach to whoever left it
+  there.
+- **Restored values go through the same checks a hand-edited card does** —
+  they are written onto the card and read back out of it, so there is no
+  route into the device that skips the gates the card's own values pass.
+- **A restore says so on the console**, naming the partition it came from.
+
+If you need a device genuinely reset, clear or reformat the data partition.
+On an ext4 `/data` (`gosd build --data-filesystem ext4`) that means a Linux
+machine: macOS and Windows can neither read it nor clear it.

@@ -221,6 +221,34 @@ historical reasoning.
   own freshest value always wins over the kept copy, and the kept copy
   always wins over baked defaults.**
 
+### 3a. What this spike did not weigh: /data is a trust boundary
+
+This section was written entirely as an availability problem — how not to
+lose somebody's settings — and it never asked the other question, which
+beans `gosd-7m9y` and `gosd-39da` later did: **the same property that makes
+a reflash non-destructive makes it non-remedial.** `/data` surviving a
+reflash means anything with write access to it — someone who has had the
+card, or the app itself, which runs as root and whose storage `/data` is —
+can leave a setting there and have a freshly flashed card act on it. The
+reflash is the most drastic thing an owner can do to a device, and by this
+design it does not reach the store at all. On an ext4 data partition they
+cannot even inspect the store from a macOS or Windows host.
+
+Authenticating the store would answer this, and cannot be done here. A
+keyed MAC needs a key the verifier can read and an attacker cannot: the
+boot partition is erased by the reflash the store exists to survive, `/data`
+is what the attacker is writing, no supported board has a TPM or secure
+element, and a hardware-derived key is readable by the compromised app that
+is the actor of most concern. Recording that as a **non-goal with a reason**
+rather than an open task is the honest outcome; what shipped instead bounds
+the damage, and is described in
+[the config tree's own guide](../config.md#a-reflash-is-not-a-factory-reset):
+bearer credentials (tunnel token, tailnet authkey) are never kept and so
+never restored; every restored value re-enters through the card and is
+re-read through the gates a hand-edited card passes, so no restore path
+reaches a sink the card's own path would not; and a restore is announced on
+the console, naming the partition it came from.
+
 ## 4. Image identity (small prerequisite)
 
 `config.json` (`internal/initcfg`) currently records no build identity.

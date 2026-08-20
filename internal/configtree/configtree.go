@@ -22,6 +22,7 @@
 package configtree
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -296,6 +297,66 @@ func IgnoredName(name string) bool {
 	return isJunkName(name)
 }
 
+// credentialPaths are the settings whose value is a bearer credential for
+// a channel that reaches the device from anywhere: holding the string is
+// itself the authorisation, with no second factor and nothing tied to the
+// particular device it was typed onto. gosd-init will not put one of these
+// back onto a card from the copy kept on the data partition — see
+// cmd/gosd-init/internal/configstore's "/data is a trust boundary" section
+// and bean gosd-7m9y.
+//
+// Membership is decided by hand, per setting, and deliberately so: it is
+// the difference between "somebody has to retype this after a re-flash"
+// and "a value planted on /data survives the re-flash its owner performed
+// to be rid of it", and only a person can weigh that for a new setting.
+// configtree_test.go's credential-shape test makes a new one impossible to
+// add without answering the question.
+var credentialPaths = map[string]bool{
+	"ingress/cloudflared/token":        true,
+	"ingress/tailscale-funnel/authkey": true,
+}
+
+// IsCredential reports whether the setting at path — a tree path, e.g.
+// "ingress/cloudflared/token" — is a bearer credential in the sense
+// credentialPaths describes.
+//
+// Matched without regard to capitalization, as checkCollisions matches for
+// the same reason: the config tree lives on a FAT boot partition and the
+// store may live on a FAT data partition, and on FAT "Token" and "token"
+// are one file. A case-sensitive comparison here would be a refusal an
+// attacker walks around by changing a letter — planting the value under a
+// spelling this function doesn't recognise, which the card then writes into
+// the very file the device reads.
+func IsCredential(path string) bool { return credentialPaths[strings.ToLower(path)] }
+
+// ValidEnvName reports whether name has the shape of an environment
+// variable's name — the rule checkEnvValue enforces at build time, exposed
+// so a name that reached a running device by some other route is held to
+// the identical one. A card is hand-edited and the settings kept on the
+// data partition are not authenticated, so neither has been through the
+// build's gate; gosd-init applies this to both (see boot's mergeUserEnv).
+//
+// It says nothing about the GOSD_* namespace gosd reserves: that is a
+// separate refusal, with its own explanation, at both call sites.
+func ValidEnvName(name string) bool { return envNameShape.MatchString(name) }
+
+// PlausibleValue reports whether content could be a setting somebody typed
+// into a file. The only thing it refuses is a NUL byte, which no text
+// editor writes and no sink gosd hands a value to can carry: a NUL in an
+// app environment variable makes execve(2) fail with EINVAL, so a single
+// one planted in the copy kept on the data partition would stop /app
+// starting on every boot, and go on doing so through the re-flash somebody
+// performed to fix it (bean gosd-7m9y).
+//
+// It is deliberately no stricter than that. An embedded newline is legal
+// in a value — a multi-line credential pasted into config/env/ is a real
+// thing people do — and the sinks where a newline actually matters gate it
+// themselves (naming.ValidHostname for /etc/hosts, cloudflared's own
+// hostname check for its config.yml).
+func PlausibleValue(content []byte) bool {
+	return !bytes.ContainsRune(content, 0)
+}
+
 // isJunkName reports whether name is one of the operating-system metadata
 // files junkNames lists, matched the way a FAT card compares names.
 func isJunkName(name string) bool {
@@ -386,7 +447,7 @@ func checkEnvValue(p string, files map[string]entry) error {
 		return fmt.Errorf("%s (%s) is in the GOSD_* namespace gosd reserves for itself; the device ignores those names, so rename it to something else",
 			p, files[p].source)
 	}
-	if !envNameShape.MatchString(name) {
+	if !ValidEnvName(name) {
 		return fmt.Errorf("%s (%s) isn't a valid environment variable name; use only letters, digits and underscores, and don't start with a digit",
 			p, files[p].source)
 	}
