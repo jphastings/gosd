@@ -6,7 +6,7 @@ type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
 updated_at: 2026-08-21T04:42:20Z
-parent: gosd-jge2
+parent: gosd-q6g6
 blocked_by:
     - gosd-uo9f
 ---

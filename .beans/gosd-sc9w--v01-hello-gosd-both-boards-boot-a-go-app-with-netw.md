@@ -1,7 +1,7 @@
 ---
 # gosd-sc9w
 title: 'v0.1 — Hello GoSD: both boards boot a Go app with network'
-status: todo
+status: completed
 type: milestone
 priority: normal
 created_at: 2026-07-02T20:46:56Z
@@ -52,3 +52,38 @@ belongs to them.
 Followed through in the README, which promised "under 5 seconds, WiFi
 included" — false on both halves. It now states about 10 seconds to the app
 and to a wired `hostname.local`, and ~25s over WiFi, with the reason.
+## Summary of Changes
+
+Closed retrospectively. v0.1 shipped long ago — GoSD is on v0.6.5 — and this
+milestone stayed open on hardware beans alone. Against its own definition of
+done:
+
+- **"`gosd build ./examples/hello --board=…` produces a flashable .img on a
+  plain macOS/Linux machine with only Go installed (no root, no Docker)" —
+  SHIPPED** (epic gosd-vi0n), and now for seven public boards rather than the
+  two named here.
+- **"Pi Zero 2W joins WiFi from credentials baked in at build time; Radxa
+  Zero 3E gets a DHCP lease over Ethernet; the example app serves HTTP on :80
+  and logs to serial" — SHIPPED and hardware-proven on both boards**
+  (gosd-m9dj; gosd-nlzf session 1, where the Radxa took lease 192.168.1.233
+  and answered on .local from macOS). The build-time credential baking this
+  bullet describes was later replaced wholesale by the config tree (epic
+  gosd-rw6n) — a supersession, not a gap.
+- **"Boots the board into the example Go app in under 10 seconds from
+  power-on" — NOT MET, and the target was retired rather than hit.**
+  gosd-m9dj measured roughly 25s power-to-HTTP on the Pi Zero 2W and recorded
+  the reason: the WiFi path pays association + DHCP + mDNS on top of boot,
+  where wired boards land near 9s (rock-4se). The equivalent Radxa figure was
+  never taken at all.
+
+**What did not finish.** The Radxa Zero 3E's boot-time baseline, its 5x
+power-cycle survival run, and its gadget / GbE / peripheral checks — six
+unchecked items in gosd-nlzf, held up by serial: this board's 1.5Mbaud TX
+garbles on the bench CP2102N, and full U-Boot visibility needs a CH340 cable.
+That work moved with its epic gosd-v370 to the v0.7 milestone (gosd-dyoi).
+COMPATIBILITY.md still shows the Radxa Zero 3E bring-up as "In progress" and
+correctly continues to.
+
+The hardware-kit bean gosd-s4t4 was completed alongside this one on evidence
+rather than ticked boxes — its own summary sets out what is and is not
+claimed.
