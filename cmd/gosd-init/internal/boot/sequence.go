@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/consoletail"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/configtree"
+	"github.com/jphastings/gosd/internal/devreserve"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/initcfg"
@@ -170,6 +171,18 @@ type Deps struct {
 	// applyHostname's own SetHostname failures.
 	WriteHosts func(hostname string) error
 
+	// ReserveDevices publishes the block devices this board's own
+	// operation depends on, so that a library an app calls can refuse to
+	// hand one of them to a USB host whether or not it happens to be
+	// mounted at the time (see internal/devreserve and gadget.MassStorage;
+	// bean gosd-ix0r). Called as soon as the boot partition has mounted,
+	// which is when gosd-init first knows which device that is, and always
+	// before /app starts. Nil-checked like the other optional deps; a
+	// failure is logged and never fatal — an app then falls back to the
+	// mounted-device check it had before, and halting a device over a
+	// tmpfs write would be the worse outcome.
+	ReserveDevices func(devices []devreserve.Entry) error
+
 	// FaultReport is how a fatal failure reaches LAST_FATAL_ERROR.md at
 	// the root of the boot partition, so whoever collects an unattended
 	// device can read the latest fatal issue by plugging the card into any
@@ -308,6 +321,7 @@ func Run(deps Deps, opts Options) error {
 		return fatal(deps, log, nil, fatalBootMount, err)
 	}
 	log("boot partition mounted at %s from %s", opts.BootTarget, bootDevice)
+	reserveDevices(deps, log, bootDevice)
 
 	// From here on a fatal can be recorded on the card itself: there is
 	// somewhere to write it. Everything above this line can only ever reach

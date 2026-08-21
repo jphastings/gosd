@@ -1352,6 +1352,17 @@ interface, no WiFi/cable needed at all) is planned for later.
   set `ReadOnly` it may write to all of them. `ReadOnly`'s zero value is
   `false`, so an omitted field means read-write; write it out rather
   than letting it be assumed.
+- **The boot partition is refused for you.** As it boots, `gosd-init`
+  writes down the devices GoSD keeps for the board's own operation, and
+  `MassStorage` refuses any `Path` that would hand one to a host —
+  the boot partition itself, or the whole card it sits on, since a LUN
+  over the disk contains the partition. The refusal holds whether or not
+  anything is mounted at the time, which is what makes it a rule rather
+  than a coincidence, and it wraps `gadget.ErrReservedDevice` so an app
+  that can carry on without a drive can match it with `errors.Is` and do
+  so. It is a floor, not a review of your choice of volume: the data
+  partition is yours, so it is deliberately not on that list, and the
+  bullet below is still yours to honour.
 - **Do not share the data partition.** `gosd-init` keeps this device's
   own settings on it, under `/data/.gosd`, so that re-flashing the card
   doesn't lose them — and those settings include, in plain text, the

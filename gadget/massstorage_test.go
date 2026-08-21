@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jphastings/gosd/internal/devreserve"
 )
 
 const msLUN = gadgetRoot + "/functions/mass_storage.usb0/lun.0"
@@ -21,10 +23,31 @@ func mountedFake(source, target string) func() (map[string]string, error) {
 	}
 }
 
+// noneReserved is a reservedDevices fake reporting that gosd-init has
+// published no reserved devices at all — the state anywhere off a GoSD
+// board, and the default for tests that aren't specifically exercising the
+// reserved-device rejection below.
+func noneReserved() (devreserve.Reservations, error) { return nil, nil }
+
+// bootPartition and settingsPartition are the reserved entries gosd-init
+// publishes: the boot partition today, and — standing in for bean
+// gosd-onjv's config partition — a second class this package has never
+// heard of, whose role it can only quote back.
+var (
+	bootPartition     = devreserve.Entry{Path: "/dev/mmcblk0p1", Role: "the boot partition this device started from"}
+	settingsPartition = devreserve.Entry{Path: "/dev/mmcblk0p3", Role: "the partition holding this device's settings"}
+)
+
+// reservedFake returns a reservedDevices fake publishing exactly entries,
+// as gosd-init would have written them at boot.
+func reservedFake(entries ...devreserve.Entry) func() (devreserve.Reservations, error) {
+	return func() (devreserve.Reservations, error) { return devreserve.Reservations(entries), nil }
+}
+
 func TestMassStorageWritesLUNAttributes(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
-	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", ReadOnly: true, Removable: true, mountedTargets: noneMounted})
+	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", ReadOnly: true, Removable: true, reservedDevices: noneReserved, mountedTargets: noneMounted})
 
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() = %v, want nil", err)
@@ -53,7 +76,7 @@ func TestMassStorageWritesLUNAttributes(t *testing.T) {
 func TestMassStorageFlagsDefaultOff(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
-	g := testGadget(MassStorage{Path: "/dev/mmcblk0p3", mountedTargets: noneMounted})
+	g := testGadget(MassStorage{Path: "/dev/mmcblk0p3", reservedDevices: noneReserved, mountedTargets: noneMounted})
 
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() = %v, want nil", err)
@@ -72,7 +95,7 @@ func TestMassStorageFlagsDefaultOff(t *testing.T) {
 func TestMassStorageWritesFlagsBeforeBackingFile(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
-	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", ReadOnly: true, mountedTargets: noneMounted})
+	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", ReadOnly: true, reservedDevices: noneReserved, mountedTargets: noneMounted})
 
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() = %v, want nil", err)
@@ -107,7 +130,7 @@ func TestMassStorageEmptyPathFails(t *testing.T) {
 func TestCloseRemovesMassStorageFunction(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
-	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", mountedTargets: noneMounted})
+	g := testGadget(MassStorage{Path: "/dev/nvme0n1p1", reservedDevices: noneReserved, mountedTargets: noneMounted})
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() = %v, want nil", err)
 	}
@@ -145,7 +168,7 @@ func TestMassStorageRejectsMountedPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFakeFS()
 			seedUDC(f, "20980000.usb")
-			g := testGadget(MassStorage{Path: tt.path, mountedTargets: mountedFake(tt.mountedSrc, tt.atMP)})
+			g := testGadget(MassStorage{Path: tt.path, reservedDevices: noneReserved, mountedTargets: mountedFake(tt.mountedSrc, tt.atMP)})
 
 			err := applyWithFake(t, g, f)
 			if err == nil {
@@ -167,7 +190,7 @@ func TestMassStorageRejectsMountedPath(t *testing.T) {
 func TestMassStorageAllowsUnrelatedMount(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
-	g := testGadget(MassStorage{Path: "/dev/sda1", mountedTargets: mountedFake("/dev/sdb1", "/mnt/other")})
+	g := testGadget(MassStorage{Path: "/dev/sda1", reservedDevices: noneReserved, mountedTargets: mountedFake("/dev/sdb1", "/mnt/other")})
 
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() = %v, want nil: an unrelated device being mounted must not block Path", err)
@@ -185,7 +208,7 @@ func TestMassStorageMountThenExposeWithoutUnmountFails(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
 	device, mountpoint := "/dev/mmcblk0", "/storage"
-	g := testGadget(MassStorage{Path: device, mountedTargets: mountedFake(device, mountpoint)})
+	g := testGadget(MassStorage{Path: device, reservedDevices: noneReserved, mountedTargets: mountedFake(device, mountpoint)})
 
 	err := applyWithFake(t, g, f)
 	if err == nil {
@@ -204,7 +227,7 @@ func TestMassStorageMountUnmountThenExposeSucceeds(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
 	device := "/dev/mmcblk0"
-	g := testGadget(MassStorage{Path: device, mountedTargets: noneMounted})
+	g := testGadget(MassStorage{Path: device, reservedDevices: noneReserved, mountedTargets: noneMounted})
 
 	if err := applyWithFake(t, g, f); err != nil {
 		t.Fatalf("Apply() after Unmount = %v, want nil", err)
@@ -221,7 +244,7 @@ func TestMassStorageMountCheckErrorPropagates(t *testing.T) {
 	f := newFakeFS()
 	seedUDC(f, "20980000.usb")
 	wantErr := errors.New("boom: /proc/mounts unreadable")
-	g := testGadget(MassStorage{Path: "/dev/sda1", mountedTargets: func() (map[string]string, error) {
+	g := testGadget(MassStorage{Path: "/dev/sda1", reservedDevices: noneReserved, mountedTargets: func() (map[string]string, error) {
 		return nil, wantErr
 	}})
 
@@ -265,4 +288,142 @@ func TestRelatedDevicePaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMassStorageRefusesAReservedDeviceWhileNothingIsMounted is the whole
+// point of bean gosd-ix0r: until gosd-init published what it booted from,
+// the only thing standing between an app and the card's boot partition was
+// the mount table, so a device that happened not to be mounted at that
+// moment sailed through. Every case here has NOTHING mounted.
+//
+// The settings-partition rows matter for a second reason: this package
+// knows nothing about that device class (it is bean gosd-onjv's, and does
+// not exist yet), which is what proves a class added later needs only one
+// more published entry to be refused, with its publisher's own words.
+func TestMassStorageRefusesAReservedDeviceWhileNothingIsMounted(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want devreserve.Entry
+	}{
+		{"the boot partition itself", bootPartition.Path, bootPartition},
+		{"the whole card holding the boot partition", "/dev/mmcblk0", bootPartition},
+		{"a device class this package has never heard of", settingsPartition.Path, settingsPartition},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeFS()
+			seedUDC(f, "20980000.usb")
+			g := testGadget(MassStorage{
+				Path:            tt.path,
+				reservedDevices: reservedFake(bootPartition, settingsPartition),
+				mountedTargets:  noneMounted,
+			})
+
+			err := applyWithFake(t, g, f)
+			if err == nil {
+				t.Fatalf("Apply() = nil, want a refusal: %s is reserved even with nothing mounted", tt.path)
+			}
+			if !errors.Is(err, ErrReservedDevice) {
+				t.Errorf("errors.Is(%v, ErrReservedDevice) = false; a caller can't degrade gracefully without it", err)
+			}
+			if !strings.Contains(err.Error(), tt.want.Role) {
+				t.Errorf("error %q should quote the published role %q so its owner knows what was refused", err, tt.want.Role)
+			}
+			if !strings.Contains(err.Error(), tt.path) {
+				t.Errorf("error %q should name the refused path %q", err, tt.path)
+			}
+			assertNoGadgetState(t, f)
+		})
+	}
+}
+
+// A reservation refuses the disk that contains it and nothing beside it:
+// the data partition is the app's own storage, which examples/usbwebsite
+// shares behind an operator opt-in on the eMMC-less boards (bean
+// gosd-cayj's locked decision). Refusing it here would have broken that.
+func TestMassStorageAllowsTheDataPartitionOfAReservedDisk(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	data := "/dev/mmcblk0p2"
+	g := testGadget(MassStorage{
+		Path:            data,
+		reservedDevices: reservedFake(bootPartition),
+		mountedTargets:  noneMounted,
+	})
+
+	if err := applyWithFake(t, g, f); err != nil {
+		t.Fatalf("Apply() = %v, want nil: the data partition is the app's own storage", err)
+	}
+	if got := string(f.files[msLUN+"/file"]); got != data+"\n" {
+		t.Errorf("lun.0/file = %q, want %q", got, data+"\n")
+	}
+}
+
+// A reserved device that also happens to be mounted must report the fact
+// that stays true afterwards. Reporting the mount instead would invite an
+// Unmount that changes nothing about why the device is off limits.
+func TestMassStorageReservationOutranksTheMountCheck(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	g := testGadget(MassStorage{
+		Path:            bootPartition.Path,
+		reservedDevices: reservedFake(bootPartition),
+		mountedTargets:  mountedFake(bootPartition.Path, "/boot"),
+	})
+
+	err := applyWithFake(t, g, f)
+	if err == nil {
+		t.Fatal("Apply() = nil, want a refusal")
+	}
+	if !errors.Is(err, ErrReservedDevice) {
+		t.Errorf("error %q reports the mount; the reservation is what survives an Unmount", err)
+	}
+	assertNoGadgetState(t, f)
+}
+
+// An image whose gosd-init predates the reserved-device list publishes
+// nothing, and an app built against a newer gadget package must keep
+// working on it — with the mounted-device check it always had, and no more.
+// Pinned deliberately: this is the documented limit of the guarantee, not
+// an oversight.
+func TestMassStorageWithNothingPublishedFallsBackToTheMountCheck(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	g := testGadget(MassStorage{
+		Path:            bootPartition.Path,
+		reservedDevices: noneReserved,
+		mountedTargets:  mountedFake(bootPartition.Path, "/boot"),
+	})
+
+	err := applyWithFake(t, g, f)
+	if err == nil {
+		t.Fatal("Apply() = nil, want the mounted-device refusal")
+	}
+	if errors.Is(err, ErrReservedDevice) {
+		t.Errorf("error %q claims a reservation, but nothing was published", err)
+	}
+	if !strings.Contains(err.Error(), "Unmount") {
+		t.Errorf("error %q should be the mounted-device refusal", err)
+	}
+}
+
+// A reserved-device list that exists but can't be read means the package
+// doesn't know what is off limits, which must surface actionably rather
+// than read as "nothing is".
+func TestMassStorageReservationReadErrorPropagates(t *testing.T) {
+	f := newFakeFS()
+	seedUDC(f, "20980000.usb")
+	wantErr := errors.New("boom: reserved-devices.json is not JSON")
+	g := testGadget(MassStorage{
+		Path:            "/dev/sda1",
+		mountedTargets:  noneMounted,
+		reservedDevices: func() (devreserve.Reservations, error) { return nil, wantErr },
+	})
+
+	err := applyWithFake(t, g, f)
+	if err == nil || !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Fatalf("Apply() = %v, want an error wrapping %v", err, wantErr)
+	}
+	assertNoGadgetState(t, f)
 }
