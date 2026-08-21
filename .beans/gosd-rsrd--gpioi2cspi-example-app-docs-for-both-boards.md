@@ -5,8 +5,8 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-08T03:35:00Z
-parent: gosd-jge2
+updated_at: 2026-08-21T03:19:52Z
+parent: gosd-q6g6
 blocked_by:
     - gosd-m9dj
     - gosd-nlzf

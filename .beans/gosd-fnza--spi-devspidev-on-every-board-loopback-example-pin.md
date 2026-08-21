@@ -5,8 +5,8 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-08T03:35:00Z
-updated_at: 2026-07-09T20:05:43Z
-parent: gosd-jge2
+updated_at: 2026-08-21T03:19:52Z
+parent: gosd-q6g6
 blocked_by:
     - gosd-nyad
 ---

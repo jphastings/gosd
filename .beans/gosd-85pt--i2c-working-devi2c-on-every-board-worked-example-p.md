@@ -5,8 +5,8 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-07T21:13:35Z
-updated_at: 2026-07-08T02:46:22Z
-parent: gosd-jge2
+updated_at: 2026-08-21T03:19:52Z
+parent: gosd-q6g6
 ---
 
 Make I2C actually usable on all four boards. Kernel drivers are already =y everywhere (I2C_BCM2835 + I2C_CHARDEV on Pis, I2C_RK3X on Rockchips); the gap is device-tree enablement and documentation.

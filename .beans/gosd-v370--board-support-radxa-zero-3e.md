@@ -3,9 +3,10 @@
 title: 'Board support: Radxa Zero 3E'
 status: todo
 type: epic
+priority: normal
 created_at: 2026-07-02T20:49:55Z
-updated_at: 2026-07-02T20:49:55Z
-parent: gosd-sc9w
+updated_at: 2026-08-21T03:19:52Z
+parent: gosd-dyoi
 ---
 
 Everything needed to boot GoSD on the Radxa Zero 3E (Rockchip RK3566, 4×Cortex-A55, GbE, no WiFi).

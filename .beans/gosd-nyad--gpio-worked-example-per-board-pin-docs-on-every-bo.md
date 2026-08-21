@@ -5,8 +5,8 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-07-08T03:35:00Z
-updated_at: 2026-07-08T06:08:34Z
-parent: gosd-jge2
+updated_at: 2026-08-21T03:19:52Z
+parent: gosd-q6g6
 ---
 
 Make GPIO usable and documented on all four boards. CONFIG_GPIO_CDEV is already =y everywhere, so /dev/gpiochipN appears at boot — this is a docs + worked-example job with NO kernel/DTB/config.txt change and NO artifact release.
