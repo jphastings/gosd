@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/diskfmt/ext4golden"
@@ -16,8 +17,8 @@ import (
 // package wrote is one this package reads back correctly, label and UUID
 // both, mirroring TestFormatExFATRoundTripsThroughInspect.
 func TestFormatEXT4RoundTripsThroughInspect(t *testing.T) {
-	path := backingFile(t, ext4golden.RawBytes)
-	if err := FormatEXT4(path, "GOSD-DATA"); err != nil {
+	path := backingFile(t, ext4golden.Data.RawBytes)
+	if err := FormatEXT4(EXT4GoldenData, path, "GOSD-DATA"); err != nil {
 		t.Fatalf("FormatEXT4: %v", err)
 	}
 
@@ -39,15 +40,15 @@ func TestFormatEXT4RoundTripsThroughInspect(t *testing.T) {
 const ext4GoldenPlaceholderUUID = "4c1a41c8-20b8-4c50-8399-7fae324e8398"
 
 func TestFormatEXT4RefusesAnOverlongLabel(t *testing.T) {
-	path := backingFile(t, ext4golden.RawBytes)
-	if err := FormatEXT4(path, "SEVENTEEN-CHARS!!"); err == nil {
+	path := backingFile(t, ext4golden.Data.RawBytes)
+	if err := FormatEXT4(EXT4GoldenData, path, "SEVENTEEN-CHARS!!"); err == nil {
 		t.Fatal("FormatEXT4 accepted a 17-byte label")
 	}
 }
 
 func TestFormatEXT4RefusesATargetSmallerThanTheGoldenImage(t *testing.T) {
-	path := backingFile(t, ext4golden.RawBytes-1)
-	if err := FormatEXT4(path, "GOSD-DATA"); err == nil {
+	path := backingFile(t, ext4golden.Data.RawBytes-1)
+	if err := FormatEXT4(EXT4GoldenData, path, "GOSD-DATA"); err == nil {
 		t.Fatal("FormatEXT4 accepted a device one byte smaller than the golden image")
 	}
 }
@@ -56,12 +57,12 @@ func TestFormatEXT4RefusesATargetSmallerThanTheGoldenImage(t *testing.T) {
 // zero-valued UUID slipping in: two formats of two different files must not
 // collide.
 func TestFormatEXT4GeneratesAFreshUUIDEachTime(t *testing.T) {
-	path1 := backingFile(t, ext4golden.RawBytes)
-	path2 := backingFile(t, ext4golden.RawBytes)
-	if err := FormatEXT4(path1, "GOSD-DATA"); err != nil {
+	path1 := backingFile(t, ext4golden.Data.RawBytes)
+	path2 := backingFile(t, ext4golden.Data.RawBytes)
+	if err := FormatEXT4(EXT4GoldenData, path1, "GOSD-DATA"); err != nil {
 		t.Fatalf("FormatEXT4 (1): %v", err)
 	}
-	if err := FormatEXT4(path2, "GOSD-DATA"); err != nil {
+	if err := FormatEXT4(EXT4GoldenData, path2, "GOSD-DATA"); err != nil {
 		t.Fatalf("FormatEXT4 (2): %v", err)
 	}
 
@@ -86,8 +87,8 @@ func TestFormatEXT4GeneratesAFreshUUIDEachTime(t *testing.T) {
 // e2fsprogs while building this package (see the bean's Summary of
 // Changes).
 func TestFormatEXT4StampsBackupSuperblocksConsistently(t *testing.T) {
-	path := backingFile(t, ext4golden.RawBytes)
-	if err := FormatEXT4(path, "GOSD-DATA"); err != nil {
+	path := backingFile(t, ext4golden.Data.RawBytes)
+	if err := FormatEXT4(EXT4GoldenData, path, "GOSD-DATA"); err != nil {
 		t.Fatalf("FormatEXT4: %v", err)
 	}
 
@@ -173,14 +174,14 @@ func (o offsetWriterAt) WriteAt(p []byte, off int64) (int, error) {
 // its own offset.
 func TestWriteEXT4AtANonZeroOffsetInsideALargerFile(t *testing.T) {
 	const gapBytes = 3 * 1024 * 1024 // arbitrary, unaligned to any ext4 structure
-	path := backingFile(t, gapBytes+ext4golden.RawBytes)
+	path := backingFile(t, gapBytes+ext4golden.Data.RawBytes)
 
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("opening backing file: %v", err)
 	}
 	shifted := offsetWriterAt{w: f, base: gapBytes}
-	if err := WriteEXT4(shifted, ext4golden.RawBytes, "GOSD-DATA"); err != nil {
+	if err := WriteEXT4(EXT4GoldenData, shifted, ext4golden.Data.RawBytes, "GOSD-DATA"); err != nil {
 		t.Fatalf("WriteEXT4: %v", err)
 	}
 	if err := f.Close(); err != nil {
@@ -204,7 +205,7 @@ func TestWriteEXT4AtANonZeroOffsetInsideALargerFile(t *testing.T) {
 		}
 	}
 
-	region := extractRegionForTest(t, path, gapBytes, ext4golden.RawBytes)
+	region := extractRegionForTest(t, path, gapBytes, ext4golden.Data.RawBytes)
 	got, err := Inspect(region)
 	if err != nil {
 		t.Fatalf("Inspect on the extracted ext4 region: %v", err)
@@ -240,7 +241,7 @@ func extractRegionForTest(t *testing.T, path string, offset, length int64) strin
 }
 
 func TestWriteEXT4FailsHonestlyWhenTheUnderlyingWriteFails(t *testing.T) {
-	path := backingFile(t, ext4golden.RawBytes)
+	path := backingFile(t, ext4golden.Data.RawBytes)
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("opening backing file: %v", err)
@@ -248,7 +249,113 @@ func TestWriteEXT4FailsHonestlyWhenTheUnderlyingWriteFails(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	fw := &failingWriterAt{w: f, failAt: 2 << 20} // fail partway through the first few chunks
-	if err := writeEXT4(fw, ext4golden.RawBytes, "GOSD-DATA"); err == nil {
+	if err := writeEXT4(EXT4GoldenData, fw, ext4golden.Data.RawBytes, "GOSD-DATA"); err == nil {
 		t.Fatal("writeEXT4 with a failing underlying writer = nil error, want a failure")
+	}
+}
+
+// ext4ConfigGoldenPlaceholderUUID is the config golden's own fixed UUID
+// (internal/diskfmt/ext4golden/config-manifest.json), the counterpart to
+// ext4GoldenPlaceholderUUID above.
+const ext4ConfigGoldenPlaceholderUUID = "d33ae914-c738-4bea-ba4d-99fe3c1bf25d"
+
+// TestFormatEXT4ConfigGoldenRoundTripsThroughInspect is the config golden's
+// half of TestFormatEXT4RoundTripsThroughInspect. It is not redundant with
+// it: the config golden is small enough to be a SINGLE block group, so it
+// carries no backup superblocks at all, and it ships resize_inode where the
+// data golden ships meta_bg — a different incompat bitmask for
+// parseEXT4Superblock to accept.
+func TestFormatEXT4ConfigGoldenRoundTripsThroughInspect(t *testing.T) {
+	path := backingFile(t, ext4golden.Config.RawBytes)
+	if err := FormatEXT4(EXT4GoldenConfig, path, "gosd-conf"); err != nil {
+		t.Fatalf("FormatEXT4: %v", err)
+	}
+
+	got, err := Inspect(path)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if got.FS != EXT4 || got.Label != "gosd-conf" {
+		t.Errorf("Inspect = %+v, want {FS:ext4 Label:gosd-conf}", got)
+	}
+	if got.UUID == "" || got.UUID == ext4ConfigGoldenPlaceholderUUID {
+		t.Errorf("Inspect UUID = %q, want a freshly generated one (not empty, not the golden's placeholder)", got.UUID)
+	}
+}
+
+// TestConfigGoldenHasNoBackupSuperblocks pins the reason the round-trip test
+// above has to exist separately: at 32MiB the whole filesystem is one block
+// group, so the stamping loop has nothing to patch beyond the primary. If a
+// future config golden ever grew past one group, the backup-stamping path
+// would start applying to it and would want its own coverage.
+func TestConfigGoldenHasNoBackupSuperblocks(t *testing.T) {
+	path := backingFile(t, ext4golden.Config.RawBytes)
+	if err := FormatEXT4(EXT4GoldenConfig, path, "gosd-conf"); err != nil {
+		t.Fatalf("FormatEXT4: %v", err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("reopening formatted device: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	sb, err := parseEXT4Superblock(readSuperblockAt(t, f, ext4SuperblockOffset))
+	if err != nil {
+		t.Fatalf("parsing the primary superblock: %v", err)
+	}
+	backups, err := ext4BackupSuperblockOffsets(sb)
+	if err != nil {
+		t.Fatalf("ext4BackupSuperblockOffsets: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("config golden reports %d backup superblocks at %v, want none (it is a single block group)", len(backups), backups)
+	}
+}
+
+// TestEXT4GoldensRefuseEachOthersSizes proves the two goldens are not
+// interchangeable, which is the whole reason the caller has to name one: the
+// data golden cannot be written into a config-sized region, and writing the
+// config golden into a data-sized one succeeds but leaves a 32MiB filesystem
+// where a 512MiB one was meant to be — so only the first is an error, and
+// the second is why the choice is explicit rather than inferred from size.
+func TestEXT4GoldensRefuseEachOthersSizes(t *testing.T) {
+	path := backingFile(t, ext4golden.Config.RawBytes)
+	err := FormatEXT4(EXT4GoldenData, path, "GOSD-DATA")
+	if err == nil {
+		t.Fatal("the data golden was accepted into a config-sized region")
+	}
+	if !strings.Contains(err.Error(), "too small") {
+		t.Errorf("error = %v, want it to say the target is too small", err)
+	}
+}
+
+// TestFormatEXT4RefusesAnUnknownGolden covers EXT4Golden's zero value: a
+// caller that forgot to choose must be refused loudly rather than quietly
+// given whichever golden happened to be first.
+func TestFormatEXT4RefusesAnUnknownGolden(t *testing.T) {
+	path := backingFile(t, ext4golden.Data.RawBytes)
+	err := FormatEXT4("", path, "GOSD-DATA")
+	if err == nil {
+		t.Fatal("FormatEXT4 accepted EXT4Golden's zero value")
+	}
+	for _, want := range []string{"EXT4GoldenData", "EXT4GoldenConfig"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+}
+
+// TestEXT4GoldenMinBytesMatchTheAssets keeps the size a caller validates
+// against tied to the bytes actually shipped — the numbers `gosd build`
+// quotes in a refusal come from here.
+func TestEXT4GoldenMinBytesMatchTheAssets(t *testing.T) {
+	if got, want := EXT4GoldenData.MinBytes(), ext4golden.Data.RawBytes; got != want {
+		t.Errorf("EXT4GoldenData.MinBytes() = %d, want %d", got, want)
+	}
+	if got, want := EXT4GoldenConfig.MinBytes(), ext4golden.Config.RawBytes; got != want {
+		t.Errorf("EXT4GoldenConfig.MinBytes() = %d, want %d", got, want)
+	}
+	if got := EXT4Golden("nonsense").MinBytes(); got != 0 {
+		t.Errorf("an unrecognised golden reports MinBytes() = %d, want 0 (the loud refusal belongs to Format/Write)", got)
 	}
 }

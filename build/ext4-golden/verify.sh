@@ -56,20 +56,21 @@ fi
 umount "$WORK/mnt"
 losetup -d "$LOOPDEV"
 
-# Grow a truncated (sparse) copy of the golden image. The largest target
-# this build host's own filesystem can represent is tried first, falling
-# back to smaller round sizes -- some hosts' root filesystems are
+# Grow a truncated (sparse) copy of the golden image, to each of the sizes
+# in $GROW_TARGETS (build.sh passes a per-variant list, largest first). The
+# largest target this build host's own filesystem can represent is tried
+# first, falling back through the rest -- some hosts' root filesystems are
 # themselves capped well under 16TiB (this sandbox's colima VM, for one:
 # its own ext4 root has no 64bit feature, so files top out just under
 # 2^32 blocks). That is a build-HOST limitation, not a property of the
-# golden image or its meta_bg parameters, so we record whichever ceiling
+# golden image or its resize parameters, so we record whichever ceiling
 # this run actually proved rather than silently claiming the target we
 # couldn't reach here.
 GROW=/tmp/grow.img
-for TARGET_BYTES in 17592186044416 8796093022208 4398046511104 1099511627776 274877906944; do
+for TARGET_BYTES in ${GROW_TARGETS:?GROW_TARGETS must be set by build.sh}; do
   cp "$GOLDEN" "$GROW"
   if truncate -s "$TARGET_BYTES" "$GROW" 2>/dev/null; then
-    echo "verify: growing to $TARGET_BYTES bytes ($((TARGET_BYTES / 1024 / 1024 / 1024 / 1024)) TiB, or just under)"
+    echo "verify: growing to $TARGET_BYTES bytes"
     break
   fi
   TARGET_BYTES=""

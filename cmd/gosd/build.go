@@ -546,9 +546,9 @@ const dataSizeLimitDocsURL = "https://github.com/jphastings/gosd/blob/main/docs/
 // silently corrupt partition (see diskfmt.FAT32SizeLimitReason) - that
 // ceiling is a defect of GoSD's own FAT32 formatter, so it does not apply to
 // ext4 at all. ext4 instead has a floor: GoSD writes a fixed
-// diskfmt.MinEXT4Bytes() golden image and grows it to the partition's real
+// diskfmt.EXT4GoldenData golden image and grows it to the partition's real
 // size on first boot, so a smaller partition has nowhere to grow into (see
-// diskfmt.EXT4SizeLimitReason), and 0 (no partition) is refused outright,
+// diskfmt.EXT4Golden.SizeLimitReason), and 0 (no partition) is refused outright,
 // since --data-filesystem=ext4 with no partition to format is certainly a
 // mistake. "expand" is valid for either filesystem and is resolved before
 // either bound is checked, since it carries no --data-size number to compare
@@ -583,9 +583,9 @@ func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error
 		if size == 0 {
 			return 0, false, fmt.Errorf("--data-filesystem=ext4 needs a writable data partition to format, but --data-size=0 (the default) means none is created; pass --data-size (e.g. --data-size=1GiB) or --data-size=expand, or drop --data-filesystem=ext4 to build without a data partition")
 		}
-		if minBytes := diskfmt.MinEXT4Bytes(); size < minBytes {
+		if minBytes := diskfmt.EXT4GoldenData.MinBytes(); size < minBytes {
 			return 0, false, fmt.Errorf("--data-size %q is smaller than the %s minimum GoSD's ext4 formatter needs, because %s; use --data-size=%s or larger (--data-size=%d for the exact minimum), or --data-size=expand which always clears it, or build with --data-filesystem=fat32 instead",
-				s, humanizeBinaryBytes(minBytes), diskfmt.EXT4SizeLimitReason, humanizeBinaryBytes(minBytes), minBytes)
+				s, humanizeBinaryBytes(minBytes), diskfmt.EXT4GoldenData.SizeLimitReason(), humanizeBinaryBytes(minBytes), minBytes)
 		}
 		return size, false, nil
 	}

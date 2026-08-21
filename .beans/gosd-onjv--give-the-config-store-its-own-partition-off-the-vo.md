@@ -1,11 +1,11 @@
 ---
 # gosd-onjv
 title: Give the config store its own partition, off the volume apps share
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-20T09:39:04Z
-updated_at: 2026-08-20T09:39:04Z
+updated_at: 2026-08-21T08:14:23Z
 ---
 
 Move the config store off `/data` and onto a partition of its own, so an app
@@ -120,13 +120,115 @@ own:
 
 ## Todo
 
-- [ ] New 32 MiB golden + provenance manifest + README rationale
+- [x] New 32 MiB golden + provenance manifest + README rationale
 - [ ] `--config-size` build flag; three-partition layout in `internal/image`
 - [ ] Config partition establishment/adoption via `internal/blockmount`
 - [ ] Point `cmd/gosd-init/internal/configstore` at the new mount
-- [ ] Exclude it from every app-reachable storage enumeration (`disk`, `emmc`)
-- [ ] Decide the `boards.EXT4Support` question above
+- [ ] Exclude it from every app-reachable storage enumeration (`disk`, `emmc`) — **not this bean's to build**: `gosd-ix0r` owns the mechanism, follow-up filed as `gosd-9h37`
+- [x] Decide the `boards.EXT4Support` question above (see the decision section)
 - [ ] `dataexpand`: derive offsets with a third partition present
 - [ ] Change file naming the one-time settings loss and the layout ABI break
 - [ ] Update `gosd-df24` to target the config partition
 - [ ] Docs: the config tree guide, and the upgrade-path design doc
+
+## Progress notes
+
+**Split into two PRs.** This bean is large enough that one PR would not be
+reviewable, so it lands at the seam the plan suggested:
+
+1. **The golden + diskfmt support** — the new 32MiB seed, its provenance and
+   rationale, and `diskfmt.EXT4Golden` making every ext4 format name which
+   seed it writes. Self-contained, changes nothing a user sees.
+2. **The layout and the move** — `--config-size`, the three-partition image,
+   establishment through `internal/blockmount`, pointing configstore at the
+   new mount, dataexpand's offsets, and the docs/release-note callout.
+
+## Design finding: the config partition must be created at first boot, not shipped in the .img
+
+Found while building the golden, and it changes the shape of the remaining
+work — it is not something either reading of the locked decisions settles,
+so it is written down here rather than discovered late.
+
+**Flashing an image rewrites every byte the image contains.** That is why
+`/data` survives a reflash only for `--data-size=expand` images: the image
+file *ends* at the boot partition, so the data region beyond it is never
+touched, and `dataexpand` re-adopts it. A fixed-size image embeds a
+freshly-formatted data partition in the image itself, and "nothing can save
+it" (upgrade-path §2, verbatim).
+
+The config partition inherits that property exactly. If `internal/image`
+writes a pre-formatted 32MiB config partition into the `.img`, then **every
+reflash wipes the store the partition exists to protect** — silently, and
+looking for all the world like it worked. So:
+
+- **`--data-size=expand`** (the recommended updatable mode): the image ends
+  at partition 1. Partition 2 (config) *and* partition 3 (data) are both
+  created on first boot, beyond the image's end, and both survive a reflash.
+  This is the case the whole feature is for.
+- **`--data-size=N` or `0`**: partition 2 necessarily sits inside the image
+  (partition 3 has to follow it), so it is shipped pre-formatted and is
+  rewritten by every flash. Kept settings do not survive a reflash — exactly
+  as they do not today, for the same reason, and the docs already say
+  `expand` is the updatable-deployment mode.
+
+That asymmetry is forced, not chosen: config must precede data (locked), and
+anything preceding an embedded data partition is itself embedded.
+
+**Consequence for the implementation:** `dataexpand` becomes first-boot
+partition work for *two* partitions rather than one, with the same commit
+discipline applied twice — for each partition, register it with the running
+kernel, adopt-or-format, sync, marker, sync, and only then write ITS MBR
+entry, which is that partition's own commit record. Partition 2 is completed
+(entry and all) before partition 3 is touched, so a crash between them leaves
+"config established, data absent", which the next boot completes. The
+fixed-size path keeps its existing shape: the entry is already there, so the
+work is only grow-and-mark, never format.
+
+`internal/image` correspondingly writes partition 2 into the image only when
+partition 3 is also embedded (fixed or zero `--data-size`); an `expand` image
+is byte-for-byte the same length it is today.
+
+## Decided: `boards.EXT4Support` stays a build-time refusal, and gains a registration assertion
+
+The bean asked whether to keep the per-board check as a build-time refusal or
+promote it to a board-registration assertion. **Both, and neither replaces the
+other** — they answer different questions:
+
+- **Keep the `Board.EXT4Support()` method and `gosd build`'s refusal.** The
+  method carries a `Reason` that is folded verbatim into an actionable
+  user-facing error, and the check is not redundant even when every registered
+  board supports ext4: `gosd build-kernel` lets a developer compile their own
+  kernel and `--artifacts-dir` lets one be substituted, so a board's static
+  claim can be true while the kernel actually in use has had `CONFIG_EXT4_FS`
+  dropped. The runtime preflights (`blockmount.Mountable`,
+  `dataexpand`'s `FilesystemSupported`) stay for the same reason.
+- **Add the registration assertion in `internal/repocheck/boards_test.go`.**
+  What the config partition changes is not *whether* to check but *when a
+  false answer can exist*: a board whose stock kernel lacks `CONFIG_EXT4_FS`
+  can no longer run GoSD at all, so that fact must surface to the person
+  adding the board, in CI, rather than months later to an end user running
+  `gosd build`. `boards_test.go` already derives per-board requirements from
+  the registry "with the failure naming the edit to make"; this is one more
+  derivation, and no board GoSD ships today is affected (gosd-ssth).
+
+Net effect: `--data-filesystem=ext4`'s per-board refusal becomes
+unreachable-in-practice for a registered board, in exactly the way
+`dataexpand`'s ext4 preflight already is — which is the honest place for it.
+The assertion lands with the change that makes ext4 unconditional, not before:
+on `main` today ext4 is genuinely optional and asserting it at registration
+would assert something the codebase does not yet require.
+
+## gosd-ix0r owns the app-reachable-storage exclusion
+
+The todo "exclude it from every app-reachable storage enumeration (`disk`,
+`emmc`)" is deliberately left unchecked and is NOT implemented here.
+`gosd-ix0r` owns the mechanism — gosd-init publishing the identity of the
+device it booted from, and `gadget.MassStorage.Create` refusing those devices
+— and the config partition belongs *on top of that mechanism*, as one more
+device in the published set. Building a second, parallel exclusion in `disk`
+and `emmc` would leave two things to keep in step.
+
+When `gosd-ix0r` lands, the config partition's node has to be added to
+whatever set it publishes, and `disk.rank`/`Usable` and `emmc.chooseEMMC`
+checked against it. If `gosd-ix0r` merges first, do it in this bean's second
+PR; if not, it is the follow-up below.

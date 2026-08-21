@@ -157,8 +157,8 @@ type Spec struct {
 	// formats into a self-consistent FAT32 volume (at most two clusters
 	// less) - the same trim BootSizeBytes gets. That trim is a
 	// workaround for a go-diskfs defect and does NOT apply to ext4; an
-	// ext4 DataSizeBytes must instead be at least diskfmt.MinEXT4Bytes(),
-	// or Write refuses.
+	// ext4 DataSizeBytes must instead be at least
+	// diskfmt.EXT4GoldenData.MinBytes(), or Write refuses.
 	DataSizeBytes int64
 
 	// DataFilesystem selects the filesystem written into the data
@@ -240,8 +240,8 @@ type layout struct {
 // dataFS is the already-validated data filesystem (validateDataFilesystem's
 // result): it decides whether the data partition gets FAT32's
 // self-consistency trim (skipped for ext4, which has no such go-diskfs
-// defect) or a minimum-size check against diskfmt.MinEXT4Bytes() (skipped
-// for FAT32, which has no fixed golden-image floor).
+// defect) or a minimum-size check against diskfmt.EXT4GoldenData.MinBytes()
+// (skipped for FAT32, which has no fixed golden-image floor).
 func computeLayout(bootSizeBytes, dataSizeBytes int64, dataFS diskfmt.FS) (layout, error) {
 	if bootSizeBytes < 0 {
 		return layout{}, fmt.Errorf("boot partition size %d bytes is negative", bootSizeBytes)
@@ -293,10 +293,11 @@ func computeLayout(bootSizeBytes, dataSizeBytes int64, dataFS diskfmt.FS) (layou
 	}
 
 	if dataFS == diskfmt.EXT4 {
-		if trimmed := sizeInLBAs * sectorSizeBytes; trimmed < diskfmt.MinEXT4Bytes() {
+		minBytes := diskfmt.EXT4GoldenData.MinBytes()
+		if trimmed := sizeInLBAs * sectorSizeBytes; trimmed < minBytes {
 			return layout{}, fmt.Errorf(
 				"data partition size %d bytes (%.2f MiB) is smaller than the smallest ext4 volume GoSD can write (%d bytes / %.2f MiB): %s; pass a larger --data-size, or build with --data-filesystem=fat32",
-				trimmed, float64(trimmed)/(1<<20), diskfmt.MinEXT4Bytes(), float64(diskfmt.MinEXT4Bytes())/(1<<20), diskfmt.EXT4SizeLimitReason)
+				trimmed, float64(trimmed)/(1<<20), minBytes, float64(minBytes)/(1<<20), diskfmt.EXT4GoldenData.SizeLimitReason())
 		}
 	} else {
 		// Same trim as the boot partition above - a go-diskfs FAT32
@@ -652,7 +653,7 @@ func writeEXT4DataPartition(d *disk.Disk, lay layout, label string) error {
 
 	sizeBytes := int64(lay.dataPartitionSizeInLBAs) * sectorSizeBytes
 	shifted := offsetPartitionWriter{w: w, base: lay.dataPartitionOffsetBytes, limit: sizeBytes}
-	if err := diskfmt.WriteEXT4(shifted, sizeBytes, label); err != nil {
+	if err := diskfmt.WriteEXT4(diskfmt.EXT4GoldenData, shifted, sizeBytes, label); err != nil {
 		return fmt.Errorf("writing the %s ext4 data partition failed: %w", label, err)
 	}
 	return nil

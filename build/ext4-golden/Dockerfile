@@ -43,25 +43,32 @@ ARG HASH_SEED
 ARG FAKE_TIME
 ARG GOLDEN_SIZE_MB
 ARG JOURNAL_SIZE_MB
+ARG FEATURES
 
 RUN test -n "$GOLDEN_UUID" && test -n "$HASH_SEED" \
     && test -n "$FAKE_TIME" && test -n "$GOLDEN_SIZE_MB" \
-    && test -n "$JOURNAL_SIZE_MB"
+    && test -n "$JOURNAL_SIZE_MB" && test -n "$FEATURES"
 
 WORKDIR /build
 # Parameter rationale lives in ../README.md (internal/diskfmt/ext4golden/) --
 # this is the literal invocation those WHYs justify.
 #
-# ^resize_inode,meta_bg: the classic reserved-GDT-blocks online-resize path
-#   (resize_inode) tops out around 8TiB with 4KiB blocks/64bit descriptors
-#   (its reserved blocks are addressed through the resize inode's single
-#   indirect block, capped at blocksize/4 = 1024 blocks however large a
-#   target -E resize= requests -- verified empirically, see the README).
-#   meta_bg removes that ceiling by storing group descriptors inside each
-#   meta block group instead of reserving them contiguously up front, and
-#   supports online resize (kernel.org's ext4 blockgroup.html: "Existing
-#   filesystems can be resized on-line"). The two features are mutually
-#   exclusive at format time -- mke2fs refuses combining them.
+# -O $FEATURES: the whole feature set, passed in by build.sh so the two
+#   goldens differ in exactly one respect and nowhere else. The data golden
+#   passes ^resize_inode,meta_bg -- the classic reserved-GDT-blocks
+#   online-resize path (resize_inode) tops out around 8TiB with 4KiB
+#   blocks/64bit descriptors (its reserved blocks are addressed through the
+#   resize inode's single indirect block, capped at blocksize/4 = 1024
+#   blocks however large a target -E resize= requests -- verified
+#   empirically, see the README), and meta_bg removes that ceiling by
+#   storing group descriptors inside each meta block group instead of
+#   reserving them contiguously up front, while still supporting online
+#   resize (kernel.org's ext4 blockgroup.html: "Existing filesystems can be
+#   resized on-line"). The two features are mutually exclusive at format
+#   time -- mke2fs refuses combining them. The config golden passes
+#   resize_inode instead: a fixed-size partition never approaches that
+#   ceiling, and the plainer filesystem is the one any host's e2fsck knows
+#   best.
 # lazy_itable_init/lazy_journal_init=1: ship without fully zeroing the inode
 #   table or journal; the kernel's ext4lazyinit thread finishes after mount
 #   (crash-safety argument in the README).
@@ -73,7 +80,7 @@ WORKDIR /build
 #   real per-volume values into the superblock at format time.
 RUN dd if=/dev/zero of=/build/golden.img bs=1M count="$GOLDEN_SIZE_MB" \
     && E2FSPROGS_FAKE_TIME="$FAKE_TIME" mke2fs -q -F -t ext4 -b 4096 \
-         -O ^resize_inode,meta_bg,sparse_super,large_file,filetype,dir_index,ext_attr,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize \
+         -O "$FEATURES" \
          -E lazy_itable_init=1,lazy_journal_init=1,hash_seed="$HASH_SEED",root_owner=0:0 \
          -J size="$JOURNAL_SIZE_MB" \
          -U "$GOLDEN_UUID" \

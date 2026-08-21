@@ -432,11 +432,11 @@ func TestParseDataSizeEXT4RequiresANonZeroSize(t *testing.T) {
 }
 
 // TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum confirms a --data-size
-// smaller than diskfmt.MinEXT4Bytes() is refused for ext4, naming the
+// smaller than diskfmt.EXT4GoldenData.MinBytes() is refused for ext4, naming the
 // minimum and the remedy - bean gosd-95yu's floor, mirroring
 // TestParseDataSizeRefusesMoreThanFAT32CanHold's ceiling check for FAT32.
 func TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum(t *testing.T) {
-	minBytes := diskfmt.MinEXT4Bytes()
+	minBytes := diskfmt.EXT4GoldenData.MinBytes()
 
 	for _, tc := range []struct {
 		name    string
@@ -455,7 +455,7 @@ func TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum(t *testing.T) {
 			if err == nil {
 				return
 			}
-			for _, want := range []string{strconv.FormatInt(minBytes, 10), diskfmt.EXT4SizeLimitReason, "--data-filesystem=fat32"} {
+			for _, want := range []string{strconv.FormatInt(minBytes, 10), diskfmt.EXT4GoldenData.SizeLimitReason(), "--data-filesystem=fat32"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal %q does not mention %q", err, want)
 				}
@@ -466,7 +466,7 @@ func TestParseDataSizeEXT4RefusesBelowTheGoldenMinimum(t *testing.T) {
 
 // TestParseDataSizeEXT4AcceptsExpandWithNoFloorCheck confirms
 // --data-size=expand is valid for ext4 with no minimum-size refusal: it
-// carries no --data-size number to compare against diskfmt.MinEXT4Bytes(),
+// carries no --data-size number to compare against diskfmt.EXT4GoldenData.MinBytes(),
 // and gosd-init always fills the whole remaining card, which comfortably
 // clears the golden image's floor.
 func TestParseDataSizeEXT4AcceptsExpandWithNoFloorCheck(t *testing.T) {

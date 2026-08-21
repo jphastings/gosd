@@ -691,7 +691,7 @@ func extractRegion(t *testing.T, imgPath string, offset, length int64) string {
 // real ext4 filesystem labelled with Spec.DataLabel that diskfmt.Inspect can read back.
 func TestWriteWithEXT4DataFilesystemProducesAReadableEXT4Partition(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
-	dataSizeBytes := diskfmt.MinEXT4Bytes()
+	dataSizeBytes := diskfmt.EXT4GoldenData.MinBytes()
 
 	_, err := image.Write(imgPath, image.Spec{
 		BootLabel:      testBootLabel,
@@ -764,7 +764,7 @@ func TestWriteRejectsEXT4DataSizeBelowTheGoldenMinimum(t *testing.T) {
 	_, err := image.Write(imgPath, image.Spec{
 		BootLabel:      testBootLabel,
 		DataLabel:      testDataLabel,
-		DataSizeBytes:  diskfmt.MinEXT4Bytes() - 1,
+		DataSizeBytes:  diskfmt.EXT4GoldenData.MinBytes() - 1,
 		DataFilesystem: diskfmt.EXT4,
 	})
 	if err == nil {
@@ -808,7 +808,7 @@ func TestWriteRejectsAnUnsupportedDataFilesystem(t *testing.T) {
 // FAT32 must come through untrimmed for ext4.
 func TestWriteWithEXT4DoesNotApplyTheFAT32SizingTrim(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "test.img")
-	dataSizeBytes := firstFAT32TrimmedSizeAtOrAbove(t, diskfmt.MinEXT4Bytes())
+	dataSizeBytes := firstFAT32TrimmedSizeAtOrAbove(t, diskfmt.EXT4GoldenData.MinBytes())
 
 	_, err := image.Write(imgPath, image.Spec{
 		BootLabel:      testBootLabel,
