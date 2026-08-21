@@ -1,11 +1,11 @@
 ---
 # gosd-vt2l
 title: Release automation via knope across CLI, artifacts, and npm
-status: in-progress
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-14T06:00:53Z
-updated_at: 2026-08-14T06:51:20Z
+updated_at: 2026-08-21T02:38:58Z
 ---
 
 Adopt knope (knope.tech) for changesets-style release automation across the three release surfaces: gosd CLI (plain vX.Y.Z + gosd/vX.Y.Z tags), board artifacts (artifacts/vX.Y.Z), and npm (npm/gosd/vX.Y.Z). Contributors add .changeset/*.md files per user-facing change; a knope-maintained release PR on branch knope/release accumulates them; merging it tags and creates GitHub releases with real notes; existing tag-triggered pipelines publish unchanged.
@@ -27,3 +27,30 @@ Full approved plan: /Users/jp/.claude/plans/i-d-like-to-automate-fluttering-boot
 
 Shipped and proven end to end: knope config + workflows (#281, app-token auth), attach-only artifacts workflow (#280), docs (#282, #283), the package.json newline fix (#286). Real releases through the pipeline: gosd 0.6.1 (release PR #284; `gosd/v0.6.1` + plain `v0.6.1` module tag) and npm/gosd 0.3.1 (release PR #287; its tag fired publish-npm.yml — the app-token-triggers-workflows mechanism artifacts will rely on). `release.yml` has correctly skipped on every ordinary merge since. Only gosd-odx3 (pin-bump auto-PR) remains, held for the first knope artifacts release.
 
+
+## Summary of Changes
+
+Releases across all three artefact classes are now cut by merging a PR, with
+no tagging by hand and no step that relies on somebody remembering it.
+
+- **CLI** — knope generates the release PR from `.changeset/` files; merging
+  it produces the `gosd/vX.Y.Z` GitHub release and the plain `vX.Y.Z` Go
+  module tag ([[gosd-9qb0]]). Change files are validated in-tree, so a
+  malformed key fails `go test ./...` rather than the release ([[gosd-qs2g]]).
+- **Artifacts** — `build-artifacts.yml` uploads kernels and U-Boot onto the
+  knope-published release ([[gosd-gnnn]]), and the follow-up pin bump opens
+  itself, carrying its own change file and proving itself with a
+  clean-machine build, an offline re-run and a per-board manifest diff
+  ([[gosd-odx3]]).
+- **npm** — staged and tokenless: a `npm/<directory>/vX.Y.Z` tag, OIDC
+  trusted publishing with provenance, and only ever the `next` dist-tag; a
+  human promotes to `latest` ([[gosd-96qg]]).
+
+Two knope quirks are worked around in `knope.toml` rather than lived with:
+its `package.json` serializer drops the trailing newline ([[gosd-489p]]), and
+its verbatim copy of change-file prose into the npm CHANGELOG collides with
+oxfmt's emphasis normalisation, which is why that generated file is excluded
+from the formatter.
+
+The behaviours the whole design rests on were established in a throwaway
+clone first ([[gosd-dnzo]]) rather than discovered on a real release.
