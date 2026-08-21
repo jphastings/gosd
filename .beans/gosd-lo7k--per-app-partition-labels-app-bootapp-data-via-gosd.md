@@ -1,10 +1,11 @@
 ---
 # gosd-lo7k
 title: 'Per-app partition labels: <app>-boot/<app>-data via gosd build --label-prefix'
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-08-09T10:07:01Z
-updated_at: 2026-08-09T10:07:01Z
+updated_at: 2026-08-21T01:36:07Z
 ---
 
 Replace the fixed GOSD-BOOT/GOSD-DATA volume labels with per-app ones: an app

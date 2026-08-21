@@ -1,11 +1,11 @@
 ---
 # gosd-65uy
 title: 'Tailscale Funnel ingress: gosd build --ingress tailscale-funnel (all boards)'
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-07T15:07:24Z
-updated_at: 2026-08-08T04:51:22Z
+updated_at: 2026-08-21T01:41:31Z
 blocked_by:
     - gosd-wxjy
 ---
@@ -84,3 +84,39 @@ free. Unquantified bandwidth caps; no custom domains. GOARM=6 self-compile
 covers pi-zero-w (upstream even ships GOARM=5; 32-bit Go crypto slow but
 functional, tailscale/tailscale#7053) → ALL boards supported, contrast
 cloudflared's arm64-only.
+
+## Summary of Changes
+
+`gosd build --ingress tailscale-funnel` ships on every board, giving a device
+a public `https://<hostname>.<tailnet>.ts.net` URL with no listener on any
+real host interface. gosd-4fve added `cmd/gosd-tsfunnel` — a tsnet shim in
+the MAIN module (the nested-module route was rejected because Go module zips
+exclude nested-`go.mod` directories, which would have emptied the source
+ladder's `go mod download` rung) — and the `tailscale.com` dependency;
+gosd-kzd3 built the build rail: the flag in the agent registry,
+`build.CrossCompileTsfunnel` compiling the shim once per architecture the
+selected boards need, bundling to `/bin/gosd-tsfunnel`, and the
+data-partition gate that refuses the flag without `--data-size` because
+losing `tailscaled.state` means a new node identity and a new public URL.
+gosd-e3mm wrote the runtime module and gosd-o68e wired it live into
+`StartNetworking` under the PID-1 reaper, exactly like cloudflared.
+gosd-85bn and gosd-u2gz covered the config schema and its provisioning
+classification — since carried over wholesale to the config tree
+(`config/ingress/tailscale-funnel/`) by epic gosd-rw6n. gosd-1cqa wrote the
+docs and the COMPATIBILITY row, and gosd-79v8 proved it end to end against a
+real tailnet on a NanoPi Zero2.
+
+The "no interactive surface" argument holds by construction: `ts_omit_ssh`
+compiles Tailscale SSH out entirely, and tsnet's userspace netstack dials
+out over WireGuard rather than binding a socket.
+
+Two hard-won facts outlived the epic and are recorded in CLAUDE.md: a
+gosd-shipped subprocess gets a minimal env with no `HOME` and no
+`os.UserCacheDir()`, so a library's directory env must be set explicitly
+(gosd-6cf2); and a build-tag feature trim silently broke tsnet's
+control-plane registration on-device but not on macOS (gosd-h46e), which is
+why the shim ships full tsnet.
+
+Closing note: `docs/ingress.md` still carried a "not yet hardware-verified"
+caveat contradicting COMPATIBILITY.md's bench footnote; corrected in the
+same PR as this status change.

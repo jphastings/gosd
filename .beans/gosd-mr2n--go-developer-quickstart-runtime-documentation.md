@@ -1,11 +1,11 @@
 ---
 # gosd-mr2n
 title: Go developer quickstart + runtime documentation
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-06T10:15:19Z
+updated_at: 2026-08-21T01:36:17Z
 parent: gosd-y0x3
 ---
 
@@ -64,3 +64,20 @@ Re-verified every stale claim against current `main` rather than trusting the ea
 - Swept README.md, docs/runtime.md, docs/publishing.md, docs/artifacts.md, docs/provisioning-formats.md for other "not yet"/"forthcoming"/"planned"/"TODO" language; everything else found (GPIO/I2C/SPI worked examples for v0.3, USB Ethernet gadget, OTA updates, the NanoPi Zero2 board profile, the screenshot flashing guide, bench-only provisioning-format todos) is genuinely still future work and was left as-is.
 
 Quality gates (`go test ./...`, `go vet ./...`, `gofmt -l .`, `golangci-lint run ./...` on both host and `GOOS=linux`) all pass — this PR touches only Markdown.
+
+### Closed 2026-08-21 — the hardware gate this bean was held on has closed
+
+The only reason recorded above for leaving this bean in-progress was that no
+image had been flashed to or booted from real hardware, so the acceptance
+criterion ("a Go developer with no embedded experience gets `examples/hello`
+running on a Pi Zero 2W using only these docs") could not be claimed. Pi Zero
+2W bring-up completed under gosd-m9dj and COMPATIBILITY.md now records it as
+Complete, so the criterion is met end to end.
+
+The four findings filed above have all since been fixed by other beans
+(`--artifacts-dir`, real image assembly, WiFi association, mDNS), and the
+README quickstart and runtime contract carry none of the caveats this bean
+wrote for them: the quickstart now walks install, app, `gosd build`, the
+Imager custom-repository flash and `http://<hostname>.local/` with no
+"not yet" language. Ongoing docs upkeep is not this bean's — the Diátaxis
+reshape and de-staling pass (gosd-0hkx) took that on.

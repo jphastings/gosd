@@ -1,11 +1,11 @@
 ---
 # gosd-oyhi
 title: 'Externals: build and bundle non-Go binaries into images'
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2026-07-13T13:18:59Z
-updated_at: 2026-08-07T18:18:36Z
+updated_at: 2026-08-21T01:41:43Z
 ---
 
 A generic mechanism for shipping companion executables ("externals") alongside the user's Go app: `gosd build-external` cross-compiles a binary in Docker/Podman (like `gosd build-kernel`), and `gosd build --with-external` bundles any prebuilt static binary into the image. Driving use case: betamin (separate, unreferenced repo) bundles a static mpv for hardware-decoded video playback, supervised by its app over mpv's JSON IPC. Planned 2026-07-13.
@@ -33,3 +33,29 @@ single-child" bullet above still governs `--with-external` companion
 binaries. The carve-out text landed in boot/reaper.go's stash comment and
 docs/runtime.md's "Your app owns it at runtime" bullet, both in
 [[gosd-66ax]].
+
+## Summary of Changes
+
+Companion non-Go binaries can now be built and bundled. gosd-sn30 wrote
+`internal/extconfig` (strict `gosd-external.toml` parsing —
+`[external.<name>]` plus `[[external.<name>.source]]`, unknown keys are an
+error, mirroring the kernel-recipe idiom) and `internal/extbuild` (the
+containerized cross-compile). gosd-x3o0 exposed it as `gosd build-external`,
+which requires Docker or Podman and says so in its own `--help` and errors,
+per the carve-out — `gosd build` itself still never needs a container.
+gosd-ig4h added `gosd build --with-external <path>[:<dest>]`, repeatable,
+dest absolute, defaulting to `/bin/<basename>`.
+
+The two contracts that make this safe are enforced, not documented: static
+linking is checked by an ELF `PT_INTERP` probe in `internal/staticelf`,
+shared by both entry points so a dynamically-linked binary is refused before
+it can reach an initramfs that has no `ld.so`; and provenance is written as
+`source.json` beside each output (per-name on the shared per-arch output
+dir), which is what keeps GoSD out of the business of redistributing built
+externals. `docs/externals.md` documents both. There is deliberately no
+in-repo example recipe.
+
+The single-child supervision decision above survived with one carve-out,
+recorded here by gosd-66ax: gosd-SHIPPED system services (cloudflared, and
+later the tailscale-funnel shim) may be gosd-init-supervised. USER externals
+remain app-owned via `os/exec`, unchanged.
