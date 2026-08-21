@@ -134,7 +134,7 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 	if consoleBaud == 0 {
 		consoleBaud = defaultConsoleBaud
 	}
-	cmdlineTxt, err := templates.RenderCmdlineTxt(templates.CmdlineTxtData{Board: boardName, ConsoleBaud: consoleBaud})
+	cmdlineTxt, err := templates.RenderCmdlineTxt(templates.CmdlineTxtData{Board: boardName, ConsoleBaud: consoleBaud, KernelParams: cfg.KernelParamString()})
 	if err != nil {
 		return nil, fmt.Errorf("rendering cmdline.txt: %w", err)
 	}

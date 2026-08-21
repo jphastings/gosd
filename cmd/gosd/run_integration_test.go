@@ -247,3 +247,58 @@ func extractKeptPath(t *testing.T, stderr string) string {
 	rest := stderr[idx+len(marker):]
 	return strings.TrimSpace(strings.SplitN(rest, "\n", 2)[0])
 }
+
+// TestRunPassesKernelParamsToQemusCommandLine is gosd-mf3a's `gosd run`
+// half. qemu-virt is the one board with no boot config inside its image, so
+// the mirrored --kernel-param has to reach the kernel through qemu's
+// -append argument instead - otherwise the flag would silently do nothing
+// on the very inner loop a developer would reach for to try a parameter
+// out.
+func TestRunPassesKernelParamsToQemusCommandLine(t *testing.T) {
+	disableNetwork(t)
+
+	argsFile := filepath.Join(t.TempDir(), "qemu-args.txt")
+	fakeQemuBinary(t, argsFile)
+
+	cmd := newRootCmd()
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"run", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--kernel-param", "loglevel=8",
+		"--kernel-param", "nomodeset",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd run failed: %v", err)
+	}
+
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("fake qemu-system-aarch64 was never invoked: %v", err)
+	}
+	want := "-append console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10 loglevel=8 nomodeset"
+	if !strings.Contains(string(got), want) {
+		t.Errorf("qemu invocation = %q, want it to contain %q", got, want)
+	}
+}
+
+// TestRunRejectsAMalformedKernelParam confirms gosd run validates the flag
+// the same way gosd build does, before compiling anything.
+func TestRunRejectsAMalformedKernelParam(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "qemu-args.txt")
+	fakeQemuBinary(t, argsFile)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"run", "../../examples/hello",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--kernel-param", "=8",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd run --kernel-param=8 succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "--kernel-param") {
+		t.Errorf("error = %q, want it to name the flag", err.Error())
+	}
+}

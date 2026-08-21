@@ -8,7 +8,9 @@
 // the board DT's stdout-path, a different UART and baud from the Rockchip
 // boards' ttyS2 @ 1500000. ExtlinuxConfData.ConsoleBaud (gosd-zp9s) is an
 // additive exception: it only ever changes the console= baud number, never
-// the UART device (ttyS0) or anything else in the file.
+// the UART device (ttyS0) or anything else in the file. So is
+// ExtlinuxConfData.KernelParams (gosd-mf3a): it only ever appends the
+// developer's --kernel-param values to the end of the append line.
 package templates
 
 import (
@@ -34,6 +36,14 @@ type ExtlinuxConfData struct {
 	// cmdline's console= argument, e.g. 115200. See
 	// boards.BuildConfig.ConsoleBaud / --console-baud.
 	ConsoleBaud int
+
+	// KernelParams is the developer's extra kernel command-line
+	// parameters, already space-separated (see
+	// boards.BuildConfig.KernelParamString / --kernel-param). Empty
+	// renders the append line exactly as it was before the flag
+	// existed; non-empty appends it, after everything gosd puts there
+	// itself.
+	KernelParams string
 
 	// DTBFilename is the device tree blob extlinux loads, named rather
 	// than hardcoded because this board ships two: the stock DTB, and a

@@ -27,6 +27,18 @@ func TestArgsUsesDefaultsWhenPortAndMemoryAreZero(t *testing.T) {
 	assertContains(t, args, "-netdev", "user,id=n0,hostfwd=tcp::8080-:80")
 }
 
+// TestArgsAppendsKernelParamsAfterGosdsOwn covers gosd-mf3a's qemu-virt
+// delivery: this board has no boot config inside its image, so `gosd run
+// --kernel-param` reaches the kernel by extending -append - after gosd's own
+// parameters, in the order the developer gave them.
+func TestArgsAppendsKernelParamsAfterGosdsOwn(t *testing.T) {
+	args := qemurun.Args("/work", "/img.img", qemurun.Options{
+		KernelParams: []string{"loglevel=8", "nomodeset"},
+	})
+
+	assertFlag(t, args, "-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10 loglevel=8 nomodeset")
+}
+
 func TestArgsDoublesLiteralCommasInImagePathForDriveFile(t *testing.T) {
 	// QEMU's -drive option splits its value on commas; a lone comma in a
 	// user-supplied path (gosd qemuboot <img>) must be doubled to survive

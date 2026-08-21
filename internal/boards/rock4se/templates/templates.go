@@ -7,7 +7,9 @@
 // console (ttyS2 @ 1500000n8, uart2) comes from bean gosd-je2r's research.
 // ExtlinuxConfData.ConsoleBaud (gosd-zp9s) is an additive exception: it only
 // ever changes the console= baud number, never the UART device (ttyS2) or
-// anything else in the file.
+// anything else in the file. So is
+// ExtlinuxConfData.KernelParams (gosd-mf3a): it only ever appends the
+// developer's --kernel-param values to the end of the append line.
 package templates
 
 import (
@@ -33,6 +35,14 @@ type ExtlinuxConfData struct {
 	// cmdline's console= argument, e.g. 1500000. See
 	// boards.BuildConfig.ConsoleBaud / --console-baud.
 	ConsoleBaud int
+
+	// KernelParams is the developer's extra kernel command-line
+	// parameters, already space-separated (see
+	// boards.BuildConfig.KernelParamString / --kernel-param). Empty
+	// renders the append line exactly as it was before the flag
+	// existed; non-empty appends it, after everything gosd puts there
+	// itself.
+	KernelParams string
 }
 
 // RenderExtlinuxConf renders extlinux/extlinux.conf for the given data.

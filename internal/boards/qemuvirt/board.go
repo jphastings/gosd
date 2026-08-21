@@ -13,6 +13,14 @@
 // board), so the same provisioning story (settings on the card, cloud-init
 // files) stays testable under qemu exactly as it works on real hardware.
 //
+// One consequence worth knowing: `gosd build --kernel-param` has nowhere to
+// land here. Every other board renders the flag's parameters into the boot
+// config it writes (cmdline.txt, extlinux.conf); qemu-virt's kernel command
+// line is the runner's -append argument, outside the image entirely, so
+// `gosd run --kernel-param` delivers it there instead (see
+// internal/qemurun.Options.KernelParams and bean gosd-mf3a) and an image
+// built with --board=qemu-virt carries no record of it.
+//
 // SD-card access on this machine is virtio-blk, which the kernel exposes as
 // /dev/vda rather than /dev/mmcblkN; see gosd-init's boot-partition and
 // data-partition device-candidate lists (cmd/gosd-init/main.go) for the

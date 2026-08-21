@@ -131,7 +131,7 @@ func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string
 	if consoleBaud == 0 {
 		consoleBaud = defaultConsoleBaud
 	}
-	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud})
+	extlinuxConf, err := templates.RenderExtlinuxConf(templates.ExtlinuxConfData{ConsoleBaud: consoleBaud, KernelParams: cfg.KernelParamString()})
 	if err != nil {
 		return nil, fmt.Errorf("rendering extlinux.conf: %w", err)
 	}

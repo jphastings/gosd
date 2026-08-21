@@ -1020,6 +1020,53 @@ gosd build . --board radxa-zero-3e --console-baud 115200
   hand-editing the `console=` argument there has the same effect as
   rebuilding with `--console-baud`.
 
+## Extra kernel parameters (`--kernel-param`)
+
+Every board boots with a kernel command line GoSD renders for it. `gosd
+build --kernel-param <parameter>` adds your own to the end of it,
+repeatably:
+
+```sh
+gosd build . --kernel-param snd_bcm2835.enable_hdmi=1 --kernel-param loglevel=8
+```
+
+- **You write it once; GoSD puts it where the board reads it.** The Pi
+  boards take their command line from `cmdline.txt` on the boot
+  partition; the Rockchip and Allwinner boards take theirs from the
+  `append` line of `extlinux/extlinux.conf`, which their U-Boot turns
+  into `bootargs`. The flag is the same either way, so a bare `gosd
+  build` — which builds every board — carries your parameters onto all
+  of them.
+- **A parameter a board's kernel doesn't recognise is inert, not an
+  error.** `snd_bcm2835.enable_hdmi=1` means something to a Pi and
+  nothing to a Rockchip board, exactly like any other unrecognised
+  kernel parameter, so you don't need a per-board build to use one.
+- **Shape is validated; the parameter itself never is.** A value
+  containing whitespace, a newline, a NUL or another control character
+  is refused with an error naming it, because it would split into two
+  parameters or truncate the file. Beyond that GoSD makes no judgement:
+  there is no list of "known" kernel parameters to fall foul of, which
+  matters because [a custom kernel](custom-kernels.md) can add
+  parameters no such list would ever have.
+- **Order is yours and is preserved.** Parameters render in the order
+  you pass them, after everything GoSD puts on the line itself
+  (`console=`, `init=`, `gosd.board=`, `panic=`), so two builds of the
+  same app produce byte-identical boot files and the kernel's
+  last-one-wins handling of a repeated parameter stays predictable.
+- **This is developer input, not a device setting.** Like `--boot-size`
+  and `--data-filesystem`, it is compiled into the image you ship; it
+  gets no [config-tree setting](config.md) and no `GOSD_*` override,
+  because it is not something the person holding the card chooses.
+- **`gosd run` mirrors the flag.** qemu-virt is the one board with no
+  boot config inside its image at all — qemu is handed the kernel,
+  initramfs and command line directly — so `gosd run --kernel-param`
+  extends qemu's own `-append` instead. Trying a parameter under qemu is
+  usually faster than reflashing to find out.
+- **No reflash needed to try one on an already-flashed card.**
+  `cmdline.txt` (Pi boards) or `extlinux/extlinux.conf` (the others) is
+  a plain text file on the boot partition; editing the line there by
+  hand has the same effect as rebuilding with `--kernel-param`.
+
 ## Build constraints
 
 - `gosd build` always cross-compiles with `CGO_ENABLED=0` and
