@@ -15,7 +15,7 @@ import (
 // ext4 golden image — the same asset FormatEXT4 embeds and streams.
 func decompressedGolden(t *testing.T) []byte {
 	t.Helper()
-	zr, err := zstd.NewReader(bytes.NewReader(ext4golden.Compressed))
+	zr, err := zstd.NewReader(bytes.NewReader(ext4golden.Data.Compressed))
 	if err != nil {
 		t.Fatalf("creating zstd reader: %v", err)
 	}
@@ -24,8 +24,8 @@ func decompressedGolden(t *testing.T) []byte {
 	if err != nil {
 		t.Fatalf("decompressing the golden image: %v", err)
 	}
-	if int64(len(raw)) != ext4golden.RawBytes {
-		t.Fatalf("decompressed golden image is %d bytes, want %d", len(raw), ext4golden.RawBytes)
+	if int64(len(raw)) != ext4golden.Data.RawBytes {
+		t.Fatalf("decompressed golden image is %d bytes, want %d", len(raw), ext4golden.Data.RawBytes)
 	}
 	return raw
 }

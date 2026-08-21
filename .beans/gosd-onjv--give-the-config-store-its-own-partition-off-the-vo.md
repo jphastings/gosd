@@ -1,11 +1,11 @@
 ---
 # gosd-onjv
 title: Give the config store its own partition, off the volume apps share
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-08-20T09:39:04Z
-updated_at: 2026-08-20T09:39:04Z
+updated_at: 2026-08-21T08:08:47Z
 ---
 
 Move the config store off `/data` and onto a partition of its own, so an app
@@ -120,7 +120,7 @@ own:
 
 ## Todo
 
-- [ ] New 32 MiB golden + provenance manifest + README rationale
+- [x] New 32 MiB golden + provenance manifest + README rationale
 - [ ] `--config-size` build flag; three-partition layout in `internal/image`
 - [ ] Config partition establishment/adoption via `internal/blockmount`
 - [ ] Point `cmd/gosd-init/internal/configstore` at the new mount
@@ -130,3 +130,15 @@ own:
 - [ ] Change file naming the one-time settings loss and the layout ABI break
 - [ ] Update `gosd-df24` to target the config partition
 - [ ] Docs: the config tree guide, and the upgrade-path design doc
+
+## Progress notes
+
+**Split into two PRs.** This bean is large enough that one PR would not be
+reviewable, so it lands at the seam the plan suggested:
+
+1. **The golden + diskfmt support** — the new 32MiB seed, its provenance and
+   rationale, and `diskfmt.EXT4Golden` making every ext4 format name which
+   seed it writes. Self-contained, changes nothing a user sees.
+2. **The layout and the move** — `--config-size`, the three-partition image,
+   establishment through `internal/blockmount`, pointing configstore at the
+   new mount, dataexpand's offsets, and the docs/release-note callout.

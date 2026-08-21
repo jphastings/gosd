@@ -1,0 +1,57 @@
+{
+  "$schema_note": "Provenance for internal/diskfmt/ext4golden/config-golden.img.zst. Regenerate with build/ext4-golden/build.sh config; parameter WHYs are in that directory's README.md, not here.",
+  "variant": "config",
+  "e2fsprogs": {
+    "repo": "https://github.com/tytso/e2fsprogs.git",
+    "tag": "v1.47.4",
+    "commit": "7ee1d505ef3b37831215f490411f346fe57e9053"
+  },
+  "mke2fs": {
+    "filesystem": "ext4",
+    "blockSize": 4096,
+    "goldenSizeMiB": 32,
+    "journalSizeMiB": 4,
+    "features": {
+      "compat": [
+        "has_journal",
+        "ext_attr",
+        "resize_inode",
+        "dir_index"
+      ],
+      "incompat": [
+        "filetype",
+        "extent",
+        "64bit",
+        "flex_bg",
+        "metadata_csum_seed"
+      ],
+      "roCompat": [
+        "sparse_super",
+        "large_file",
+        "huge_file",
+        "dir_nlink",
+        "extra_isize",
+        "metadata_csum"
+      ]
+    },
+    "uuid": "d33ae914-c738-4bea-ba4d-99fe3c1bf25d",
+    "label": "",
+    "hashSeed": "a8bade99-e2c6-4e0d-a634-1e4f2a5d764c",
+    "e2fsprogsFakeTime": "1735689600"
+  },
+  "rawImage": {
+    "sizeBytes": 33554432,
+    "sha256": "3af12480b5ca5cf8de31d0512ff5e7578587d080ac811efe6c4b8b7a6b94ca72"
+  },
+  "compressedAsset": {
+    "sizeBytes": 1594,
+    "sha256": "5de45f546ace624a9f91733995cb4113f7982beb7d44f1514ad624bcbc7dc817",
+    "path": "config-golden.img.zst"
+  },
+  "verification": {
+    "ranInContainer": true,
+    "verifiedGrowthCeilingBytes": 1073741824,
+    "note": "Proves the fixed-size path (mount, write, fsck) and that an oversized --config-size still grows through resize_inode's reserved GDT blocks. See README.md."
+  },
+  "generatedAt": "2026-08-21T07:50:21Z"
+}

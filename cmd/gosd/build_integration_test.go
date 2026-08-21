@@ -1263,7 +1263,7 @@ func TestBuildDataFilesystemEXT4ProducesAReadableEXT4DataPartition(t *testing.T)
 	t.Cleanup(func() { http.DefaultTransport = origTransport })
 
 	imgPath := filepath.Join(t.TempDir(), "hello-qemu-virt.img")
-	dataSizeBytes := diskfmt.MinEXT4Bytes()
+	dataSizeBytes := diskfmt.EXT4GoldenData.MinBytes()
 
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
@@ -2306,7 +2306,7 @@ func TestBuildIdentityUnaffectedByDataFilesystem(t *testing.T) {
 	dir := t.TempDir()
 	withoutExt4 := buildQemuVirtConfigJSON(t, filepath.Join(dir, "fat32.img"))
 	withExt4 := buildQemuVirtConfigJSON(t, filepath.Join(dir, "ext4.img"),
-		"--data-filesystem", "ext4", "--data-size", strconv.FormatInt(diskfmt.MinEXT4Bytes(), 10))
+		"--data-filesystem", "ext4", "--data-size", strconv.FormatInt(diskfmt.EXT4GoldenData.MinBytes(), 10))
 
 	if withExt4.DataFilesystem != "ext4" {
 		t.Fatal("config.json's dataFilesystem is not ext4 after --data-filesystem=ext4")

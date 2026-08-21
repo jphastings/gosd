@@ -13,9 +13,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// ext4FormatChunkBytes bounds how much of the golden image is held in memory
+// ext4FormatChunkBytes bounds how much of a golden image is held in memory
 // at once while it streams onto the target — RAM on the smallest GoSD board
-// is scarce, so the whole 512 MiB golden is never buffered whole. It must
+// is scarce, so a golden is never buffered whole. It must
 // stay large enough that every superblock copy the golden ships (the
 // primary, plus each sparse_super backup) lands entirely inside a single
 // chunk: ext4BackupSuperblockOffsets checks this at format time and refuses
@@ -144,16 +144,17 @@ func isPowerOf(n, base uint64) bool {
 
 // FormatEXT4 formats the block device (or image file) at devicePath as a
 // whole-device ext4 filesystem labelled volumeLabel, discarding any existing
-// contents. It streams GoSD's checked-in golden image (see
+// contents. It streams one of GoSD's checked-in golden images (see
 // internal/diskfmt/ext4golden) onto the device rather than running mkfs.ext4
 // — see that package's README.md for why — then stamps volumeLabel and a
 // fresh random UUID into the primary superblock and its sparse_super backup
 // copies.
 //
+// golden says which seed to write, and has no default: see EXT4Golden.
+//
 // The device is opened and sized by the same openDisk helper FormatFAT32 and
-// FormatExFAT use. It must be at least as large as the golden image
-// (internal/diskfmt/ext4golden.RawBytes, 512 MiB); FormatEXT4 does not grow
-// the filesystem to fill a larger device — that is a mount-time
+// FormatExFAT use. It must be at least golden.MinBytes(); FormatEXT4 does not
+// grow the filesystem to fill a larger device — that is a mount-time
 // EXT4_IOC_RESIZE_FS step outside this package's scope (bean gosd-1c0x).
 //
 // A device FormatEXT4 has written to is not yet "established" in the sense
@@ -169,13 +170,13 @@ func isPowerOf(n, base uint64) bool {
 // proves a FAT32 format finished.
 //
 // Unlike FormatFAT32, this needs no separate eraseLeadingRegion call: the
-// golden image is streamed starting at offset 0 and is unconditionally at
-// least MinEXT4Bytes (512 MiB), so a successful call here has already
-// overwritten every byte in [0, 512MiB) — vastly more than the
+// golden image is streamed starting at offset 0, and even the smaller of the
+// two goldens is 32 MiB, so a successful call here has already overwritten
+// every byte in [0, golden.MinBytes()) — vastly more than the
 // blankProbeBytes window any of Inspect's probes ever reads — with the
 // golden's own content. Nothing a prior filesystem left in that range can
 // survive.
-func FormatEXT4(devicePath, volumeLabel string) (err error) {
+func FormatEXT4(golden EXT4Golden, devicePath, volumeLabel string) (err error) {
 	d, err := openDisk(devicePath, false)
 	if err != nil {
 		return fmt.Errorf("opening %s for formatting failed: %w", devicePath, err)
@@ -190,26 +191,77 @@ func FormatEXT4(devicePath, volumeLabel string) (err error) {
 	if err != nil {
 		return fmt.Errorf("opening %s for writing failed: %w", devicePath, err)
 	}
-	if err := writeEXT4(w, d.Size, volumeLabel); err != nil {
+	if err := writeEXT4(golden, w, d.Size, volumeLabel); err != nil {
 		return fmt.Errorf("writing an ext4 filesystem to %s failed: %w", devicePath, err)
 	}
 	return nil
 }
 
-// EXT4SizeLimitReason says, in one clause, why no region smaller than
-// MinEXT4Bytes can hold an ext4 filesystem FormatEXT4 or WriteEXT4 writes.
-// Every refusal quotes it, mirroring FAT32SizeLimitReason.
-const EXT4SizeLimitReason = "the golden ext4 image GoSD ships is a fixed 512MiB seed that is grown to the partition's real size on first boot"
+// EXT4Golden selects which of GoSD's two checked-in seed filesystems an
+// ext4 format or write starts from (see internal/diskfmt/ext4golden's
+// README.md for what makes them different, and why one image cannot serve
+// both jobs).
+//
+// It deliberately has no usable zero value and FormatEXT4/WriteEXT4 take it
+// as their first argument, so every call site states which volume it is
+// writing. Defaulting would make the one mistake that matters — seeding a
+// 32MiB config partition from the 512MiB data golden, or a terabyte data
+// volume from a golden with a 4MiB journal it can never enlarge — expressible
+// by omission.
+type EXT4Golden string
 
-// MinEXT4Bytes is the smallest region FormatEXT4 or WriteEXT4 can write: the
-// embedded golden image's fixed decompressed size (internal/diskfmt/ext4golden.RawBytes).
-// Callers that must validate a region's size before the region exists (e.g.
-// `gosd build --data-size` sizing the data partition) compare against it so an
-// impossible size is refused before any bytes are written, mirroring
-// MaxFAT32Bytes.
-func MinEXT4Bytes() int64 { return ext4golden.RawBytes }
+const (
+	// EXT4GoldenData seeds every volume GoSD grows: /data on an ext4 image,
+	// and any emmc/disk volume an app formats.
+	EXT4GoldenData EXT4Golden = "data"
+	// EXT4GoldenConfig seeds the fixed-size config partition.
+	EXT4GoldenConfig EXT4Golden = "config"
+)
 
-// WriteEXT4 streams GoSD's embedded ext4 golden image into w starting at
+// seed resolves g to the embedded asset it names, refusing anything else —
+// including EXT4Golden's zero value, which is a caller that forgot to choose
+// rather than a caller that chose the default.
+func (g EXT4Golden) seed() (ext4golden.Golden, error) {
+	switch g {
+	case EXT4GoldenData:
+		return ext4golden.Data, nil
+	case EXT4GoldenConfig:
+		return ext4golden.Config, nil
+	default:
+		return ext4golden.Golden{}, fmt.Errorf("%q is not one of GoSD's ext4 golden images; pass diskfmt.EXT4GoldenData or diskfmt.EXT4GoldenConfig", string(g))
+	}
+}
+
+// MinBytes is the smallest region FormatEXT4 or WriteEXT4 can write this
+// golden into: its fixed decompressed size. Callers that must validate a
+// region's size before the region exists (e.g. `gosd build --data-size`
+// sizing the data partition) compare against it so an impossible size is
+// refused before any bytes are written, mirroring MaxFAT32Bytes. An
+// unrecognised golden reports 0 rather than erroring — the size checks that
+// consult this are guards, and the loud refusal for a bad token belongs to
+// FormatEXT4/WriteEXT4, which are the calls that would otherwise write
+// something.
+func (g EXT4Golden) MinBytes() int64 {
+	seed, err := g.seed()
+	if err != nil {
+		return 0
+	}
+	return seed.RawBytes
+}
+
+// SizeLimitReason says, in one clause, why no region smaller than MinBytes
+// can hold this golden. Every refusal quotes it, mirroring
+// FAT32SizeLimitReason.
+func (g EXT4Golden) SizeLimitReason() string {
+	switch g {
+	case EXT4GoldenConfig:
+		return "the golden ext4 image GoSD ships for the config partition is a fixed 32MiB seed"
+	default:
+		return "the golden ext4 image GoSD ships is a fixed 512MiB seed that is grown to the partition's real size on first boot"
+	}
+}
+
+// WriteEXT4 streams one of GoSD's embedded ext4 golden images into w starting at
 // whatever offset w is already positioned at: unlike FormatEXT4, which owns
 // a whole device from byte 0, WriteEXT4 has no notion of "the start of the
 // device" — every WriteAt it issues is relative to w, so the caller owns the
@@ -217,11 +269,11 @@ func MinEXT4Bytes() int64 { return ext4golden.RawBytes }
 // partition of a larger .img file by shifting w's offsets itself).
 //
 // sizeBytes is the size of the region available to write into; it must be at
-// least MinEXT4Bytes(), or WriteEXT4 refuses (see EXT4SizeLimitReason).
-// WriteEXT4 always writes exactly that fixed ~512MiB golden filesystem — it
-// does NOT grow it to fill a larger region, even when sizeBytes exceeds
-// MinEXT4Bytes(). Growing the written filesystem to the region's real size
-// is a separate runtime step (EXT4_IOC_RESIZE_FS,
+// least golden.MinBytes(), or WriteEXT4 refuses (see
+// EXT4Golden.SizeLimitReason). WriteEXT4 always writes exactly that golden's
+// fixed size — it does NOT grow the filesystem to fill a larger region, even
+// when sizeBytes exceeds it. Growing the written filesystem to the region's
+// real size is a separate runtime step (EXT4_IOC_RESIZE_FS,
 // internal/blockmount.GrowEXT4), entirely outside this function's scope.
 //
 // As with FormatEXT4, nothing WriteEXT4 writes is "established" in GoSD's
@@ -229,23 +281,28 @@ func MinEXT4Bytes() int64 { return ext4golden.RawBytes }
 // a probe that reads back fine is not proof the whole image reached the
 // medium, and the write → sync → marker → sync commit record that makes it
 // so is blockmount's responsibility, not this function's.
-func WriteEXT4(w io.WriterAt, sizeBytes int64, volumeLabel string) error {
-	return writeEXT4(w, sizeBytes, volumeLabel)
+func WriteEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel string) error {
+	return writeEXT4(golden, w, sizeBytes, volumeLabel)
 }
 
-// writeEXT4 streams the embedded ext4 golden image into w, patching the
-// primary superblock and its backups with volumeLabel and a fresh random
+// writeEXT4 streams one of the embedded ext4 golden images into w, patching
+// the primary superblock and its backups with volumeLabel and a fresh random
 // UUID as they pass through. It is separated from FormatEXT4 so the on-disk
 // result can be built and read back in tests without a block device, exactly
 // as writeExFAT is.
-func writeEXT4(w io.WriterAt, sizeBytes int64, volumeLabel string) error {
+func writeEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel string) error {
+	seed, err := golden.seed()
+	if err != nil {
+		return err
+	}
+
 	label := []byte(volumeLabel)
 	if len(label) > ext4LabelBytes {
 		return fmt.Errorf("volume label %q is %d bytes; ext4 labels are at most %d bytes", volumeLabel, len(label), ext4LabelBytes)
 	}
-	if sizeBytes < ext4golden.RawBytes {
-		return fmt.Errorf("the target is %d bytes, too small for the ext4 golden image (%d bytes / %d MiB); format a larger device, or grow it first",
-			sizeBytes, ext4golden.RawBytes, ext4golden.RawBytes/(1<<20))
+	if sizeBytes < seed.RawBytes {
+		return fmt.Errorf("the target is %d bytes, too small for the %s ext4 golden image (%d bytes / %d MiB); format a larger device, or grow it first",
+			sizeBytes, seed.Name, seed.RawBytes, seed.RawBytes/(1<<20))
 	}
 
 	uuid, err := randomEXT4UUID()
@@ -253,9 +310,9 @@ func writeEXT4(w io.WriterAt, sizeBytes int64, volumeLabel string) error {
 		return fmt.Errorf("generating a volume UUID failed: %w", err)
 	}
 
-	zr, err := zstd.NewReader(bytes.NewReader(ext4golden.Compressed))
+	zr, err := zstd.NewReader(bytes.NewReader(seed.Compressed))
 	if err != nil {
-		return fmt.Errorf("opening the embedded ext4 golden image failed: %w", err)
+		return fmt.Errorf("opening the %s ext4 golden image failed: %w", seed.Name, err)
 	}
 	defer zr.Close()
 
@@ -274,7 +331,7 @@ readLoop:
 				sbBytes := chunk[ext4SuperblockOffset : ext4SuperblockOffset+ext4SuperblockSize]
 				sb, perr := parseEXT4Superblock(sbBytes)
 				if perr != nil {
-					return fmt.Errorf("the embedded ext4 golden image's own superblock failed to parse: %w", perr)
+					return fmt.Errorf("the embedded %s ext4 golden image's own superblock failed to parse: %w", seed.Name, perr)
 				}
 				if perr := requireEXT4StampableFeatures(sb); perr != nil {
 					return perr
@@ -293,7 +350,7 @@ readLoop:
 			}
 
 			if _, werr := w.WriteAt(chunk, offset); werr != nil {
-				return fmt.Errorf("writing the ext4 golden image at offset %d failed: %w", offset, werr)
+				return fmt.Errorf("writing the %s ext4 golden image at offset %d failed: %w", seed.Name, offset, werr)
 			}
 			written += int64(n)
 		}
@@ -304,12 +361,12 @@ readLoop:
 		case errors.Is(rerr, io.EOF), errors.Is(rerr, io.ErrUnexpectedEOF):
 			break readLoop
 		default:
-			return fmt.Errorf("decompressing the embedded ext4 golden image failed: %w", rerr)
+			return fmt.Errorf("decompressing the embedded %s ext4 golden image failed: %w", seed.Name, rerr)
 		}
 	}
 
-	if written != ext4golden.RawBytes {
-		return fmt.Errorf("the embedded ext4 golden image decompressed to %d bytes, want %d — the embedded asset may be corrupt", written, ext4golden.RawBytes)
+	if written != seed.RawBytes {
+		return fmt.Errorf("the embedded %s ext4 golden image decompressed to %d bytes, want %d — the embedded asset may be corrupt", seed.Name, written, seed.RawBytes)
 	}
 	return nil
 }

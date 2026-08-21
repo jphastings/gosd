@@ -52,12 +52,12 @@ func TestFormatEXT4PassesRealE2fsck(t *testing.T) {
 
 	dir := homeStagedDir(t)
 	path := filepath.Join(dir, "ext4.img")
-	if err := createSizedFile(path, ext4golden.RawBytes); err != nil {
+	if err := createSizedFile(path, ext4golden.Data.RawBytes); err != nil {
 		t.Fatalf("creating the target image: %v", err)
 	}
 
 	const label = "GOSD-DATA"
-	if err := FormatEXT4(path, label); err != nil {
+	if err := FormatEXT4(EXT4GoldenData, path, label); err != nil {
 		t.Fatalf("FormatEXT4: %v", err)
 	}
 

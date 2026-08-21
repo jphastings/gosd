@@ -1,19 +1,38 @@
-# ext4 golden image
+# ext4 golden images
 
-`golden.img.zst` is a small, pristine ext4 filesystem, zstd-compressed and
+A golden image is a small, pristine ext4 filesystem, zstd-compressed and
 checked into this repository. It is the seed for GoSD's ext4 "format by
-golden copy" route (epic gosd-lfu0): `disk.FormatAndMount` decompresses this
-image, raw-writes it to the target block device, stamps a fresh per-volume
-UUID and label into the superblock (bean gosd-apmv), mounts it, and grows it
-to the partition's real size with the kernel's `EXT4_IOC_RESIZE_FS` ioctl
-(bean gosd-1c0x). There is no `mkfs.ext4` or `resize2fs` on the device --
-gosd-init stays userland-free (see the epic's locked decisions).
+golden copy" route (epic gosd-lfu0): the formatter decompresses one,
+raw-writes it to the target block device, stamps a fresh per-volume UUID and
+label into the superblock (bean gosd-apmv), mounts it, and -- where the
+volume is meant to be bigger than its seed -- grows it to the partition's
+real size with the kernel's `EXT4_IOC_RESIZE_FS` ioctl (bean gosd-1c0x).
+There is no `mkfs.ext4` or `resize2fs` on the device -- gosd-init stays
+userland-free (see the epic's locked decisions).
+
+There are two, and one image genuinely cannot do both jobs:
+
+| Asset | Size | Journal | Seeds | Grows? |
+|---|---|---|---|---|
+| `golden.img.zst` | 512 MiB | 128 MiB | `/data` on an ext4 image, and every `emmc`/`disk` volume an app formats | Always, once, at first establishment |
+| `config-golden.img.zst` | 32 MiB | 4 MiB | the config partition (bean gosd-onjv) | Only if `--config-size` exceeds it |
+
+The split exists because **the journal can never be resized after format**
+(see "Journal size" below), so a seed's journal has to be sized for the
+filesystem it will eventually become -- which is what puts a 512 MiB floor
+under the data golden and makes it unusable as the seed for a 32 MiB
+partition. The two are otherwise built from the same recipe with the same
+pins, and differ in exactly three parameters: total size, journal size, and
+`resize_inode` vs `meta_bg`.
 
 This document records *why* every mke2fs parameter was chosen. The exact
 invocation lives in `../../../build/ext4-golden/Dockerfile`; regenerate with
 `../../../build/ext4-golden/build.sh`.
 
 ## Parameters, and why
+
+These are the **data** golden's parameters. The config golden shares every
+one of them except the three called out in its own section below.
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -187,14 +206,70 @@ only produces the golden image. Worth revisiting alongside gosd-1c0x if a
 board ever needs stricter on-corruption behavior than "keep going and let
 the journal/fsck sort it out on next mount".
 
+## The config golden: 32 MiB, 4 MiB journal, resize_inode
+
+`config-golden.img.zst` seeds the config partition (bean gosd-onjv) -- a
+partition every image carries, holding kilobytes of settings, that exists so
+that an app sharing or serving its data volume cannot thereby publish the
+device's own configuration. It differs from the data golden in three
+parameters and nothing else.
+
+| Parameter | Data | Config | Why the config golden differs |
+|---|---|---|---|
+| Golden size | 512 MiB | 32 MiB | The partition is 32 MiB by default (`gosd build --config-size`). The seed matches it, so the common case involves no resize at all -- see "Why not smaller" below. |
+| `-J size=` | 128 MiB | 4 MiB | ext4's own minimum journal, 1024 blocks at the 4096-byte block size both goldens use. The data golden's 128 MiB is sized for a grown multi-terabyte filesystem; a partition that stays 32 MiB needs nothing of the sort. |
+| Resize mechanism | `-O ^resize_inode,meta_bg` | `-O resize_inode` (mke2fs's own default) | `meta_bg` exists solely to escape `resize_inode`'s ~8 TiB ceiling, and a fixed-size partition cannot approach that ceiling. Keeping the feature set plain and standard means any host's `e2fsck` -- and any recovery tool somebody reaches for -- meets the filesystem shape it knows best. |
+
+Everything else is identical and identically argued above: 4096-byte blocks,
+`metadata_csum_seed` (so gosd-apmv's per-volume UUID stamp stays a
+superblock-only edit), `64bit`, the lazy init flags and their crash-safety
+argument, a fixed placeholder UUID and hash seed, an empty label, 256-byte
+inodes and the default inode ratio.
+
+### Why not smaller than 32 MiB
+
+Because 4 MiB of it is journal, and that is the floor ext4 imposes rather
+than one this recipe chose. A freshly formatted config golden reports
+(`dumpe2fs`) 1543 overhead clusters -- roughly 6 MiB of journal, inode table,
+bitmaps, `lost+found` and superblock -- leaving about 26 MiB free for
+settings that are measured in kilobytes. Going below 32 MiB would buy back a
+few megabytes of card space while making the journal a larger and larger
+proportion of the volume; 32 MiB is where that trade stops being worth
+making, and it aligns comfortably.
+
+### Growth, when `--config-size` exceeds the seed
+
+`--config-size` is a build-time flag, so a partition larger than the seed is
+possible and is grown exactly once at establishment, through the same
+`EXT4_IOC_RESIZE_FS` path the data golden uses (`internal/blockmount`). At
+the default size no resize happens at all, which is both the simpler and the
+overwhelmingly commoner path.
+
+`resize_inode` bounds how far that growth can go, and here the bound is real
+rather than theoretical: mke2fs reserved 3 GDT blocks in this golden (its
+default target is 1024x the format size), which with 64-byte group
+descriptors and 128 MiB block groups tops out around **32 GiB**. That is four
+orders of magnitude past any plausible `--config-size` and is recorded here
+so nobody has to rediscover it; it is emphatically not a reason to reach for
+`meta_bg`, whose own ceiling argument (see above) is about the data golden's
+job, not this one.
+
+`build.sh`'s verification step proves the path rather than the ceiling: it
+grows the config golden online from 32 MiB to 1 GiB while mounted, confirms a
+file written beforehand survived, and requires a clean `e2fsck -f`
+afterwards. `config-manifest.json`'s `verification.verifiedGrowthCeilingBytes`
+records that 1 GiB target -- a size deliberately chosen as an implausibly
+large config partition, **not** a discovered limit.
+
 ## Regenerating
 
 ```sh
-../../../build/ext4-golden/build.sh
+../../../build/ext4-golden/build.sh          # both goldens
+../../../build/ext4-golden/build.sh config   # just one
 ```
 
 Requires Docker (or Podman via a docker-compatible context, e.g. colima)
-and `jq`. The script:
+and `jq`. Per golden, the script:
 
 1. Builds e2fsprogs from source inside Docker, at the pinned tag + commit in
    `build.sh` (never the distro-packaged version -- that would drift with
@@ -213,16 +288,17 @@ and `jq`. The script:
 4. Compresses with zstd (`github.com/klauspost/compress/zstd` decodes it on
    the Go side -- see `golden_test.go` -- standard zstd streams are fully
    interoperable regardless of which implementation wrote them).
-5. Writes `golden.img.zst` and `manifest.json` (provenance: e2fsprogs
+5. Writes the compressed asset and its manifest (provenance: e2fsprogs
    version/commit, the exact mke2fs parameters, sha256 of both the raw and
-   compressed image, and whichever growth ceiling the verification step
+   compressed image, and whichever growth target the verification step
    actually proved) into this directory.
 
 ### On determinism
 
-The raw image *is* byte-for-byte reproducible: two independent runs of the
-recipe (confirmed with `cmp`/`sha256sum` while developing it) produce an
-identical `golden.img`, because every source of non-determinism mke2fs has
+The raw images *are* byte-for-byte reproducible: two independent runs of the
+recipe (confirmed with `cmp`/`sha256sum` while developing each golden)
+produce an identical `golden.img`, because every source of non-determinism
+mke2fs has
 is pinned -- fixed UUID, fixed hash seed, `E2FSPROGS_FAKE_TIME` for every
 on-disk timestamp, and a pinned e2fsprogs build (no distro-package drift).
 This is not a universal e2fsprogs guarantee (see
@@ -237,18 +313,20 @@ checked in, which is what actually matters.
 
 ## Provenance
 
-See `manifest.json` in this directory: e2fsprogs repo/tag/commit, the full
-mke2fs parameter set, sha256 of the raw and compressed image, whether the
-in-container verification ran, the growth ceiling it proved, and the
-generation timestamp.
+See `manifest.json` (data) and `config-manifest.json` (config) in this
+directory: e2fsprogs repo/tag/commit, the full mke2fs parameter set, sha256
+of the raw and compressed image, whether the in-container verification ran,
+the growth target it proved, and the generation timestamp.
 
-## Contract this asset provides
+## Contract these assets provide
 
 `golden_test.go` in this directory is the pure-Go, no-mount, no-Docker
-behavioral pin on the checked-in asset: it decompresses `golden.img.zst`
-and asserts the primary superblock's magic, exact feature-flag sets, block
-size, block count, empty label, fixed UUID, and presence of the checksum
-seed. Bean gosd-apmv's superblock reader/writer (the actual `Inspect` /
-`Format` implementation, `go:embed`-ing this asset) should keep this test
-green -- if it doesn't, the asset's contract changed and gosd-apmv needs to
-know.
+behavioral pin on both checked-in assets: it decompresses each and asserts
+the primary superblock's magic, exact feature-flag sets, block size, block
+count, journal size, empty label, fixed UUID, and presence of the checksum
+seed -- then cross-checks each asset against its manifest's recorded sizes
+and digests, and against the `Golden` constant in `golden.go`, so those three
+cannot drift apart silently. Bean gosd-apmv's superblock reader/writer (the
+actual `Inspect` / `Format` implementation, `go:embed`-ing these assets)
+should keep this test green -- if it doesn't, an asset's contract changed and
+gosd-apmv needs to know.

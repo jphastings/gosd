@@ -41,7 +41,11 @@ func NewDeps(log func(format string, args ...any), ext4Mountpoint string) Deps {
 		MarkerExists: func(partitionDevice string) (bool, error) {
 			return diskfmt.RootFileExists(partitionDevice, EstablishedMarker)
 		},
-		FormatEXT4: diskfmt.FormatEXT4,
+		FormatEXT4: func(partitionDevice, label string) error {
+			// The data golden, always: this partition is grown to the
+			// card's real size right afterwards (EstablishEXT4 below).
+			return diskfmt.FormatEXT4(diskfmt.EXT4GoldenData, partitionDevice, label)
+		},
 		EstablishEXT4: func(partitionDevice string) error {
 			return establishEXT4(partitionDevice, ext4Mountpoint)
 		},

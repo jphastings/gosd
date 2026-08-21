@@ -249,6 +249,11 @@ func isAllZero(data []byte) bool {
 // Format writes a whole-device filesystem of the requested kind, labelled
 // volumeLabel, to the block device (or image file) at devicePath, discarding
 // any existing contents.
+//
+// ext4 is seeded from EXT4GoldenData, the only golden this dispatcher's
+// callers (emmc and disk, through internal/blockmount) ever want: they format
+// volumes that are then grown to the device's real size. The config
+// partition's fixed-size golden is reached by calling FormatEXT4 directly.
 func Format(devicePath, volumeLabel string, fs FS) error {
 	switch fs {
 	case FAT32:
@@ -256,7 +261,7 @@ func Format(devicePath, volumeLabel string, fs FS) error {
 	case ExFAT:
 		return FormatExFAT(devicePath, volumeLabel)
 	case EXT4:
-		return FormatEXT4(devicePath, volumeLabel)
+		return FormatEXT4(EXT4GoldenData, devicePath, volumeLabel)
 	default:
 		return fmt.Errorf("cannot format %s: %q is not a filesystem GoSD can create", devicePath, string(fs))
 	}

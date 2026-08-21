@@ -2,7 +2,7 @@ package diskfmt
 
 import "testing"
 
-// reformatMatrixDeviceBytes must hold FormatEXT4's fixed 512MiB golden image
+// reformatMatrixDeviceBytes must hold the data golden's fixed 512MiB image
 // with headroom left over for a FAT32 or exFAT layout written on top of it
 // afterwards — the same size the bean's own reproduction used.
 const reformatMatrixDeviceBytes = 768 << 20
@@ -10,7 +10,7 @@ const reformatMatrixDeviceBytes = 768 << 20
 // reformatFormatters lets TestReformatOverwritesEveryPriorSignature drive
 // every ordered pair of {ext4, fat32, exfat} without hand-listing them.
 var reformatFormatters = map[FS]func(devicePath, label string) error{
-	EXT4:  FormatEXT4,
+	EXT4:  func(devicePath, label string) error { return FormatEXT4(EXT4GoldenData, devicePath, label) },
 	FAT32: FormatFAT32,
 	ExFAT: FormatExFAT,
 }
