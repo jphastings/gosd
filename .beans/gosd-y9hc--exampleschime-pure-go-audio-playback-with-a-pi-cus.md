@@ -1,11 +1,11 @@
 ---
 # gosd-y9hc
 title: 'examples/chime: pure-Go audio playback with a Pi custom-kernel recipe'
-status: in-progress
+status: completed
 type: task
 priority: high
 created_at: 2026-07-29T21:45:24Z
-updated_at: 2026-07-29T23:04:42Z
+updated_at: 2026-08-21T01:36:07Z
 parent: gosd-qkbl
 ---
 
@@ -139,3 +139,13 @@ seven boards, which says less than the footnote does.
 
 Status left at in-progress pending review in PR #132, matching how gosd-yggd
 rode its PR.
+
+### Closed 2026-08-21
+
+PR #132 merged; the "pending review" hold above no longer applies.
+`examples/chime` (app, tone synthesis, kernel recipe and README) is on `main`,
+and the recipe has since grown Rockchip fragments under gosd-lrxz. The ALSA
+PCM path written here was subsequently promoted out of the example into the
+public `sound/` package. No hardware gate belonged to this bean: audio's
+first bench pass is the epic's business, and COMPATIBILITY.md carries the
+footnote rather than a per-board row, as justified above.

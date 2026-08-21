@@ -595,8 +595,10 @@ into `config/ingress/tailscale-funnel/authkey` and the device restarted.
   `tailscale-funnel` into the same image at once costs roughly an extra
   40-60MB of RAM combined — most devices only need one agent, but nothing
   stops building with both.
-- **Not yet hardware-verified.** Every piece of this — the build, the
-  config tree's schema, the runtime module, the supervisor wiring — is
-  unit-tested and exercised under QEMU, but hasn't yet been run against a
-  real tailnet on real hardware. That's epic `gosd-65uy`'s bench bean
-  `gosd-79v8`; see `COMPATIBILITY.md` for current per-board status.
+- **Hardware-verified on one board so far.** Every piece of this — the
+  build, the config tree's schema, the runtime module, the supervisor
+  wiring — is unit-tested and exercised under QEMU on every board, and the
+  whole path has been run against a real tailnet on real hardware on the
+  NanoPi Zero2 (epic `gosd-65uy`'s bench bean `gosd-79v8`). The remaining
+  boards run the identical, gosd-compiled shim over the same runtime path;
+  see `COMPATIBILITY.md` for current per-board status.

@@ -1,11 +1,11 @@
 ---
 # gosd-jm2v
 title: Go toolchain preflight + record why the flake embeds Go
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-09T12:00:41Z
-updated_at: 2026-08-09T12:22:28Z
+updated_at: 2026-08-21T01:36:07Z
 ---
 
 JP asked whether `flake.nix` should embed its own Go or depend on the user's
