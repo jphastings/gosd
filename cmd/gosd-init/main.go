@@ -28,6 +28,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/wifiup"
 	"github.com/jphastings/gosd/internal/configtree"
+	"github.com/jphastings/gosd/internal/devreserve"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultdrop"
 	"github.com/jphastings/gosd/internal/faultreport"
@@ -140,6 +141,13 @@ func main() {
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
+		// ReserveDevices writes down which of this board's block devices
+		// belong to GoSD, for gadget.MassStorage to refuse against —
+		// plain file operations, not platform ones, since /run is an
+		// ordinary tmpfs by the time boot.Run reaches this.
+		ReserveDevices: func(devices []devreserve.Entry) error {
+			return devreserve.Write(devreserve.Path, devices)
+		},
 		WriteHosts: func(hostname string) error {
 			return hostsfile.Write(hostsfile.Path, hostname)
 		},

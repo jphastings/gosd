@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/dataexpand"
 	"github.com/jphastings/gosd/internal/configtree"
+	"github.com/jphastings/gosd/internal/devreserve"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/faultreport"
 	"github.com/jphastings/gosd/internal/hostsfile"
@@ -2913,4 +2914,118 @@ func bootOnceWritingHosts(t *testing.T, store, root, identity string, baked, car
 		t.Fatalf("Run() = %v, want nil", err)
 	}
 	return hostname
+}
+
+// TestRunPublishesTheBootPartitionItMounted is the gosd-init half of bean
+// gosd-ix0r: nothing else on the board can say which disk it started from
+// (an initramfs boot leaves /proc/cmdline's root= naming no block device),
+// so an app-facing refusal is only possible if gosd-init writes down what
+// it found. It must publish the device the boot mount actually used, with a
+// role a refusal can quote, before /app ever starts.
+func TestRunPublishesTheBootPartitionItMounted(t *testing.T) {
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+
+	var published []devreserve.Entry
+	publishedBeforeApp := false
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		publishedBeforeApp = len(published) > 0
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReserveDevices: func(devices []devreserve.Entry) error {
+			published = devices
+			return nil
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.DataTarget = "/data"
+	opts.DataDevices = []string{"/dev/mmcblk0p2"}
+	opts.DataTimeout = time.Second
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	if len(published) != 1 {
+		t.Fatalf("published %+v, want exactly the boot partition", published)
+	}
+	if published[0].Path != "/dev/mmcblk0p1" {
+		t.Errorf("published path = %q, want the device the boot partition mounted from", published[0].Path)
+	}
+	if published[0].Role == "" {
+		t.Error("published entry has no role; a refusal has nothing to tell its owner")
+	}
+	if !publishedBeforeApp {
+		t.Error("the reserved devices were published after /app started; an app can read the list at once")
+	}
+
+	// The data partition is the app's own storage, sharable behind an
+	// app's own opt-in (bean gosd-cayj) — reserving it here would refuse
+	// examples/usbwebsite's documented path.
+	for _, e := range published {
+		if e.Path == "/dev/mmcblk0p2" {
+			t.Errorf("published %q; the data partition is the app's to share, not gosd-init's to reserve", e.Path)
+		}
+	}
+}
+
+// Publishing happens on tmpfs, so a failure means an app falls back to the
+// mounted-device check it already had. That is worth a console line and
+// nothing more: halting a device over it would be far the worse outcome.
+func TestRunContinuesWhenPublishingReservedDevicesFails(t *testing.T) {
+	console := &bytes.Buffer{}
+	clock := newFakeClock(time.Unix(0, 0))
+	stop := make(chan struct{})
+	rebooter := &fakeRebooter{}
+
+	started := false
+	appStarter := funcAppStarter(func(string, []string, io.Writer, io.Writer) (int, error) {
+		started = true
+		close(stop)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:     &fakeMounter{},
+		Hostname:    &fakeHostname{},
+		AppStarter:  appStarter,
+		Reaper:      fakeReaper{},
+		Rebooter:    rebooter,
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{console}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig:  func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReserveDevices: func([]devreserve.Entry) error {
+			return errors.New("boom: /run is full")
+		},
+		Sleep: func(d time.Duration) { clock.Sleep(d) },
+		Now:   clock.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if !started || rebooter.rebooted {
+		t.Errorf("app started = %v, rebooted = %v; a failed publish must not stop the boot", started, rebooter.rebooted)
+	}
+	if !strings.Contains(console.String(), "boom: /run is full") {
+		t.Errorf("console %q should say the publish failed and what an app falls back to", console.String())
+	}
 }

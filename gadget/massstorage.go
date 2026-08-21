@@ -1,8 +1,10 @@
 package gadget
 
 import (
+	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/jphastings/gosd/internal/devreserve"
 )
 
 // MassStorage is a USB mass-storage Function (configfs f_mass_storage): it
@@ -35,6 +37,32 @@ import (
 // See the USB gadget section of GoSD's runtime documentation, and
 // examples/usbwebsite for how an app can hold that line and still be
 // editable over USB.
+//
+// # Devices GoSD keeps for itself
+//
+// Some of the board's storage is never the app's to publish, whatever the
+// app intends: the boot partition carries the kernel this device starts
+// from and the config tree that provisions it, so a host given write access
+// to it gets code execution on the next boot. Create refuses those outright
+// — wrapping [ErrReservedDevice], and regardless of whether anything is
+// mounted at the time — for Path itself and for the whole disk a reserved
+// partition sits on, since a LUN over the disk contains the partition.
+//
+// It learns which devices those are from gosd-init, which publishes them at
+// boot (see the reserved-device list in
+// [github.com/jphastings/gosd/internal/devreserve]); the refusal is
+// therefore a rule the package enforces rather than, as it was until bean
+// gosd-ix0r, an accident of gosd-init happening to keep /boot mounted. On
+// an image whose gosd-init predates that list — or anywhere off a GoSD
+// board — nothing is published, and Create falls back to the mounted-device
+// check alone, exactly as it behaved before.
+//
+// The data partition is deliberately NOT among them: it is the app's own
+// persistent storage, and examples/usbwebsite shares it behind an explicit
+// operator opt-in on the eMMC-less boards. What lives on it that shouldn't
+// be published is gosd-init's config store, which bean gosd-onjv moves to a
+// partition of its own — and which, being reserved there, this refusal will
+// cover.
 type MassStorage struct {
 	// Path is the block device (e.g. /dev/nvme0n1p1) or disk-image file
 	// backing the LUN. Required.
@@ -59,7 +87,24 @@ type MassStorage struct {
 	// for the default; tests in this package override it directly to
 	// exercise the mounted-device rejection below without real storage.
 	mountedTargets func() (map[string]string, error)
+
+	// reservedDevices reports the block devices gosd-init has claimed for
+	// the board's own operation. nil (the zero value) means "read the real
+	// /run file" (see defaultReservedDevices); tests override it directly,
+	// the same way they do mountedTargets. Unlike the mount check this
+	// needs no per-platform implementation: it reads one ordinary file at
+	// a fixed path, which simply isn't there off a GoSD board.
+	reservedDevices func() (devreserve.Reservations, error)
 }
+
+// ErrReservedDevice reports that MassStorage.Path names, or contains, a
+// block device GoSD keeps for the board's own operation — today the boot
+// partition, and so the whole disk holding it. Create's returned error
+// wraps it, so an app that can do something else when it can't share a
+// particular volume (offer a different one, or carry on without the drive)
+// can match it with errors.Is and degrade gracefully, the same way
+// [ErrNoController] already lets it.
+var ErrReservedDevice = errors.New("the device is reserved for GoSD's own use")
 
 // Name implements Function. "usb0" is this gadget's only mass-storage
 // instance, matching ACM's instance-naming convention.
@@ -73,6 +118,13 @@ func (MassStorage) Name() string { return "mass_storage.usb0" }
 func (m MassStorage) Create(fsys writableFS, dir string) error {
 	if m.Path == "" {
 		return fmt.Errorf("MassStorage.Path is empty; set it to the block device or disk-image file the LUN should expose")
+	}
+
+	// Reservations first: they hold whether or not anything is mounted, so
+	// a device that is both reserved and mounted deserves the error that
+	// stays true after an Unmount rather than the one that invites it.
+	if err := m.checkReserved(); err != nil {
+		return err
 	}
 
 	targetsFn := m.mountedTargets
@@ -100,6 +152,43 @@ func (m MassStorage) Create(fsys writableFS, dir string) error {
 		}
 	}
 	return nil
+}
+
+// checkReserved refuses a Path that would hand a USB host one of the block
+// devices gosd-init reserves for the board's own operation. See the type's
+// "Devices GoSD keeps for itself" section for what is on the list and what
+// deliberately isn't.
+func (m MassStorage) checkReserved() error {
+	reservedFn := m.reservedDevices
+	if reservedFn == nil {
+		reservedFn = defaultReservedDevices
+	}
+	reserved, err := reservedFn()
+	if err != nil {
+		return fmt.Errorf("MassStorage: reading the devices GoSD reserves (%s) failed, so it can't tell whether %s is one of them: %w — gosd-init writes that file at boot, so reboot the board; if something else on the device created it, remove it", devreserve.Path, m.Path, err)
+	}
+
+	entry, blocked := reserved.Exposes(m.Path)
+	if !blocked {
+		return nil
+	}
+	// Exposes already established that Path covers the reservation;
+	// covering in the other direction too is what makes them the same
+	// device rather than the disk one sits on. Asked this way rather than
+	// by comparing the strings, so the two checks can't drift over what
+	// counts as the same path.
+	if devreserve.Covers(entry.Path, m.Path) {
+		return fmt.Errorf("MassStorage.Path %s is %s, so %w, mounted or not: a LUN is the whole volume, so the host would get this board's kernel and every setting it was provisioned with — the WiFi passphrase and any ingress token in plain text among them — and without ReadOnly it could write files there that outlive the owner's next re-flash. Back the LUN with a volume your app owns outright instead: an eMMC or attached disk it formatted itself, or the SD card's data partition", m.Path, entry.Describe(), ErrReservedDevice)
+	}
+	return fmt.Errorf("MassStorage.Path %s is the whole disk holding %s (%s), so %w, mounted or not: a LUN is the whole volume, so sharing the disk shares that partition with it. Back the LUN with a single partition your app owns outright rather than the disk it sits on", m.Path, entry.Describe(), entry.Path, ErrReservedDevice)
+}
+
+// defaultReservedDevices is checkReserved's real source: the list gosd-init
+// publishes on tmpfs at boot. A file that isn't there reports no
+// reservations and no error — see devreserve's package doc for why absence
+// degrades rather than refuses.
+func defaultReservedDevices() (devreserve.Reservations, error) {
+	return devreserve.Read(devreserve.Path)
 }
 
 // boolAttr renders b the way configfs boolean attributes expect it written.
@@ -132,41 +221,11 @@ func mountedAt(path string, targets map[string]string) (mountpoint string, block
 // /dev/sda1 is the candidate Path, or vice versa). A non-device path (e.g. a
 // disk-image file backing a LUN) only ever matches by exact equality, since
 // it has no partitions to relate.
+//
+// devreserve.Covers is the one-directional half of this — "would sharing
+// the first hand over the second" — and the naming convention itself lives
+// there, so the mounted-device check and the reserved-device check can
+// never disagree about what a partition of what is.
 func relatedDevicePaths(a, b string) bool {
-	return a == b || isPartitionOf(a, b) || isPartitionOf(b, a)
-}
-
-// isPartitionOf reports whether child names a partition of the whole device
-// parent, using Linux's device-partition naming convention: a parent whose
-// name ends in a digit (nvme0n1, mmcblk0) numbers its partitions with a "p"
-// separator (nvme0n1p1, mmcblk0p1) — otherwise a partition number would be
-// indistinguishable from another whole device's name — while every other
-// parent (sda, vda) appends the partition digit directly (sda1). Restricted
-// to /dev paths: a disk-image file backing a LUN follows no such
-// convention, so e.g. "/data/image.bin" and a same-directory
-// "/data/image.bin2" must never be treated as device and partition.
-func isPartitionOf(parent, child string) bool {
-	if parent == "" || !strings.HasPrefix(parent, "/dev/") || !strings.HasPrefix(child, parent) {
-		return false
-	}
-	suffix := strings.TrimPrefix(child, parent)
-	if suffix == "" {
-		return false
-	}
-	if parent[len(parent)-1] >= '0' && parent[len(parent)-1] <= '9' {
-		rest, ok := strings.CutPrefix(suffix, "p")
-		if !ok {
-			return false
-		}
-		suffix = rest
-	}
-	if suffix == "" {
-		return false
-	}
-	for _, r := range suffix {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return devreserve.Covers(a, b) || devreserve.Covers(b, a)
 }
