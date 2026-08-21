@@ -40,9 +40,14 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   code changes, no config: [which LED gets used and
   why](docs/status-led.md). Code-complete and unit-tested; not yet
   bench-verified on any board (bean `gosd-xtcs`).
-- Ships no shell and no SSH, ever — serial console and app logs only.
-- Will gain OTA app updates — [designed](docs/design/ab-updates.md), not
-  yet implemented (epic `gosd-vxal`).
+- Ships no shell and no SSH, ever — serial console and app logs only, and
+  mDNS as the only network listener.
+- Updates by reflashing, permanently: there is no over-the-network update
+  path and there will not be one (JP, 2026-08-21 — bean `gosd-vxal`, with the
+  reasoning [kept as a design record](docs/design/ab-updates.md)). A
+  `--data-size=expand` image re-adopts its data partition across a reflash,
+  and the config store puts the operator's own settings back, so an upgrade
+  costs one Raspberry Pi Imager run and loses neither.
 
 Below is a snapshot of `main`, not a roadmap (`beans list` shows what's in
 flight). ✅ means **code-complete**: implemented, unit-tested, QEMU-tested
@@ -138,7 +143,8 @@ board · ❌ not supported (see footnote).
 
 [^nanopi-usb]: The RK3528's USB device-tree nodes aren't in any released
     mainline kernel yet, so this board has no USB at all — host or gadget
-    (bean `gosd-36yy`); `--usb-gadget` refuses to build.
+    (bean `gosd-woox`, which watches for the release that unlocks it);
+    `--usb-gadget` refuses to build.
 
 [^cubie-gadget]: Building with `--usb-gadget` ships a variant device tree
     with the USB-C port's `ehci0`/`ohci0` host controllers disabled, because

@@ -511,11 +511,11 @@ Rules of engagement:
   `--data-size=expand` instead, `/data` survives a same-`--boot-size`
   reflash (see above) — this is the one durability difference between the
   two modes, and the reason to prefer `expand` for anything you expect to
-  update. The planned app-slot update mechanism (`docs/design/ab-updates.md`)
-  is a separate, narrower promise: it changes only files inside
-  the boot partition and never touches the partition table at all, so once
-  it lands, over-the-network app updates leave the data partition intact
-  regardless of `--data-size` mode.
+  update. There is no over-the-network alternative to reflashing, now or
+  later: updating a fielded card means flashing it again, permanently (JP,
+  2026-08-21). An app-slot scheme that would have changed that was designed
+  and then declined; it is [kept as a record of a road not
+  taken](design/ab-updates.md), and the reasoning is at the top of it.
 
 ### Keeping settings across a reflash: the config store
 

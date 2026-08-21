@@ -1,11 +1,11 @@
 ---
 # gosd-36yy
 title: 'Fleet kernel tag bump: unlock RK3528 USB gadget on NanoPi Zero2'
-status: todo
+status: scrapped
 type: task
 priority: deferred
 created_at: 2026-07-24T16:02:21Z
-updated_at: 2026-07-24T16:17:22Z
+updated_at: 2026-08-21T04:43:59Z
 parent: gosd-cwjf
 ---
 
@@ -277,3 +277,23 @@ dispatch step.
 - This bean's priority is set to `deferred` (mirroring gosd-vcae's own
   "if no-go, set priority to deferred with a recheck note" playbook) and
   status to `todo` — it is not actively worked, but is not done either.
+
+
+## Reasons for Scrapping
+
+**JP, 2026-08-21: superseded by gosd-woox, the single upstream watch list.**
+Not abandoned — re-homed. Three separate beans (this one, gosd-vo75 and
+gosd-nplp) all fired on the *same* trigger, the next fleet kernel tag bump,
+and four scattered reminders meant the bump would service some of them and
+silently miss the rest. gosd-woox makes the next bump one checklist.
+
+Nothing in this bean is lost. gosd-woox's item W1 carries this bean's trigger
+(a numbered stable release containing commits `5f3ae9b12a6c` and
+`ff660109f412`), its decision rule (**never pin a `-rc` tag**; `fleetKernelTag`
+means a stable LTS tag across every mainline-fleet board, and moving to a new
+major version is JP's call, not a side effect of a bump), the 7/7 DTS-patch
+dry-run result against v7.2-rc4, the fragment symbol promotion with the
+still-unchecked `phy-rockchip-inno-usb2` `rk3528` `of_device_id` question
+called out as unchecked, and the `dr_mode = "peripheral"` patch plan with the
+reasoning that distinguishes this board from rock-4se. The full tag-by-tag
+evidence table stays here, in this bean, and gosd-woox points at it.

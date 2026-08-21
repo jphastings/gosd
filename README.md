@@ -14,12 +14,14 @@ the people you send them to never need a terminal.
 
 - One CLI, runnable locally or in CI — building an image needs no Docker, no
   root, and no Linux
-- Boots to your app in under 5 seconds, WiFi included
+- Boots to your app in about 10 seconds, and to a wired `hostname.local` in
+  about the same — over WiFi expect ~25s, because association, DHCP and mDNS
+  all happen after your app is already up
 - Runs any normal Linux-capable Go program — no SDK, no special imports
 - Networking via Ethernet (DHCP) or WiFi (credentials written as the SD card
   is flashed)
-- Optional USB gadget mode — the board presents as a USB serial, Ethernet,
-  or mass-storage _device_: see
+- Optional USB gadget mode — the board presents as a USB serial or
+  mass-storage _device_: see
   [`docs/runtime.md`](docs/runtime.md#usb-gadget-mode) and
   `examples/usbserial`
 

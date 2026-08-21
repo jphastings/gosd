@@ -3,8 +3,9 @@
 title: USB Ethernet gadget mode (ECM + RNDIS) with built-in DHCP server
 status: todo
 type: task
+priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-07-02T21:10:00Z
+updated_at: 2026-08-21T04:42:20Z
 parent: gosd-jge2
 blocked_by:
     - gosd-uo9f
@@ -20,3 +21,23 @@ Device-as-network-interface: plug the board into any computer via USB and reach 
 
 ## Acceptance
 Pi Zero 2W plugged into a Mac via USB alone: http://hostname.local loads within 15s with zero configuration.
+
+
+## Deliberately kept deferred (JP, 2026-08-21)
+
+Reviewed on 2026-08-21 in the pass that closed the OTA chain and the audio
+extras, and **deliberately left deferred rather than scrapped or scheduled**.
+This note exists so that a later reader does not mistake its age for neglect:
+it was looked at, and the answer was "not yet", not "forgotten".
+
+It is the largest thing v0.3 promised and did not deliver. "Plug the board
+into any computer over one USB cable and reach the app at a fixed address" is
+still the best story GoSD has for a minimally-technical user on a Pi Zero 2W —
+no WiFi credentials, no network, no terminal — and nothing has replaced it.
+The prerequisite (`gadget/`, the pure-Go configfs gadget library, bean
+gosd-uo9f) is shipped and proven with CDC-ACM serial and mass storage, so the
+missing pieces are the ECM and RNDIS functions, the composite gadget with the
+Windows `os_desc` incantation, a minimal DHCPv4 server on `usb0`, mDNS on
+`usb0`, and the three-OS hardware pass.
+
+Still deferred, not closed: it stays on the list exactly as written above.
