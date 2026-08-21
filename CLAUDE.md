@@ -29,6 +29,15 @@ say so in the bean rather than silently diverging.
   outside `jphastings`. The hook refuses the command and explains the reason
   and the fix at the moment it matters, so they are not restated here; read the
   script if you want the rules without triggering one.
+- **An epic closes when its code has shipped, even if bench verification is
+  outstanding** (2026-08-21): where an epic's implementation is on `main` and
+  CI-proven and its only open child is hardware verification of that
+  already-shipped code, close the epic with a `## Summary of Changes` naming
+  the bench bean, and re-parent that bean to no parent so the tree never shows
+  a completed epic with an open child. The boundary is the part that gets
+  mistaken: this covers verification of work already delivered, NOT epics
+  where the bring-up itself is the deliverable — `gosd-v370` (Radxa Zero 3E)
+  stays open because bringing the board up IS the work.
 - Stacked work: when a task depends on an as-yet-unmerged PR, branch from that
   PR's branch (not `main`), say "stacked on #NN" in the body, and rebase onto
   `main` once it lands. Keep stacks shallow — prefer waiting for a merge over

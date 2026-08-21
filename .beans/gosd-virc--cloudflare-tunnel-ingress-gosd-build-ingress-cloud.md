@@ -1,11 +1,11 @@
 ---
 # gosd-virc
 title: 'Cloudflare Tunnel ingress: gosd build --ingress cloudflared (arm64 v1)'
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-07T12:51:17Z
-updated_at: 2026-08-07T13:59:09Z
+updated_at: 2026-08-21T06:50:22Z
 ---
 
 JP request (2026-08-07): gosd devices' HTTP services reachable from the public
@@ -65,3 +65,31 @@ CA roots in every image: bean gosd-kzgq (cloudflared needs
 
 schema → build rail → runtime module → wiring+contract amendment →
 provsnapshot → docs → bench verification.
+
+
+## Summary of Changes
+
+Closed 2026-08-21 (JP) under the convention recorded in CLAUDE.md's Workflow
+section: an epic whose implementation has shipped and is CI-proven closes even
+when a hardware bench verification is still outstanding — the delivered work
+gets recorded as delivered, and the outstanding verification keeps its own bean
+rather than holding an epic hostage.
+
+Shipped, all on `main`: `gosd build --ingress cloudflared` bakes a pinned,
+sha256-verified upstream `cloudflared` into arm64 images (bean gosd-g4km, with
+the `cloudflaredpin` pin, the config.json bit and a fixture-driven integration
+test); `cmd/gosd-init/internal/cloudflared` decodes the tunnel token's a/s/t
+triple into a synthesized `credentials.json` + `config.yml` under
+`/run/gosd/cloudflared/`, so no credentials file is ever written to the card
+(beans gosd-uj36, gosd-7upw); gosd-init supervises the process under the
+amended single-child supervision contract (bean gosd-66ax); the settings
+round-trip through the provisioning snapshot so ingress survives a reflash
+(bean gosd-tgzo); and the ingress guide, COMPATIBILITY.md row and runtime
+pointer document it, including the hard armv6 refusal on pi-zero-w (bean
+gosd-d1c2).
+
+**This closure is not a hardware-verification claim.** The end-to-end run —
+a real Cloudflare zone, a real board on the sdwire rig, dashboard-managed
+tunnel characterization, reflash survival and the no-network cold boot — is
+bean gosd-igk0, now a standalone bench bean with no parent. COMPATIBILITY.md's
+"not yet hardware-verified" footnote stays until that bean flips it.

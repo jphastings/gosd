@@ -5,8 +5,7 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-08-07T14:07:40Z
-updated_at: 2026-08-07T19:11:38Z
-parent: gosd-lfu0
+updated_at: 2026-08-21T06:49:52Z
 ---
 
 Hardware bench follow-up to epic gosd-lfu0's code (shipped: gosd-1c0x's

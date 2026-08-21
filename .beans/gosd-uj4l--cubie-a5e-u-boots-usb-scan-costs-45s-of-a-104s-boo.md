@@ -1,10 +1,11 @@
 ---
 # gosd-uj4l
 title: 'cubie-a5e: U-Boot''s USB scan costs ~4.5s of a 10.4s boot'
-status: in-progress
+status: completed
 type: task
+priority: normal
 created_at: 2026-08-16T19:35:26Z
-updated_at: 2026-08-16T23:00:00Z
+updated_at: 2026-08-21T06:53:18Z
 parent: gosd-h1wv
 ---
 
@@ -47,7 +48,8 @@ Worth checking whether the same scan is costing the other extlinux boards
 - [x] Rebuild, re-measure, and record the new baseline (needs the bench —
       no container runtime or bench access at implementation time; the
       ~4.5s saving below is a hypothesis, not a measurement)
-- [ ] Check the other U-Boot boards for the same cost
+- [x] Check the other U-Boot boards for the same cost — separate scope, split
+      out 2026-08-21 as bean gosd-ylkv (rock-4se, nanopi-zero2, radxa-zero-3e)
 
 ## Summary of Changes
 
@@ -150,3 +152,21 @@ and on these boots DHCP, mDNS and NTP all came up
 `CONFIG_USB_GADGET` remains set, so `--usb-gadget` is unaffected — untested
 here only because this board's USB-C carries its bench power (bean
 gosd-6pfn).
+
+
+## Closed 2026-08-21
+
+The fix shipped in artifacts v0.10.2 ("Cubie A5E U-Boot no longer scans USB on
+every boot") and is hardware-measured on this board: −4.55s on the U-Boot phase
+across 5 clean power cycles, spread 0.03s, recovering essentially all of the
+~4.5s the scan was reasoned to cost. `internal/artifacts.Version` was moved in
+its own follow-up PR after the release existed, per tag-first, bump-second.
+
+The one remaining todo — whether rock-4se, nanopi-zero2 and radxa-zero-3e pay
+the same cost — was separate scope that merely happened to be noticed here, and
+is now bean **gosd-ylkv** (no parent, since it spans three boards). That bean
+carries two warnings this one earned: the cubie figure must not be assumed to
+transfer, and the Rockchip boards do not share the `ARCH_SUNXI` → `USB_KEYBOARD`
+→ `PREBOOT="usb start"` chain that caused it here, so each board's own resolved
+`CONFIG_PREBOOT` has to be established at the pinned tag before anything is
+"fixed".

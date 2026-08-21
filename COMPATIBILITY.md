@@ -118,12 +118,15 @@ board · ❌ not supported (see footnote).
   PMIC-internal `r_i2c0` bus is wired up; both are deferred to a
   post-bring-up follow-up (bean `gosd-jpc8`). GPIO works as usual. Its
   U-Boot ships per-chip vendor DRAM calibration values hardware-verified
-  only on the **1GB LPDDR4x variant** (bean `gosd-6pfn`) — upstream
-  mainline's own values fail U-Boot SPL's DRAM init on that unit
-  (`DRAM test failure at address 0x6fffffc0`, bean `gosd-84b8`). The
-  2GB/4GB variants have not been tested and may fail to boot with the same
-  DRAM error at a different address; if you're running one, feedback
-  (working or not) is very welcome on bean `gosd-84b8`.
+  only on the **1GB LPDDR4x variant** — upstream mainline's own values fail
+  U-Boot SPL's DRAM init on that unit (`DRAM test failure at address
+  0x6fffffc0`, diagnosed in bean `gosd-84b8`). Keeping the 1GB-proven
+  values is a deliberate choice: they are the only ones anyone has been
+  able to verify against real silicon. The **2GB and 4GB variants are
+  untested**, and one may fail the same way at a different address — which
+  presents as a brick: no kernel, no network, and the error visible only on
+  a serial console. If you're running one, feedback (working or not) is
+  very welcome on bean `gosd-6pfn`.
 
 [^pi3b-wifi]: The 3B+'s BCM43455 WiFi firmware isn't bundled yet, so a
     3B+ is Ethernet-first for now (bean `gosd-oq0z`).

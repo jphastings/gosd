@@ -1,11 +1,11 @@
 ---
 # gosd-lfu0
 title: 'disk/: crash-safe ext4 as the default filesystem for internal drives'
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-07T09:57:26Z
-updated_at: 2026-08-09T09:01:01Z
+updated_at: 2026-08-21T06:50:04Z
 ---
 
 JP (2026-08-07): FAT on internal drives (eMMC-attached NVMe, USB drives via disk/) is causing real problems — power-cut corruption and the FAT32 size ceiling. Add ext4 as a disk/ filesystem option and make it the DEFAULT: disk.FormatAndMount is almost always used for internal drives, where host-OS readability doesn't matter and crash-safety does.
@@ -27,3 +27,34 @@ JP (2026-08-07): FAT on internal drives (eMMC-attached NVMe, USB drives via disk
 - Pi-family ext4 kernel enablement: out until a concrete need.
 
 Related: rock-4se NVMe is the flagship consumer (betamin appliance). Bench verification on rock-4se NVMe belongs to the final child bean.
+
+
+## Summary of Changes
+
+Closed 2026-08-21 (JP) under the convention recorded in CLAUDE.md's Workflow
+section: an epic whose implementation has shipped and is CI-proven closes even
+when a hardware bench verification is still outstanding — the delivered work
+gets recorded as delivered, and the outstanding verification keeps its own bean
+rather than holding an epic hostage.
+
+Shipped, all on `main`:
+
+- Pure-Go ext4 inspect and format-by-golden-copy in `internal/diskfmt`, plus
+  the checked-in 512MiB golden itself with its generator recipe and provenance
+  (`internal/diskfmt/ext4golden`) — beans gosd-apmv, gosd-u988.
+- `disk/` and `internal/blockmount`: the typed `Filesystem` token with ext4 as
+  its zero value, the once-only online grow via `EXT4_IOC_RESIZE_FS`, and the
+  marker-gated establishment/adoption state machine that never treats a
+  filesystem probe as proof a format completed — bean gosd-1c0x.
+- `emmc/` took the same token and the same ext4 default (bean gosd-9sc4), and
+  the Pi-family kernels gained `CONFIG_EXT4_FS` so the default works on Pi USB
+  drives too (bean gosd-19kw).
+- Ship pass: the `qemu-disk-ext4` CI job — format, grow, a hard qemu kill with
+  no clean shutdown, reboot, adopt, journal replay — plus docs,
+  COMPATIBILITY.md, CLAUDE.md's locked decision and the minor version bump
+  (bean gosd-ucgr).
+
+**This closure is not a hardware-verification claim.** Everything above is
+proven by unit tests and QEMU only. Real-hardware close-out on the bench —
+rock-4se + NVMe SSD + the sdwire power-cut rig — is bean gosd-vv5o, now a
+standalone bench bean with no parent.

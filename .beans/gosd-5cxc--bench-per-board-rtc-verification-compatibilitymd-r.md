@@ -5,8 +5,7 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-08-07T12:53:05Z
-updated_at: 2026-08-07T12:53:22Z
-parent: gosd-achn
+updated_at: 2026-08-21T06:49:52Z
 blocked_by:
     - gosd-lx8g
 ---

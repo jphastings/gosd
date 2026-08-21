@@ -1,11 +1,11 @@
 ---
 # gosd-84b8
 title: 'cubie-a5e: image does not boot on the 1GB RAM variant (SPL DRAM init fails)'
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-16T18:44:19Z
-updated_at: 2026-08-16T21:37:41Z
+updated_at: 2026-08-21T06:52:11Z
 parent: gosd-h1wv
 blocking:
     - gosd-6pfn
@@ -93,10 +93,10 @@ options 1 and 2), so it is written up here rather than decided.
 
 ## Todos
 
-- [ ] Bench-test the community 1GB parameters as a config fragment (in
+- [x] Bench-test the community 1GB parameters as a config fragment (in
       progress at time of writing) to confirm the diagnosis
-- [ ] JP decides which of the four options above cubie-a5e takes
-- [ ] COMPATIBILITY.md: record hardware-verified status honestly for this board
+- [x] JP decides which of the four options above cubie-a5e takes
+- [x] COMPATIBILITY.md: record hardware-verified status honestly for this board
 
 
 
@@ -123,3 +123,53 @@ overrides `TPR6/TPR10/TPR11/TPR12`, merged by the Dockerfile alongside
   gosd-init → `/app`, with `data partition already present` and `boots=2`
   proving adoption across a reboot. Nothing outstanding for this bean's
   verification.
+
+
+## Final decision (JP, 2026-08-21): keep the 1GB values, document the rest honestly
+
+Option 1 of the four above, combined with option 3's honesty. The 1GB-verified
+DRAM calibration values ship as they are, and the 2GB and 4GB variants are
+documented plainly as unverified rather than implied to work.
+
+**Why.** The values are verified on the hardware that exists here, and nobody
+has a 2GB or 4GB unit to verify anything against. Backing `CONFIG_DRAM_CLK` off
+1200 (option 2) would trade a known-good-on-1GB configuration for a
+hoped-good-everywhere one, with no way to prove the trade paid off — the only
+board that could report on it is the one already working. Documenting honestly
+costs nothing and is true today; retuning on speculation could break the one
+board we can actually test.
+
+**The accepted risk, stated plainly:** a 2GB or 4GB buyer may hit a U-Boot SPL
+DRAM-init failure. It presents as a brick — no kernel, no login, just
+`DRAM test failure at address 0x…` on the serial console (and nothing at all
+without a serial adapter). That is a real, known cost of this decision, not an
+oversight, and it is why COMPATIBILITY.md says so in the board notes rather
+than burying it in a footnote.
+
+**The real fix remains upstream and out of scope here:** a runtime DRAM variant
+probe in U-Boot, so one binary calibrates itself for whichever chip is fitted
+instead of carrying one vendor's fixed table. That is option 4, it is upstream
+work in `arch/arm/mach-sunxi`, and it is not tracked by any gosd bean — noted
+here so the option is not lost the next time this comes up.
+
+## Summary of Changes
+
+Root-caused the 1GB variant's SPL DRAM failure to upstream mainline's single
+fixed set of per-chip vendor DRAM calibration values in
+`radxa-cubie-a5e_defconfig`, which suit whichever reference unit upstreamed the
+board and not the 1GB LPDDR4x chip. Fixed by
+`build/boards/cubie-a5e/uboot/dram-1gb.config`, overriding TPR6/TPR10/TPR11/
+TPR12 and merged by the board's own Dockerfile alongside the other fragments
+(PR #292); shipped to real builds in artifacts v0.10.1, whose release note reads
+"Cubie A5E images now boot the 1GB RAM variant".
+
+Hardware-verified from the committed recipe, not just a hand-staged config: the
+repo recipe's merged `.config` is byte-identical to the one proven on the board,
+and a repo-built binary took the board all the way through
+`DRAM: 1024 MiB` → BL31 → U-Boot → extlinux → kernel → gosd-init → /app, with
+`/data` adopted across a reboot.
+
+Closed on the decision above: 1GB values kept, 2GB/4GB documented as unverified
+with the brick risk stated. COMPATIBILITY.md's board notes carry that, and now
+point Cubie A5E hardware reports at bean gosd-6pfn (the board's still-open
+bring-up bean) rather than at this closed one.
