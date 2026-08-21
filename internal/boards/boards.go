@@ -76,6 +76,29 @@ type BuildConfig struct {
 	// see boards.Board.ConsoleBaudSupport for which boards can honor this
 	// at all.
 	ConsoleBaud int
+
+	// KernelParams are the extra kernel command-line parameters
+	// `gosd build --kernel-param` was given, already validated by
+	// internal/kernelparam and in the order the developer wrote them.
+	// Every board appends them to the command line it renders into its
+	// own boot config - cmdline.txt on the Pi family, extlinux.conf's
+	// `append` line on the mainline fleet - so a developer writes a
+	// parameter once and it reaches whichever boards the build produces.
+	// A parameter that means nothing to a given board's kernel is inert
+	// there, exactly as an unrecognised kernel parameter always is (bean
+	// gosd-mf3a). Boards render these via KernelParamString rather than
+	// joining them by hand.
+	KernelParams []string
+}
+
+// KernelParamString renders BuildConfig.KernelParams as the space-separated
+// fragment a board's boot-config template appends to the kernel command line
+// it builds for itself, or "" when --kernel-param wasn't given. Every board
+// renders its own command line, so this is the one place the joining rule
+// lives; the parameters keep the order they were given, which is what makes
+// two builds of the same app produce byte-identical boot files.
+func (c BuildConfig) KernelParamString() string {
+	return strings.Join(c.KernelParams, " ")
 }
 
 // ConsoleBaudSupport reports whether a board's boot config can carry a

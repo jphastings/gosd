@@ -249,6 +249,13 @@ Kconfig lines and a one-line patch that defaults the driver's `enable_hdmi`
 module parameter on, which is the only lever that behaves identically on all
 three Pi boards.
 
+The patch is what the recipe ships, so nothing extra is needed to hear HDMI
+audio on a Pi. The module parameter can also be set from the outside now:
+`gosd build --kernel-param snd_bcm2835.enable_hdmi=1` puts it on the kernel
+command line, which is useful for turning HDMI audio on (or checking whether
+it is the parameter that was missing) against a kernel built without the
+patch — see [the kernel-parameter flag](runtime.md#extra-kernel-parameters---kernel-param).
+
 On RK3399 and RK3566, HDMI audio is an I2S codec hanging off the Synopsys
 DesignWare HDMI bridge (`DRM_DW_HDMI_I2S_AUDIO`), and that bridge is a
 component of the Rockchip DRM driver. Asking for HDMI sound therefore compiles

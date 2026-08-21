@@ -3062,3 +3062,113 @@ func TestBuildIdentityChangesWithConfigTreeContent(t *testing.T) {
 		t.Errorf("identity stayed %q across builds whose config trees differ, want it to change", deviceA.Identity)
 	}
 }
+
+// TestBuildKernelParamsReachEachFamilysBootConfig is the acceptance test for
+// bean gosd-mf3a's whole point: one board-agnostic --kernel-param, written
+// once, delivered into whatever the selected board's family actually reads
+// its kernel command line from. The same two parameters must land on the Pi
+// family's cmdline.txt and on the mainline fleet's extlinux.conf `append`
+// line, appended after everything gosd puts there itself and in the order
+// they were given, with the network tripwire proving --artifacts-dir still
+// satisfied every fetch.
+func TestBuildKernelParamsReachEachFamilysBootConfig(t *testing.T) {
+	disableNetwork(t)
+
+	// snd_bcm2835.enable_hdmi=1 is the case that motivated the flag (epic
+	// gosd-qkbl's HDMI audio); it means nothing on a Rockchip board and
+	// must still be delivered there, inert, rather than filtered out.
+	params := []string{"--kernel-param", "snd_bcm2835.enable_hdmi=1", "--kernel-param", "loglevel=8"}
+
+	for _, tc := range []struct {
+		board     string
+		bootFile  string
+		wantValue string
+	}{
+		{
+			board:     "pi-zero-2w",
+			bootFile:  "cmdline.txt",
+			wantValue: "console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w panic=10 snd_bcm2835.enable_hdmi=1 loglevel=8",
+		},
+		{
+			board:    "radxa-zero-3e",
+			bootFile: "extlinux/extlinux.conf",
+			wantValue: "default gosd\n" +
+				"timeout 0\n" +
+				"label gosd\n" +
+				"    kernel /Image\n" +
+				"    fdt /rk3566-radxa-zero-3e.dtb\n" +
+				"    initrd /initramfs.cpio.zst\n" +
+				"    append console=ttyS2,1500000n8 quiet init=/init gosd.board=radxa-zero-3e panic=10 snd_bcm2835.enable_hdmi=1 loglevel=8\n",
+		},
+	} {
+		t.Run(tc.board, func(t *testing.T) {
+			imgPath := filepath.Join(t.TempDir(), "hello-"+tc.board+".img")
+
+			cmd := newRootCmd()
+			cmd.SetArgs(append([]string{
+				"build", "../../examples/hello",
+				"--board", tc.board,
+				"--artifacts-dir", "testdata/fake-artifacts",
+				"-o", imgPath,
+			}, params...))
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("gosd build --board=%s failed: %v", tc.board, err)
+			}
+
+			if got := string(readBootFile(t, imgPath, tc.bootFile)); got != tc.wantValue {
+				t.Errorf("%s = %q, want %q", tc.bootFile, got, tc.wantValue)
+			}
+		})
+	}
+}
+
+// TestBuildWithoutKernelParamsLeavesBootConfigUnchanged pins the flag's
+// additive-only contract: an image built without --kernel-param renders
+// exactly the command line it rendered before the flag existed, with no
+// stray trailing space for a bootloader to read as an empty parameter.
+func TestBuildWithoutKernelParamsLeavesBootConfigUnchanged(t *testing.T) {
+	disableNetwork(t)
+
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	want := "console=serial0,115200 quiet init=/init gosd.board=pi-zero-2w panic=10"
+	if got := string(readBootFile(t, imgPath, "cmdline.txt")); got != want {
+		t.Errorf("cmdline.txt = %q, want %q", got, want)
+	}
+}
+
+// TestBuildRejectsAMalformedKernelParam confirms a value that would break
+// the boot config is refused before anything is built, with an error that
+// names both the flag and the offending value. gosd-mf3a's locked decision
+// is to validate shape and never vocabulary, so the companion assertion is
+// that a parameter gosd has never heard of still builds fine - which
+// TestBuildKernelParamsReachEachFamilysBootConfig covers.
+func TestBuildRejectsAMalformedKernelParam(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"--kernel-param", "quiet loglevel=8",
+		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("gosd build --kernel-param with an embedded space succeeded, want an error")
+	}
+	for _, want := range []string{"--kernel-param", "quiet loglevel=8"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}

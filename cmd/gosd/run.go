@@ -17,6 +17,7 @@ import (
 	"github.com/jphastings/gosd/internal/configtree"
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
+	"github.com/jphastings/gosd/internal/kernelparam"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 	"github.com/jphastings/gosd/internal/qemurun"
@@ -42,6 +43,7 @@ var (
 	runIngress      []string
 	runDataSize     string
 	runLabelPrefix  string
+	runKernelParams []string
 )
 
 func newRunCmd() *cobra.Command {
@@ -88,6 +90,8 @@ place and prints its path instead.`,
 			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
 	cmd.Flags().StringArrayVar(&runIngress, "ingress", nil,
 		fmt.Sprintf("same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s) - qemu-virt is arm64, so this exercises the runtime path in CI", strings.Join(ingressAgentNames(), ", ")))
+	cmd.Flags().StringArrayVar(&runKernelParams, "kernel-param", nil,
+		"same flag as gosd build's --kernel-param: an extra kernel command-line parameter to boot with (repeatable), e.g. --kernel-param loglevel=8 - qemu-virt is the one board with no boot config in its image (qemu is handed the command line directly), so gosd run appends these to qemu's -append instead")
 	cmd.Flags().StringVar(&runDataSize, "data-size", defaultDataSize,
 		"same flag as gosd build's --data-size: size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand'; default 0 omits the partition - required by some --ingress agents (e.g. tailscale-funnel) that need to persist state across reboots")
 
@@ -112,6 +116,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	ingressSelected, err := parseIngressFlags(runIngress)
+	if err != nil {
+		return err
+	}
+
+	extraKernelParams, err := kernelparam.Parse(runKernelParams)
 	if err != nil {
 		return err
 	}
@@ -257,13 +266,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 	cmd.PrintErrf("gosd run: your app will be reachable at http://localhost:%d once gosd-init starts it and networking comes up\n", runPort)
 
 	return qemurun.Run(runCtx, qemurun.Options{
-		ImagePath: imgPath,
-		Port:      runPort,
-		MemoryMiB: runMemoryMiB,
-		Display:   runDisplay,
-		ExtraArgs: runQemuArgs,
-		Stdin:     cmd.InOrStdin(),
-		Stdout:    cmd.OutOrStdout(),
-		Stderr:    cmd.ErrOrStderr(),
+		ImagePath:    imgPath,
+		Port:         runPort,
+		MemoryMiB:    runMemoryMiB,
+		Display:      runDisplay,
+		ExtraArgs:    runQemuArgs,
+		KernelParams: extraKernelParams,
+		Stdin:        cmd.InOrStdin(),
+		Stdout:       cmd.OutOrStdout(),
+		Stderr:       cmd.ErrOrStderr(),
 	})
 }

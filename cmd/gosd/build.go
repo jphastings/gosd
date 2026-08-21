@@ -27,6 +27,7 @@ import (
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/inject"
+	"github.com/jphastings/gosd/internal/kernelparam"
 	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 )
@@ -45,6 +46,7 @@ var (
 	kernelCfgPath  string
 	withExternal   []string
 	consoleBaud    int
+	kernelParams   []string
 	dataFlush      bool
 	dataFilesystem string
 	labelPrefix    string
@@ -118,6 +120,8 @@ not touch the cache at all.`,
 		"prebuilt static executable to bundle into the image at <path>[:<dest>] (repeatable); dest must be absolute, default /bin/<basename of path>; the binary must be a fully static ELF matching each selected board's architecture")
 	cmd.Flags().IntVar(&consoleBaud, "console-baud", 0,
 		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
+	cmd.Flags().StringArrayVar(&kernelParams, "kernel-param", nil,
+		"extra kernel command-line parameter to bake into the boot config (repeatable), e.g. --kernel-param snd_bcm2835.enable_hdmi=1; gosd writes it wherever the board's family reads its command line from - cmdline.txt on the Pi boards, extlinux.conf's append line on the others - so one flag covers every board you build for, and a parameter a given board's kernel doesn't recognise is simply inert there; validated for shape only (no whitespace, no newlines, a name before any =), never against a list of known parameters")
 	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
 		"mount the data partition, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with the card's own config/data_flush setting")
 	cmd.Flags().StringVar(&dataFilesystem, "data-filesystem", defaultDataFilesystem,
@@ -191,6 +195,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := validateConsoleBaudRate(cmd, consoleBaud); err != nil {
+		return err
+	}
+
+	extraKernelParams, err := kernelparam.Parse(kernelParams)
+	if err != nil {
 		return err
 	}
 
@@ -326,9 +335,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			AppBinaryPath:  bin.appPath,
 			InitBinaryPath: bin.initPath,
 			Config: boards.BuildConfig{
-				Hostname:    appName,
-				UsbGadget:   usbGadget,
-				ConsoleBaud: consoleBaud,
+				Hostname:     appName,
+				UsbGadget:    usbGadget,
+				ConsoleBaud:  consoleBaud,
+				KernelParams: extraKernelParams,
 			},
 			ConfigTree:             tree,
 			ArtifactsDir:           artifactsDir,

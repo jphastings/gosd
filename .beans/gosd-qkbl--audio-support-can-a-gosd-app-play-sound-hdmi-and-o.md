@@ -337,7 +337,16 @@ it ships first.
 - gosd-df57 — bug: sattrack's fragment silently compiles in the whole Pi audio zoo, and says it doesn't.
 - gosd-lrxz — Rockchip audio coverage: rock-4se analog (ES8316) and Rockchip HDMI-over-DRM. **Implemented second**, and it also promoted the playback code to the public `sound/` package and wrote `docs/sound.md` (see its Summary of Changes; the Rockchip recipes are written but not yet compiled).
 - gosd-aptt — qemu-virt audio (virtio-sound) + a boot-to-sound CI smoke test.
-- gosd-mf3a — no surface for extra `config.txt` lines / kernel cmdline params in `gosd build`.
+- gosd-mf3a — **DONE.** `gosd build --kernel-param key=value` (repeatable) now
+  exists, board-agnostic: it lands in `cmdline.txt` on the Pi family and in
+  `extlinux.conf`'s `append` line on the mainline fleet. So lever 1 above is no
+  longer blocked on "no example can write to `config.txt`" — the parameter
+  itself, `snd_bcm2835.enable_hdmi=1`, is reachable without a `config.txt`
+  surface at all, and works on pi-zero-w too (it never needed `__overrides__`;
+  only `dtparam=audio=on` did). It is documented as this flag's worked example.
+  Nothing here has to change: the recipe still ships the patch (lever 3), which
+  needs no flag from the app developer. The flag is the way to turn HDMI audio
+  on against a kernel built without the patch.
 - gosd-nxm4 — a public `audio/` package and decoders, if audio outgrows one example.
 - gosd-tjrw — audio capture (mic in on the 4SE jack, I2S mics).
 
@@ -373,5 +382,5 @@ completed; the short version:
 Two of this epic's remaining children were closed as won't-do the same day
 (JP, 2026-08-21): gosd-nxm4 (decoders — its real deliverable already shipped
 as the public `sound/` package) and gosd-tjrw (capture). Both are re-fileable
-the day something needs them. Still open here: gosd-df57, gosd-lrxz,
-gosd-mf3a and gosd-aptt.
+the day something needs them. gosd-mf3a shipped on 2026-08-21 (see Children).
+Still open here: gosd-df57, gosd-lrxz and gosd-aptt.

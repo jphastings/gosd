@@ -8,7 +8,9 @@
 // an additive exception: it only ever appends a line, never changing what
 // renders when it's unset. CmdlineTxtData.ConsoleBaud (gosd-zp9s) is another
 // additive exception: it only ever changes the console= baud number, never
-// the UART device (serial0) or anything else on the line.
+// the UART device (serial0) or anything else on the line. So is
+// CmdlineTxtData.KernelParams (gosd-mf3a): it only ever appends the
+// developer's --kernel-param values after the locked ones.
 package templates
 
 import (
@@ -51,6 +53,12 @@ type CmdlineTxtData struct {
 	// ConsoleBaud is the serial console baud rate baked into console=,
 	// e.g. 115200. See boards.BuildConfig.ConsoleBaud / --console-baud.
 	ConsoleBaud int
+	// KernelParams is the developer's extra kernel command-line
+	// parameters, already space-separated (see
+	// boards.BuildConfig.KernelParamString / --kernel-param). Empty
+	// renders the line exactly as it was before the flag existed;
+	// non-empty appends it, after everything gosd puts there itself.
+	KernelParams string
 }
 
 // RenderConfigTxt renders config.txt for the given data.

@@ -62,6 +62,15 @@ type Options struct {
 	// qemu-system-aarch64 argument - an escape hatch for options this
 	// package doesn't expose directly.
 	ExtraArgs []string
+	// KernelParams are the extra kernel command-line parameters
+	// `gosd run --kernel-param` was given, already validated by
+	// internal/kernelparam. They're appended, in order, to the -append
+	// argument Args builds. This is how qemu-virt delivers the flag:
+	// unlike every other board it has no boot config in the image at all
+	// (qemu is handed -kernel/-initrd/-append directly), so the runner is
+	// its kernel command line - see the qemuvirt package doc and bean
+	// gosd-mf3a.
+	KernelParams []string
 
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
@@ -199,15 +208,7 @@ func Args(workDir, imgPath string, opts Options) []string {
 	args = append(args,
 		"-kernel", filepath.Join(workDir, "Image"),
 		"-initrd", filepath.Join(workDir, "initramfs.cpio.zst"),
-		// gosd.bootdev names the disk the kernel was booted from (the
-		// virtio-blk drive below, always vda) so gosd-init's boot-partition
-		// probe skips any other candidate — the same mechanism real
-		// bootloaders would use to point past a stale eMMC image (see
-		// gosd-vzk2), exercised end-to-end on every qemu boot.
-		// panic=10 matches every real board's cmdline (see the board
-		// templates): a kernel panic — including the one PID 1 dying
-		// causes — reboots instead of hanging forever (gosd-fkkr).
-		"-append", "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10",
+		"-append", kernelCmdline(opts.KernelParams),
 		"-drive", "if=none,file="+escapeOptionValue(imgPath)+",format=raw,id=hd0",
 		"-device", "virtio-blk-pci,drive=hd0,romfile=",
 		"-netdev", fmt.Sprintf("user,id=n0,hostfwd=tcp::%d-:80", port),
@@ -219,6 +220,29 @@ func Args(workDir, imgPath string, opts Options) []string {
 		"-device", "virtio-gpu-pci,romfile=",
 	)
 	return append(args, opts.ExtraArgs...)
+}
+
+// baseKernelCmdline is the kernel command line every qemu-virt boot gets,
+// standing in for the cmdline.txt/extlinux.conf a real board reads off its
+// own boot partition.
+//
+// gosd.bootdev names the disk the kernel was booted from (the virtio-blk
+// drive Args attaches, always vda) so gosd-init's boot-partition probe skips
+// any other candidate — the same mechanism real bootloaders would use to
+// point past a stale eMMC image (see gosd-vzk2), exercised end-to-end on
+// every qemu boot. panic=10 matches every real board's cmdline (see the
+// board templates): a kernel panic — including the one PID 1 dying causes —
+// reboots instead of hanging forever (gosd-fkkr).
+const baseKernelCmdline = "console=ttyAMA0 gosd.board=qemu-virt gosd.bootdev=vda panic=10"
+
+// kernelCmdline appends the developer's --kernel-param values to
+// baseKernelCmdline, in the order they were given, so a parameter behaves
+// under `gosd run` the way it will on a real board.
+func kernelCmdline(extra []string) string {
+	if len(extra) == 0 {
+		return baseKernelCmdline
+	}
+	return baseKernelCmdline + " " + strings.Join(extra, " ")
 }
 
 // Run extracts opts.ImagePath's boot files into a temp directory and boots
