@@ -119,11 +119,15 @@ and hardware-verified the same way: rebuilding with only these four values
 changed took the board from halting in SPL to a clean `DRAM: 1024 MiB` and a
 full boot, first try.
 
-**This is verified on a 1GB board only.** The 2GB/4GB variants ship
-different DRAM chips and may still fail SPL DRAM init with these values --
-see `COMPATIBILITY.md`'s board notes, and bean `gosd-84b8` if you have one
-of those variants and want to report back. Re-deriving values for another
-variant means reading `tpr6`/`tpr10`/`tpr11`/`tpr12` back off that
+**This is verified on a 1GB board only.** Keeping these values rather than
+detuning for hypothetical compatibility is a deliberate decision (bean
+`gosd-84b8`, 2026-08-21): they are the only ones anyone has been able to
+prove against real silicon. The 2GB/4GB variants ship different DRAM chips
+and may still fail SPL DRAM init with these values, which presents as a
+brick -- see the board notes in the compatibility matrix, and bean
+`gosd-6pfn` if you have one of those variants and want to report back.
+Re-deriving values for another variant means reading
+`tpr6`/`tpr10`/`tpr11`/`tpr12` back off that
 variant's own working vendor bootloader, the same way the Armbian community
 did here.
 
