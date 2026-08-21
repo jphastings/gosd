@@ -156,6 +156,18 @@ section](runtime.md#app-environment-variables) for how those reach `/app`),
 but nothing stops you shipping a whole new top-level file or directory for a
 device-level setting your app reads directly off the card.
 
+> **A setting outside `env/` is not scrubbed from a crash report.** Every
+> `env/<NAME>` value is swept out of `LAST_FATAL_ERROR.md` automatically,
+> because gosd-init hands those to your app and so knows they are yours. A
+> setting your app reads off the card itself — the
+> `google-service-account.json` shape above — never passes through
+> gosd-init, which cannot tell a credential there from a theme name, and
+> blanking every setting it doesn't recognise would turn an ordinary short
+> value into confetti across the report. If one of your own settings holds
+> a secret, register it once at startup with `fault.RegisterSecretString`;
+> [the crash-report guide](crash-reports.md) explains what that does and
+> why it happens on the call rather than at crash time.
+
 ## Reserved names and the FAT-junk rules
 
 A value's name may contain letters, digits, periods, hyphens and underscores

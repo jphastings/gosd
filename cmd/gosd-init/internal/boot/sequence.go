@@ -431,7 +431,10 @@ func Run(deps Deps, opts Options) error {
 	// mount succeeded, so its secrets are handed over now through
 	// setSecrets rather than at construction.
 	userEnv := mergeUserEnv(cfg.Env, config.Group(envPath), log)
-	report.setSecrets(append(envRedactionRules(userEnv), ingressRedactionRules(config)...))
+	secrets := envRedactionRules(userEnv)
+	secrets = append(secrets, ingressRedactionRules(config)...)
+	secrets = append(secrets, wifiRedactionRules(config, cfg)...)
+	report.setSecrets(secrets)
 
 	env := []string{
 		"GOSD_BOARD=" + cfg.Board,
@@ -871,6 +874,41 @@ func ingressRedactionRules(config cardconfig.Tree) []redact.Rule {
 	for _, c := range credentials {
 		if value := config.Get(c.path); value != "" {
 			rules = append(rules, redact.Rule{Needle: value, Replacement: c.label})
+		}
+	}
+	return rules
+}
+
+// wifiRedactionRules turns the WiFi passphrase into a rule a crash report is
+// redacted with, from both places one can come from: the card's
+// wifi/passphrase setting, and config.json's baked Wifi.Passphrase that the
+// card falls back to (see wifiup.ConfigCredentials, which resolves the same
+// two sources). Both are registered whichever one the device ends up
+// joining with, because both are values gosd-init read into memory this
+// boot — which is what decides whether a value can reach a report, not
+// which of them won.
+//
+// Same reasoning as ingressRedactionRules (bean gosd-sk8v is gosd-tzd1 one
+// setting over): wifiup does not print the passphrase today, so this is a
+// safety net rather than a fix for a live leak. A WPA2 passphrase earns one
+// anyway — it is the credential most likely to be shared with every other
+// device on the same network, and most likely to have been reused
+// elsewhere by whoever chose it.
+//
+// The SSID is deliberately NOT a rule. It is broadcast to anyone within
+// radio range, gosd-init logs it on purpose, and redacting it would remove
+// the one detail that makes a WiFi failure diagnosable.
+//
+// A passphrase shorter than redact.MinNeedleLength is skipped by
+// redact.New, which reports it by label so the console says a value was
+// left alone without saying which. That is only reachable by hand-editing
+// the card: WPA2-PSK's own floor is 8 characters, exactly the length
+// redaction starts acting at.
+func wifiRedactionRules(config cardconfig.Tree, cfg initcfg.Config) []redact.Rule {
+	rules := make([]redact.Rule, 0, 2)
+	for _, passphrase := range []string{config.Get(wifiPassphrasePath), cfg.Wifi.Passphrase} {
+		if passphrase != "" {
+			rules = append(rules, redact.Rule{Needle: passphrase, Replacement: "{wifi: passphrase}"})
 		}
 	}
 	return rules

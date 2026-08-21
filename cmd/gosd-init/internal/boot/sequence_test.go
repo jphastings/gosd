@@ -1988,6 +1988,156 @@ func TestRunRedactsTheCardsTunnelTokenFromAnAppCrashReport(t *testing.T) {
 	}
 }
 
+func TestWifiRedactionRulesCoverBothPlacesAPassphraseComesFrom(t *testing.T) {
+	tree := cardconfig.Tree{}
+	tree.Set(wifiSSIDPath, "kitchen-mesh")
+	tree.Set(wifiPassphrasePath, "correct-horse-battery-staple")
+	cfg := initcfg.Config{Wifi: initcfg.Wifi{SSID: "factory-net", Passphrase: "baked-in-passphrase"}}
+
+	rules := wifiRedactionRules(tree, cfg)
+
+	want := []redact.Rule{
+		{Needle: "correct-horse-battery-staple", Replacement: "{wifi: passphrase}"},
+		{Needle: "baked-in-passphrase", Replacement: "{wifi: passphrase}"},
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("wifiRedactionRules() = %v, want %v", rules, want)
+	}
+	for i := range want {
+		if rules[i] != want[i] {
+			t.Errorf("rules[%d] = %+v, want %+v", i, rules[i], want[i])
+		}
+	}
+}
+
+// An SSID is broadcast to anyone in radio range and is logged on purpose;
+// redacting it would cost a WiFi failure the one detail that makes it
+// diagnosable. A card that names an open network — SSID set, no passphrase
+// — must produce no rule at all, or the console would log a skipped
+// "{wifi: passphrase}" for a device that has no passphrase.
+func TestWifiRedactionRulesIgnoreTheSSIDAndAnUnsetPassphrase(t *testing.T) {
+	tree := cardconfig.Tree{}
+	tree.Set(wifiSSIDPath, "open-guest-network")
+
+	if rules := wifiRedactionRules(tree, initcfg.Config{}); len(rules) != 0 {
+		t.Errorf("wifiRedactionRules() = %v, want none for an open network", rules)
+	}
+}
+
+// The WiFi passphrase reaches a report by the same route an app env value
+// or a tunnel token does (bean gosd-sk8v): something printed it, and the
+// console tail became the report's technical detail.
+func TestRunRedactsBothWifiPassphrasesFromAnAppCrashReport(t *testing.T) {
+	const cardPassphrase = "correct-horse-battery-staple"
+	const bakedPassphrase = "baked-in-passphrase"
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprintf(stdout, "wpa handshake failed for %q / %q\n", cardPassphrase, bakedPassphrase)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: appStarter,
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{ExitCode: 1}, nil
+		}),
+		Rebooter:    &fakeRebooter{},
+		OpenConsole: func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog: func(string, ...any) {},
+		ReadConfig: func() (initcfg.Config, error) {
+			return initcfg.Config{Wifi: initcfg.Wifi{SSID: "factory-net", Passphrase: bakedPassphrase}}, nil
+		},
+		ReadCmdline: func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(map[string]string{
+			wifiSSIDPath:       "kitchen-mesh",
+			wifiPassphrasePath: cardPassphrase,
+		}),
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	for _, passphrase := range []string{cardPassphrase, bakedPassphrase} {
+		if strings.Contains(written, passphrase) {
+			t.Errorf("LAST_FATAL_ERROR.md still contains the WiFi passphrase %q:\n%s", passphrase, written)
+		}
+	}
+	if !strings.Contains(written, "{wifi: passphrase}") {
+		t.Errorf("LAST_FATAL_ERROR.md is missing the redaction placeholder:\n%s", written)
+	}
+}
+
+// The Imager wizard is the flagship way an operator supplies a passphrase,
+// and it reaches redaction only because the seed is consumed into the tree
+// BEFORE setSecrets reads it. Moving either would silently stop scrubbing
+// the one passphrase most devices are given, with every other test still
+// passing — so the ordering is asserted here rather than assumed.
+func TestRunRedactsAWizardSuppliedWifiPassphraseFromAnAppCrashReport(t *testing.T) {
+	const passphrase = "wizard-typed-passphrase"
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "network-config"), "version: 2\n")
+
+	stop := make(chan struct{})
+	reports := &fakeFaultReport{}
+
+	appStarter := funcAppStarter(func(path string, env []string, stdout, stderr io.Writer) (int, error) {
+		_, _ = fmt.Fprintf(stdout, "wpa handshake failed for %q\n", passphrase)
+		return 1, nil
+	})
+
+	deps := Deps{
+		Mounter:    &fakeMounter{},
+		Hostname:   &fakeHostname{},
+		AppStarter: appStarter,
+		Reaper: funcReaper(func(int) (ExitStatus, error) {
+			close(stop)
+			return ExitStatus{ExitCode: 1}, nil
+		}),
+		Rebooter:       &fakeRebooter{},
+		OpenConsole:    func() (io.WriteCloser, error) { return nopWriteCloser{&bytes.Buffer{}}, nil },
+		FallbackLog:    func(string, ...any) {},
+		ReadConfig:     func() (initcfg.Config, error) { return initcfg.Config{}, nil },
+		ReadCmdline:    func() (initcfg.CmdlineArgs, error) { return initcfg.CmdlineArgs{}, nil },
+		ReadConfigTree: readsCard(nil),
+		ReadProvisioning: func(log func(string, ...any)) provision.Result {
+			return provision.Result{
+				Wifi:      []provision.WifiNetwork{{SSID: "kitchen-mesh", Password: passphrase}},
+				SeedFiles: []string{"network-config"},
+			}
+		},
+		EditBoot:    func(edit func(root string) error) error { return edit(root) },
+		FaultReport: reports.deps(),
+		Sleep:       func(time.Duration) {},
+		Now:         time.Now,
+	}
+	opts := testOptions()
+	opts.Stop = stop
+
+	if err := Run(deps, opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+
+	written := reports.written()
+	if strings.Contains(written, passphrase) {
+		t.Errorf("LAST_FATAL_ERROR.md still contains the wizard's WiFi passphrase:\n%s", written)
+	}
+	if !strings.Contains(written, "{wifi: passphrase}") {
+		t.Errorf("LAST_FATAL_ERROR.md is missing the redaction placeholder:\n%s", written)
+	}
+}
+
 // equalEnv compares two env slices exactly, in order: mergeUserEnv's output
 // is fully deterministic (GOSD_* vars in the fixed order Run builds them,
 // then the merged user env sorted by key), so tests can assert on it
