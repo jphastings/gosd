@@ -1,11 +1,11 @@
 ---
 # gosd-odx3
 title: Auto-open the internal/artifacts.Version pin-bump PR after an artifacts release
-status: todo
+status: completed
 type: feature
 priority: normal
 created_at: 2026-08-14T06:00:53Z
-updated_at: 2026-08-14T06:53:06Z
+updated_at: 2026-08-21T02:38:45Z
 parent: gosd-vt2l
 blocked_by:
     - gosd-gnnn
@@ -135,3 +135,37 @@ found while testing it are fixed:
 - **Re-running duplicated entries.** The workflow can legitimately run again
   over an already-annotated tree; releases the comment already names are now
   skipped.
+
+
+---
+
+## Validated end to end by artifacts/v0.10.3 (2026-08-20)
+
+This bean was held open deliberately — "lands after the first knope artifacts
+release validates the flow" — because opening a PR is easy and opening a
+*correct* one is the thing worth proving. v0.10.3 proved it, unattended:
+
+| | |
+|---|---|
+| 19:45 | `artifacts/v0.10.3` published |
+| 20:16 | `pin-artifacts-version.yml` fired on `workflow_run` and succeeded |
+| — | PR #351 opened carrying **both** `internal/artifacts/artifacts.go` **and** `.changeset/artifacts-pin-v0-10-3.md` |
+| — | `Build every board from the pinned release` passed: clean-machine build of every public board from a real download, the newly-pinned version present in the redirected cache, and the offline re-run |
+| 21:03 | merged; `main` now reads `const Version = "v0.10.3"` |
+
+The change file is the part that matters. Every earlier run of this flow —
+including v0.10.2's PR #306 — dropped it, so an automated pin bump reached
+main and knope had no reason to cut a CLI release carrying it. That is the
+failure this bean's own "gap found by JP" section describes, where an image
+built with `gosd v0.6.2` halted in U-Boot SPL on a 1GB Cubie because the DRAM
+fix was pinned but unreleased.
+
+The staging bug behind it was `.github/workflows/pin-artifacts-version.yml`
+adding only `internal/artifacts/artifacts.go` to the index, so the change file
+`pin-bump.sh` had written was never committed — filed as [[gosd-osjp]] and
+fixed in PR #348, merged 14:37 the same day, about five hours before this run.
+So v0.10.3 is the first pass over the completed mechanism, and it behaved.
+
+Nothing is left outstanding: the human gate is what it was designed to be —
+reading `pin-diff.sh`'s report of which boards moved — and real-hardware boots
+remain on whichever bean motivated the release.
