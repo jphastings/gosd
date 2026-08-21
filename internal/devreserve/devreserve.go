@@ -49,6 +49,11 @@
 // reserving partition 1 is what refuses the whole disk, and a device class
 // added later becomes one more entry with no change to any reader.
 //
+// A publisher therefore reserves the most specific node it depends on. The
+// same one-way relation that keeps the data partition shareable means a
+// reservation on a whole disk would NOT protect the partitions on it: name
+// the partition, and its disk follows.
+//
 // # What a reader must assume
 //
 // A missing file means "no reservations", not an error. An app's copy of
@@ -237,13 +242,19 @@ func Parse(data []byte) (Reservations, error) {
 	return reserved, nil
 }
 
-// cleanRole makes a published role safe to quote into an error: it drops
-// one that isn't valid UTF-8 or carries control characters (a refusal that
-// rewrites a serial console with escape sequences is worse than one with no
-// explanation — and [Entry.Describe] still explains it), and trims an
-// over-long one on a rune boundary.
+// cleanRole makes a published role safe to quote into an error, and trims
+// an over-long one on a rune boundary.
+//
+// Safety is an allow-list, not a deny-list: every rune must be printable
+// (Unicode L/M/N/P/S plus the ASCII space, per unicode.IsPrint). A
+// deny-list of control characters would stop ESC and miss the format
+// category — a role carrying U+202E reorders the text of a refusal on a
+// console without using a control character at all — and this reader is
+// deliberately built to quote prose from a publisher it may be several
+// releases older than. A role that fails loses its prose and not its
+// entry's reservation, and [Entry.Describe] still explains the refusal.
 func cleanRole(role string) string {
-	if !utf8.ValidString(role) || strings.ContainsFunc(role, unicode.IsControl) {
+	if !utf8.ValidString(role) || strings.ContainsFunc(role, func(r rune) bool { return !unicode.IsPrint(r) }) {
 		return ""
 	}
 	if len(role) <= MaxRoleBytes {

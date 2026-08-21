@@ -1,11 +1,11 @@
 ---
 # gosd-ix0r
 title: 'gadget.MassStorage cannot refuse the boot disk except by accident: the mount-table check is the only guard'
-status: todo
+status: completed
 type: bug
 priority: normal
 created_at: 2026-08-20T06:01:15Z
-updated_at: 2026-08-21T08:04:48Z
+updated_at: 2026-08-21T08:13:17Z
 ---
 
 Split out of `gosd-cayj`, which fixed the example that took the sharp edge but
@@ -154,9 +154,13 @@ and it can consume this bean's mechanism unchanged.
   `Covers`/`Reservations.Exposes` containment rule. `isPartitionOf` moved
   here from `gadget` so the mounted-device check and the reserved-device
   check can never disagree about Linux's partition-naming convention;
-  `path.Clean` is now applied to both sides. A role that isn't valid UTF-8
-  or carries control characters is dropped while its entry's *path* is kept,
-  so a bad publisher loses the explanation and never the refusal.
+  `path.Clean` is now applied to both sides. A role is validated against a
+  printable allow-list (`unicode.IsPrint`) rather than a control-character
+  deny-list — a deny-list stops ESC but misses the format category, and
+  U+202E reorders the text of a refusal on a console without using a control
+  character at all — and a role that fails is dropped while its entry's
+  *path* is kept, so a bad publisher loses the explanation and never the
+  refusal.
 - **`gadget/massstorage.go`** — `Create` consults the list before the mount
   check (the reservation is the fact that survives an `Unmount`, so it is
   the one worth reporting), with two distinct actionable errors for "this is

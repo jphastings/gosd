@@ -118,6 +118,7 @@ func TestParseKeepsThePathWhenTheRoleIsUnusable(t *testing.T) {
 	long := strings.Repeat("é", MaxRoleBytes)
 	data, err := Encode([]Entry{
 		{Path: "/dev/mmcblk0p1", Role: "clears\rthe\nline"},
+		{Path: "/dev/mmcblk0p2", Role: "the boot partition\u202e"},
 		{Path: "/dev/mmcblk0p3", Role: long},
 	})
 	if err != nil {
@@ -128,14 +129,19 @@ func TestParseKeepsThePathWhenTheRoleIsUnusable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() = %v, want nil", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("Parse() kept %d entries, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("Parse() kept %d entries, want 3", len(got))
 	}
 	if got[0].Role != "" || got[0].Describe() == "" {
 		t.Errorf("entry with a control-character role = %+v, want the role dropped but still described", got[0])
 	}
-	if len(got[1].Role) > MaxRoleBytes || !strings.HasPrefix(long, got[1].Role) {
-		t.Errorf("over-long role = %q, want it trimmed on a rune boundary within %d bytes", got[1].Role, MaxRoleBytes)
+	// U+202E carries no control character, and would reorder the text of a
+	// refusal printed to a console.
+	if got[1].Role != "" {
+		t.Errorf("entry with a bidi-override role = %+v, want the role dropped", got[1])
+	}
+	if len(got[2].Role) > MaxRoleBytes || !strings.HasPrefix(long, got[2].Role) {
+		t.Errorf("over-long role = %q, want it trimmed on a rune boundary within %d bytes", got[2].Role, MaxRoleBytes)
 	}
 }
 
