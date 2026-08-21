@@ -1,5 +1,33 @@
 # Design spike: firmware upgrade path for fielded SD cards
 
+> ## Phase 1 shipped; phase 2 was decided against (JP, 2026-08-21)
+>
+> **This document is still live for phase 1 — non-destructive plain reflash,
+> which is now the permanent, only update path.** Phase 2 (§6), self-update of
+> boot files over the network, will not be built. It rode the app-slot update
+> machinery of [the over-the-network app-update spike](ab-updates.md), and
+> that whole design was decided against on the same day; bean `gosd-522n` and
+> the epic it was blocked by, `gosd-vxal`, are scrapped.
+>
+> **Why.** Phase 1 turned out to be enough on its own. A `--data-size=expand`
+> image re-adopts its own data partition across a reflash, and the config store
+> in `/data` (§3, shipped as bean `gosd-87ip`) puts the operator's settings
+> back — so upgrading already costs one Raspberry Pi Imager run, exactly what
+> the operator did the first time, and loses neither their data nor their
+> settings. Route 1 would have added convenience and reach on top of that, in
+> exchange for a permanent network listener on an appliance whose whole
+> security posture is having no interactive surface. Route 4 (the sneakernet
+> bundle) folded into phase 2's staging design and goes with it: handing
+> someone a payload file is, in the end, no easier than handing them a flashed
+> card.
+>
+> **What that costs, stated plainly:** there is no way to fix a deployed fleet
+> without physical access to each card. That is accepted, not overlooked.
+>
+> Everything below is unchanged. Read §0.3's "phase 2", the route table's
+> row 1, §4's and §5's "returns in phase 2", and §6's phase-2 paragraph as
+> decided-against rather than deferred.
+
 Bean `gosd-inau`. This is the piece `docs/design/ab-updates.md` §0
 deliberately left open: the kernel, initramfs, boot files — everything a
 reflash carries — are "reflash-only", and this document decides what
@@ -29,7 +57,10 @@ already did — flash the SD card with Raspberry Pi Imager per
    are unchanged).
 3. **Route 1 (self-update over the network) is phase 2**, riding the
    app-slot update machinery (`gosd-vxal`) once it exists. Route 4
-   (sneakernet bundle) folds into phase 2's staging design. Route 2 (a
+   (sneakernet bundle) folds into phase 2's staging design.
+   **Superseded 2026-08-21 (JP): routes 1 and 4 are decided against, not
+   deferred — `gosd-vxal` never happens, so there is no machinery to ride;
+   see the note at the top of this document.** Route 2 (a
    custom flasher GUI) is not pursued: its only unique win over route 3 +
    mitigation is preserving files the mitigation already preserves, and it
    costs a signed, maintained GUI on three OSes.
@@ -301,11 +332,17 @@ Phase 1 (this design, buildable now):
   flashing.md's "upgrading" section; expand as the updatable-deployment
   default).
 
-Phase 2 (deferred, new design work, after `gosd-vxal` lands its
-endpoint): self-update of boot files over the network — staging area on
-the boot partition, verify-then-commit, the manifest scheme from §5, and the
-sneakernet bundle (route 4) as the offline carrier of the same payload
-format. Tracked as `gosd-522n` (blocked by `gosd-vxal`).
+**Phase 2 — decided against, 2026-08-21 (JP). It will not be built, and
+nothing else is waiting on it.** What it would have been: self-update of boot
+files over the network — staging area on the boot partition,
+verify-then-commit, the manifest scheme from §5, and the sneakernet bundle
+(route 4) as the offline carrier of the same payload format. It was tracked as
+`gosd-522n`, blocked by `gosd-vxal`, and both are scrapped: over-the-network
+updates are dropped entirely and reflashing is the permanent, only update
+path. Phase 1 above already lets an operator upgrade with one Imager run
+without losing their data or their settings, which is most of what phase 2
+would have bought; the reasoning, and the cost (no way to fix a fielded card
+without physically handling it), is at the top of this document.
 
 ## Acceptance for phase 1
 

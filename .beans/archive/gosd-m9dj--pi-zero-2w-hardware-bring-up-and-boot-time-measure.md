@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T20:56:21Z
-updated_at: 2026-07-24T21:12:39Z
+updated_at: 2026-08-21T04:48:15Z
 parent: gosd-vmgw
 blocked_by:
     - gosd-70b2
@@ -96,3 +96,23 @@ Boot log key lines (session 2, annotated):
     [    6.490507] brcmfmac: ... power save enabled
     [gosd] wlan2: lease {192.168.1.235 ...} via gateway 192.168.1.1
     [gosd] mdns: answering as hello.local on all up interfaces
+
+
+## The ruling this bean asked for (JP, 2026-08-21)
+
+Session 2's acceptance note above left an explicit "JP to rule" on the ~25s
+WiFi figure. He ruled: **accept ~25s as the WiFi-path reality and re-scope the
+target to wired paths.** No boot-time-optimization bean is filed. This bean's
+own outcome is unchanged and it stays completed — the note is appended so that
+a reader who meets the open question here finds the answer.
+
+The distinction the ruling turns on: **"the app is running" and "the app is
+reachable at `hostname.local`" are different numbers.** This bean measured the
+first at ~9s on the pi-zero-2w (~2-3s firmware + ~6.1s to gosd-init + ~0.4s to
+the app), well inside the target; the second is ~25s over WiFi because
+association, DHCP and mDNS all follow the app coming up. rock-4se hits ~9.2s
+power-to-HTTP wired.
+
+Recorded on the v0.1 milestone gosd-sc9w, where the "under 10 seconds" target
+is actually asserted, and followed through in the README (which had promised
+"under 5 seconds, WiFi included").

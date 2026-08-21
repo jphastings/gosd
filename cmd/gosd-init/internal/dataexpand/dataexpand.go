@@ -63,14 +63,16 @@
 // the creation gate) and/or overwrites partition 2's bytes with a
 // filesystem carrying the new image's own label — so the label a gate
 // compares against and the label on the volume it reads always change
-// together. A phase-2 self-update (docs/design/ab-updates.md, bean
-// gosd-522n) deliberately touches neither the partition table nor
-// partition 2, so it has neither property: a payload that changed
+// together. Flashing is the only way an image ever reaches a card:
+// over-the-network updates were dropped entirely on 2026-08-21 (bean
+// gosd-vxal), so there is no path that writes new boot files in place. That
+// is what makes the label a safe thing to gate on. The argument is recorded
+// because it is the thing that would have to be re-examined if that decision
+// were ever revisited: an in-place update touches neither the partition table
+// nor partition 2, so it has neither property, and a payload that changed
 // config.json's dataLabel would leave a healthy, established partition
-// carrying the previous label, which verifyEstablished can only report as
-// ErrDataCorrupt — halting a device that was working perfectly. A
-// self-update payload must therefore never change dataLabel, unless
-// relabelling and re-establishing the volume is part of the update itself.
+// carrying the previous label — which verifyEstablished can only report as
+// ErrDataCorrupt, halting a device that was working perfectly.
 package dataexpand
 
 import (
@@ -551,8 +553,8 @@ func dataStartLBA(mbr []byte) int64 {
 // partition 2's filesystem with one stamped with this image's own label,
 // so the volume this function goes on to read is always this image's own.
 // Both routes rest on installing an image rewriting the MBR and/or
-// partition 2's bytes; see the package comment for what that means for a
-// future self-update, which does neither.
+// partition 2's bytes; see the package comment for why flashing is the only
+// way that ever happens.
 //
 // The FAT32 marker deliberately plays no part in the FS/label check above:
 // /data belongs to the app from here on, and an app that tidies away a file

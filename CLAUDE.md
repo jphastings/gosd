@@ -321,8 +321,12 @@ say so in the bean rather than silently diverging.
   It is EXCLUDED from default all-boards builds and from end-user docs;
   build it only via an explicit `--board=qemu-virt`.
 - **gosd-init has no interactive surface**: no shell, no SSH, no remote debug,
-  ever. Serial console output and app logs only. The only network listeners in
-  gosd-init are mDNS (and, later, the explicitly-designed update endpoint).
+  ever. Serial console output and app logs only. **mDNS is the only network
+  listener in gosd-init** — full stop, with no sanctioned exception pending.
+  The one that used to be pending, the OTA update endpoint, is gone: OTA was
+  dropped entirely on 2026-08-21 (JP) and reflashing is the permanent, only
+  update path (epic gosd-vxal and its whole chain, scrapped; the design record
+  is kept in docs/design/ab-updates.md, marked decided-against).
   cloudflared (when baked via `--ingress cloudflared`) is an outbound-only
   tunnel supervised by gosd-init — still no listeners, no shell. Same for
   tailscale-funnel (`--ingress tailscale-funnel`, epic gosd-65uy): the shim

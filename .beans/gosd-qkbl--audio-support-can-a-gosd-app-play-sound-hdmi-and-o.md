@@ -5,7 +5,7 @@ status: in-progress
 type: epic
 priority: normal
 created_at: 2026-07-29T21:45:08Z
-updated_at: 2026-07-29T23:13:45Z
+updated_at: 2026-08-21T04:41:34Z
 ---
 
 JP asked, verbatim:
@@ -282,7 +282,7 @@ Decoding (MP3/Vorbis/FLAC) is deliberately out of scope: WAV/raw PCM is a
 (`hajimehoshi/go-mp3` — pure Go but **archived** 2023, `jfreymuth/oggvorbis`,
 `mewkiz/flac`). Tracked as gosd-nxm4.
 
-## The fork — JP to choose
+## The fork — JP to choose (RESOLVED: Route A, 2026-08-21 — see the end of this bean)
 
 **Route A — audio stays an opt-in `gosd build-kernel` recipe.** Exactly the
 precedent DRM set (`docs/custom-kernels.md`, `examples/sattrack`): the app that
@@ -333,7 +333,7 @@ it ships first.
 ## Children
 
 - gosd-y9hc — `examples/chime`: the example + Pi custom-kernel recipe (Route A). **Implemented first.**
-- gosd-ette — **JP to choose**: Route B, sound in the stock kernels.
+- gosd-ette — **DECIDED 2026-08-21: Route A.** Route B declined; sound stays a recipe.
 - gosd-df57 — bug: sattrack's fragment silently compiles in the whole Pi audio zoo, and says it doesn't.
 - gosd-lrxz — Rockchip audio coverage: rock-4se analog (ES8316) and Rockchip HDMI-over-DRM. **Implemented second**, and it also promoted the playback code to the public `sound/` package and wrote `docs/sound.md` (see its Summary of Changes; the Rockchip recipes are written but not yet compiled).
 - gosd-aptt — qemu-virt audio (virtio-sound) + a boot-to-sound CI smoke test.
@@ -349,3 +349,29 @@ it ships first.
   never appears and COMPATIBILITY.md's SPI ✅ for that board is wrong. Turned
   up because the same missing `__overrides__` block is why `dtparam=audio=on`
   could not have been the mechanism for audio on that board.
+
+
+## The fork is resolved: Route A (JP, 2026-08-21)
+
+**Audio stays an opt-in `gosd build-kernel` recipe. It does not go into the
+stock released kernels.** Recorded in full on gosd-ette, which is now
+completed; the short version:
+
+- **The size argument was conceded.** The measurement came out ~10x cheaper
+  than the DRM precedent suggested — +0.63% on the pi-zero-w kernel, +0.71% on
+  arm64. On size alone Route B would have won on the Pis.
+- **It does not rest on size.** Rockchip HDMI audio requires DRM, so Route B
+  would either ship the whole DRM subsystem to every board (contradicting the
+  decision that put DRM behind a recipe) or deliver a capability that means
+  something different on every board. And any Pi kernel that gains sound wakes
+  the dormant USB MIDI gadget — `USB_MIDI_GADGET`/`USB_CONFIGFS_F_MIDI` depend
+  on the raw-MIDI core, which cannot exist while `CONFIG_SOUND` is off — and a
+  legacy gadget driver claiming the only UDC at probe is exactly how "Gadget
+  Zero" broke `--usb-gadget` in gosd-spjt. Route B would have to carry a
+  deny-list into every Pi fragment forever.
+
+Two of this epic's remaining children were closed as won't-do the same day
+(JP, 2026-08-21): gosd-nxm4 (decoders — its real deliverable already shipped
+as the public `sound/` package) and gosd-tjrw (capture). Both are re-fileable
+the day something needs them. Still open here: gosd-df57, gosd-lrxz,
+gosd-mf3a and gosd-aptt.

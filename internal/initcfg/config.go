@@ -102,7 +102,7 @@ type Config struct {
 	// field never appears anywhere else in the payload the way
 	// Hostname/Wifi/Env do via the config tree. That's consistent with
 	// Identity's actual job - telling boot *payload* builds apart for
-	// upgrade-skew/self-update checks - rather than a full-disk layout
+	// upgrade-skew checks - rather than a full-disk layout
 	// fingerprint: DataSizeBytes and BootSizeBytes, which change on-card
 	// layout at least as much as this field does, aren't even baked into
 	// config.json at all, let alone hashed. The layout-ABI story for a
@@ -171,10 +171,8 @@ type Config struct {
 	// exact recipe, and internal/pipeline for where it's computed).
 	// Identical rebuilds from identical inputs produce the identical
 	// Identity — it is never a timestamp or a random id — which is what
-	// makes it usable both for upgrade-skew detection (does the running
-	// image match the one a device's stored settings were last written
-	// under?) and for
-	// a future self-update's "am I already running this?" check.
+	// makes it usable for upgrade-skew detection: does the running image
+	// match the one a device's stored settings were last written under?
 	// Optional: empty for every config.json baked before this field
 	// existed; callers must treat that as "unknown, not comparable"
 	// rather than as a mismatch (see ShortIdentity).

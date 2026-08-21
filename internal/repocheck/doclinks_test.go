@@ -29,7 +29,7 @@ var maxDocPathViolations = map[string]int{
 	"docs/ingress.md":              5,
 	"docs/provisioning-formats.md": 7,
 	"docs/publishing.md":           11,
-	"docs/runtime.md":              13,
+	"docs/runtime.md":              12,
 	"docs/sound.md":                1,
 }
 

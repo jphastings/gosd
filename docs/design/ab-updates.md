@@ -1,7 +1,39 @@
 # Design spike: over-the-network app updates (app-slot scheme)
 
-Status: design only, nothing in this document is built. Tracked by bean
-`gosd-v2w1`. Target: informing a v0.4 task breakdown.
+> ## Decided against — this will not be built (JP, 2026-08-21)
+>
+> **OTA is dropped entirely. Reflashing is the permanent, only update path.**
+> Nothing in this document was ever built, and nothing in it is going to be.
+> Read it as a record of a road not taken, not as a plan: the epic it fed
+> (`gosd-vxal`) and every child bean it proposed in §8 are scrapped.
+>
+> **Why.** Reflash was already the baseline, decided in [the fielded-card
+> upgrade design](upgrade-path.md) on 2026-07-31 — and two things have shipped
+> since that make a reflash keep what a device already had. A
+> `--data-size=expand` image re-adopts its own data partition on first boot,
+> and the config store in `/data` (bean `gosd-87ip`) puts the operator's
+> hostname, WiFi credentials and hand-edited settings back onto the newly
+> flashed card. So an upgrade already costs one Raspberry Pi Imager run and
+> loses neither data nor settings. What this design adds on top of that is
+> convenience and reach — not capability — in exchange for a network listener,
+> a per-image HMAC key, a slot store built on FAT's weak atomicity, a
+> probation supervisor, a rollback ladder and a new CLI verb, all maintained
+> forever on an appliance whose whole security posture is having no
+> interactive surface at all.
+>
+> **What that costs, stated plainly:** there is no way to fix a deployed fleet
+> without physical access to each card. Every device needs someone to pull the
+> SD card, reflash it and put it back. That is accepted, not overlooked. It is
+> also the one thing that would reopen the question — a real fielded fleet
+> that cannot be reached, not a hypothetical one.
+>
+> The consequence recorded elsewhere: mDNS is now the only network listener in
+> `gosd-init`, with no sanctioned exception pending. The rest of this document
+> is unchanged from the day it was written.
+
+Status: design only, nothing in this document was built. Tracked by bean
+`gosd-v2w1`. Target: informing a v0.4 task breakdown (which never happened —
+see the decision above).
 
 **Revision note:** this document originally recommended a per-board
 boot-slot mechanism (Pi `tryboot`, Radxa U-Boot `bootcount`). JP rejected
