@@ -1,11 +1,11 @@
 ---
 # gosd-0nk4
 title: 'vfat rename durability: /data write-fsync-rename pattern isn''t durable until ~30s writeback expiry'
-status: in-progress
+status: completed
 type: bug
 priority: normal
 created_at: 2026-07-30T20:42:07Z
-updated_at: 2026-07-30T22:22:53Z
+updated_at: 2026-08-21T07:39:57Z
 ---
 
 Found during gosd-6sac's qemu boot-cycle testing (2026-07-30), by killing qemu at varying delays after boot: examples/hello's boot counter never survived a <30s-after-write power cut, across many runs. Host-side mount of the card showed the tell: `hello-boots.tmp` (2 bytes, the new counter, fsync'd) present on disk, `hello-boots` absent — the rename's directory update never reached the card.
@@ -110,4 +110,50 @@ Where it would change, if you want it:
       remove the need to fsync file *data*, so it buys a permanent cost
       without removing the sharp edge. The narrow `/data`-only change is a
       one-word diff (`mounts.go`) if the calculus ever changes.
-- [ ] Optional, not needed for confidence: repeat one kill-cycle on real hardware via sdwire (qemu ran our real kernel and mount options, so this only adds card-level realism)
+- [x] Optional, not needed for confidence: repeat one kill-cycle on real hardware via sdwire (qemu ran our real kernel and mount options, so this only adds card-level realism) — **decided 2026-08-21: not doing it.** Judged unnecessary, not forgotten; see the Summary of Changes for what the qemu evidence already covers and what a card would have added.
+
+
+## Summary of Changes
+
+Closed 2026-08-21. Everything this bean set out to establish is on `main` and
+CI-guarded; the one remaining todo was explicitly optional and is deliberately
+not being done.
+
+**What was proven, and by what means.** The loss was reproduced and the fix
+demonstrated on a real `qemu-virt` image — gosd's own kernel, gosd's own
+`/data` mount options, gosd's own `examples/hello` — by SIGKILLing qemu at
+fixed delays after the counter write. SIGKILL is a faithful power cut at the
+guest boundary: everything the guest submitted is in the host's page cache,
+everything it didn't is gone. The table above is that run: three boots at
+`boots=1` before the fix, `boots=1 → 2 → 3 → 4` after it, and — the finding
+that mattered most — a directory-fsync-only variant persisting the NAME with
+cluster 0 and size 0, which is worse than the bug it appeared to fix. The
+kernel-source verdict was read from both pinned trees with line cites, and
+then confirmed experimentally rather than trusted.
+
+**What shipped.** The four-step durable-write sequence in `examples/hello` and
+`examples/emmcstorage`, `docs/runtime.md`'s "Making a write durable" section
+(honest about what steps 1-2 guarantee versus what 3-4 add, and why step 3
+can't be skipped), and a regression assertion folded into CI's existing
+double-boot qemu jobs — verified to fail against the pre-fix example, which is
+the part that makes it a real gate rather than a passing test.
+
+**The optional hardware repeat: judged unnecessary, not forgotten.** An sdwire
+kill-cycle on a real card would add exactly one variable the qemu runs don't
+have — the card's own controller, its erase-block behaviour and its volatile
+write cache. It would not touch the mechanism this bean is about, which lives
+entirely in `fs/fat`: which buffers a rename dirties, whose private list they
+hang off, and which fsync waits for them. That mechanism is decided above the
+block device, identically for a virtio disk and an SD card, and
+`fat_file_fsync`'s `blkdev_issue_flush` is precisely the call that pushes the
+question past a card's cache. A real card could therefore only fail this in a
+way that would equally break every other durable write GoSD documents, and
+CI re-runs the qemu proof on every push while a bench repeat would be a
+one-off. The evidence is sufficient; the extra realism isn't worth a bench
+slot.
+
+**The `dirsync` decision stands** (JP, 2026-07-31): `/data` is mounted without
+it, durability is the app's choice through the documented four-step pattern,
+and the one-word change site is recorded above if the calculus ever changes.
+That decision is also recorded as a project-wide locked decision in CLAUDE.md,
+so it survives this bean's closure.

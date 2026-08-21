@@ -238,10 +238,21 @@ gosd-init's own reserved `GOSD_*` variables are never swept this way:
 `GOSD_DATA_FLUSH` is `0` or `1`, and redacting it would blank every digit in
 the technical detail.
 
-The tunnel credentials a card carries are swept too — a Cloudflare tunnel
-token becomes `{ingress: cloudflared-token}`, a Tailscale auth key
-`{ingress: tailscale-funnel-authkey}` — so the secrets gosd-init holds for
-itself are covered by the same net as the ones it holds for you.
+The credentials a card carries are swept too — a Cloudflare tunnel token
+becomes `{ingress: cloudflared-token}`, a Tailscale auth key
+`{ingress: tailscale-funnel-authkey}`, and the WiFi passphrase
+`{wifi: passphrase}`, whether it came from the card or was baked into the
+image — so the secrets gosd-init holds for itself are covered by the same
+net as the ones it holds for you. The network's SSID is not swept: it is
+broadcast to anyone in radio range, and removing it would cost a WiFi
+failure the one detail that makes it diagnosable.
+
+Settings you ship yourself are covered only when they live under `env/`:
+those are values gosd-init puts into your app's environment, so it knows
+they are yours. A setting your app reads off the card directly never passes
+through gosd-init at all, and it is not swept — register it with
+`RegisterSecretString` below if it holds a secret. [The settings
+guide](config.md) says the same thing from the other side.
 
 Scrubbing applies to everything the report carries in from your side: the
 error code in the header, all four written sections, the technical detail,
