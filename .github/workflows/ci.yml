@@ -462,7 +462,7 @@ jobs:
           go run ./cmd/gosd build ./examples/hello \
             --board=qemu-virt \
             --data-size=expand \
-            --config-dir .github/testdata/reflash-config \
+            --boot-config-dir .github/testdata/reflash-config \
             -o dist/reflashed.img
           # The image is 272MiB; a real card is bigger. truncate models
           # flashing onto a 1.27GiB card (raw qemu disks may be sparse).
