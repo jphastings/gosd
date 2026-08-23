@@ -25,7 +25,11 @@ import (
 // fat32SectorsPerFAT/fat32SectorsPerCluster/maxFAT32Bytes against the new
 // version first (bean gosd-qvjs) — see fat32selfconsistent.go's doc comment
 // for why, and TestFAT32MirroredArithmeticMatchesGoDiskfsRealOutput below
-// for the test that pins today's version's real behavior.
+// for the test that pins today's version's real behavior. internal/blockmount's
+// label round-trip simulation (fatDirectoryEntryRoundTrip/labelMatches and
+// ValidateLabel's byte-7 rule) must be revisited on the same bump: it too is
+// pinned to go-diskfs's current buggy label read, so a patched go-diskfs would
+// make it needlessly reject labels every real OS reads.
 const (
 	// fat32ReservedSectors is the reserved area go-diskfs fixes every FAT32
 	// volume's layout on: boot sector, FSInfo and their backups, rounded up.

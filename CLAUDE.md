@@ -351,11 +351,15 @@ say so in the bean rather than silently diverging.
   wedge only on-device — fakes can't catch it. Two concrete lessons that
   generalise: (1) set whatever dir env a library needs EXPLICITLY (tsnet's
   `TS_LOGS_DIR` → the state dir; cloudflared's `HOME` → `/run/gosd/...`),
-  don't rely on OS defaults; (2) library state files written to `/data`
-  without write→rename become an unrecoverable wedge after a power cut,
-  made STICKY because `/data` survives reflash and can't be cleared from a
-  macOS host (ext4) — the shim must self-heal a corrupt/empty state file
-  (drop-if-unparseable) rather than trust it. Also: never
+  don't rely on OS defaults; (2) a library that treats a
+  present-but-unparseable state file as fatal and never regenerates it wedges
+  the device — tsnet does this even though it writes those files ATOMICALLY
+  (write→fsync→rename, since 2022), so the corruption comes from the FAT32/SD
+  media on power loss, NOT a torn write or a missing write→rename — and the
+  wedge is STICKY because `/data` survives reflash and can't be cleared from a
+  macOS host (ext4), so the shim must self-heal a corrupt/empty state file
+  (drop-if-unparseable) rather than trust it (that drop is only a partial
+  mitigation: valid-JSON-but-wrong-schema still wedges — bean gosd-6cf2). Also: never
   `defer thing.Close()` unconditionally on a start-failure path — tsnet's
   Close panics when Up failed early and MASKS the real error; only defer
   Close after a successful start. **Corollary for bench triage:** an
