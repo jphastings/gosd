@@ -1,3 +1,116 @@
+## 0.7.2 (2026-08-21)
+
+### Features
+
+#### `gosd build --kernel-param` adds your own kernel command-line parameters
+
+Some things can only be turned on from the kernel command line, and until now
+a GoSD app had no way to put anything there. `gosd build --kernel-param
+snd_bcm2835.enable_hdmi=1` (repeatable) now bakes a parameter into the image.
+
+You write it once and GoSD delivers it wherever the board's family actually
+reads its command line from — `cmdline.txt` on the Raspberry Pi boards, the
+`append` line of `extlinux.conf` on the Rockchip and Allwinner boards — so a
+bare `gosd build`, which builds every board, carries your parameters onto all
+of them. A parameter one board's kernel doesn't recognise is inert there, just
+as an unrecognised kernel parameter always is, so cross-board builds don't
+need per-board flags.
+
+Values are checked for shape and never for vocabulary: whitespace, newlines
+and other characters that would corrupt the boot config are refused with an
+error naming the offending value, but GoSD keeps no list of "known" kernel
+parameters to fall foul of — which matters, since a `gosd build-kernel` kernel
+can introduce parameters no such list would ever have had. Parameters render
+in the order you pass them, after GoSD's own, so builds stay byte-identical.
+
+`gosd run` mirrors the flag, extending qemu's kernel command line, so a
+parameter can be tried under qemu before a card is ever flashed.
+
+#### A USB mass-storage gadget can no longer be pointed at the boot partition
+
+`gadget.MassStorage` now refuses to expose the partition your device booted
+from, or the whole card holding it, to a USB host — whether or not it
+happens to be mounted at the time. That partition carries the kernel the
+board starts from and the config tree it was provisioned with, so a computer
+given write access to it has code execution on the next boot.
+
+Until now the only thing standing in the way was a check that the backing
+path wasn't currently mounted, which worked purely because `gosd-init` keeps
+`/boot` mounted for the life of the device. Nothing on a GoSD board could
+identify the boot medium independently: the image boots from an initramfs,
+so the kernel command line names no root block device. `gosd-init` now
+publishes the devices it reserves as it boots, and the `gadget` package
+refuses against that instead.
+
+The refused error wraps a new `gadget.ErrReservedDevice`, so an app that can
+do something else when a volume isn't available — offer a different one, or
+run without the drive — can match it with `errors.Is` and degrade
+gracefully, as `gadget.ErrNoController` already allows.
+
+The **data partition is not refused**: it is your app's own storage, and
+sharing it stays your call (`examples/usbwebsite` still offers it behind its
+documented opt-in). Everything the runtime documentation says about what
+lives on that partition, and why publishing it discloses this device's WiFi
+passphrase and ingress tokens, still applies.
+
+Apps built against this release keep working on images produced by an older
+`gosd`, which publish no such list; there, `MassStorage` behaves exactly as
+it did before.
+
+### Fixes
+
+#### A crash report no longer carries the WiFi passphrase
+
+`LAST_FATAL_ERROR.md` is a file whose own text asks its reader to forward the
+whole thing, so gosd-init scrubs the secrets it knows about out of it first.
+The WiFi passphrase was not one of them: every app environment value and both
+ingress credentials were swept, and the one credential most likely to be
+reused on another account was not.
+
+It is now registered the same way and at the same moment as the tunnel
+credentials — from both places one can come from, the card's `wifi/passphrase`
+setting and the passphrase baked into the image — and appears in a report as
+`{wifi: passphrase}`. The network's SSID is deliberately left alone: it is
+broadcast to anyone in radio range, and removing it would cost a WiFi failure
+the one detail that makes it diagnosable.
+
+No gosd-init code path printed the passphrase before this, so no released
+image is known to have leaked one. The point of the redaction rule set is that
+nobody has to audit each new log line, or each upstream library's, to keep
+that true.
+
+### Notes
+
+#### Updates are by reflashing, permanently — and the boot-time claim is now the measured one
+
+Two product decisions, both of which change what the documentation promises.
+
+**Over-the-network updates are dropped.** GoSD will not gain an OTA update
+mechanism: reflashing the card is the update path, permanently. Plain
+Raspberry Pi Imager reflash was already the documented baseline, and it keeps
+what a device has — a `--data-size=expand` image re-adopts its own data
+partition on first boot, and the config store puts the operator's hostname,
+WiFi credentials and hand-edited settings back onto the newly flashed card. So
+an upgrade costs one Imager run and loses neither data nor settings. The cost,
+stated plainly: fixing a fielded device needs physical access to its card.
+Consequence worth knowing if you audit what an image listens on — mDNS is now
+the only network listener in `gosd-init`, with no sanctioned exception
+pending. The design that was declined is kept in the repository as a record of
+a road not taken.
+
+**The boot-time claim was wrong in both directions and is now measured.** The
+README promised "under 5 seconds, WiFi included". On real hardware your app is
+running about 10 seconds after power-on, and a wired board answers on
+`hostname.local` in about the same (ROCK 4SE: ~9.2s power-to-HTTP). Over WiFi,
+expect ~25s — association, DHCP and mDNS announcement all happen *after* your
+app is already serving. "The app is running" and "the app is reachable" are
+different numbers, and the README now says so.
+
+Also corrected: the feature list said USB gadget mode could present the board
+as a USB Ethernet device. It cannot — CDC-ACM serial and mass storage are what
+the `gadget` package builds today, as the compatibility matrix has always
+said.
+
 ## 0.7.1 (2026-08-20)
 
 ### Fixes
