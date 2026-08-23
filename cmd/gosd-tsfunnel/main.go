@@ -89,9 +89,11 @@ func run(args []string, stderr io.Writer) error {
 // tsnetStateFiles are the JSON files tsnet.Server persists directly under
 // its state directory across restarts — the node's private key and tailnet
 // identity (tailscaled.state) and its log-upload config (tailscaled.log.conf).
-// tsnet writes them as plain JSON with no write-then-rename (bean gosd-e721
-// tracks the upstream fix request), so a power cut mid-write can leave one
-// empty or truncated.
+// tsnet writes BOTH atomically (atomicfile.WriteFile: write → fsync → rename,
+// and has since 2022), so a torn write is not the hazard — the gap is that
+// tsnet does not self-heal a present-but-unparseable one (bean gosd-e721
+// tracks the upstream fix request). See prepareStateDir for how a corrupt
+// file arises here despite the atomic write, and why the shim drops it.
 var tsnetStateFiles = []string{"tailscaled.state", "tailscaled.log.conf"}
 
 // prepareStateDir makes statedir ready for a tsnet.Server rooted there,
@@ -109,15 +111,27 @@ var tsnetStateFiles = []string{"tailscaled.state", "tailscaled.log.conf"}
 //     (LogsDir os.Stats it and ignores it otherwise) — so statedir must be
 //     created before TS_LOGS_DIR is set to it.
 //
-//   - corrupt-state wedge: an empty or truncated tailscaled.state or
-//     tailscaled.log.conf makes tsnet.Up refuse to load it ("unexpected
-//     end of JSON input") and it never regenerates on its own — a
-//     permanent wedge, made sticky by /data surviving a plain Imager
-//     reflash. Both files regenerate when absent, the log ID is unshipped
-//     telemetry, and an unparseable state file holds no identity worth
-//     keeping (fresh registration via TS_AUTHKEY is the correct recovery),
-//     so an invalid file is removed here, never repaired. A VALID file is
-//     left untouched — node identity must survive reboot and reflash.
+//   - corrupt-state wedge: tsnet's writes are atomic, so a torn write is not
+//     the cause. The defect is a self-heal gap: store.NewFileStore
+//     regenerates an EMPTY tailscaled.state but treats a NON-EMPTY
+//     unparseable one as a fatal wedge, and tsnet's own startLogger (which
+//     does not use logpolicy's self-healing loader) treats an empty OR
+//     corrupt tailscaled.log.conf as fatal — tsnet.Up then refuses to start
+//     (the observed "unexpected end of JSON input") and never regenerates
+//     on its own. A corrupt file can therefore only come from underlying
+//     media corruption: /data is FAT32 by default (no journal) on an SD card
+//     whose FTL can corrupt completed sectors on power loss. The wedge is
+//     made sticky by /data surviving a plain Imager reflash, and
+//     host-unclearable when /data is ext4 (macOS/Windows cannot mount it to
+//     delete the file). Both files regenerate when absent, the log ID is
+//     unshipped telemetry, and an unparseable state file holds no identity
+//     worth keeping (fresh registration via TS_AUTHKEY is the correct
+//     recovery), so an invalid file is removed here, never repaired. A VALID
+//     file is left untouched — node identity must survive reboot and reflash.
+//     This json.Valid drop is only a PARTIAL mitigation: a file that is valid
+//     JSON but the wrong schema (e.g. log.conf = {}, which fails tsnet's
+//     Validate with "zero PrivateID") still wedges — a further argument for
+//     the upstream self-heal fix (bean gosd-e721).
 func prepareStateDir(statedir string) error {
 	if err := os.MkdirAll(statedir, 0o700); err != nil {
 		return fmt.Errorf("creating %q: %w", statedir, err)

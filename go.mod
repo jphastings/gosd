@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/NeowayLabs/drm v0.0.0-20190824133025-4939fc0ad345
 	github.com/beevik/ntp v1.5.0
-	github.com/diskfs/go-diskfs v1.9.3 // bumping this needs internal/diskfmt/fat32limit.go and fat32selfconsistent.go re-derived/re-verified first (bean gosd-qvjs)
+	github.com/diskfs/go-diskfs v1.9.3 // bumping this needs internal/diskfmt/fat32limit.go and fat32selfconsistent.go re-derived/re-verified, AND internal/blockmount's label round-trip simulation (fatDirectoryEntryRoundTrip/labelMatches + ValidateLabel's byte-7 rule) revisited, first — all three model go-diskfs's current buggy read, so a patched go-diskfs makes them reject labels every real OS reads (bean gosd-qvjs)
 	github.com/insomniacslk/dhcp v0.0.0-20260719225207-c76316d4aa82
 	github.com/joshuaferrara/go-satellite v0.0.0-20220611180459-512638c64e5b
 	github.com/klauspost/compress v1.19.1

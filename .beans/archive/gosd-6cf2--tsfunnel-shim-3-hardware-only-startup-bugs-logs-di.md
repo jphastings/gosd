@@ -5,7 +5,7 @@ status: completed
 type: bug
 priority: high
 created_at: 2026-08-08T09:35:37Z
-updated_at: 2026-08-08T09:35:37Z
+updated_at: 2026-08-23T16:12:07Z
 ---
 
 Found on the bench (nanopi-zero2, 2026-08-08) while verifying gosd-79v8:
@@ -132,3 +132,33 @@ both linux/arm64 and arm/GOARM=6 cross-compiles pass). All three were proven
 on the nanopi-zero2 bench 2026-08-08. The separate, still-open tsnet-404 is
 gosd-h46e (NOT addressed here). Upstream write→rename/self-heal note recorded
 on gosd-e721.
+
+
+## Correction (2026-08-23): Bug 2's stated mechanism is DISPROVEN
+
+Verified against tailscale.com v1.102.2. Bug 2 above claims tsnet writes
+tailscaled.state / tailscaled.log.conf "with no write->rename, so a power cut
+mid-write leaves an empty/truncated file." That mechanism is FALSE and was
+reproduced false — do not carry it forward:
+
+- tsnet writes BOTH files ATOMICALLY via atomicfile.WriteFile (write -> fsync
+  -> rename), and has since 2022. There is no torn-write window.
+- The real defect is a SELF-HEAL gap, not an atomicity gap: store.NewFileStore
+  regenerates an EMPTY tailscaled.state but treats a NON-EMPTY unparseable one
+  as a fatal wedge; tsnet's own startLogger (which does NOT use logpolicy's
+  self-healing loader) treats an empty OR corrupt tailscaled.log.conf as fatal.
+- Because the writes are atomic, a corrupt file can only come from underlying
+  MEDIA corruption — /data is FAT32 by default (no journal) on an SD card whose
+  FTL can corrupt completed sectors on power loss. That is the real trigger,
+  and it is what makes the wedge host-unclearable when /data is ext4.
+- The wedge was never actually reproduced on the bench: it was INFERRED from
+  the "unexpected end of JSON input" error string, which most plausibly came
+  from the log.conf path (fatal even when empty), not the state file (empty is
+  handled).
+
+The drop-if-unparseable self-heal is still CORRECT and STAYS — the media-
+corruption trigger is real and the wedge is host-unclearable. One residual gap
+the json.Valid check cannot catch: a file that is valid JSON but the WRONG
+schema (e.g. log.conf = {} -> tsnet's Validate fails "zero PrivateID") still
+wedges, so the shim self-heal is only a PARTIAL mitigation — a further argument
+for the upstream fix (gosd-e721).
