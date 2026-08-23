@@ -91,7 +91,7 @@ type Report struct {
 	// Fix is a concrete instruction its reader can act on: "add
 	// WEATHER_API_KEY to config/env/ on this card". Leave it empty when
 	// there genuinely isn't one — the report then points at the
-	// --support-url baked into the image instead of inventing advice.
+	// --app-support-url baked into the image instead of inventing advice.
 	Fix string
 	// Detail is the technical half: the error that led here, reproduced
 	// verbatim for whoever gets the file forwarded to them. Nil is fine

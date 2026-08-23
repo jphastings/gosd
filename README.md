@@ -84,9 +84,12 @@ for what's shipped; per-board verification status lives in
    ```
 
    Omit `--board` to build every supported board at once; `gosd build
-   --help` lists the full flag set (`--config-dir`, `-o`/`--output`,
+   --help` lists the full flag set (`--boot-config-dir`, `-o`/`--output`,
    repeatable `--with-external` — see
    [`docs/runtime.md`](docs/runtime.md#bundling-a-companion-binary---with-external)).
+   Every flag can also live in a checked-in `gosd-build.toml`, so a bare
+   `gosd build` in a fresh checkout reproduces your repo's canonical
+   image — see [checked-in build options](docs/build-config.md).
 
    No board on hand yet? `gosd run .` cross-compiles your app, builds an
    image, and boots it under `qemu-system-aarch64` in one step, so you can
@@ -96,7 +99,7 @@ for what's shipped; per-board verification status lives in
 
 4. Flash `hello.img` to an SD card and boot it. The recommended path is
    [Raspberry Pi Imager](https://www.raspberrypi.com/software/)'s custom
-   repository: build with `--catalog --publish-base-url=<url>`, host the
+   repository: build with `--publish-catalog --publish-base-url=<url>`, host the
    emitted `os_list.json` next to your image, and paste that URL into
    Imager's Settings → Custom repository — flashers get the full
    WiFi/hostname wizard. [`docs/publishing.md`](docs/publishing.md) is the
@@ -146,6 +149,12 @@ for what's shipped; per-board verification status lives in
   [which LED gets used and why](docs/status-led.md)
 - **The device's config tree** — the hand-editable settings on every
   card, one plain-text file per setting: [`docs/config.md`](docs/config.md)
+- **Checked-in build options** (`gosd-build.toml`) — record the options your
+  app's image needs (boards, partition sizes, an ingress tunnel, placeholder
+  files) in a file next to your code: every key is a `gosd build` flag of
+  the same name, a bare `gosd build` reproduces the repo's canonical image,
+  and a flag on the command line still wins per option:
+  [checked-in build options](docs/build-config.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
   Docker/Podman-driven command compiles one from a `gosd-kernel.toml` in

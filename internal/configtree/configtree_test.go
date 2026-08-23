@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// writeOverlay creates a --config-dir with the given path->content files.
+// writeOverlay creates a --boot-config-dir with the given path->content files.
 func writeOverlay(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -209,7 +209,7 @@ func TestBuildRefusals(t *testing.T) {
 }
 
 // A FAT card can't hold two names differing only in case, and neither can
-// the macOS filesystem a developer most often authors a --config-dir on -
+// the macOS filesystem a developer most often authors a --boot-config-dir on -
 // so this collision is only reachable from a case-sensitive host, and the
 // gate is exercised against the merged file set directly rather than
 // through a directory this test can't portably create.
@@ -243,8 +243,8 @@ func TestValidateRefusesASettingThatIsAlsoADirectory(t *testing.T) {
 
 func TestBuildRefusesAMissingConfigDir(t *testing.T) {
 	_, err := Build(filepath.Join(t.TempDir(), "nope"), Features{})
-	if err == nil || !strings.Contains(err.Error(), "--config-dir") {
-		t.Fatalf("a missing --config-dir gave %v, want a refusal naming the flag", err)
+	if err == nil || !strings.Contains(err.Error(), "--boot-config-dir") {
+		t.Fatalf("a missing --boot-config-dir gave %v, want a refusal naming the flag", err)
 	}
 }
 

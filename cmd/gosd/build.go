@@ -33,6 +33,8 @@ import (
 )
 
 var (
+	buildConfigFile string
+
 	boardIDs       []string
 	output         string
 	configDir      string
@@ -77,7 +79,7 @@ const defaultDataFilesystem = "fat32"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "build <path-to-main-package>",
+		Use:   "build [path-to-main-package]",
 		Short: "Cross-compile a Go app and assemble it into a bootable SD-card image",
 		Long: `Cross-compile a Go app and assemble it into a bootable SD-card image.
 
@@ -89,15 +91,17 @@ cache entry left over from an older gosd version or pin, so the cache holds
 only the current version's assets rather than growing forever - see
 docs/artifacts.md. --artifacts-dir builds skip this pruning, since they may
 not touch the cache at all.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: runBuild,
 	}
 
+	cmd.Flags().StringVar(&buildConfigFile, "build-config", "",
+		"read build options from this TOML file, so a repository can check in its canonical build: every key is a flag of the same name (a --<section>-<rest> flag lives at [section] rest, and [app] main stands in for the package-path argument), a flag passed on the command line wins per key, and relative paths in the file resolve against the file's own directory (default: gosd-build.toml in the working directory, when one exists); see docs/build-config.md")
 	cmd.Flags().StringArrayVar(&boardIDs, "board", nil,
 		fmt.Sprintf("board to build for (repeatable); omit to build all boards: %s", strings.Join(boards.IDs(), ", ")))
 	cmd.Flags().StringVarP(&output, "output", "o", "",
 		"output .img file when building one board, or output directory when building several")
-	cmd.Flags().StringVar(&configDir, "config-dir", "",
+	cmd.Flags().StringVar(&configDir, "boot-config-dir", "",
 		fmt.Sprintf("directory of setting files to overlay onto gosd's own %s/ tree: one value per file, each documented by a <name>%s sidecar (its own, or gosd's when the file only overrides a value); the merged tree is written to the boot partition, so a card's owner can edit it in any text editor (default: a %s directory beside the app's main package, when one exists)",
 			configtree.Dir, configtree.DocSuffix, configtree.Dir))
 	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
@@ -108,10 +112,10 @@ not touch the cache at all.`,
 		"size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
 	cmd.Flags().StringVar(&bootSize, "boot-size", defaultBootSize,
 		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); default 256MiB fits every stock board's kernel/initramfs, but a large app may need more - the build fails with an actionable error naming this flag if it doesn't fit; this size becomes part of the app's on-disk layout, so changing it in a later release erases the data partition on upgrade (see docs/design/upgrade-path.md §0.4)")
-	cmd.Flags().BoolVar(&catalogFlag, "catalog", false,
+	cmd.Flags().BoolVar(&catalogFlag, "publish-catalog", false,
 		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
 	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
-		"absolute http(s) URL the built image(s) will be hosted at, used to build the catalog's download links; required by --catalog, and validated at build time like --support-url so a broken (or plaintext-http) link can't reach an end user's Imager")
+		"absolute http(s) URL the built image(s) will be hosted at, used to build the catalog's download links; required by --publish-catalog, and validated at build time like --app-support-url so a broken (or plaintext-http) link can't reach an end user's Imager")
 	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
 		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
 	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
@@ -133,7 +137,7 @@ not touch the cache at all.`,
 		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
 	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
 		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device in the card's config/ingress/<value>/ settings - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
-	cmd.Flags().StringVar(&supportURL, "support-url", "",
+	cmd.Flags().StringVar(&supportURL, "app-support-url", "",
 		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
 	cmd.Flags().StringVar(&appVersion, "app-version", "",
 		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
@@ -142,13 +146,22 @@ not touch the cache at all.`,
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
-	pkgPath := args[0]
+	fileCfg, fileBaseDir, err := loadBuildConfig(buildConfigFile)
+	if err != nil {
+		return err
+	}
+	applyFileValues(cmd.Flags(), fileCfg, fileBaseDir, buildFileKeys())
+
+	pkgPath, err := resolveMainOperand(args, fileCfg, fileBaseDir, "gosd build")
+	if err != nil {
+		return err
+	}
 	if err := validatePkgPath(pkgPath); err != nil {
 		return err
 	}
 
 	if catalogFlag && publishBaseURL == "" {
-		return fmt.Errorf("--catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
+		return fmt.Errorf("--publish-catalog requires --publish-base-url=<https://...> so the generated os_list.json can build download links; try e.g. --publish-base-url=https://example.com/downloads")
 	}
 	resolvedPublishBaseURL, err := parsePublishBaseURL(publishBaseURL)
 	if err != nil {
@@ -239,7 +252,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix"), appName)
+	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix") || fileCfg.IsSet("label-prefix"), appName)
 	if err != nil {
 		return err
 	}
@@ -455,13 +468,13 @@ func deriveAppName(pkgPath string) (string, error) {
 }
 
 // defaultConfigDirName is the directory `gosd build` picks up as the app's
-// config overlay with no --config-dir: a config/ directory beside the app's
-// main package, which is where an app's settings naturally live in its own
-// repository.
+// config overlay with no --boot-config-dir: a config/ directory beside the
+// app's main package, which is where an app's settings naturally live in its
+// own repository.
 const defaultConfigDirName = configtree.Dir
 
 // resolveConfigDir decides which directory (if any) overlays gosd's own
-// config defaults. An explicit --config-dir must exist - a typo'd path
+// config defaults. An explicit --boot-config-dir must exist - a typo'd path
 // silently building gosd's bare defaults would ship an image missing every
 // setting the app actually needs - while the default beside the main package
 // is only used when it happens to be there.
@@ -469,10 +482,10 @@ func resolveConfigDir(pkgPath, flag string) (string, error) {
 	if flag != "" {
 		info, err := os.Stat(flag)
 		if err != nil {
-			return "", fmt.Errorf("--config-dir %s can't be read: %w; point it at a directory holding one file per setting, or drop the flag to build with gosd's own defaults", flag, err)
+			return "", fmt.Errorf("--boot-config-dir %s can't be read: %w; point it at a directory holding one file per setting, or drop the flag to build with gosd's own defaults", flag, err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("--config-dir %s is a file, not a directory; it takes a directory holding one file per setting", flag)
+			return "", fmt.Errorf("--boot-config-dir %s is a file, not a directory; it takes a directory holding one file per setting", flag)
 		}
 		return flag, nil
 	}
@@ -755,7 +768,7 @@ func parsePlaceholderFlags(flags []string) ([]inject.Placeholder, error) {
 	return placeholders, nil
 }
 
-// parseSupportURL validates --support-url: when given, it must be an
+// parseSupportURL validates --app-support-url: when given, it must be an
 // absolute http(s) URL (a scheme and a host), because a broken link in a
 // crash report is worse than no link at all - a device's owner who follows
 // it has no recourse. Empty is valid: the flag is optional, and omitting it
@@ -769,17 +782,17 @@ func parseSupportURL(raw string) (string, error) {
 
 	u, err := url.Parse(trimmed)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", fmt.Errorf("--support-url %q is invalid; it must be an absolute http:// or https:// URL with a host, e.g. https://example.com/support", raw)
+		return "", fmt.Errorf("--app-support-url %q is invalid; it must be an absolute http:// or https:// URL with a host, e.g. https://example.com/support", raw)
 	}
 	return trimmed, nil
 }
 
 // parsePublishBaseURL validates --publish-base-url the same way
-// parseSupportURL validates --support-url: it must be an absolute http(s)
+// parseSupportURL validates --app-support-url: it must be an absolute http(s)
 // URL with a host, because every download link in the generated
 // os_list.json is built from it and lands in an end user's Raspberry Pi
-// Imager. Empty is valid — the flag is only required by --catalog, which
-// checks for it separately.
+// Imager. Empty is valid — the flag is only required by --publish-catalog,
+// which checks for it separately.
 func parsePublishBaseURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -816,11 +829,11 @@ func printBootVolumeUsage(cmd *cobra.Command, boardName string, report image.Wri
 }
 
 // writeCatalog builds and writes the Raspberry Pi Imager custom-repository
-// catalog (--catalog) for the images just built at outputs, reading each
-// finished .img back off disk to compute its size/hash. All of selected's
-// images share one output directory (resolveOutputs always maps every
-// board into the same directory when there's more than one, and a single
-// board's own directory when there's just one), so the combined
+// catalog (--publish-catalog) for the images just built at outputs, reading
+// each finished .img back off disk to compute its size/hash. All of
+// selected's images share one output directory (resolveOutputs always maps
+// every board into the same directory when there's more than one, and a
+// single board's own directory when there's just one), so the combined
 // os_list.json is written next to the first image.
 //
 // Internal-only boards (currently just qemu-virt - see this file's init())
@@ -828,8 +841,9 @@ func printBootVolumeUsage(cmd *cobra.Command, boardName string, report image.Wri
 // into Imager, so they're filtered out of selected before any entry is
 // built - not because they'd fail, but because a catalog is a genuinely
 // public artifact. A build of only internal boards (e.g. `--board=qemu-virt
-// --catalog`) is therefore a silent no-op: nothing to write isn't an error,
-// and --catalog on a normal, public-board build is unaffected either way.
+// --publish-catalog`) is therefore a silent no-op: nothing to write isn't an
+// error, and --publish-catalog on a normal, public-board build is unaffected
+// either way.
 func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, outputs map[string]string, baseURL string) error {
 	images := make([]catalog.Image, 0, len(selected))
 	for _, b := range selected {
@@ -843,7 +857,7 @@ func writeCatalog(cmd *cobra.Command, selected []boards.Board, appName string, o
 		})
 	}
 	if len(images) == 0 {
-		cmd.PrintErrln("gosd build --catalog: every selected board is internal-only, so no catalog entries were written")
+		cmd.PrintErrln("gosd build --publish-catalog: every selected board is internal-only, so no catalog entries were written")
 		return nil
 	}
 

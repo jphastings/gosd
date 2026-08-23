@@ -46,7 +46,7 @@ type PayloadFile struct {
 // ConfigDigests is the interesting case: config.json's copy of it is
 // invisible to Identity, but the config tree those digests describe is
 // itself a set of real, hashed FAT-root files (see pipeline.Assemble), so
-// changing what `gosd build --config-dir` bakes into a setting still moves
+// changing what `gosd build --boot-config-dir` bakes into a setting still moves
 // Identity - through the tree, never through config.json. That's an acceptable trade for what Identity is for:
 // telling boot *payload* builds apart, not per-device provisioning —
 // provisioning drift is §3's concern, not §4's.

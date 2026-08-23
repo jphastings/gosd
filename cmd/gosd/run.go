@@ -30,6 +30,8 @@ import (
 const qemuVirtBoardName = "qemu-virt"
 
 var (
+	runBuildConfigFile string
+
 	runPort         int
 	runMemoryMiB    int
 	runQemuArgs     []string
@@ -48,7 +50,7 @@ var (
 
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "run <path-to-main-package>",
+		Use:   "run [path-to-main-package]",
 		Short: "Cross-compile, build a qemu-virt image, and boot it under qemu-system-aarch64",
 		Long: `Cross-compile, build a qemu-virt image, and boot it under qemu-system-aarch64.
 
@@ -61,10 +63,12 @@ HTTP port 80 to a port on your machine.
 
 Ctrl-C stops qemu and cleans up the temporary image; --keep leaves it in
 place and prints its path instead.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: runRun,
 	}
 
+	cmd.Flags().StringVar(&runBuildConfigFile, "build-config", "",
+		"same flag as gosd build's --build-config: read build options from this TOML file (default: gosd-build.toml in the working directory, when one exists); gosd run honours the keys whose flags it mirrors and ignores build-only keys - see docs/build-config.md")
 	cmd.Flags().IntVar(&runPort, "port", qemurun.DefaultPort,
 		"host port forwarded to the guest's HTTP port 80")
 	cmd.Flags().IntVar(&runMemoryMiB, "memory", qemurun.DefaultMemoryMiB,
@@ -75,12 +79,12 @@ place and prints its path instead.`,
 		"keep the built image and temp build directory after qemu exits, instead of deleting them")
 	cmd.Flags().BoolVar(&runDisplay, "display", false,
 		"open qemu's default host display window (Cocoa on macOS, GTK on Linux) showing the guest's virtio-gpu output; serial console stays on this terminal")
-	cmd.Flags().StringVar(&runConfigDir, "config-dir", "",
-		fmt.Sprintf("same flag as gosd build's --config-dir: a directory of setting files to overlay onto gosd's own %s/ tree (default: a %s directory beside the app's main package, when one exists)", configtree.Dir, configtree.Dir))
+	cmd.Flags().StringVar(&runConfigDir, "boot-config-dir", "",
+		fmt.Sprintf("same flag as gosd build's --boot-config-dir: a directory of setting files to overlay onto gosd's own %s/ tree (default: a %s directory beside the app's main package, when one exists)", configtree.Dir, configtree.Dir))
 	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
 		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
-	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", "",
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups; also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
+	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
+		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy, same as gosd build); also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
 	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
 		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
 	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
@@ -99,7 +103,16 @@ place and prints its path instead.`,
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
-	pkgPath := args[0]
+	fileCfg, fileBaseDir, err := loadBuildConfig(runBuildConfigFile)
+	if err != nil {
+		return err
+	}
+	applyFileValues(cmd.Flags(), fileCfg, fileBaseDir, runFileKeys())
+
+	pkgPath, err := resolveMainOperand(args, fileCfg, fileBaseDir, "gosd run")
+	if err != nil {
+		return err
+	}
 	if err := validatePkgPath(pkgPath); err != nil {
 		return err
 	}
@@ -145,7 +158,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := resolveLabels(runLabelPrefix, cmd.Flags().Changed("label-prefix"), appName)
+	labels, err := resolveLabels(runLabelPrefix, cmd.Flags().Changed("label-prefix") || fileCfg.IsSet("label-prefix"), appName)
 	if err != nil {
 		return err
 	}

@@ -45,7 +45,7 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "qemu-virt",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--config-dir", parityConfigDir,
+		"--boot-config-dir", parityConfigDir,
 		"--ingress", "cloudflared",
 		"--ingress", "tailscale-funnel",
 		"--data-size", "64MiB",
@@ -64,7 +64,7 @@ func TestBuildAndRunProduceIdenticalInitramfsContent(t *testing.T) {
 	runCmd.SetArgs([]string{
 		"run", "../../examples/hello",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--config-dir", parityConfigDir,
+		"--boot-config-dir", parityConfigDir,
 		"--ingress", "cloudflared",
 		"--ingress", "tailscale-funnel",
 		"--data-size", "64MiB",

@@ -94,7 +94,7 @@ tree](config.md) — a file named `GREETING` holding `Hello!` sets the
 | Source | Wins per key? | Where it lives |
 |---|---|---|
 | `config/env/<NAME>` | Yes | Hand-editable fallback on the boot partition (see "Provisioning" below). |
-| Baked defaults | No | Recorded in `config.json` inside the image, from your app's own `--config-dir` overlay. |
+| Baked defaults | No | Recorded in `config.json` inside the image, from your app's own `--boot-config-dir` overlay. |
 
 Precedence is evaluated per key: if the card sets `LOG_LEVEL` but not
 `API_URL`, and a baked default set both, your app gets the card's

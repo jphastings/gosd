@@ -244,7 +244,7 @@ type Config struct {
 	// gosd-my8e.
 	AppVersion string `json:"appVersion,omitempty"`
 
-	// SupportURL is gosd build --support-url's value: an absolute http(s)
+	// SupportURL is gosd build --app-support-url's value: an absolute http(s)
 	// URL validated at build time (see cmd/gosd's parseSupportURL) - a
 	// broken link in a crash report is worse than no link. Baked in so
 	// LAST_FATAL_ERROR.md can point a device's owner somewhere when it has

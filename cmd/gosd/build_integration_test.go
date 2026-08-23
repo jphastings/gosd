@@ -1362,7 +1362,7 @@ func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 }
 
 // TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
-// behavior for --catalog when every selected board is internal-only: no
+// behavior for --publish-catalog when every selected board is internal-only: no
 // os_list.json is written, and the build itself still succeeds (this is not
 // treated as an error - see writeCatalog's doc comment for why).
 func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
@@ -1381,12 +1381,12 @@ func TestBuildCatalogForQemuVirtOnlyWritesNothing(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "qemu-virt",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --board=qemu-virt --catalog failed: %v", err)
+		t.Fatalf("gosd build --board=qemu-virt --publish-catalog failed: %v", err)
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
@@ -1537,7 +1537,7 @@ func TestBuildUsbGadgetFailsActionablyForPi3B(t *testing.T) {
 }
 
 // TestBuildCatalogForPi3BWritesEntry confirms that, now that pi-3b is a
-// public board (gosd-7wv9's flip), --catalog on a pi-3b-only build writes a
+// public board (gosd-7wv9's flip), --publish-catalog on a pi-3b-only build writes a
 // real os_list.json entry - unlike qemu-virt (still internal-only, see
 // TestBuildCatalogForQemuVirtOnlyWritesNothing above) - carrying the
 // official "pi3-64bit" Imager device tag (the "Raspberry Pi 3" device's
@@ -1559,12 +1559,12 @@ func TestBuildCatalogForPi3BWritesEntry(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-3b",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --board=pi-3b --catalog failed: %v", err)
+		t.Fatalf("gosd build --board=pi-3b --publish-catalog failed: %v", err)
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
@@ -1673,7 +1673,7 @@ func TestBuildProducesABootableImageForRock4SEFromFakeArtifacts(t *testing.T) {
 }
 
 // TestBuildCatalogForNanopiZero2WritesEntry confirms that, now that
-// nanopi-zero2 is a public board (gosd-wskc's flip), --catalog on a
+// nanopi-zero2 is a public board (gosd-wskc's flip), --publish-catalog on a
 // nanopi-zero2-only build writes a real os_list.json entry - unlike
 // qemu-virt (still internal-only, see
 // TestBuildCatalogForQemuVirtOnlyWritesNothing above), and with its
@@ -1696,12 +1696,12 @@ func TestBuildCatalogForNanopiZero2WritesEntry(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "nanopi-zero2",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --board=nanopi-zero2 --catalog failed: %v", err)
+		t.Fatalf("gosd build --board=nanopi-zero2 --publish-catalog failed: %v", err)
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
@@ -1736,7 +1736,7 @@ func TestBuildCatalogForNanopiZero2WritesEntry(t *testing.T) {
 }
 
 // TestBuildCatalogForRock4SEWritesEntry confirms that, now that rock-4se is
-// a public board (gosd-h8a8's flip), --catalog on a rock-4se-only build
+// a public board (gosd-h8a8's flip), --publish-catalog on a rock-4se-only build
 // writes a real os_list.json entry with the display name from
 // internal/catalog and its "devices" tag falling back to the raw board ID,
 // like the other non-Raspberry-Pi boards.
@@ -1756,12 +1756,12 @@ func TestBuildCatalogForRock4SEWritesEntry(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "rock-4se",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --board=rock-4se --catalog failed: %v", err)
+		t.Fatalf("gosd build --board=rock-4se --publish-catalog failed: %v", err)
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
@@ -1868,7 +1868,7 @@ func TestBuildProducesABootableImageForCubieA5EFromFakeArtifacts(t *testing.T) {
 }
 
 // TestBuildCatalogForCubieA5EWritesEntry confirms that, now that cubie-a5e
-// is a public board (gosd-zh95's flip), --catalog on a cubie-a5e-only build
+// is a public board (gosd-zh95's flip), --publish-catalog on a cubie-a5e-only build
 // writes a real os_list.json entry with the display name from
 // internal/catalog and its "devices" tag falling back to the raw board ID,
 // like the other non-Raspberry-Pi boards.
@@ -1949,12 +1949,12 @@ func TestBuildCatalogForCubieA5EWritesEntry(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "cubie-a5e",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --board=cubie-a5e --catalog failed: %v", err)
+		t.Fatalf("gosd build --board=cubie-a5e --publish-catalog failed: %v", err)
 	}
 
 	if _, err := os.Stat(imgPath); err != nil {
@@ -1988,7 +1988,7 @@ func TestBuildCatalogForCubieA5EWritesEntry(t *testing.T) {
 }
 
 // TestBuildCatalogWritesOsListJSON is the acceptance test for gosd-t6cs:
-// `gosd build --catalog --publish-base-url=...` writes a combined
+// `gosd build --publish-catalog --publish-base-url=...` writes a combined
 // os_list.json (and a per-image fragment) next to the built image, with the
 // entry's extract_size/extract_sha256 matching the real .img file gosd just
 // wrote.
@@ -2008,7 +2008,7 @@ func TestBuildCatalogWritesOsListJSON(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"--publish-base-url", "https://example.com/downloads",
 		"-o", imgPath,
 	})
@@ -2068,7 +2068,7 @@ func TestBuildCatalogWritesOsListJSON(t *testing.T) {
 	}
 }
 
-// TestBuildCatalogWithoutBaseURLFailsActionably confirms --catalog refuses
+// TestBuildCatalogWithoutBaseURLFailsActionably confirms --publish-catalog refuses
 // to run without --publish-base-url, per its locked requirement, instead of
 // building images it can't produce usable download links for.
 func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
@@ -2077,12 +2077,12 @@ func TestBuildCatalogWithoutBaseURLFailsActionably(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--catalog",
+		"--publish-catalog",
 		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
 	})
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("gosd build --catalog with no --publish-base-url succeeded, want an error")
+		t.Fatal("gosd build --publish-catalog with no --publish-base-url succeeded, want an error")
 	}
 	if !strings.Contains(err.Error(), "--publish-base-url") {
 		t.Errorf("error = %q, want it to mention --publish-base-url", err.Error())
@@ -2351,12 +2351,12 @@ func TestBuildIdentityUnaffectedByLabelPrefix(t *testing.T) {
 // TestBuildBakesReportMetadataIntoConfigJSON is the acceptance test for bean
 // gosd-my8e: the board's display name (derived from the selected board, not
 // a flag), the app name (derived, not a flag), --app-version, and
-// --support-url all reach config.json under their own fields, so a future
+// --app-support-url all reach config.json under their own fields, so a future
 // LAST_FATAL_ERROR.md renderer has a data source for its device: line,
 // image: line, and its "visit <support_url>" fallback text.
 func TestBuildBakesReportMetadataIntoConfigJSON(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
-	cfg := buildConfigJSON(t, imgPath, "--app-version", "1.4.2", "--support-url", "https://example.com/support")
+	cfg := buildConfigJSON(t, imgPath, "--app-version", "1.4.2", "--app-support-url", "https://example.com/support")
 
 	if cfg.BoardDisplayName != "Raspberry Pi Zero 2W" {
 		t.Errorf("config.json's boardDisplayName = %q, want %q (pi-zero-2w's DisplayName)", cfg.BoardDisplayName, "Raspberry Pi Zero 2W")
@@ -2373,7 +2373,7 @@ func TestBuildBakesReportMetadataIntoConfigJSON(t *testing.T) {
 }
 
 // TestBuildReportMetadataAppVersionAndSupportURLAreOptional confirms
-// --app-version and --support-url can both be omitted: the board display
+// --app-version and --app-support-url can both be omitted: the board display
 // name and app name are still baked in (neither is a flag - gosd build
 // always resolves a board and an app name), but AppVersion and SupportURL
 // stay empty rather than getting a fabricated value.
@@ -2382,20 +2382,20 @@ func TestBuildReportMetadataAppVersionAndSupportURLAreOptional(t *testing.T) {
 	cfg := buildConfigJSON(t, imgPath)
 
 	if cfg.BoardDisplayName != "Raspberry Pi Zero 2W" {
-		t.Errorf("config.json's boardDisplayName = %q, want %q even with no --app-version/--support-url", cfg.BoardDisplayName, "Raspberry Pi Zero 2W")
+		t.Errorf("config.json's boardDisplayName = %q, want %q even with no --app-version/--app-support-url", cfg.BoardDisplayName, "Raspberry Pi Zero 2W")
 	}
 	if cfg.AppName != "hello" {
-		t.Errorf("config.json's appName = %q, want %q even with no --app-version/--support-url", cfg.AppName, "hello")
+		t.Errorf("config.json's appName = %q, want %q even with no --app-version/--app-support-url", cfg.AppName, "hello")
 	}
 	if cfg.AppVersion != "" {
 		t.Errorf("config.json's appVersion = %q, want empty when --app-version was not passed", cfg.AppVersion)
 	}
 	if cfg.SupportURL != "" {
-		t.Errorf("config.json's supportURL = %q, want empty when --support-url was not passed", cfg.SupportURL)
+		t.Errorf("config.json's supportURL = %q, want empty when --app-support-url was not passed", cfg.SupportURL)
 	}
 }
 
-// TestBuildRefusesAnInvalidSupportURL confirms --support-url is validated
+// TestBuildRefusesAnInvalidSupportURL confirms --app-support-url is validated
 // before any image is written: a value that isn't an absolute http(s) URL
 // must fail the build with an actionable error naming the flag, not silently
 // bake in a link a device's owner could never follow.
@@ -2413,25 +2413,25 @@ func TestBuildRefusesAnInvalidSupportURL(t *testing.T) {
 				"build", "../../examples/hello",
 				"--board", "pi-zero-2w",
 				"--artifacts-dir", "testdata/fake-artifacts",
-				"--support-url", badURL,
+				"--app-support-url", badURL,
 				"-o", imgPath,
 			})
 			err := cmd.Execute()
 			if err == nil {
-				t.Fatalf("gosd build --support-url=%q succeeded, want a refusal", badURL)
+				t.Fatalf("gosd build --app-support-url=%q succeeded, want a refusal", badURL)
 			}
-			if !strings.Contains(err.Error(), "--support-url") {
-				t.Errorf("refusal %q does not mention --support-url", err)
+			if !strings.Contains(err.Error(), "--app-support-url") {
+				t.Errorf("refusal %q does not mention --app-support-url", err)
 			}
 			if _, statErr := os.Stat(imgPath); !os.IsNotExist(statErr) {
-				t.Errorf("gosd build wrote %s despite refusing --support-url=%q; the refusal must come first", imgPath, badURL)
+				t.Errorf("gosd build wrote %s despite refusing --app-support-url=%q; the refusal must come first", imgPath, badURL)
 			}
 		})
 	}
 }
 
 // TestBuildIdentityUnaffectedByReportMetadata is TestBuildIdentityUnaffected
-// ByLabelPrefix's counterpart for --app-version/--support-url: both reach
+// ByLabelPrefix's counterpart for --app-version/--app-support-url: both reach
 // config.json alone, config.json is excluded from ComputeIdentity's hashed
 // payload in its entirety, and neither flag has any footprint elsewhere in
 // that payload (nothing in the config tree, unlike a hostname or WiFi
@@ -2443,7 +2443,7 @@ func TestBuildRefusesAnInvalidSupportURL(t *testing.T) {
 func TestBuildIdentityUnaffectedByReportMetadata(t *testing.T) {
 	dir := t.TempDir()
 	withoutMetadata := buildConfigJSON(t, filepath.Join(dir, "no-metadata.img"))
-	withMetadata := buildConfigJSON(t, filepath.Join(dir, "metadata.img"), "--app-version", "1.4.2", "--support-url", "https://example.com/support")
+	withMetadata := buildConfigJSON(t, filepath.Join(dir, "metadata.img"), "--app-version", "1.4.2", "--app-support-url", "https://example.com/support")
 
 	if withMetadata.AppVersion != "1.4.2" || withMetadata.SupportURL != "https://example.com/support" {
 		t.Fatalf("config.json didn't carry the report metadata: %+v", withMetadata)
@@ -2452,7 +2452,7 @@ func TestBuildIdentityUnaffectedByReportMetadata(t *testing.T) {
 		t.Fatal("the build with no report metadata has an empty identity")
 	}
 	if withoutMetadata.Identity != withMetadata.Identity {
-		t.Errorf("identity differed across builds that only differed by --app-version/--support-url: %q vs %q", withoutMetadata.Identity, withMetadata.Identity)
+		t.Errorf("identity differed across builds that only differed by --app-version/--app-support-url: %q vs %q", withoutMetadata.Identity, withMetadata.Identity)
 	}
 }
 
@@ -2906,7 +2906,7 @@ func TestBuildIngressWritesOnlyTheSelectedAgentsSettings(t *testing.T) {
 	}
 }
 
-// writeConfigOverlay creates an app-side --config-dir with the given
+// writeConfigOverlay creates an app-side --boot-config-dir with the given
 // tree-relative files.
 func writeConfigOverlay(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -2944,11 +2944,11 @@ func TestBuildConfigDirIsInjectableAndBakedIntoConfigJSON(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--config-dir", overlay,
+		"--boot-config-dir", overlay,
 		"-o", imgPath,
 	})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gosd build --config-dir failed: %v", err)
+		t.Fatalf("gosd build --boot-config-dir failed: %v", err)
 	}
 
 	manifestData, err := os.ReadFile(inject.ManifestPath(imgPath))
@@ -3031,7 +3031,7 @@ func TestBuildRefusesAnUndocumentedSetting(t *testing.T) {
 		"build", "../../examples/hello",
 		"--board", "pi-zero-2w",
 		"--artifacts-dir", "testdata/fake-artifacts",
-		"--config-dir", overlay,
+		"--boot-config-dir", overlay,
 		"-o", filepath.Join(t.TempDir(), "hello-pi-zero-2w.img"),
 	})
 	err := cmd.Execute()
@@ -3052,8 +3052,8 @@ func TestBuildIdentityChangesWithConfigTreeContent(t *testing.T) {
 	overlayA := writeConfigOverlay(t, map[string]string{"hostname": "device-a\n"})
 	overlayB := writeConfigOverlay(t, map[string]string{"hostname": "device-b\n"})
 
-	deviceA := buildConfigJSON(t, filepath.Join(dir, "device-a.img"), "--config-dir", overlayA)
-	deviceB := buildConfigJSON(t, filepath.Join(dir, "device-b.img"), "--config-dir", overlayB)
+	deviceA := buildConfigJSON(t, filepath.Join(dir, "device-a.img"), "--boot-config-dir", overlayA)
+	deviceB := buildConfigJSON(t, filepath.Join(dir, "device-b.img"), "--boot-config-dir", overlayB)
 
 	if deviceA.Identity == "" {
 		t.Fatal("device A's identity is empty")

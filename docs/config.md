@@ -117,7 +117,7 @@ the device behaves. Read them before you change the value they describe.
 
 At **build time**, `gosd build` refuses to ship a value with no explanation
 at all — its own, or one it inherits from gosd's built-in defaults when your
-`--config-dir` overrides the value but not the prose (see "Your own
+`--boot-config-dir` overrides the value but not the prose (see "Your own
 settings" below). A setting nobody can explain is worse than no setting, so
 this is a hard build failure, not a warning. At **runtime**, `gosd-init`
 never requires an `.explain.md` to be present — a card missing one (someone
@@ -125,15 +125,15 @@ deleted it, or a very old card predates a setting your rebuilt image added)
 just means one setting nobody documents to that particular reader; it never
 stops the device from booting.
 
-## Your own settings (`gosd build --config-dir`)
+## Your own settings (`gosd build --boot-config-dir`)
 
 gosd ships its own tree — the `hostname`, `wifi/`, `data_flush`, `env/` and
 `ingress/*` layout shown above — as a real directory baked into the `gosd`
 binary itself. Your app overlays its own settings onto that tree, file by
-file, with `gosd build --config-dir <dir>`:
+file, with `gosd build --boot-config-dir <dir>`:
 
 ```sh
-gosd build . --board pi-zero-2w --config-dir ./config
+gosd build . --board pi-zero-2w --boot-config-dir ./config
 ```
 
 Every file your directory provides wins over gosd's own file at the same
@@ -144,9 +144,9 @@ defaults, explanation included, so overriding `env/API_TOKEN` without also
 writing `env/API_TOKEN.explain.md` is fine — as long as you wrote the
 sidecar for a genuinely new setting.
 
-With no `--config-dir` flag at all, `gosd build` looks for a `config/`
+With no `--boot-config-dir` flag at all, `gosd build` looks for a `config/`
 directory sitting beside your app's main package and uses it automatically
-if it exists; an explicit `--config-dir` that doesn't exist is refused
+if it exists; an explicit `--boot-config-dir` that doesn't exist is refused
 outright — a typo'd path silently falling back to gosd's bare defaults would
 ship an image missing every setting your app actually needs.
 
@@ -185,7 +185,7 @@ itself:
   reflash" below — so a setting can never be named that way.
 - **Any name starting with a period**, including the ones a computer writes
   without asking: macOS's `.DS_Store` is the one you will actually hit if
-  you ever browse a `--config-dir` folder in Finder before building. The
+  you ever browse a `--boot-config-dir` folder in Finder before building. The
   device ignores dot-files on the card, so a setting named this way would
   silently never take effect — `gosd build` catches it at build time
   instead, naming the file to delete.
@@ -195,7 +195,7 @@ itself:
 - **`Thumbs.db` and `desktop.ini`** — Windows Explorer's own metadata files.
 - **Two names that differ only in capitalization.** FAT is
   case-insensitive, so `Env/api_token` and `env/API_TOKEN` can't coexist on
-  a real card even though they look distinct in a `--config-dir` folder on
+  a real card even though they look distinct in a `--boot-config-dir` folder on
   a case-sensitive filesystem.
 - **A setting whose own name is also a directory of other settings.**
   A card can't hold a file and a folder with the same name.
@@ -230,7 +230,7 @@ afterwards — it's what a provisioning tool overwrites, byte range for byte
 range, when it splices a value into a downloaded `.img` (see [image
 injection](image-injection.md#injecting-settings)). If your app's own
 setting needs to hold something longer than 256 bytes, ship a longer file
-from your `--config-dir` (a file of nothing but 4096 newlines reserves 4KiB
+from your `--boot-config-dir` (a file of nothing but 4096 newlines reserves 4KiB
 and still reads as unset). `.explain.md` files are never padded and are
 never a target for injection — only value files reserve space.
 

@@ -34,7 +34,7 @@ const bootSizeBytes = 16 * 1024 * 1024
 // would be (naming.LabelPrefix; see `gosd build --label-prefix`).
 const fixtureAppName = "fixture"
 
-// fixtureEnvName is the app-supplied setting the fixture's --config-dir
+// fixtureEnvName is the app-supplied setting the fixture's --boot-config-dir
 // overlay adds, so the TypeScript integration test can inject an
 // env/<NAME> value into a tree gosd really built.
 const fixtureEnvName = "API_TOKEN"
@@ -128,7 +128,7 @@ func run(args []string) error {
 	return nil
 }
 
-// writeOverlay creates the app-side --config-dir the fixture builds with:
+// writeOverlay creates the app-side --boot-config-dir the fixture builds with:
 // one app-owned environment variable, documented as gosd's build gate
 // requires. The caller removes the directory.
 func writeOverlay() (string, error) {
