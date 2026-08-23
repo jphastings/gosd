@@ -60,7 +60,7 @@ func TestRender(t *testing.T) {
 			ctx:    pi(),
 		},
 		{
-			// The same, on an image built without --support-url: the
+			// The same, on an image built without --app-support-url: the
 			// fallback must not trail off pointing at nothing.
 			name:   "no-fix-no-support-url",
 			report: Report{Code: "NO-API-KEY", Doing: "fetching today's forecast", Problem: "The weather service rejected our API key.", Detail: "401 Unauthorized"},

@@ -9,13 +9,13 @@ image (see §0 of `docs/provisioning-formats.md`). Hand-editing [the config
 tree](config.md) on the flashed boot partition is the always-present
 fallback for anyone not using this flow.
 
-The recipe: build with `--catalog`, host the resulting files, send users
+The recipe: build with `--publish-catalog`, host the resulting files, send users
 the `os_list.json` URL.
 
-## 1. Build with `--catalog`
+## 1. Build with `--publish-catalog`
 
 ```sh
-gosd build . --catalog --publish-base-url=https://example.com/downloads
+gosd build . --publish-catalog --publish-base-url=https://example.com/downloads
 ```
 
 This builds the image(s) exactly as a normal `gosd build` would, then
@@ -27,7 +27,7 @@ additionally writes, next to each image:
 - `os_list.json` — a combined catalog listing every image built in this
   invocation.
 
-`--publish-base-url` is required whenever `--catalog` is given — gosd
+`--publish-base-url` is required whenever `--publish-catalog` is given — gosd
 refuses to guess where you're going to host the files, since every entry's
 `url` field is `--publish-base-url` joined with the image's filename.
 Omitting it fails the build immediately, before any building happens, with
@@ -88,7 +88,7 @@ copy-paste snippet for your own README.
 
 If your app reads configuration from the environment, bake per-deployment
 defaults in from your app's own `config/` directory (`gosd build
---config-dir`) — see
+--boot-config-dir`) — see
 [`docs/runtime.md`'s "App environment variables"](runtime.md#app-environment-variables)
 section for the full precedence rules. Each setting you bake also ships as
 its own file under `config/env/` on the card, documented by whatever

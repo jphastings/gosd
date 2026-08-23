@@ -84,7 +84,7 @@ for what's shipped; per-board verification status lives in
    ```
 
    Omit `--board` to build every supported board at once; `gosd build
-   --help` lists the full flag set (`--config-dir`, `-o`/`--output`,
+   --help` lists the full flag set (`--boot-config-dir`, `-o`/`--output`,
    repeatable `--with-external` — see
    [`docs/runtime.md`](docs/runtime.md#bundling-a-companion-binary---with-external)).
 
@@ -96,7 +96,7 @@ for what's shipped; per-board verification status lives in
 
 4. Flash `hello.img` to an SD card and boot it. The recommended path is
    [Raspberry Pi Imager](https://www.raspberrypi.com/software/)'s custom
-   repository: build with `--catalog --publish-base-url=<url>`, host the
+   repository: build with `--publish-catalog --publish-base-url=<url>`, host the
    emitted `os_list.json` next to your image, and paste that URL into
    Imager's Settings → Custom repository — flashers get the full
    WiFi/hostname wizard. [`docs/publishing.md`](docs/publishing.md) is the

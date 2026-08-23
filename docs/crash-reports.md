@@ -304,10 +304,10 @@ Three limits worth knowing:
 ## Building for it
 
 ```
-gosd build --support-url https://example.com/support --app-version 0.1.0 ./cmd/myapp
+gosd build --app-support-url https://example.com/support --app-version 0.1.0 ./cmd/myapp
 ```
 
-`--support-url` is where the report sends a reader when you couldn't name a
+`--app-support-url` is where the report sends a reader when you couldn't name a
 fix, and should be a page that can answer questions about error codes.
 `--app-version` is free-form and never interpreted; without it the report
 identifies the build by content hash alone. Your app's name and the board's

@@ -27,7 +27,7 @@ boards. Most of what it does is board-independent — on every board, GoSD:
   Tailscale Funnel (`--ingress tailscale-funnel`; every board, needs a
   `--data-size` data partition).
 - Publishes every setting on the card, and any reserved placeholder file, for
-  [post-build config injection](docs/image-injection.md) (`--config-dir`,
+  [post-build config injection](docs/image-injection.md) (`--boot-config-dir`,
   `--placeholder`).
 - Can [compile a custom kernel](docs/custom-kernels.md) for drivers the
   stock kernels omit (`gosd build-kernel`).

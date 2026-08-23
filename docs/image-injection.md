@@ -19,7 +19,7 @@ This is for developers distributing a per-user or per-deployment config
 (API keys, WiFi credentials, a device identity) without building a
 different image for every recipient. If your app's configuration is the
 same for everyone, you don't need this — ship the value in your app's own
-`config/` directory (`gosd build --config-dir`) instead.
+`config/` directory (`gosd build --boot-config-dir`) instead.
 
 ## Why this works
 
@@ -60,7 +60,7 @@ are case-insensitive).
 ## The manifest: `<image basename>.inject.json`
 
 Written next to every built image (the extension is swapped, the same
-convention `--catalog`'s `os_list.json` fragments use):
+convention `--publish-catalog`'s `os_list.json` fragments use):
 
 ```json
 {
@@ -146,7 +146,7 @@ file, rather than in a placeholder of a developer's own. The manifest's
 placeholder:
 
 ```sh
-gosd build . --board pi-zero-2w --config-dir ./config
+gosd build . --board pi-zero-2w --boot-config-dir ./config
 ```
 
 A downloader overwrites a setting's ranges the same way it overwrites a
@@ -169,7 +169,7 @@ the padding is invisible, and a file of nothing but newlines reads as unset.
 The reservation is fixed when the image is built and can never grow
 afterwards, so a setting that has to accept a long value ships as a longer
 file: gosd's own `ingress/cloudflared/token` reserves a kilobyte, and an
-app's `--config-dir` can ship any value file at whatever size it needs (a
+app's `--boot-config-dir` can ship any value file at whatever size it needs (a
 file of 4096 newlines reserves 4KiB and still reads as unset).
 
 ### Secrets

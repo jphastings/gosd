@@ -4,7 +4,7 @@
 //
 // A tree is gosd's own checked-in defaults (the embedded defaults directory
 // beside this file) overlaid, file by file, with the app's own directory
-// (`gosd build --config-dir`): the app's file wins, and any explanation it
+// (`gosd build --boot-config-dir`): the app's file wins, and any explanation it
 // doesn't override is inherited from gosd's. Every value file must be
 // documented by a <name>.explain.md sidecar, its own or inherited, and each
 // directory may carry a group explain.md - the build refuses a value with no
@@ -37,7 +37,7 @@ import (
 )
 
 // defaults is gosd's own config tree, shipped inside the gosd binary and
-// used as the base every app's --config-dir overlays onto.
+// used as the base every app's --boot-config-dir overlays onto.
 //
 //go:embed defaults
 var defaults embed.FS
@@ -229,10 +229,10 @@ func loadDefaults() (map[string]entry, error) {
 func applyOverlay(files map[string]entry, dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return fmt.Errorf("reading the config directory %s failed: %w; pass --config-dir <dir> pointing at a directory of setting files, or drop the flag to use gosd's defaults alone", dir, err)
+		return fmt.Errorf("reading the config directory %s failed: %w; pass --boot-config-dir <dir> pointing at a directory of setting files, or drop the flag to use gosd's defaults alone", dir, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("the config directory %s is a file, not a directory; --config-dir takes a directory holding one file per setting", dir)
+		return fmt.Errorf("the config directory %s is a file, not a directory; --boot-config-dir takes a directory holding one file per setting", dir)
 	}
 
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -254,7 +254,7 @@ func applyOverlay(files map[string]entry, dir string) error {
 			return nil
 		}
 		if !d.Type().IsRegular() {
-			return fmt.Errorf("%s is not a regular file; every entry under --config-dir %s must be a plain file holding one setting's value, or a .explain.md documenting one", p, dir)
+			return fmt.Errorf("%s is not a regular file; every entry under --boot-config-dir %s must be a plain file holding one setting's value, or a .explain.md documenting one", p, dir)
 		}
 
 		content, err := os.ReadFile(p)
@@ -337,7 +337,7 @@ func isJunkName(name string) bool {
 }
 
 // checkName refuses a reserved or unusable file/directory name. rel is the
-// entry's path within the tree and dir the --config-dir it came from, both
+// entry's path within the tree and dir the --boot-config-dir it came from, both
 // only used to make the refusal name a real file on disk.
 func checkName(name, rel, dir string) error {
 	switch {

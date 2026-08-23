@@ -122,7 +122,7 @@ say so in the bean rather than silently diverging.
   pre-`gosd-lo7k` release fails the reflash-upgrade adoption gate on its
   data partition and is cleanly reformatted, never halted.
 - **Default hostname:** the sanitized basename of the app's main package,
-  overridable via a `config/hostname` file (`--config-dir`, or hand-edited
+  overridable via a `config/hostname` file (`--boot-config-dir`, or hand-edited
   on the card).
 - **Public API surface** (semver-relevant): `cmd/gosd`, `gadget/` (USB gadget
   library), `emmc/` (onboard-eMMC format/mount), `disk/` (the same for any
@@ -409,7 +409,7 @@ say so in the bean rather than silently diverging.
   its own size; every value needs an `.explain.md` sidecar (its own or
   inherited), required at build, never required at runtime. gosd ships its
   own defaults tree, overlaid file-by-file by an app's own
-  `gosd build --config-dir`. The injection manifest carries a `config`
+  `gosd build --boot-config-dir`. The injection manifest carries a `config`
   array alongside `placeholders`, and the TypeScript client gained a
   matching `config` option. A `/data` store (`cmd/gosd-init/internal/configstore`,
   bean `gosd-87ip`) keeps whatever differs from the shipped tree and

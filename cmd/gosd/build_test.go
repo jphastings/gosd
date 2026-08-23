@@ -524,7 +524,7 @@ func TestParseDataFilesystemRejectsUnknownValue(t *testing.T) {
 func TestParseSupportURLAcceptsEmpty(t *testing.T) {
 	got, err := parseSupportURL("")
 	if err != nil {
-		t.Fatalf("parseSupportURL(\"\") = %v, want nil: --support-url is optional", err)
+		t.Fatalf("parseSupportURL(\"\") = %v, want nil: --app-support-url is optional", err)
 	}
 	if got != "" {
 		t.Errorf("parseSupportURL(\"\") = %q, want empty", got)
@@ -559,8 +559,8 @@ func TestParseSupportURLRejectsInvalidValues(t *testing.T) {
 			if err == nil {
 				t.Fatalf("parseSupportURL(%q) succeeded, want an error", bad)
 			}
-			if !strings.Contains(err.Error(), "--support-url") {
-				t.Errorf("error = %q, want it to mention --support-url", err.Error())
+			if !strings.Contains(err.Error(), "--app-support-url") {
+				t.Errorf("error = %q, want it to mention --app-support-url", err.Error())
 			}
 		})
 	}
@@ -569,7 +569,7 @@ func TestParseSupportURLRejectsInvalidValues(t *testing.T) {
 func TestParsePublishBaseURLAcceptsEmptyAndAbsoluteURLs(t *testing.T) {
 	got, err := parsePublishBaseURL("")
 	if err != nil || got != "" {
-		t.Errorf("parsePublishBaseURL(\"\") = %q, %v; want \"\", nil: the flag is only required by --catalog", got, err)
+		t.Errorf("parsePublishBaseURL(\"\") = %q, %v; want \"\", nil: the flag is only required by --publish-catalog", got, err)
 	}
 	got, err = parsePublishBaseURL(" https://example.com/downloads ")
 	if err != nil {
@@ -910,11 +910,12 @@ func TestResolveConfigDirWithoutOneIsEmpty(t *testing.T) {
 	}
 }
 
-// A typo'd --config-dir must fail rather than silently building gosd's bare
-// defaults, which would ship an image missing every setting the app needs.
+// A typo'd --boot-config-dir must fail rather than silently building gosd's
+// bare defaults, which would ship an image missing every setting the app
+// needs.
 func TestResolveConfigDirRefusesAMissingExplicitDirectory(t *testing.T) {
 	_, err := resolveConfigDir(t.TempDir(), filepath.Join(t.TempDir(), "nope"))
-	if err == nil || !strings.Contains(err.Error(), "--config-dir") {
+	if err == nil || !strings.Contains(err.Error(), "--boot-config-dir") {
 		t.Fatalf("resolveConfigDir with a missing directory = %v, want a refusal naming the flag", err)
 	}
 }

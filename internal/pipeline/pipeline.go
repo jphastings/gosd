@@ -64,7 +64,7 @@ type Options struct {
 	Config boards.BuildConfig
 
 	// ConfigTree is this board's assembled config/ directory (gosd's
-	// defaults overlaid with `gosd build --config-dir`, pruned to the
+	// defaults overlaid with `gosd build --boot-config-dir`, pruned to the
 	// features this image carries - see internal/configtree). Its files
 	// land at the FAT root under configtree.Dir, are covered by the image
 	// identity like every other FAT-root file, and each value file's byte
@@ -199,7 +199,7 @@ type Options struct {
 	// metadata only (bean gosd-my8e); empty means the flag was omitted.
 	AppVersion string
 
-	// SupportURL is `gosd build --support-url`'s value, already validated as
+	// SupportURL is `gosd build --app-support-url`'s value, already validated as
 	// an absolute http(s) URL by cmd/gosd's parseSupportURL, baked straight
 	// into config.json's SupportURL field (initcfg.Config.SupportURL).
 	// Report metadata only (bean gosd-my8e); empty means the flag was

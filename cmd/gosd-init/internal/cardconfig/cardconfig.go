@@ -46,7 +46,7 @@ const MaxValueBytes = 64 * 1024
 // Every setting costs at least its reservation (configtree.MinValueBytes),
 // which is what makes this a bound on how many settings there are as well
 // as on how big they get: 1 MiB is room for four thousand of them, where
-// gosd's own tree ships eleven and an app's --config-dir adds its own
+// gosd's own tree ships eleven and an app's --boot-config-dir adds its own
 // handful.
 const MaxTreeBytes = 1024 * 1024
 
