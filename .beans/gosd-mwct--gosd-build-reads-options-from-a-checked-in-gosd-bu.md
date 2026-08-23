@@ -1,10 +1,11 @@
 ---
 # gosd-mwct
 title: gosd build reads options from a checked-in gosd-build.toml
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-08-23T19:58:13Z
-updated_at: 2026-08-23T19:58:13Z
+updated_at: 2026-08-23T20:54:46Z
 ---
 
 `gosd build` has ~22 flags; developers who need a specific combination carry a long command line in a Makefile. A checked-in `gosd-build.toml` lets a repo declare its canonical build, with CLI flags still winning.
@@ -25,10 +26,19 @@ updated_at: 2026-08-23T19:58:13Z
 
 ## Todo
 
-- [ ] Rename sweep: `--support-url`→`--app-support-url`, `--config-dir`→`--boot-config-dir` (build+run), `--catalog`→`--publish-catalog`, incl. help texts, pairing error, tests, README, docs
-- [ ] `internal/buildconfig`: strict Parse, IsSet (dotted), reflection-derived Keys, ResolvePath + unit tests
-- [ ] `cmd/gosd/buildconfigfile.go`: loadBuildConfig, fileKey tables, applyFileValues, resolveMainOperand + unit tests incl. structural parity test
-- [ ] Wire runBuild/runRun: MaximumNArgs(1), prologue, label-prefix explicitness, `--build-config` flags, run's gosd-init-src env default
-- [ ] Integration tests: file-only bare build, flag-override, --build-config elsewhere, bare run w/ ignored build-only keys, no-file-no-arg errors
-- [ ] docs/build-config.md + README + changeset (`gosd: major`)
-- [ ] Quality gates (go test/vet/gofmt/golangci-lint darwin+linux)
+- [x] Rename sweep: `--support-url`→`--app-support-url`, `--config-dir`→`--boot-config-dir` (build+run), `--catalog`→`--publish-catalog`, incl. help texts, pairing error, tests, README, docs
+- [x] `internal/buildconfig`: strict Parse, IsSet (dotted), reflection-derived Keys, ResolvePath + unit tests
+- [x] `cmd/gosd/buildconfigfile.go`: loadBuildConfig, fileKey tables, applyFileValues, resolveMainOperand + unit tests incl. structural parity test
+- [x] Wire runBuild/runRun: MaximumNArgs(1), prologue, label-prefix explicitness, `--build-config` flags, run's gosd-init-src env default
+- [x] Integration tests: file-only bare build, flag-override, --build-config elsewhere, bare run w/ ignored build-only keys, no-file-no-arg errors
+- [x] docs/build-config.md + README + changeset (`gosd: major`)
+- [x] Quality gates (go test/vet/gofmt/golangci-lint darwin+linux)
+
+## Summary of Changes
+
+- Renamed `--support-url`→`--app-support-url`, `--config-dir`→`--boot-config-dir` (build and run) and `--catalog`→`--publish-catalog` tree-wide (own commit), so the structural flag↔key rule holds with no hand-coded map.
+- New `internal/buildconfig`: strict BurntSushi TOML mirroring `internal/kernelconfig`'s idiom — unknown keys error naming the dotted key, `IsSet` distinguishes written-zero from absent, `Keys()` is reflection-derived from the struct's toml tags.
+- New `cmd/gosd/buildconfigfile.go`: cwd-only discovery (`gosd-build.toml`), `--build-config` escape hatch on build and run, per-key flag-wins merge into the existing flag globals (`IsSet && !Changed`), file-dir-relative path rebasing (with-external's local half included, placeholder never), `resolveMainOperand` for `[app] main`, and the flag>env>file tier for `gosd-init-src` (run's flag also gained the `$GOSD_INIT_SRC` default it was missing).
+- Both commands relaxed to `MaximumNArgs(1)` with an actionable no-arg-no-file error; file-set `label-prefix` counts as explicit at both `resolveLabels` call sites.
+- `TestFlagKeyParityIsStructural` pins every-flag-has-a-key and the structural mapping by reflection; integration tests cover the bare-`gosd build` flagship flow (app-repo module fixture), per-key CLI override, `--build-config` from a monorepo root, bare `gosd run` honouring its subset while provably ignoring build-only keys, and the actionable errors.
+- New docs page `docs/build-config.md` (full example file, ABI warnings, run subset, config-tree distinction), README feature bullet + quickstart mention, changeset `gosd: major` calling out the renames.

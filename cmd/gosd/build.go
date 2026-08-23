@@ -33,6 +33,8 @@ import (
 )
 
 var (
+	buildConfigFile string
+
 	boardIDs       []string
 	output         string
 	configDir      string
@@ -77,7 +79,7 @@ const defaultDataFilesystem = "fat32"
 
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "build <path-to-main-package>",
+		Use:   "build [path-to-main-package]",
 		Short: "Cross-compile a Go app and assemble it into a bootable SD-card image",
 		Long: `Cross-compile a Go app and assemble it into a bootable SD-card image.
 
@@ -89,10 +91,12 @@ cache entry left over from an older gosd version or pin, so the cache holds
 only the current version's assets rather than growing forever - see
 docs/artifacts.md. --artifacts-dir builds skip this pruning, since they may
 not touch the cache at all.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: runBuild,
 	}
 
+	cmd.Flags().StringVar(&buildConfigFile, "build-config", "",
+		"read build options from this TOML file, so a repository can check in its canonical build: every key is a flag of the same name (a --<section>-<rest> flag lives at [section] rest, and [app] main stands in for the package-path argument), a flag passed on the command line wins per key, and relative paths in the file resolve against the file's own directory (default: gosd-build.toml in the working directory, when one exists); see docs/build-config.md")
 	cmd.Flags().StringArrayVar(&boardIDs, "board", nil,
 		fmt.Sprintf("board to build for (repeatable); omit to build all boards: %s", strings.Join(boards.IDs(), ", ")))
 	cmd.Flags().StringVarP(&output, "output", "o", "",
@@ -142,7 +146,16 @@ not touch the cache at all.`,
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
-	pkgPath := args[0]
+	fileCfg, fileBaseDir, err := loadBuildConfig(buildConfigFile)
+	if err != nil {
+		return err
+	}
+	applyFileValues(cmd.Flags(), fileCfg, fileBaseDir, buildFileKeys())
+
+	pkgPath, err := resolveMainOperand(args, fileCfg, fileBaseDir, "gosd build")
+	if err != nil {
+		return err
+	}
 	if err := validatePkgPath(pkgPath); err != nil {
 		return err
 	}
@@ -239,7 +252,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix"), appName)
+	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix") || fileCfg.IsSet("label-prefix"), appName)
 	if err != nil {
 		return err
 	}
