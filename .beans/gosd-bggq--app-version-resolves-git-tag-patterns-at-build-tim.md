@@ -1,10 +1,11 @@
 ---
 # gosd-bggq
 title: 'app-version resolves git: tag patterns at build time'
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-08-24T03:40:19Z
-updated_at: 2026-08-24T03:40:19Z
+updated_at: 2026-08-24T04:06:08Z
 ---
 
 `--app-version` (and `[app] version` in gosd-build.toml, where this matters most — the file is checked in once and can't be edited per release) can name a git source instead of a literal: `git:v*.*.*` resolves at build time to a describe-style version derived from the app repo's tags.
@@ -28,3 +29,10 @@ updated_at: 2026-08-24T03:40:19Z
 - [x] docs/build-config.md section (incl. CI shallow-checkout guidance) + changeset (gosd: minor)
 - [x] flake.nix vendorHash bump for the new dependency (no local nix — take the hash from the CI job's mismatch report)
 - [x] Quality gates (go test/vet/gofmt/golangci-lint darwin+linux)
+
+## Summary of Changes
+
+- `internal/gitversion`: pure-Go describe on go-git v5.17.1 (already in the module graph, so the direct import added no version churn). Nearest-reachable-tag selection with exact distance (|ancestry(HEAD)| − |ancestry(tag)|), tie-breaks pinned by tests, `-N-g<7hex>` and `-dirty` suffixes matching `git describe --tags --dirty` (untracked ≠ dirty), literal-prefix extraction, shallow-aware actionable errors. Fixture repos are built with go-git, so the tests run with no git binary installed.
+- `cmd/gosd`: `resolveAppVersion` runs after the file/flag merge against the app main package's enclosing repo; import-path operands are refused actionably; the resolved version is printed to stderr; `--app-version` help amended (gosd resolves a `git:` source, never interprets the result). `filesystemPathLike` extracted from `packagePathLike`.
+- End-to-end integration test bakes `"appVersion":"2.5.0"` from a toml `git:v*.*.*` source into config.json, network-tripwired.
+- docs/build-config.md section (describe semantics, extraction rule, CI shallow-checkout guidance) + `gosd: minor` changeset; flake.nix vendorHash bumped via CI's hash oracle.
