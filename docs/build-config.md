@@ -154,9 +154,26 @@ gosd resolves the source but still never interprets the resulting version.
 
 **Building in CI?** Most CI checkouts are shallow and tagless — GitHub
 Actions' checkout defaults to a depth of 1 — which leaves nothing for the
-pattern to match. Give `actions/checkout` `fetch-depth: 0` (all history and
-tags), or run `git fetch --unshallow --tags` before building. The build
-error names these fixes when it detects a shallow clone.
+pattern to match. Resolution needs the commit graph and the tags but none
+of the historical file contents, and git can fetch exactly that — a
+*treeless* fetch:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # the whole commit graph and every tag...
+    filter: tree:0  # ...but no historical file contents
+```
+
+or repair an existing shallow clone with
+`git fetch --unshallow --tags --filter=tree:0`. A plain `fetch-depth: 0`
+also works — it just downloads every version of every file to answer a
+question about commits — and a server without partial-clone support
+ignores the filter and sends everything, so the treeless form never does
+worse. (A build triggered by a tag push can get away with
+`fetch-tags: true` alone: the pushed tag points at the very commit being
+built.) The build error names these fixes when it detects a shallow
+clone.
 
 ## The keys that are on-disk layout
 

@@ -17,9 +17,12 @@ literal prefix is stripped from the result — `git:v*.*.*` turns tag
 failing the build.
 
 Shallow CI checkouts have no tags to search, so the error for that case
-names the fix directly: `fetch-depth: 0` for actions/checkout, or
-`git fetch --unshallow --tags`. Details and examples live on the
-build-config documentation page.
+names the efficient fix directly: a treeless fetch — `fetch-depth: 0`
+with `filter: tree:0` for actions/checkout, or
+`git fetch --unshallow --tags --filter=tree:0` — which downloads the
+commit graph and tags (all resolution needs) while skipping historical
+file contents. Details and examples live on the build-config
+documentation page.
 
 One edge: a literal version that genuinely began with `git:` now means
 something else; no known app does this.

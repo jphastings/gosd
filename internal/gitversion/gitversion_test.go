@@ -247,8 +247,9 @@ func TestErrorsAreActionable(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := Resolve("git:v*", f.dir)
-		if err == nil || !strings.Contains(err.Error(), "--unshallow") || !strings.Contains(err.Error(), "fetch-depth: 0") {
-			t.Errorf("error = %v, want the unshallow and actions/checkout fetch-depth remedies named", err)
+		if err == nil || !strings.Contains(err.Error(), "--unshallow") ||
+			!strings.Contains(err.Error(), "fetch-depth: 0") || !strings.Contains(err.Error(), "tree:0") {
+			t.Errorf("error = %v, want the unshallow and treeless actions/checkout remedies named", err)
 		}
 	})
 

@@ -266,7 +266,9 @@ func noTagError(repo *git.Repository, glob string, totalTags int, what string) e
 	if shallow, err := repo.Storer.Shallow(); err == nil && len(shallow) > 0 {
 		return fmt.Errorf(
 			"--app-version git:%s: %s %q, and this is a shallow clone, which usually has no tags or history to search; "+
-				"run `git fetch --unshallow --tags`, or in GitHub Actions give actions/checkout `fetch-depth: 0` (all history and tags)",
+				"run `git fetch --unshallow --tags --filter=tree:0`, or in GitHub Actions give actions/checkout "+
+				"`fetch-depth: 0` with `filter: tree:0` — the filter keeps the fetch small by skipping historical "+
+				"file contents, since the commit graph and tags are all a version needs",
 			glob, what, glob)
 	}
 	return fmt.Errorf(
