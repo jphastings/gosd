@@ -140,7 +140,7 @@ not touch the cache at all.`,
 	cmd.Flags().StringVar(&supportURL, "app-support-url", "",
 		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
 	cmd.Flags().StringVar(&appVersion, "app-version", "",
-		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
+		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
 
 	return cmd
 }
@@ -250,6 +250,15 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	appName, err := deriveAppName(pkgPath)
 	if err != nil {
 		return err
+	}
+
+	resolvedAppVersion, err := resolveAppVersion(appVersion, pkgPath)
+	if err != nil {
+		return err
+	}
+	if resolvedAppVersion != appVersion {
+		cmd.PrintErrf("gosd build: app version %s (resolved from %s)\n", resolvedAppVersion, appVersion)
+		appVersion = resolvedAppVersion
 	}
 
 	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix") || fileCfg.IsSet("label-prefix"), appName)
@@ -439,10 +448,7 @@ func validatePkgPath(pkgPath string) error {
 // requiring a package path to begin the way one legitimately can is that
 // same rule stated positively.
 func packagePathLike(s string) bool {
-	if s == "." || s == ".." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
-		return true
-	}
-	if filepath.IsAbs(s) {
+	if filesystemPathLike(s) {
 		return true
 	}
 	r, size := utf8.DecodeRuneInString(s)
@@ -450,6 +456,13 @@ func packagePathLike(s string) bool {
 		return false
 	}
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+// filesystemPathLike reports whether s names the app by filesystem
+// location — the relative forms the Go toolchain reads as directories, or
+// an absolute path — rather than by import path.
+func filesystemPathLike(s string) bool {
+	return s == "." || s == ".." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || filepath.IsAbs(s)
 }
 
 // deriveAppName computes the default app name gosd uses for the device

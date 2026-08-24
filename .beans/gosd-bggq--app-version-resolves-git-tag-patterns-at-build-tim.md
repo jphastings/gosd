@@ -22,9 +22,9 @@ updated_at: 2026-08-24T03:40:19Z
 
 ## Todo
 
-- [ ] Add go-git dependency; `internal/gitversion`: scheme parse, describe (reachability walk + distance), tie-breaks, dirty check, prefix strip, shallow-aware errors + hermetic go-git-built fixture tests
-- [ ] Wire cmd/gosd: resolve `git:` after file/flag merge using the app dir; amend --app-version help ("never interpreted" → "resolves a git: source, never interprets the result")
-- [ ] Integration test: bare build with [app] version = "git:v*" bakes the described version into config.json
-- [ ] docs/build-config.md section (incl. CI shallow-checkout guidance) + changeset (gosd: minor)
+- [x] Add go-git dependency; `internal/gitversion`: scheme parse, describe (reachability walk + distance), tie-breaks, dirty check, prefix strip, shallow-aware errors + hermetic go-git-built fixture tests
+- [x] Wire cmd/gosd: resolve `git:` after file/flag merge using the app dir; amend --app-version help ("never interpreted" → "resolves a git: source, never interprets the result")
+- [x] Integration test: bare build with [app] version = "git:v*" bakes the described version into config.json
+- [x] docs/build-config.md section (incl. CI shallow-checkout guidance) + changeset (gosd: minor)
 - [ ] flake.nix vendorHash bump for the new dependency (no local nix — take the hash from the CI job's mismatch report)
-- [ ] Quality gates (go test/vet/gofmt/golangci-lint darwin+linux)
+- [x] Quality gates (go test/vet/gofmt/golangci-lint darwin+linux)
