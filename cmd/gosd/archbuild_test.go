@@ -12,13 +12,19 @@ import (
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
+	"github.com/jphastings/gosd/internal/build"
 )
 
 // appCall records one compileApp invocation's arguments, so tests can assert
-// not just how many times it was called but with which board's tag.
+// not just how many times it was called but with which board's tag and
+// AppCompileOptions.
 type appCall struct {
-	tags string
-	arch boards.Arch
+	tags     string
+	ldflags  string
+	gcflags  string
+	asmflags string
+	trimpath bool
+	arch     boards.Arch
 }
 
 // countingCompiler records every compileApp/compileInit/compileTsfunnel call
@@ -31,8 +37,15 @@ type countingCompiler struct {
 	tsfunnelCalls []boards.Arch
 }
 
-func (c *countingCompiler) compileApp(_, _, tags string, arch boards.Arch) error {
-	c.appCalls = append(c.appCalls, appCall{tags: tags, arch: arch})
+func (c *countingCompiler) compileApp(_, _ string, opts build.AppCompileOptions, arch boards.Arch) error {
+	c.appCalls = append(c.appCalls, appCall{
+		tags:     opts.Tags,
+		ldflags:  opts.LDFlags,
+		gcflags:  opts.GCFlags,
+		asmflags: opts.ASMFlags,
+		trimpath: opts.TrimPath,
+		arch:     arch,
+	})
 	return nil
 }
 
@@ -58,7 +71,7 @@ func TestCompileForBoardsCompilesAppOncePerBoardOnSharedArch(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), radxazero3e.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -100,7 +113,7 @@ func TestCompileForBoardsAddsOneInitPassPerDistinctArch(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), nanopizero2.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -124,7 +137,7 @@ func TestCompileForBoardsAddsOneInitPassPerDistinctArch(t *testing.T) {
 // is reported with the failing package and board, and stops before wasting a
 // compileInit call.
 func TestCompileForBoardsSurfacesAppCompileFailure(t *testing.T) {
-	compileApp := func(_, _, _ string, _ boards.Arch) error { return errors.New("boom") }
+	compileApp := func(_, _ string, _ build.AppCompileOptions, _ boards.Arch) error { return errors.New("boom") }
 	initCalls := 0
 	compileInit := func(_, _ string, _ boards.Arch) error {
 		initCalls++
@@ -135,7 +148,7 @@ func TestCompileForBoardsSurfacesAppCompileFailure(t *testing.T) {
 		return nil
 	}
 
-	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", false, compileApp, compileInit, compileTsfunnel)
+	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", false, "", nil, "", "", false, compileApp, compileInit, compileTsfunnel)
 	if err == nil {
 		t.Fatal("compileForBoards succeeded despite a failing compileApp, want an error")
 	}
@@ -152,7 +165,7 @@ func TestCompileForBoardsSkipsTsfunnelWhenNotNeeded(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -175,7 +188,7 @@ func TestCompileForBoardsAddsOneTsfunnelPassPerDistinctArchWhenNeeded(t *testing
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), nanopizero2.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", true, c.compileApp, c.compileInit, c.compileTsfunnel)
+	binaries, err := compileForBoards(selected, t.TempDir(), "./pkg", "", true, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -201,11 +214,11 @@ func TestCompileForBoardsAddsOneTsfunnelPassPerDistinctArchWhenNeeded(t *testing
 // TestCompileForBoardsSurfacesAppCompileFailure's shape for the third
 // binary.
 func TestCompileForBoardsSurfacesTsfunnelCompileFailure(t *testing.T) {
-	compileApp := func(_, _, _ string, _ boards.Arch) error { return nil }
+	compileApp := func(_, _ string, _ build.AppCompileOptions, _ boards.Arch) error { return nil }
 	compileInit := func(_, _ string, _ boards.Arch) error { return nil }
 	compileTsfunnel := func(_, _ string, _ boards.Arch) error { return errors.New("boom") }
 
-	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", true, compileApp, compileInit, compileTsfunnel)
+	_, err := compileForBoards([]boards.Board{pizero2w.New()}, t.TempDir(), "./pkg", "", true, "", nil, "", "", false, compileApp, compileInit, compileTsfunnel)
 	if err == nil {
 		t.Fatal("compileForBoards succeeded despite a failing compileTsfunnel, want an error")
 	}
@@ -220,7 +233,7 @@ func TestCompileForBoardsTagsEveryAppCompileWithTheBareGosdTag(t *testing.T) {
 	c := &countingCompiler{}
 	selected := []boards.Board{pizero2w.New(), radxazero3e.New(), pizerow.New()}
 
-	if _, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel); err != nil {
+	if _, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel); err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
 
@@ -239,7 +252,7 @@ func TestCompileForBoardsWritesDistinctAppPathsPerBoard(t *testing.T) {
 	tempDir := t.TempDir()
 	selected := []boards.Board{pizero2w.New(), radxazero3e.New(), pizerow.New()}
 
-	binaries, err := compileForBoards(selected, tempDir, "./pkg", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
+	binaries, err := compileForBoards(selected, tempDir, "./pkg", "", false, "", nil, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel)
 	if err != nil {
 		t.Fatalf("compileForBoards: %v", err)
 	}
@@ -253,6 +266,57 @@ func TestCompileForBoardsWritesDistinctAppPathsPerBoard(t *testing.T) {
 		seen[p] = true
 		if filepath.Dir(p) != tempDir {
 			t.Errorf("board %q's appPath %q is not inside tempDir %q", b.Name(), p, tempDir)
+		}
+	}
+}
+
+// TestCompileForBoardsMergesExtraTagsWithMandatoryBoardTags is gosd-wjjn's
+// counterpart to TestCompileForBoardsTagsEveryAppCompileWithTheBareGosdTag:
+// a caller-supplied extraTags must be merged onto - never replace - each
+// board's own mandatory boards.BuildTags.
+func TestCompileForBoardsMergesExtraTagsWithMandatoryBoardTags(t *testing.T) {
+	c := &countingCompiler{}
+	selected := []boards.Board{pizero2w.New(), radxazero3e.New()}
+
+	if _, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "", []string{"foo", "bar"}, "", "", false, c.compileApp, c.compileInit, c.compileTsfunnel); err != nil {
+		t.Fatalf("compileForBoards: %v", err)
+	}
+
+	for i, call := range c.appCalls {
+		got := strings.Split(call.tags, ",")
+		want := append(strings.Split(boards.BuildTags(selected[i]), ","), "foo", "bar")
+		for _, tag := range want {
+			if !slices.Contains(got, tag) {
+				t.Errorf("compileApp call %d (board %q) tags = %q, want them to include %q", i, selected[i].Name(), call.tags, tag)
+			}
+		}
+	}
+}
+
+// TestCompileForBoardsPassesLDFlagsGCFlagsASMFlagsTrimPathThrough confirms
+// ldflags/gcflags/asmflags/trimpath reach every board's AppCompileOptions
+// unchanged - they're uniform across boards, unlike tags, which is merged
+// per board.
+func TestCompileForBoardsPassesLDFlagsGCFlagsASMFlagsTrimPathThrough(t *testing.T) {
+	c := &countingCompiler{}
+	selected := []boards.Board{pizero2w.New(), radxazero3e.New()}
+
+	if _, err := compileForBoards(selected, t.TempDir(), "./pkg", "", false, "-X main.version=1", nil, "-m", "-someasmflag", true, c.compileApp, c.compileInit, c.compileTsfunnel); err != nil {
+		t.Fatalf("compileForBoards: %v", err)
+	}
+
+	for i, call := range c.appCalls {
+		if call.ldflags != "-X main.version=1" {
+			t.Errorf("compileApp call %d ldflags = %q, want %q", i, call.ldflags, "-X main.version=1")
+		}
+		if call.gcflags != "-m" {
+			t.Errorf("compileApp call %d gcflags = %q, want %q", i, call.gcflags, "-m")
+		}
+		if call.asmflags != "-someasmflag" {
+			t.Errorf("compileApp call %d asmflags = %q, want %q", i, call.asmflags, "-someasmflag")
+		}
+		if !call.trimpath {
+			t.Errorf("compileApp call %d trimpath = false, want true", i)
 		}
 	}
 }

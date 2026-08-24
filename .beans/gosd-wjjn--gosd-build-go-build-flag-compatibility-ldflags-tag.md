@@ -1,11 +1,11 @@
 ---
 # gosd-wjjn
 title: 'gosd build: go build flag compatibility (--ldflags, --tags, --trimpath, --gcflags, --asmflags)'
-status: draft
+status: completed
 type: feature
 priority: normal
 created_at: 2026-08-24T10:38:27Z
-updated_at: 2026-08-24T10:39:10Z
+updated_at: 2026-08-24T12:05:28Z
 ---
 
 `gosd build`'s app-compile step doesn't accept the `go build` flags a Go
@@ -152,3 +152,77 @@ Tests:
 - `--board` stays the sole board selector, validated against the closed
   `internal/boards` registry — neither increment touches board selection or
   collapses it onto GOOS/GOARCH.
+
+## Correction while implementing (2026-08-24)
+
+The bean's proposed `[app] ldflags`/`[app] tags`/etc. gosd-build.toml keys
+conflict with a real, already-enforced locked invariant this repo has
+(bean gosd-mwct, pinned by `cmd/gosd/buildconfigfile_test.go`'s
+`TestFlagKeyParityIsStructural`): the flag<->key mapping is *purely
+structural* — a flag `--<section>-<rest>` maps to `[section].rest` only
+when `<rest>` is genuinely a `--app-*`-style flag. Since this bean's design
+deliberately keeps the flags bare (`--ldflags`, `--tags`, `--trimpath`,
+`--gcflags`, `--asmflags` — exactly `go build`'s own flag names, for
+muscle-memory reasons the bean itself states), the structural rule places
+them as **top-level** gosd-build.toml keys (`ldflags`, `tags`, `trimpath`,
+`gcflags`, `asmflags`), not nested under `[app]`. This keeps both the
+muscle-memory flag names and the existing structural-parity test intact;
+renaming the flags to `--app-ldflags` etc. to fit `[app]` would have
+defeated the bean's own stated motivation. No other design bullet is
+affected. Also: several bean cross-references (`cmd/gosd/build.go:303`,
+`run.go:160`, `build.go:741-743`'s `parseEnvFlags`) point at line numbers/
+a helper that don't exist in the current tree (there is no `--env` flag or
+`parseEnvFlags`); the *entities* they describe (the `compileForBoards`
+callsite, the direct `CrossCompile` call in `gosd run`, and the
+reserved-namespace-rejection pattern precedent set by
+`validateDataFilesystemSupport`/`validateUsbGadget`'s capability-refusal
+shape) all still exist and the design against them still holds — only the
+citations were stale.
+
+## Summary of Changes
+
+Implemented both increments in one PR (per JP's answer when asked about
+scope):
+
+- `internal/build.AppCompileOptions{Tags, LDFlags, GCFlags, ASMFlags,
+  TrimPath}` + pure-function `appGoBuildArgs`, replacing `CrossCompile`'s old
+  bare `tags string` param. All direct `CrossCompile` call sites updated:
+  `internal/build/build_test.go` (6), `internal/build/injection_test.go` (2,
+  not previously enumerated by the bean), `cmd/gosd/run.go` (mechanical, no
+  new flag exposed), `cmd/gosd/withexternal_integration_test.go` (1, not
+  previously enumerated).
+- `compileForBoards` gains `ldflags string, extraTags []string, gcflags,
+  asmflags string, trimpath bool`; per-board `Tags` merges `boards.BuildTags`
+  with `extraTags` rather than replacing it. All 8
+  `cmd/gosd/archbuild_test.go` call sites and its `countingCompiler`/
+  `appCall` fakes updated; two new tests added
+  (`TestCompileForBoardsMergesExtraTagsWithMandatoryBoardTags`,
+  `TestCompileForBoardsPassesLDFlagsGCFlagsASMFlagsTrimPathThrough`).
+- New `--ldflags`, `--tags`, `--trimpath`, `--gcflags`, `--asmflags` flags on
+  `gosd build` (none mirrored on `gosd run`, matching its existing
+  not-every-flag precedent). `parseExtraTags` validates/splits `--tags` and
+  rejects any `gosd`/`gosd_`-namespaced token by prefix (forward-compatible
+  with future boards), called early in `runBuild` before board resolution.
+- `gosd-build.toml` gains matching **top-level** keys (`ldflags`, `tags`,
+  `trimpath`, `gcflags`, `asmflags`) — see the correction note above for why
+  top-level rather than the bean's original `[app]`-nested proposal.
+- Tests: `appGoBuildArgs` unit tests (omit-when-zero, one per flag, and a
+  fixed-order all-flags-set case), `TestCrossCompileAppliesLDFlags` against a
+  new `internal/build/testdata/versioned` fixture, `parseExtraTags` unit
+  tests (empty, split, dedupe, reject-gosd, reject-gosd_-even-for-an-
+  unregistered-board), a flag-registration test for all 5 new flags, and
+  three `cmd/gosd` integration tests: `TestBuildAppliesLDFlags` (new
+  `testdata/versionedfixture`), `TestBuildTagsMergesWithMandatoryBoardTags`
+  (a new `extratagmarker`-gated file added to the existing
+  `testdata/boardtagfixture`), and `TestBuildRejectsAGosdNamespacedTagsValue`
+  (mirrors `TestBuildRefusesADataSizeFAT32CannotHold`'s shape).
+- Docs: `docs/build-config.md`'s example gains the 5 new top-level keys;
+  `docs/board-build-tags.md` gets a new "Adding your own tags with --tags"
+  section documenting the merge-not-replace behavior and the reserved-
+  namespace rejection.
+
+All quality gates green: `go build ./...`, `go test ./...` (whole repo),
+`go vet ./...`, `gofmt -l .` (clean), `golangci-lint run ./...` and
+`GOOS=linux golangci-lint run ./...` (0 issues each). `js/` untouched, so its
+gate doesn't apply. `COMPATIBILITY.md` untouched — this is a generic CLI
+flag, not a board/feature-support change.

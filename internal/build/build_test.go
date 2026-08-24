@@ -1,8 +1,11 @@
 package build
 
 import (
+	"bytes"
 	"debug/elf"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jphastings/gosd/internal/boards"
@@ -13,7 +16,7 @@ var arm64 = boards.Arch{GOARCH: "arm64"}
 func TestCrossCompileProducesStaticARM64Binary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hello")
 
-	if err := CrossCompile("./testdata/hello", out, "", arm64); err != nil {
+	if err := CrossCompile("./testdata/hello", out, AppCompileOptions{}, arm64); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 
@@ -44,7 +47,7 @@ func TestCrossCompileProducesStaticARM64Binary(t *testing.T) {
 func TestCrossCompileProducesStaticARMv6Binary(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hello")
 
-	if err := CrossCompile("./testdata/hello", out, "", boards.Arch{GOARCH: "arm", GOARM: "6"}); err != nil {
+	if err := CrossCompile("./testdata/hello", out, AppCompileOptions{}, boards.Arch{GOARCH: "arm", GOARM: "6"}); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 
@@ -78,7 +81,7 @@ func TestCrossCompileProducesStaticARMv6Binary(t *testing.T) {
 func TestCrossCompileRecognizesLinuxOnlyMainPackage(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "linuxonly")
 
-	if err := CrossCompile("./testdata/linuxonly", out, "", arm64); err != nil {
+	if err := CrossCompile("./testdata/linuxonly", out, AppCompileOptions{}, arm64); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 }
@@ -86,14 +89,14 @@ func TestCrossCompileRecognizesLinuxOnlyMainPackage(t *testing.T) {
 func TestCrossCompileRejectsNonMainPackage(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "notmain")
 
-	err := CrossCompile("./testdata/notmain", out, "", arm64)
+	err := CrossCompile("./testdata/notmain", out, AppCompileOptions{}, arm64)
 	if err == nil {
 		t.Fatal("CrossCompile succeeded on a non-main package, want an error")
 	}
 }
 
 func TestCrossCompileSurfacesBuildFailure(t *testing.T) {
-	err := CrossCompile("./testdata/doesnotexist", filepath.Join(t.TempDir(), "out"), "", arm64)
+	err := CrossCompile("./testdata/doesnotexist", filepath.Join(t.TempDir(), "out"), AppCompileOptions{}, arm64)
 	if err == nil {
 		t.Fatal("CrossCompile succeeded on a missing package, want an error")
 	}
@@ -108,11 +111,109 @@ func TestCrossCompileSurfacesBuildFailure(t *testing.T) {
 // reached `go build` (ahead of the package path - a `go build <pkg> -tags
 // ...` invocation would silently ignore -tags as a package pattern).
 func TestCrossCompilePlacesTagsBeforePackagePath(t *testing.T) {
-	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), "gosd_pi_zero_2w", arm64); err != nil {
+	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), AppCompileOptions{Tags: "gosd_pi_zero_2w"}, arm64); err != nil {
 		t.Errorf("CrossCompile with tags=gosd_pi_zero_2w failed: %v", err)
 	}
 
-	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), "", arm64); err == nil {
+	if err := CrossCompile("./testdata/boardtag", filepath.Join(t.TempDir(), "out"), AppCompileOptions{}, arm64); err == nil {
 		t.Error("CrossCompile with no tags succeeded, want the untagged fallback file's deliberate compile error to surface")
+	}
+}
+
+// TestCrossCompileAppliesLDFlags is the keystone test for gosd-wjjn's
+// --ldflags: testdata/versioned exports a `version` var specifically so a
+// build can target it with -X, proving -ldflags actually reached `go build`
+// rather than being silently dropped.
+func TestCrossCompileAppliesLDFlags(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "versioned")
+
+	opts := AppCompileOptions{LDFlags: "-X main.version=stamped"}
+	if err := CrossCompile("./testdata/versioned", out, opts, arm64); err != nil {
+		t.Fatalf("CrossCompile: %v", err)
+	}
+
+	content, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("reading output binary: %v", err)
+	}
+	if !bytes.Contains(content, []byte("stamped")) {
+		t.Error("output binary does not contain the -ldflags-stamped string \"stamped\"; -X main.version=stamped did not reach go build")
+	}
+}
+
+// TestAppGoBuildArgsOmitsFlagsWhenOptsIsZero mirrors
+// TestBuildGoBuildArgsOmitsTagsAndLdflagsWhenOptsIsZero (gosdinit_test.go):
+// a zero AppCompileOptions must add nothing beyond the bare `go build -o
+// <output> -- <pkg>` invocation.
+func TestAppGoBuildArgsOmitsFlagsWhenOptsIsZero(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{})
+	want := []string{"build", "-o", "/out/app", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(zero opts) = %v, want %v", got, want)
+	}
+}
+
+func TestAppGoBuildArgsAddsTagsWhenSet(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{Tags: "gosd,gosd_pi_zero_2w"})
+	want := []string{"build", "-o", "/out/app", "-tags", "gosd,gosd_pi_zero_2w", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(Tags) = %v, want %v", got, want)
+	}
+}
+
+func TestAppGoBuildArgsAddsLDFlagsWhenSet(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{LDFlags: "-X main.version=1.4.2"})
+	want := []string{"build", "-o", "/out/app", "-ldflags", "-X main.version=1.4.2", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(LDFlags) = %v, want %v", got, want)
+	}
+}
+
+func TestAppGoBuildArgsAddsGCFlagsWhenSet(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{GCFlags: "-m"})
+	want := []string{"build", "-o", "/out/app", "-gcflags", "-m", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(GCFlags) = %v, want %v", got, want)
+	}
+}
+
+func TestAppGoBuildArgsAddsASMFlagsWhenSet(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{ASMFlags: "-D FOO=1"})
+	want := []string{"build", "-o", "/out/app", "-asmflags", "-D FOO=1", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(ASMFlags) = %v, want %v", got, want)
+	}
+}
+
+func TestAppGoBuildArgsAddsTrimPathWhenSet(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{TrimPath: true})
+	want := []string{"build", "-o", "/out/app", "-trimpath", "--", "./cmd/app"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(TrimPath) = %v, want %v", got, want)
+	}
+}
+
+// TestAppGoBuildArgsOrdersEveryFlagBeforePackagePath confirms all five flags
+// together land in appGoBuildArgs's documented fixed order (-tags,
+// -ldflags, -gcflags, -asmflags, -trimpath), package path last.
+func TestAppGoBuildArgsOrdersEveryFlagBeforePackagePath(t *testing.T) {
+	got := appGoBuildArgs("/out/app", "./cmd/app", AppCompileOptions{
+		Tags:     "sometag",
+		LDFlags:  "-s -w",
+		GCFlags:  "-m",
+		ASMFlags: "-D FOO=1",
+		TrimPath: true,
+	})
+	want := []string{
+		"build", "-o", "/out/app",
+		"-tags", "sometag",
+		"-ldflags", "-s -w",
+		"-gcflags", "-m",
+		"-asmflags", "-D FOO=1",
+		"-trimpath",
+		"--", "./cmd/app",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("appGoBuildArgs(all opts) = %v, want %v", got, want)
 	}
 }

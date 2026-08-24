@@ -45,7 +45,7 @@ func TestCrossCompileDoesNotRunAFlagShapedPackagePath(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	t.Chdir("./testdata/hello")
 
-	if err := CrossCompile("-toolexec="+program, out, "", arm64); err == nil {
+	if err := CrossCompile("-toolexec="+program, out, AppCompileOptions{}, arm64); err == nil {
 		t.Error("CrossCompile accepted a flag-shaped package path, want an error")
 	}
 
@@ -62,7 +62,7 @@ func TestCrossCompileIgnoresAmbientGOFLAGS(t *testing.T) {
 	program, marker := toolexecPayload(t)
 	t.Setenv("GOFLAGS", "-toolexec="+program)
 
-	if err := CrossCompile("./testdata/hello", filepath.Join(t.TempDir(), "out"), "", arm64); err != nil {
+	if err := CrossCompile("./testdata/hello", filepath.Join(t.TempDir(), "out"), AppCompileOptions{}, arm64); err != nil {
 		t.Fatalf("CrossCompile: %v", err)
 	}
 

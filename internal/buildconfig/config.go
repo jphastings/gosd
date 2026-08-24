@@ -43,6 +43,20 @@ type Config struct {
 	ArtifactsDir string   `toml:"artifacts-dir"`
 	GosdInitSrc  string   `toml:"gosd-init-src"`
 
+	// LDFlags, Tags, TrimPath, GCFlags and ASMFlags mirror gosd build's
+	// --ldflags/--tags/--trimpath/--gcflags/--asmflags (bean gosd-wjjn):
+	// deliberately top-level, not nested under [app], even though they
+	// only affect the app compile - the flags are kept bare
+	// (--ldflags, not --app-ldflags) to match `go build`'s own flag names
+	// for muscle memory, and the flag<->key mapping is structural (see
+	// this package's doc comment), so a bare flag is always a top-level
+	// key.
+	LDFlags  string `toml:"ldflags"`
+	Tags     string `toml:"tags"`
+	TrimPath bool   `toml:"trimpath"`
+	GCFlags  string `toml:"gcflags"`
+	ASMFlags string `toml:"asmflags"`
+
 	App     App     `toml:"app"`
 	Boot    Boot    `toml:"boot"`
 	Data    Data    `toml:"data"`

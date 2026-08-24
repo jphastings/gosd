@@ -28,7 +28,7 @@ func crossCompileFixture(t *testing.T, arch boards.Arch) string {
 	t.Helper()
 
 	out := filepath.Join(t.TempDir(), "fixture-"+arch.Key())
-	if err := build.CrossCompile("../../internal/build/testdata/hello", out, "", arch); err != nil {
+	if err := build.CrossCompile("../../internal/build/testdata/hello", out, build.AppCompileOptions{}, arch); err != nil {
 		t.Fatalf("cross-compiling fixture binary for %s: %v", arch.Key(), err)
 	}
 	return out

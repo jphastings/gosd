@@ -18,32 +18,49 @@ import (
 // depends on the host's C library.
 const targetGOOS = "linux"
 
+// AppCompileOptions are the optional `go build` flags CrossCompile forwards
+// to the app's own compile, mirroring the flags a Go developer already knows
+// from `go build` itself (--ldflags, --tags, --trimpath, --gcflags,
+// --asmflags on `gosd build`), so existing muscle memory works unchanged.
+//
+// This is a new, purpose-built pair with appGoBuildArgs, deliberately not a
+// reuse of crossCompileOpts/buildGoBuildArgs (gosdinit.go): those always
+// emit -C <dir> and resolve an absolute output path, both specific to
+// building gosd-init/tsfunnel from a different, detected/downloaded source
+// tree. The app always builds from the caller's own working directory,
+// using pkgPath/outputPath exactly as given.
+type AppCompileOptions struct {
+	// Tags is passed to `go build` as `-tags <Tags>` when non-empty - gosd
+	// uses this to pass boards.BuildTags (merged with any caller-supplied
+	// --tags, see cmd/gosd's parseExtraTags) so a developer's app can gate
+	// source on being compiled by gosd at all (`//go:build gosd`) and on
+	// the board it's being compiled for (`//go:build gosd_<id>`).
+	Tags string
+	// LDFlags is passed to `go build` as `-ldflags <LDFlags>` when
+	// non-empty, e.g. "-X main.version=1.4.2" to stamp a version into the
+	// compiled binary.
+	LDFlags string
+	// GCFlags is passed to `go build` as `-gcflags <GCFlags>` when
+	// non-empty.
+	GCFlags string
+	// ASMFlags is passed to `go build` as `-asmflags <ASMFlags>` when
+	// non-empty.
+	ASMFlags string
+	// TrimPath passes `-trimpath` to `go build` when true.
+	TrimPath bool
+}
+
 // CrossCompile builds the Go main package at pkgPath into a static binary
-// for arch at outputPath, by shelling out to the host Go toolchain. tags, if
-// non-empty, is passed to `go build` as `-tags <tags>` - gosd uses this to
-// pass boards.BuildTags so a developer's app can gate source on being
-// compiled by gosd at all (`//go:build gosd`) and on the board it's being
-// compiled for (`//go:build gosd_<id>`); an empty tags builds with no
-// extra build tags at all. It fails with an actionable error if pkgPath is
-// not a main package, or if the build itself fails; in the latter case the
-// compiler's stderr is included verbatim.
-func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
+// for arch at outputPath, by shelling out to the host Go toolchain, applying
+// opts's flags to the invocation (see AppCompileOptions). It fails with an
+// actionable error if pkgPath is not a main package, or if the build itself
+// fails; in the latter case the compiler's stderr is included verbatim.
+func CrossCompile(pkgPath, outputPath string, opts AppCompileOptions, arch boards.Arch) error {
 	if err := requireMainPackage(pkgPath); err != nil {
 		return err
 	}
 
-	args := []string{"build", "-o", outputPath}
-	if tags != "" {
-		args = append(args, "-tags", tags)
-	}
-	// "--" is what stops the toolchain reading pkgPath as another build
-	// flag: without it a pkgPath of "-toolexec=/tmp/payload" would run an
-	// arbitrary program in place of the compiler on the build host (bean
-	// gosd-jc24). cmd/gosd rejects such a pkgPath before it reaches here;
-	// this terminator is what makes that a second line of defence rather
-	// than the only one.
-	args = append(args, "--", pkgPath)
-
+	args := appGoBuildArgs(outputPath, pkgPath, opts)
 	cmd := exec.Command("go", args...)
 	cmd.Env = archEnv(arch)
 	var stderr bytes.Buffer
@@ -55,6 +72,36 @@ func CrossCompile(pkgPath, outputPath, tags string, arch boards.Arch) error {
 			stderr.String())
 	}
 	return nil
+}
+
+// appGoBuildArgs assembles CrossCompile's `go` argv as a pure function of
+// its inputs, so its flag ordering is unit-testable without shelling out.
+// Flags are appended in a fixed order (-tags, -ldflags, -gcflags,
+// -asmflags, -trimpath) whenever opts sets them, always before the "--"
+// terminator and pkgPath. "--" is what stops the toolchain reading pkgPath
+// as another build flag: without it a pkgPath of "-toolexec=/tmp/payload"
+// would run an arbitrary program in place of the compiler on the build host
+// (bean gosd-jc24). cmd/gosd rejects such a pkgPath before it reaches here;
+// this terminator is what makes that a second line of defence rather than
+// the only one.
+func appGoBuildArgs(outputPath, pkgPath string, opts AppCompileOptions) []string {
+	args := []string{"build", "-o", outputPath}
+	if opts.Tags != "" {
+		args = append(args, "-tags", opts.Tags)
+	}
+	if opts.LDFlags != "" {
+		args = append(args, "-ldflags", opts.LDFlags)
+	}
+	if opts.GCFlags != "" {
+		args = append(args, "-gcflags", opts.GCFlags)
+	}
+	if opts.ASMFlags != "" {
+		args = append(args, "-asmflags", opts.ASMFlags)
+	}
+	if opts.TrimPath {
+		args = append(args, "-trimpath")
+	}
+	return append(args, "--", pkgPath)
 }
 
 // archEnv returns the env every gosd cross-compile runs with: toolchainEnv

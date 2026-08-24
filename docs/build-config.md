@@ -102,6 +102,11 @@ base-url = "https://example.com/downloads"    # --publish-base-url
 #   console-baud = 115200
 #   artifacts-dir = "gosd-artifacts"    # e.g. local `gosd build-kernel` output
 #   gosd-init-src = "../gosd/gosd-init" # a flag or $GOSD_INIT_SRC overrides this
+#   ldflags = "-X main.version=1.4.2"   # --ldflags, applied to your app's compile only
+#   tags = "myfeature"                  # --tags, merged with gosd's own gosd/gosd_<board> tags
+#   trimpath = true                     # --trimpath
+#   gcflags = "-m"                      # --gcflags
+#   asmflags = "-D FOO=1"               # --asmflags
 ```
 
 ## Precedence, exactly
