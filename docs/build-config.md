@@ -73,7 +73,8 @@ with-external = ["./third_party/mpv:/bin/mpv"]
 
 [app]
 main = "./cmd/myapp"       # the app to build, so a bare `gosd build` works
-version = "1.4.2"          # --app-version
+version = "1.4.2"          # --app-version; or "git:v*.*.*" to resolve from
+                           # your repo's tags at build time (see below)
 support-url = "https://example.com/support"   # --app-support-url
 
 # Changing boot size, data filesystem, or label-prefix in a later release
@@ -127,6 +128,52 @@ rule the kernel and external recipe files follow. That way the file means
 the same thing no matter where gosd is invoked from. `placeholder` entries
 are paths *on the built image*, so they are never rebased; an import-path
 `main` (say `github.com/you/app`) passes through untouched.
+
+## App versions from git tags
+
+A checked-in file can't carry a literal version that changes every release,
+so `version` (and the `--app-version` flag) accepts a `git:` source instead:
+
+```toml
+[app]
+version = "git:v*.*.*"
+```
+
+At build time gosd finds the matching tag **nearest the commit being
+built** — `git describe` semantics, in pure Go, no git binary needed — so
+building a maintenance branch never picks up a newer tag from another
+branch. An exactly-tagged checkout yields the tag alone; otherwise the
+version reads `<tag>-<commits-since>-g<abbreviated-hash>`, and an unclean
+worktree appends `-dirty` (never an error). The part after `git:` is a
+shell-style wildcard pattern matched against tag names; its literal prefix
+is stripped from the result, so the pattern is also the extraction rule:
+`git:v*.*.*` turns tag `v1.4.2` into `1.4.2`, `git:release-*` turns
+`release-7` into `7`, and a bare `git:` matches any tag and keeps its full
+name. A pattern with no wildcards names one exact tag and keeps it whole.
+gosd resolves the source but still never interprets the resulting version.
+
+**Building in CI?** Most CI checkouts are shallow and tagless — GitHub
+Actions' checkout defaults to a depth of 1 — which leaves nothing for the
+pattern to match. Resolution needs the commit graph and the tags but none
+of the historical file contents, and git can fetch exactly that — a
+*treeless* fetch:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # the whole commit graph and every tag...
+    filter: tree:0  # ...but no historical file contents
+```
+
+or repair an existing shallow clone with
+`git fetch --unshallow --tags --filter=tree:0`. A plain `fetch-depth: 0`
+also works — it just downloads every version of every file to answer a
+question about commits — and a server without partial-clone support
+ignores the filter and sends everything, so the treeless form never does
+worse. (A build triggered by a tag push can get away with
+`fetch-tags: true` alone: the pushed tag points at the very commit being
+built.) The build error names these fixes when it detects a shallow
+clone.
 
 ## The keys that are on-disk layout
 
