@@ -5,7 +5,7 @@ status: completed
 type: feature
 priority: normal
 created_at: 2026-08-24T10:38:27Z
-updated_at: 2026-08-24T12:22:55Z
+updated_at: 2026-08-25T06:19:06Z
 ---
 
 `gosd build`'s app-compile step doesn't accept the `go build` flags a Go
@@ -236,3 +236,56 @@ available when work started: this repo's `.changeset/*.md`
 change-file-check (knope-based release flow, `docs/releasing.md`), which
 required adding `.changeset/go-build-flag-compatibility.md` (gosd: minor).
 Awaiting JP's review; not self-merging per project convention.
+
+## Increment C — `--ldflags` can reference `--app-version`'s resolved value
+
+Added during PR #369 review (not originally in this bean): JP pointed out
+that `--ldflags` has no equivalent to `--app-version`'s `git:v*.*.*`
+resolution, so stamping the same version into both `config.json` and the
+compiled binary meant a caller's build script had to resolve it once and
+pass it to both flags separately. First response was to document the
+limitation; JP asked to close it properly instead.
+
+Design: `--ldflags` supports exactly one literal template token,
+`{{.AppVersion}}` (internal whitespace tolerated, e.g. `{{ .AppVersion }}`,
+matching how a real Go template would treat it — added per JP's comment on
+the first draft of this addition's plan), substituted with `--app-version`'s
+fully resolved value right after `resolveAppVersion` runs, before
+`compileForBoards`. No text/template dependency: a scan for every
+`{{...}}`-shaped substring in `ldflags`, refusing outright if any one isn't
+`{{.AppVersion}}` (catches a typo or unsupported field before it reaches
+`go build` as a literal, silently-wrong value), then refusing if the token
+is present but `--app-version` resolved to empty. Mirrors `--tags`'
+"validate and reject, don't silently continue" precedent
+(`parseExtraTags`). New `resolveLDFlagsTemplate` in `cmd/gosd/appversion.go`
+(same file `resolveAppVersion` lives in). No change to `AppCompileOptions`/
+`appGoBuildArgs`/`compileForBoards` — `ldflags` is already a plain literal
+string by the time it reaches them. `gosd run` untouched (no `--ldflags` or
+`--app-version` there at all).
+
+Tests: table-driven `TestResolveLDFlagsTemplate` in `appversion_test.go`
+(no-token passthrough, substitution, whitespace tolerance, multiple
+occurrences, empty-app-version refusal, unsupported-token refusal including
+alongside the supported token). Integration:
+`TestBuildLDFlagsSubstitutesAppVersionToken`,
+`TestBuildRejectsLDFlagsAppVersionTokenWithoutAppVersion`,
+`TestBuildRejectsAnUnsupportedLDFlagsTemplateToken` (all in
+`archbuild_goflags_integration_test.go`), and the actual motivating
+end-to-end scenario, `TestBuildLDFlagsSubstitutesGitResolvedAppVersion` in
+`appversion_integration_test.go` — a `git:v*.*.*` resolution feeding both
+`config.json` and the compiled `/app` binary from one resolved value.
+`writeTestAppRepo` was generalized into a thin wrapper around new
+`writeTestAppRepoWithMain` so this test could supply a `main.go` with
+something to `-X`-target (the original fixture's `main.go` has nothing to
+stamp).
+
+Docs: `--ldflags`/`--app-version` help text cross-reference each other;
+`docs/build-config.md`'s "no git: resolution of its own" paragraph (added
+earlier in this same PR, in response to the same review) replaced with the
+new token's behavior and an example; the top-level example block's
+`ldflags` line updated to show the token. `.changeset/go-build-flag-
+compatibility.md` gained a bullet describing it (not yet released, safe to
+edit in place).
+
+All quality gates green (`go build`, `go test ./...` whole repo, `go vet`,
+`gofmt`, `golangci-lint` native + `GOOS=linux`).
