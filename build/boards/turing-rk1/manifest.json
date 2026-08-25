@@ -1,0 +1,21 @@
+{
+  "$schema_note": "Third-party binary blobs for the Turing RK1, pinned per GoSD's no-rehosting policy: fetched from upstream at build time by URL + sha256, never re-hosted in our releases.",
+  "rkbin": {
+    "repo": "https://github.com/rockchip-linux/rkbin",
+    "commit": "ecb4fcbe954edf38b3ae037d5de6d9f5bccf81f4",
+    "license_file": "LICENSE",
+    "license_note": "Rockchip's rkbin LICENSE (at the pinned commit, repo root) grants a non-exclusive license to use, copy, and distribute the software, and to modify/sublicense modifications. This permits idbloader.img (or u-boot-rockchip.bin, whichever this board's build actually emits) and u-boot.itb -- which necessarily embed these blobs -- to be produced and distributed by GoSD. Same commit already pinned for the Radxa Zero 3E and NanoPi Zero2 (build/boards/radxa-zero-3e/manifest.json, build/boards/nanopi-zero2/manifest.json); it also carries the RK3588 blobs this board needs, so no new rkbin version needed pinning.",
+    "blobs": {
+      "ddr_tpl": {
+        "path": "bin/rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.21.bin",
+        "sha256": "ae96f7ddbc6ffa891ab24708e71930cb2968cfa7a2a0972fdc0cacd6891e4f95",
+        "purpose": "DDR-init TPL (ROCKCHIP_TPL) for RK3588: this SoC has no open-source DRAM init in mainline U-Boot (confirmed against U-Boot's own doc/board/rockchip/rockchip.rst RK3588 build recipe, bean gosd-k4w2's research). The lp4_2112MHz_lp5_2400MHz variant matches the frequency class U-Boot's own doc recommends for RK3588 generally (the doc references an older v1.09 build of the same frequency variant; rkbin master has since moved to v1.21 without renaming the variant). Turing RK1 is LPDDR4x-only (no LPDDR5 SKU), so only the lp4 half of this blob's auto-detected training is ever exercised."
+      },
+      "bl31": {
+        "path": "bin/rk35/rk3588_bl31_v1.54.elf",
+        "sha256": "4d111f0c793035dba84b65cfa741665814ae134af8243c3bb8a87d55a0937bc3",
+        "purpose": "ARM Trusted Firmware BL31 (EL3 runtime firmware) for RK3588. Bundled in rkbin the same way every other Rockchip board in this fleet sources BL31 for chips without a mainline TF-A port yet."
+      }
+    }
+  }
+}

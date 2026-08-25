@@ -24,6 +24,7 @@ var kernelConfigSnapshotPath = map[string]string{
 	"rock-4se":      "../../build/boards/rock-4se/kernel/kernel.config",
 	"cubie-a5e":     "../../build/boards/cubie-a5e/kernel/kernel.config",
 	"qemu-virt":     "../../build/boards/qemu-virt/kernel/kernel.config",
+	"turing-rk1":    "../../build/boards/turing-rk1/kernel/kernel.config",
 }
 
 func TestKernelConfigSnapshotCoversEveryBoard(t *testing.T) {
