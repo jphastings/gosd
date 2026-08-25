@@ -19,6 +19,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
 	"github.com/jphastings/gosd/internal/boards/radxazero3e"
 	"github.com/jphastings/gosd/internal/boards/rock4se"
+	"github.com/jphastings/gosd/internal/boards/turingrk1"
 )
 
 func init() {
@@ -50,6 +51,11 @@ func init() {
 	// (non---artifacts-dir) fetches for this board now resolve (bean
 	// gosd-zh95's activation flip).
 	boards.Register(cubiea5e.New())
+	// turing-rk1 is internal-only for now: its kernel/U-Boot artifacts
+	// haven't been published in an artifacts release yet, so a real
+	// (non---artifacts-dir) fetch for this board would fail. Flip to
+	// Register once that release lands (bean gosd-wf58).
+	boards.RegisterInternal(turingrk1.New())
 }
 
 // Registered returns every board this package registers - public and

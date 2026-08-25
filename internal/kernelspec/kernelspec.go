@@ -52,6 +52,7 @@ import (
 	qemuvirtkernel "github.com/jphastings/gosd/build/boards/qemu-virt/kernel"
 	radxakernel "github.com/jphastings/gosd/build/boards/radxa-zero-3e/kernel"
 	rock4sekernel "github.com/jphastings/gosd/build/boards/rock-4se/kernel"
+	turingrk1kernel "github.com/jphastings/gosd/build/boards/turing-rk1/kernel"
 )
 
 // RefKind distinguishes how Source.Ref must be resolved.
@@ -543,6 +544,63 @@ var specs = map[string]KernelSpec{
 			"CONFIG_I2C_RK3X",
 			"CONFIG_SPI_ROCKCHIP",
 			"CONFIG_SPI_SPIDEV",
+			"CONFIG_SERIAL_8250_DW",
+		},
+		ModulesDisabled: true,
+		// Reproducibility left zero: this board's build doesn't set any of
+		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
+	},
+
+	"turing-rk1": {
+		BoardID: "turing-rk1",
+		Source: Source{
+			Repo:    fleetKernelRepo,
+			Ref:     fleetKernelTag,
+			RefKind: TagRef,
+		},
+		Defconfig: "defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: turingrk1kernel.ConfigFragment,
+		// No DTSPatches: this board has none, like qemu-virt (the only
+		// other unpatched board in the fleet) - see kernelassets.go's
+		// package doc.
+
+		DTB: &DTB{
+			MakeTarget: "rockchip/rk3588-turing-rk1.dtb",
+			SourcePath: "arch/arm64/boot/dts/rockchip/rk3588-turing-rk1.dtb",
+			Filename:   "rk3588-turing-rk1.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "Image",
+
+		// See the radxa-zero-3e RequiredY comment above - same origin, now
+		// a hand-maintained literal list. RK3588-specific entries verified
+		// against the pinned kernel source tree (bean gosd-k4w2's
+		// research), not carried over from the rest of the Rockchip
+		// fleet: this SoC's PCIe host is the newer DesignWare-based
+		// controller ("except RK3399" per drivers/pci/controller/dwc/
+		// Kconfig), not rock-4se's CONFIG_PCIE_ROCKCHIP_HOST; its onboard
+		// eMMC is the same dwcmshc SDHCI controller radxa-zero-3e uses,
+		// but there is no dw_mmc/SD entry at all — this module has no SD
+		// slot (the epic's central finding). GPIO/I2C/SPI header entries
+		// are deliberately absent: out of scope for this epic (see
+		// gosd-bntd).
+		RequiredY: []string{
+			"CONFIG_ARCH_ROCKCHIP",
+			"CONFIG_MMC_SDHCI_OF_DWCMSHC",
+			"CONFIG_PCI",
+			"CONFIG_PCIE_ROCKCHIP_DW_HOST",
+			"CONFIG_PHY_ROCKCHIP_SNPS_PCIE3",
+			"CONFIG_BLK_DEV_NVME",
+			"CONFIG_EXFAT_FS",
+			"CONFIG_STMMAC_ETH",
+			"CONFIG_DWMAC_ROCKCHIP",
+			"CONFIG_REALTEK_PHY",
+			"CONFIG_USB_DWC3",
+			"CONFIG_PHY_ROCKCHIP_INNO_USB2",
 			"CONFIG_SERIAL_8250_DW",
 		},
 		ModulesDisabled: true,

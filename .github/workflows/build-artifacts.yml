@@ -278,6 +278,49 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # turing-rk1 is internal-only for now (bean gosd-jvtg): its kernel/U-Boot
+  # still get packaged into every release, the same way qemu-virt's does,
+  # so a real (non---artifacts-dir) --board=turing-rk1 build has something
+  # to fetch once it's flipped to Register. Its U-Boot needs rkbin's
+  # DDR-init TPL + BL31 blobs (RK3588 has no open-source DRAM init in
+  # mainline U-Boot, unlike RK3399/A527 — see build/boards/turing-rk1/manifest.json
+  # and the board's uboot/README.md), same shape as radxa-zero-3e's/
+  # nanopi-zero2's jobs, producing the same idbloader.img/u-boot.itb pair
+  # rock-4se's job does.
+  turing-rk1-kernel:
+    name: Build turing-rk1 kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board turing-rk1 --staging staging/ -o out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: turing-rk1-kernel
+          path: staging/turing-rk1
+          if-no-files-found: error
+          retention-days: 1
+
+  turing-rk1-uboot:
+    name: Build turing-rk1 U-Boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run build.sh
+        run: build/boards/turing-rk1/uboot/build.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: turing-rk1-uboot
+          path: |
+            build/boards/turing-rk1/uboot/out/idbloader.img
+            build/boards/turing-rk1/uboot/out/u-boot.itb
+          if-no-files-found: error
+          retention-days: 1
+
   package-and-release:
     name: Package and publish release
     needs:
@@ -294,6 +337,8 @@ jobs:
         cubie-a5e-kernel,
         cubie-a5e-uboot,
         qemu-virt-kernel,
+        turing-rk1-kernel,
+        turing-rk1-uboot,
       ]
     runs-on: ubuntu-latest
     steps:
@@ -372,6 +417,16 @@ jobs:
           name: qemu-virt-kernel
           path: staging/qemu-virt
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: turing-rk1-kernel
+          path: staging/turing-rk1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: turing-rk1-uboot
+          path: staging/turing-rk1
+
       - name: Record U-Boot source provenance
         # gosd build-kernel already wrote each board's kernel source.json
         # entry (staging/<board>/source.json, downloaded above) — see
@@ -386,6 +441,7 @@ jobs:
           nanopi_zero2_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/nanopi-zero2/uboot/build.sh)
           rock_4se_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/rock-4se/uboot/build.sh)
           cubie_a5e_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/cubie-a5e/uboot/build.sh)
+          turing_rk1_uboot_tag=$(grep -oP '^UBOOT_TAG="\K[^"]+' build/boards/turing-rk1/uboot/build.sh)
 
           jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$radxa_uboot_tag" \
             --arg config "build/boards/radxa-zero-3e/uboot/bootdelay0.config" \
@@ -425,6 +481,12 @@ jobs:
             '.uboot = {repo: $repo, ref: $ref, config: $config} | .tfa = $board_manifest[0].tfa' \
             staging/cubie-a5e/source.json >staging/cubie-a5e/source.json.tmp
           mv staging/cubie-a5e/source.json.tmp staging/cubie-a5e/source.json
+
+          jq --arg repo "https://github.com/u-boot/u-boot.git" --arg ref "$turing_rk1_uboot_tag" \
+            --arg config "build/boards/turing-rk1/uboot/bootdelay0.config" \
+            '.uboot = {repo: $repo, ref: $ref, config: $config}' \
+            staging/turing-rk1/source.json >staging/turing-rk1/source.json.tmp
+          mv staging/turing-rk1/source.json.tmp staging/turing-rk1/source.json
 
       - name: Package tarballs and manifest.json
         run: build/artifacts/package.sh "${{ steps.version.outputs.version }}" staging dist
