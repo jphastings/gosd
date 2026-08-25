@@ -102,7 +102,7 @@ base-url = "https://example.com/downloads"    # --publish-base-url
 #   console-baud = 115200
 #   artifacts-dir = "gosd-artifacts"    # e.g. local `gosd build-kernel` output
 #   gosd-init-src = "../gosd/gosd-init" # a flag or $GOSD_INIT_SRC overrides this
-#   ldflags = "-X main.version=1.4.2"   # --ldflags, applied to your app's compile only
+#   ldflags = "-X main.version={{.AppVersion}}" # --ldflags; the token borrows app.version's resolved value (see below)
 #   tags = "myfeature"                  # --tags, merged with gosd's own gosd/gosd_<board> tags
 #   trimpath = true                     # --trimpath
 #   gcflags = "-m"                      # --gcflags
@@ -180,14 +180,24 @@ worse. (A build triggered by a tag push can get away with
 built.) The build error names these fixes when it detects a shallow
 clone.
 
-**`--ldflags` has no `git:` resolution of its own.** Unlike `version`,
-`ldflags` (and `--ldflags`) is a literal string gosd passes straight to `go
-build -ldflags` — there's no templating that ties it to whatever `version`
-resolves to. To stamp the same version into both `config.json` (via
-`app.version`/`--app-version`) and the compiled binary (via `go build`'s
-own `-X main.version=...`), resolve the version once in your build script
-and pass it to both flags explicitly; `gosd-build.toml` alone can't express
-"derive ldflags from app.version".
+**`--ldflags` can reference `version`'s resolved value.** `ldflags` (and
+`--ldflags`) is otherwise a literal string gosd passes straight to `go
+build -ldflags`, but it supports one template token, `{{.AppVersion}}`
+(internal whitespace is fine — `{{ .AppVersion }}` works too), substituted
+with `app.version`/`--app-version`'s fully resolved value — including a
+`git:` resolution — right before the compile runs:
+
+```toml
+[app]
+version = "git:v*.*.*"
+ldflags = "-X main.version={{.AppVersion}}"
+```
+
+so the same version lands in `config.json` and gets `-X`-stamped into the
+compiled binary from one source of truth, with nothing to resolve twice.
+Referencing `{{.AppVersion}}` with no `app.version`/`--app-version` value
+to substitute is refused, and so is any other `{{...}}`-shaped value —
+`{{.AppVersion}}` is the only token `--ldflags` understands.
 
 ## The keys that are on-disk layout
 

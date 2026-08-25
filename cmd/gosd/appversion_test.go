@@ -67,3 +67,56 @@ func TestResolveAppVersion(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveLDFlagsTemplate(t *testing.T) {
+	t.Run("no token passes ldflags through unchanged, even with no app version", func(t *testing.T) {
+		for _, ldflags := range []string{"", "-s -w", "-X main.foo=bar"} {
+			got, err := resolveLDFlagsTemplate(ldflags, "")
+			if err != nil || got != ldflags {
+				t.Errorf("resolveLDFlagsTemplate(%q, \"\") = %q, %v; want it untouched", ldflags, got, err)
+			}
+		}
+	})
+
+	t.Run("substitutes the token with the resolved app version", func(t *testing.T) {
+		got, err := resolveLDFlagsTemplate("-X main.version={{.AppVersion}}", "1.4.2")
+		if err != nil || got != "-X main.version=1.4.2" {
+			t.Errorf("resolveLDFlagsTemplate = %q, %v; want the token substituted", got, err)
+		}
+	})
+
+	t.Run("tolerates internal whitespace in the token", func(t *testing.T) {
+		got, err := resolveLDFlagsTemplate("-X main.version={{ .AppVersion }}", "1.4.2")
+		if err != nil || got != "-X main.version=1.4.2" {
+			t.Errorf("resolveLDFlagsTemplate = %q, %v; want the whitespace-tolerant token substituted", got, err)
+		}
+	})
+
+	t.Run("substitutes every occurrence", func(t *testing.T) {
+		got, err := resolveLDFlagsTemplate("-X main.a={{.AppVersion}} -X main.b={{.AppVersion}}", "1.4.2")
+		if err != nil || got != "-X main.a=1.4.2 -X main.b=1.4.2" {
+			t.Errorf("resolveLDFlagsTemplate = %q, %v; want both occurrences substituted", got, err)
+		}
+	})
+
+	t.Run("refuses the token when no app version was given", func(t *testing.T) {
+		_, err := resolveLDFlagsTemplate("-X main.version={{.AppVersion}}", "")
+		if err == nil || !strings.Contains(err.Error(), "--app-version") {
+			t.Errorf("error = %v, want it to name --app-version", err)
+		}
+	})
+
+	t.Run("refuses an unsupported template token", func(t *testing.T) {
+		_, err := resolveLDFlagsTemplate("-X main.commit={{.GitCommit}}", "1.4.2")
+		if err == nil || !strings.Contains(err.Error(), "{{.GitCommit}}") {
+			t.Errorf("error = %v, want it to name the unsupported token", err)
+		}
+	})
+
+	t.Run("refuses an unsupported token even alongside the supported one", func(t *testing.T) {
+		_, err := resolveLDFlagsTemplate("-X main.version={{.AppVersion}} -X main.commit={{.GitCommit}}", "1.4.2")
+		if err == nil || !strings.Contains(err.Error(), "{{.GitCommit}}") {
+			t.Errorf("error = %v, want it to name the unsupported token even though {{.AppVersion}} is also present", err)
+		}
+	})
+}

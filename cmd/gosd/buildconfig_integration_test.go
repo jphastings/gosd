@@ -16,9 +16,18 @@ import (
 // user running a bare `gosd build` in their checkout.
 func writeTestAppRepo(t *testing.T, dir, buildConfig string) {
 	t.Helper()
+	writeTestAppRepoWithMain(t, dir, "package main\n\nfunc main() {}\n", buildConfig)
+}
+
+// writeTestAppRepoWithMain is writeTestAppRepo with the app's main.go
+// content overridable, for a test that needs something in the compiled
+// binary to inspect (e.g. an exported var --ldflags can target with -X) -
+// writeTestAppRepo's trivial main() has nothing to look for.
+func writeTestAppRepoWithMain(t *testing.T, dir, mainGo, buildConfig string) {
+	t.Helper()
 	for path, contents := range map[string]string{
 		"go.mod":                        "module buildconfigtest\n\ngo 1.24\n",
-		filepath.Join("app", "main.go"): "package main\n\nfunc main() {}\n",
+		filepath.Join("app", "main.go"): mainGo,
 		defaultBuildConfigFile:          buildConfig,
 	} {
 		full := filepath.Join(dir, path)

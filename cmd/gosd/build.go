@@ -145,9 +145,9 @@ not touch the cache at all.`,
 	cmd.Flags().StringVar(&supportURL, "app-support-url", "",
 		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
 	cmd.Flags().StringVar(&appVersion, "app-version", "",
-		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
+		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone); --ldflags can reference this resolved value via {{.AppVersion}} to also stamp it into the compiled binary")
 	cmd.Flags().StringVar(&ldflags, "ldflags", "",
-		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version=1.4.2" to stamp a version into the compiled binary - unlike --app-version, which only bakes into config.json/crash reports; taken as a literal string with no git: resolution of its own, so stamping the same version --app-version resolved means passing it to both flags explicitly (see docs/build-config.md)`)
+		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version={{.AppVersion}}" to stamp --app-version's resolved value (including a git: resolution) into the compiled binary - {{.AppVersion}} is the one template token --ldflags supports; any other {{...}} is refused, and referencing it with no --app-version given is refused too (see docs/build-config.md)`)
 	cmd.Flags().StringVar(&tags, "tags", "",
 		"extra Go build tags for your app's compile (comma- or space-separated, same as go build -tags), merged with - never replacing - gosd's own mandatory gosd/gosd_<board> tags (see docs/board-build-tags.md); a gosd or gosd_-prefixed value is refused, since gosd always adds those tags itself")
 	cmd.Flags().BoolVar(&trimpath, "trimpath", false,
@@ -279,6 +279,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if resolvedAppVersion != appVersion {
 		cmd.PrintErrf("gosd build: app version %s (resolved from %s)\n", resolvedAppVersion, appVersion)
 		appVersion = resolvedAppVersion
+	}
+
+	ldflags, err = resolveLDFlagsTemplate(ldflags, appVersion)
+	if err != nil {
+		return err
 	}
 
 	labels, err := resolveLabels(labelPrefix, cmd.Flags().Changed("label-prefix") || fileCfg.IsSet("label-prefix"), appName)
