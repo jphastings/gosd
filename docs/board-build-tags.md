@@ -98,6 +98,29 @@ Three ways to provide one:
 Either way, the goal is the same: a plain `go build ./...` must stay clean
 with no gosd tag set.
 
+## Adding your own tags with `--tags`
+
+`gosd build --tags` (and `gosd-build.toml`'s top-level `tags` key) adds your
+own Go build tags to the app compile, comma- or space-separated, same as
+`go build -tags` itself:
+
+```console
+$ gosd build --tags myfeature,otherfeature
+```
+
+It **merges** with gosd's own `gosd`/`gosd_<board>` tags rather than
+replacing them — the app compile above still carries every tag this doc
+describes, plus `myfeature` and `otherfeature`. A `--tags` value is never
+capable of dropping gosd's own board-gating tags.
+
+For the same reason, a `gosd` or `gosd_`-prefixed value in `--tags` is
+refused outright, before any board is even touched: gosd always adds those
+tags itself, so a caller supplying one is either redundant (harmless but
+pointless) or, in a multi-`--board` build, actively wrong for whichever
+board it doesn't happen to name. This is checked by namespace, not against
+the list of boards gosd currently knows about, so it also refuses a
+`gosd_`-prefixed tag naming no board that exists yet.
+
 ## The `_<board>.go` filename suffix is cosmetic only
 
 Naming a file `stuff_pi-zero-2w.go` does **not** gate it to that board. Go's

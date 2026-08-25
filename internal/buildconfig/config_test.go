@@ -31,6 +31,11 @@ usb-gadget = true
 console-baud = 115200
 artifacts-dir = "gosd-artifacts"
 gosd-init-src = "../gosd-init"
+ldflags = "-X main.version=1.4.2"
+tags = "sometag"
+trimpath = true
+gcflags = "-m"
+asmflags = "-D FOO=1"
 
 [app]
 main = "./cmd/myapp"
@@ -69,6 +74,11 @@ base-url = "https://example.com/downloads"
 		ConsoleBaud:  115200,
 		ArtifactsDir: "gosd-artifacts",
 		GosdInitSrc:  "../gosd-init",
+		LDFlags:      "-X main.version=1.4.2",
+		Tags:         "sometag",
+		TrimPath:     true,
+		GCFlags:      "-m",
+		ASMFlags:     "-D FOO=1",
 		App:          App{Main: "./cmd/myapp", Version: "1.4.2", SupportURL: "https://example.com/support"},
 		Boot:         Boot{Size: "256MiB", ConfigDir: "config"},
 		Data:         Data{Size: "512MiB", Filesystem: "fat32", Flush: true},

@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/jphastings/gosd/internal/boards"
+	"github.com/jphastings/gosd/internal/build"
 )
 
 // archBinaries is one board's cross-compiled binaries (the name predates
@@ -36,6 +38,14 @@ type archBinaries struct {
 // gosd-tsfunnel) compile pass; a GOARM=6 board mixed in (pi-zero-w) adds
 // exactly one more of each.
 //
+// ldflags, extraTags, gcflags, asmflags and trimpath are gosd build's
+// --ldflags/--tags/--gcflags/--asmflags/--trimpath values (gosd-wjjn),
+// forwarded verbatim to every board's app compile via build.AppCompileOptions
+// except extraTags, which is merged onto (never replaces) each board's own
+// mandatory boards.BuildTags - see parseExtraTags's reserved-namespace
+// rejection, which is what keeps a caller's --tags from ever silently
+// dropping gosd's board-gating tags.
+//
 // compileApp, compileInit and compileTsfunnel are the seams that make the
 // per-board/per-arch compile counts testable without shelling out to the
 // real Go toolchain: production callers pass build.CrossCompile,
@@ -45,7 +55,9 @@ func compileForBoards(
 	selected []boards.Board,
 	tempDir, pkgPath, gosdInitSrc string,
 	needsTsfunnel bool,
-	compileApp func(pkgPath, outputPath, tags string, arch boards.Arch) error,
+	ldflags string,
+	extraTags []string, gcflags, asmflags string, trimpath bool,
+	compileApp func(pkgPath, outputPath string, opts build.AppCompileOptions, arch boards.Arch) error,
 	compileInit func(outputPath, overrideDir string, arch boards.Arch) error,
 	compileTsfunnel func(outputPath, overrideDir string, arch boards.Arch) error,
 ) (map[string]archBinaries, error) {
@@ -55,7 +67,18 @@ func compileForBoards(
 
 	for _, b := range selected {
 		appBinary := filepath.Join(tempDir, "app-"+b.Name())
-		if err := compileApp(pkgPath, appBinary, boards.BuildTags(b), b.Arch()); err != nil {
+		tags := boards.BuildTags(b)
+		if len(extraTags) > 0 {
+			tags = strings.Join(append([]string{tags}, extraTags...), ",")
+		}
+		opts := build.AppCompileOptions{
+			Tags:     tags,
+			LDFlags:  ldflags,
+			GCFlags:  gcflags,
+			ASMFlags: asmflags,
+			TrimPath: trimpath,
+		}
+		if err := compileApp(pkgPath, appBinary, opts, b.Arch()); err != nil {
 			return nil, fmt.Errorf("cross-compiling %s for %s failed: %w", pkgPath, b.Name(), err)
 		}
 

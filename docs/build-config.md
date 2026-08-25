@@ -102,6 +102,11 @@ base-url = "https://example.com/downloads"    # --publish-base-url
 #   console-baud = 115200
 #   artifacts-dir = "gosd-artifacts"    # e.g. local `gosd build-kernel` output
 #   gosd-init-src = "../gosd/gosd-init" # a flag or $GOSD_INIT_SRC overrides this
+#   ldflags = "-X main.version=1.4.2"   # --ldflags, applied to your app's compile only
+#   tags = "myfeature"                  # --tags, merged with gosd's own gosd/gosd_<board> tags
+#   trimpath = true                     # --trimpath
+#   gcflags = "-m"                      # --gcflags
+#   asmflags = "-D FOO=1"               # --asmflags
 ```
 
 ## Precedence, exactly
@@ -174,6 +179,15 @@ worse. (A build triggered by a tag push can get away with
 `fetch-tags: true` alone: the pushed tag points at the very commit being
 built.) The build error names these fixes when it detects a shallow
 clone.
+
+**`--ldflags` has no `git:` resolution of its own.** Unlike `version`,
+`ldflags` (and `--ldflags`) is a literal string gosd passes straight to `go
+build -ldflags` — there's no templating that ties it to whatever `version`
+resolves to. To stamp the same version into both `config.json` (via
+`app.version`/`--app-version`) and the compiled binary (via `go build`'s
+own `-X main.version=...`), resolve the version once in your build script
+and pass it to both flags explicitly; `gosd-build.toml` alone can't express
+"derive ldflags from app.version".
 
 ## The keys that are on-disk layout
 

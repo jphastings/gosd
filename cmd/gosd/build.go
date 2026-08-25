@@ -56,6 +56,11 @@ var (
 	ingressFlags   []string
 	supportURL     string
 	appVersion     string
+	ldflags        string
+	tags           string
+	trimpath       bool
+	gcflags        string
+	asmflags       string
 )
 
 // defaultDataSize is the data partition's size when --data-size is
@@ -141,6 +146,16 @@ not touch the cache at all.`,
 		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
 	cmd.Flags().StringVar(&appVersion, "app-version", "",
 		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
+	cmd.Flags().StringVar(&ldflags, "ldflags", "",
+		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version=1.4.2" to stamp a version into the compiled binary - unlike --app-version, which only bakes into config.json/crash reports; taken as a literal string with no git: resolution of its own, so stamping the same version --app-version resolved means passing it to both flags explicitly (see docs/build-config.md)`)
+	cmd.Flags().StringVar(&tags, "tags", "",
+		"extra Go build tags for your app's compile (comma- or space-separated, same as go build -tags), merged with - never replacing - gosd's own mandatory gosd/gosd_<board> tags (see docs/board-build-tags.md); a gosd or gosd_-prefixed value is refused, since gosd always adds those tags itself")
+	cmd.Flags().BoolVar(&trimpath, "trimpath", false,
+		"pass -trimpath to your app's go build compile, removing local filesystem paths from the compiled binary")
+	cmd.Flags().StringVar(&gcflags, "gcflags", "",
+		"arguments for go build's -gcflags, applied to your app's compile only (never gosd-init)")
+	cmd.Flags().StringVar(&asmflags, "asmflags", "",
+		"arguments for go build's -asmflags, applied to your app's compile only (never gosd-init)")
 
 	return cmd
 }
@@ -216,6 +231,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	extraTags, err := parseExtraTags(tags)
+	if err != nil {
+		return err
+	}
+
 	selected, err := resolveBoards(boardIDs)
 	if err != nil {
 		return err
@@ -287,7 +307,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, ingressSelected.TailscaleFunnel, build.CrossCompile, build.CrossCompileGosdInit, build.CrossCompileTsfunnel)
+	binaries, err := compileForBoards(selected, tempDir, pkgPath, gosdInitSrc, ingressSelected.TailscaleFunnel, ldflags, extraTags, gcflags, asmflags, trimpath, build.CrossCompile, build.CrossCompileGosdInit, build.CrossCompileTsfunnel)
 	if err != nil {
 		return err
 	}
@@ -621,6 +641,49 @@ func parseDataSize(s string, fs diskfmt.FS) (bytes int64, expand bool, err error
 			s, diskfmt.GibibytesString(diskfmt.MaxFAT32Bytes()), diskfmt.MaxFAT32Bytes(), diskfmt.FAT32SizeLimitReason, diskfmt.MaxFAT32Bytes(), dataSizeLimitDocsURL)
 	}
 	return size, false, nil
+}
+
+// reservedTagPrefix is the namespace gosd reserves for its own build tags
+// (boards.BuildTags): the bare "gosd" tag and every "gosd_"-prefixed
+// per-board tag.
+const reservedTagPrefix = "gosd_"
+
+// parseExtraTags validates and splits --tags' raw value into individual Go
+// build tags, for compileForBoards to merge onto (never replace) each
+// board's own mandatory boards.BuildTags. go build -tags itself accepts
+// either a comma- or space-separated list, so both are split here.
+//
+// A "gosd" or "gosd_"-prefixed tag is refused outright rather than silently
+// deduped: it's always either a no-op (redundant with the tag
+// compileForBoards was going to add anyway) or, in a multi-board build, a
+// real but wrong tag for boards other than the one it happened to match.
+// The rejection is by namespace, not by matching a currently-registered
+// board, so it stays forward-compatible with boards gosd doesn't know about
+// yet - mirroring validateUsbGadget/validateDataFilesystemSupport's
+// capability-refusal shape: fail fast, before any board is even touched.
+func parseExtraTags(raw string) ([]string, error) {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	if len(fields) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]bool, len(fields))
+	tags := make([]string, 0, len(fields))
+	for _, tag := range fields {
+		if tag == "gosd" || strings.HasPrefix(tag, reservedTagPrefix) {
+			return nil, fmt.Errorf(
+				"--tags %q is invalid: %q is reserved for gosd's own board-gating build tags (gosd, gosd_<board>), which gosd build always adds itself; drop it from --tags",
+				raw, tag)
+		}
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+	return tags, nil
 }
 
 // dataFilesystemNames lists every valid --data-filesystem value, in the

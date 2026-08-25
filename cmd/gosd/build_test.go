@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1012,5 +1013,89 @@ func TestGosdInitSrcFlagDefaultsEmptyWithoutEnv(t *testing.T) {
 		t.Fatal("build command has no --gosd-init-src flag")
 	} else if flag.DefValue != "" {
 		t.Errorf("--gosd-init-src default = %q, want empty when GOSD_INIT_SRC is unset", flag.DefValue)
+	}
+}
+
+// TestGoBuildCompatFlagsAreRegistered pins gosd-wjjn's five go-build-flag-
+// compatibility flags: each must exist with an empty (or, for --trimpath,
+// false) default, matching TestGosdInitSrcFlagDefaultsToEnv's pattern.
+func TestGoBuildCompatFlagsAreRegistered(t *testing.T) {
+	flags := newBuildCmd().Flags()
+
+	for _, name := range []string{"ldflags", "tags", "gcflags", "asmflags"} {
+		flag := flags.Lookup(name)
+		if flag == nil {
+			t.Errorf("build command has no --%s flag", name)
+			continue
+		}
+		if flag.DefValue != "" {
+			t.Errorf("--%s default = %q, want empty", name, flag.DefValue)
+		}
+	}
+
+	trimpath := flags.Lookup("trimpath")
+	if trimpath == nil {
+		t.Fatal("build command has no --trimpath flag")
+	} else if trimpath.DefValue != "false" {
+		t.Errorf("--trimpath default = %q, want false", trimpath.DefValue)
+	}
+}
+
+func TestParseExtraTagsNilOnEmpty(t *testing.T) {
+	for _, in := range []string{"", "   "} {
+		got, err := parseExtraTags(in)
+		if err != nil {
+			t.Errorf("parseExtraTags(%q) error: %v", in, err)
+		}
+		if got != nil {
+			t.Errorf("parseExtraTags(%q) = %v, want nil", in, got)
+		}
+	}
+}
+
+func TestParseExtraTagsSplitsOnCommaAndWhitespace(t *testing.T) {
+	got, err := parseExtraTags("foo,bar baz\tqux")
+	if err != nil {
+		t.Fatalf("parseExtraTags: %v", err)
+	}
+	want := []string{"foo", "bar", "baz", "qux"}
+	if !slices.Equal(got, want) {
+		t.Errorf("parseExtraTags(\"foo,bar baz\\tqux\") = %v, want %v", got, want)
+	}
+}
+
+func TestParseExtraTagsDedupes(t *testing.T) {
+	got, err := parseExtraTags("foo,bar,foo")
+	if err != nil {
+		t.Fatalf("parseExtraTags: %v", err)
+	}
+	want := []string{"foo", "bar"}
+	if !slices.Equal(got, want) {
+		t.Errorf("parseExtraTags(\"foo,bar,foo\") = %v, want %v", got, want)
+	}
+}
+
+func TestParseExtraTagsRejectsBareGosd(t *testing.T) {
+	_, err := parseExtraTags("foo,gosd")
+	if err == nil {
+		t.Fatal("parseExtraTags(\"foo,gosd\") succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "gosd") {
+		t.Errorf("error = %q, want it to name the reserved tag", err)
+	}
+}
+
+// TestParseExtraTagsRejectsGosdPrefixedTagEvenForAnUnregisteredBoard proves
+// the rejection is namespace-based, not a lookup against
+// internal/boards' registry - it must also refuse a gosd_-prefixed token
+// naming no board gosd has ever heard of, so the check stays
+// forward-compatible with boards added later.
+func TestParseExtraTagsRejectsGosdPrefixedTagEvenForAnUnregisteredBoard(t *testing.T) {
+	_, err := parseExtraTags("gosd_some_future_board")
+	if err == nil {
+		t.Fatal("parseExtraTags(\"gosd_some_future_board\") succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "gosd_some_future_board") {
+		t.Errorf("error = %q, want it to name the rejected tag", err)
 	}
 }
