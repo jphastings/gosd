@@ -5,7 +5,7 @@ status: completed
 type: feature
 priority: normal
 created_at: 2026-08-24T10:38:27Z
-updated_at: 2026-08-24T12:05:28Z
+updated_at: 2026-08-24T12:22:55Z
 ---
 
 `gosd build`'s app-compile step doesn't accept the `go build` flags a Go
@@ -226,3 +226,13 @@ All quality gates green: `go build ./...`, `go test ./...` (whole repo),
 `GOOS=linux golangci-lint run ./...` (0 issues each). `js/` untouched, so its
 gate doesn't apply. `COMPATIBILITY.md` untouched — this is a generic CLI
 flag, not a board/feature-support change.
+
+## PR
+
+https://github.com/jphastings/gosd/pull/369 (branch
+`bean/gosd-wjjn-go-build-flag-compatibility`) — all CI checks green,
+including one gate not anticipated by the bean or the commit history
+available when work started: this repo's `.changeset/*.md`
+change-file-check (knope-based release flow, `docs/releasing.md`), which
+required adding `.changeset/go-build-flag-compatibility.md` (gosd: minor).
+Awaiting JP's review; not self-merging per project convention.

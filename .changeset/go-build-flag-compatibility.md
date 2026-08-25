@@ -21,3 +21,8 @@ build` itself, applied to your app's own compile only (never gosd-init):
 None of the five are mirrored on `gosd run`, matching its existing pattern
 of not exposing every build flag. See the build-config docs and
 `docs/board-build-tags.md` for details.
+
+One consequence: `gosd build` now takes the same compile flags tools like
+[goreleaser](https://goreleaser.com/) pass to a `go` builder, so a
+`goreleaser.yaml` can drive `gosd build` as its `go` build tool (`tool:
+gosd`) without any special-casing.
