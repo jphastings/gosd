@@ -22,7 +22,11 @@ None of the five are mirrored on `gosd run`, matching its existing pattern
 of not exposing every build flag. See the build-config docs and
 `docs/board-build-tags.md` for details.
 
-One consequence: `gosd build` now takes the same compile flags tools like
-[goreleaser](https://goreleaser.com/) pass to a `go` builder, so a
-`goreleaser.yaml` can drive `gosd build` as its `go` build tool (`tool:
-gosd`) without any special-casing.
+One consequence: `gosd build` no longer errors on the compile flags tools
+like [goreleaser](https://goreleaser.com/)'s `go` builder pass by default.
+That closes the flag-acceptance gap, but not the rest of the mismatch —
+goreleaser's target axis is a `{goos}_{goarch}` matrix, not gosd's
+`--board`, and `-o` still means "a bootable disk image," never "one
+binary" — so driving a real build still takes some assembly (a `builds:`
+entry per board with filler `goos`/`goarch`, or a config-file-read `gosd
+build` from a `hooks: pre:` step instead of `tool: gosd`).

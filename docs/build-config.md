@@ -180,6 +180,15 @@ worse. (A build triggered by a tag push can get away with
 built.) The build error names these fixes when it detects a shallow
 clone.
 
+**`--ldflags` has no `git:` resolution of its own.** Unlike `version`,
+`ldflags` (and `--ldflags`) is a literal string gosd passes straight to `go
+build -ldflags` — there's no templating that ties it to whatever `version`
+resolves to. To stamp the same version into both `config.json` (via
+`app.version`/`--app-version`) and the compiled binary (via `go build`'s
+own `-X main.version=...`), resolve the version once in your build script
+and pass it to both flags explicitly; `gosd-build.toml` alone can't express
+"derive ldflags from app.version".
+
 ## The keys that are on-disk layout
 
 `boot.size`, `data.filesystem` and `label-prefix` are part of your app's

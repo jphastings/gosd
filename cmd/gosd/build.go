@@ -147,7 +147,7 @@ not touch the cache at all.`,
 	cmd.Flags().StringVar(&appVersion, "app-version", "",
 		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone)")
 	cmd.Flags().StringVar(&ldflags, "ldflags", "",
-		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version=1.4.2" to stamp a version into the compiled binary - unlike --app-version, which only bakes into config.json/crash reports`)
+		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version=1.4.2" to stamp a version into the compiled binary - unlike --app-version, which only bakes into config.json/crash reports; taken as a literal string with no git: resolution of its own, so stamping the same version --app-version resolved means passing it to both flags explicitly (see docs/build-config.md)`)
 	cmd.Flags().StringVar(&tags, "tags", "",
 		"extra Go build tags for your app's compile (comma- or space-separated, same as go build -tags), merged with - never replacing - gosd's own mandatory gosd/gosd_<board> tags (see docs/board-build-tags.md); a gosd or gosd_-prefixed value is refused, since gosd always adds those tags itself")
 	cmd.Flags().BoolVar(&trimpath, "trimpath", false,
