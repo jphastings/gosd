@@ -20,6 +20,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newRunCmd())
 	cmd.AddCommand(newBuildKernelCmd())
 	cmd.AddCommand(newBuildExternalCmd())
+	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newCacheCmd())
 	cmd.AddCommand(newVersionCmd())
 
