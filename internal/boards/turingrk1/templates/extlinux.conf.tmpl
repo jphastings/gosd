@@ -4,4 +4,4 @@ label gosd
     kernel /Image
     fdt /rk3588-turing-rk1.dtb
     initrd /initramfs.cpio.zst
-    append console=ttyS9,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=turing-rk1 panic=10{{with .KernelParams}} {{.}}{{end}}
+    append console=ttyS0,{{.ConsoleBaud}}n8 quiet init=/init gosd.board=turing-rk1 panic=10{{with .KernelParams}} {{.}}{{end}}

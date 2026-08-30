@@ -6,12 +6,16 @@
 // initrd by the exact file names BootFiles writes into the boot partition,
 // and the board ID GoSD boots with. Do not change it without updating that
 // decision. ConsoleBaudData.ConsoleBaud is an additive exception: it only
-// ever changes the console= baud number, never the UART device (ttyS9,
-// from bean gosd-k4w2's research against rk3588-turing-rk1.dts's
-// stdout-path — the serial9 DT alias, not yet hardware-confirmed to map to
-// ttyS9) or anything else in the file. So is ExtlinuxConfData.KernelParams:
-// it only ever appends the developer's --kernel-param values to the end of
-// the append line.
+// ever changes the console= baud number, never the UART device (ttyS0,
+// hardware-confirmed during bring-up, bean gosd-vh82 — NOT ttyS9, which
+// bean gosd-k4w2's DT-only research incorrectly assumed from
+// rk3588-turing-rk1.dts's stdout-path/serial9 alias. The generic 8250
+// driver does not number this UART by its DT alias index: this board's DTS
+// has exactly one enabled UART node, so it becomes ttyS0 regardless of the
+// alias being named serial9 — console=ttyS9 panics with "unable to open an
+// initial console") or anything else in the file. So is
+// ExtlinuxConfData.KernelParams: it only ever appends the developer's
+// --kernel-param values to the end of the append line.
 package templates
 
 import (
