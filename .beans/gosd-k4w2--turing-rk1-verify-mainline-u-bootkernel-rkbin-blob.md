@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-25T10:25:46Z
-updated_at: 2026-08-30T07:36:55Z
+updated_at: 2026-08-30T08:29:25Z
 parent: gosd-bntd
 ---
 
@@ -50,3 +50,13 @@ boot. This is exactly the kind of gap DT-only research (no real board yet)
 can leave -- recorded here so a future board's research bean weighs a
 DT alias claim about ttySN numbering as a hypothesis, not a fact, until
 hardware-confirmed.
+
+## Correction (2026-08-30, bean gosd-tqme): USB gadget candidate did not pan out
+
+This bean flagged USB gadget as "a candidate, not yet certain" from DT
+inspection alone. Hardware bring-up (and closer reading of the DTS) found
+it doesn't work: the OTG-capable port is bound to &usb_host0_xhci, and
+xhci-hcd is host-only by design in Linux — there's no dwc3/dwc2 dual-role
+node in this DTS at all. Another instance of DT-only research needing
+hardware (or a much closer driver-binding read) to confirm a capability
+claim, not just a PHY's status="okay".

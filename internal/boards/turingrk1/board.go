@@ -103,10 +103,9 @@ func (board) Artifacts() []boards.ArtifactRef {
 
 // BootFiles implements boards.Board: the kernel, DTB, the initramfs the
 // build pipeline has already built into art.Initramfs, and extlinux.conf
-// rendered from the locked template. BuildConfig.UsbGadget is deliberately
-// ignored: like the rest of the fleet's DWC3-based boards, this board's
-// OTG-capable USB2 PHY (u2phy0_otg) doesn't need a boot-time change to make
-// gadget mode available.
+// rendered from the locked template. BuildConfig.UsbGadget is moot here:
+// UsbGadgetSupport reports this board unsupported, so the build pipeline
+// refuses --usb-gadget before BootFiles is ever called with it set.
 func (board) BootFiles(cfg boards.BuildConfig, art boards.Artifacts) (map[string]io.Reader, error) {
 	files := make(map[string]io.Reader, 4)
 
@@ -187,12 +186,26 @@ func (board) FirmwareFiles(boards.Artifacts) map[string]io.Reader {
 	return map[string]io.Reader{}
 }
 
-// UsbGadgetSupport implements boards.Board: supported. rk3588-turing-rk1's
-// u2phy0_otg (USB2 PHY) is status "okay" in the mainline DT and the
-// defconfig compiles in USB_GADGET/USB_DWC3_DUAL_ROLE (bean gosd-k4w2's
-// research) -- not yet hardware-verified.
+// UsbGadgetSupport implements boards.Board: NOT supported, despite the port
+// being hardware-OTG-capable. rk3588-turing-rk1.dtsi comments the port
+// "USB 2.0 only, OTG-capable" but binds it to &usb_host0_xhci with no
+// dr_mode set — Linux's xhci-hcd driver is host-only by design (XHCI is a
+// host controller interface spec with no gadget-mode implementation at
+// all), and there is no dwc3/dwc2-style dual-role controller node anywhere
+// in this DTS. Confirmed on real hardware (bean gosd-tqme): --usb-gadget
+// produces an image whose app fails with "no USB peripheral controller
+// found under /sys/class/udc", even with the board's USB mux explicitly
+// routed to device mode before power-on. Whether this is fixable with a
+// DTS patch (a different mainline binding, if the underlying RK3588 IP
+// supports one) or a hard SoC-integration limitation is an open question
+// for a future bean — this board's kernel Kconfig already compiles in
+// USB_GADGET/USB_DWC3_DUAL_ROLE, so the gap is in the DTS binding, not
+// missing driver support.
 func (board) UsbGadgetSupport() boards.GadgetSupport {
-	return boards.GadgetSupport{Supported: true}
+	return boards.GadgetSupport{
+		Supported: false,
+		Reason:    "the DTS binds this board's OTG-capable USB port to the host-only xhci-hcd driver, with no dwc3/dwc2-style dual-role controller node (bean gosd-tqme)",
+	}
 }
 
 // ConsoleBaudSupport implements boards.Board: supported. extlinux.conf's
