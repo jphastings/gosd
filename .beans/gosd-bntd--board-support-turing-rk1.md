@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-08-25T10:25:26Z
-updated_at: 2026-08-30T07:36:55Z
+updated_at: 2026-08-30T08:29:16Z
 ---
 
 Eighth supported board and the first board with no SD/microSD slot at all: Turing RK1 —
@@ -98,3 +98,19 @@ alias being named serial9. Confirmed booting cleanly end-to-end (U-Boot ->
 kernel -> gosd-init -> app) with `console=ttyS0,115200n8`. Fixed in
 internal/boards/turingrk1/templates/extlinux.conf.tmpl. The baud (115200)
 was correct; only the device name was wrong.
+
+
+## Correction (2026-08-30, bean gosd-tqme): USB gadget mode does not work
+
+Hardware bring-up found `--usb-gadget` produces an image that fails at
+runtime: "no USB peripheral controller found under /sys/class/udc", even
+with the board's USB mux explicitly routed to device mode before power-on.
+Root cause, confirmed against the actual DTS: the port commented
+`/* USB 0: USB 2.0 only, OTG-capable */` is bound to `&usb_host0_xhci`, and
+Linux's xhci-hcd driver is host-only by design (XHCI is a host controller
+interface spec, no gadget-mode implementation at all) — there is no
+dwc3/dwc2-style dual-role controller node anywhere in this DTS. The
+hardware PHY genuinely is OTG-capable; the mainline DTS's driver binding
+for it isn't. `UsbGadgetSupport()` now correctly returns `Supported: false`.
+Whether this is fixable with a DTS patch is an open question, not yet
+researched.
