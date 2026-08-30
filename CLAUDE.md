@@ -535,29 +535,30 @@ say so in the bean rather than silently diverging.
   `--usb-gadget` ships `overlays/dwc2.dtbo`, bean gosd-spjt) the `.dtbo` is
   pinned in the board manifest from the same raspberrypi/firmware commit as
   the GPU boot files — never assume the rule transfers between families.
-- **Audit what a Pi defconfig hands you — three hardware-found traps in one
-  week (2026-07):** bcmrpi/bcm2711 defconfigs ship `=m` drivers that the
-  no-modules build promotes to `=y`, smuggling in unwanted built-ins
-  (`mac80211_hwsim`'s phantom wlan0/wlan1 radios stole wifiup's interface
-  pick — gosd-6nl2; the legacy gadget zoo claimed the only UDC as "Gadget
-  Zero" before any configfs gadget could — gosd-spjt), and ship values that
-  silently assume Pi-firmware cmdline injection
-  (`SERIAL_8250_RUNTIME_UARTS=0` left the Zero W with no console at all —
-  gosd-md4w). When adding a Pi board or touching its fragment, grep for
-  surprises and disable explicitly — but grep the *released* kernel.config,
-  not the committed snapshot (see above), and confirm against the running
-  board before "fixing" one: the firmware rewrites the cmdline, so the very
-  same `SERIAL_8250_RUNTIME_UARTS=0` that cost the Zero W its console is
-  harmless on the Zero 2W, whose firmware injects `8250.nr_uarts=1`
-  (gosd-ehkt). `/proc/cmdline` on the booted board settles it.
+- **Audit what a Pi defconfig hands you.** bcmrpi/bcm2711 defconfigs ship
+  `=m` drivers that the no-modules build promotes to `=y`, smuggling in
+  unwanted built-ins, and ship values that silently assume Pi-firmware
+  cmdline injection — both classes have bitten real boards in this fleet
+  (see a board's own `docs/development/<board-id>.md` for the specifics).
+  When adding a Pi board or touching its fragment, grep for surprises and
+  disable explicitly — but grep the *released* kernel.config, not the
+  committed snapshot (see above), and confirm against the running board
+  before "fixing" one: firmware cmdline injection can make the identical
+  defconfig default harmless on one board and fatal on another.
+  `/proc/cmdline` on the booted board settles it. Also cut the legacy USB
+  gadget zoo (`drivers/usb/gadget/legacy/`) explicitly on any board getting
+  `--usb-gadget` support — a built-in gadget driver there claims the UDC
+  before gosd's own configfs gadget can (bean gosd-spjt).
 - **Know a Pi DTB's lineage before trusting driver bindings:** the pinned
   rpi tree builds both mainline-style DTBs (`bcm2835-*`) and downstream-style
-  ones (`bcm2710-*`) with different compatibles and conventions. The
-  downstream kernel's DMA path needs the downstream soc `dma-ranges`
-  (gosd-1ey5 patches it into the Zero W's mainline-style DTB), and a usb
-  node's compatible decides `dwc_otg` (downstream, host-only in practice)
-  vs `dwc2` (mainline, gadget-capable) — opposite gadget outcomes
-  (gosd-spjt). Check which driver a node's compatible binds at the pin.
+  ones (`bcm2710-*`) with different compatibles and conventions — a USB
+  node's compatible alone decides whether a controller binds `dwc_otg`
+  (downstream, host-only in practice) or `dwc2` (mainline, gadget-capable),
+  and a mainline-style DTB's DMA needs an explicit peripheral-window
+  `dma-ranges` entry the downstream one already carries. Check which driver
+  a node's compatible binds at the pin before assuming a capability; see a
+  board's own `docs/development/<board-id>.md` for specific instances this
+  caught.
 - Kernel pins are **per-family**, bumped family-wide, never one board alone:
   the mainline-fleet boards — Rockchip, Allwinner (cubie-a5e), and
   qemu-virt — share one mainline stable tag (`internal/kernelspec`'s
@@ -569,21 +570,13 @@ say so in the bean rather than silently diverging.
   session that owns them, never from a subagent's background task (a
   subagent's background jobs are killed when it returns; the cubie-a5e
   U-Boot build died this way, log frozen mid-compile with no error).
-- **Allwinner (sunxi) family facts, proven on cubie-a5e (epic gosd-h1wv):**
-  the whole boot chain is ONE raw write — `u-boot-sunxi-with-spl.bin`
-  (SPL + FIT with BL31, U-Boot proper, DTB) at byte 8192; the BootROM also
-  probes 128KiB, unused by us. Blob-free, but BL31 compiles from a
-  commit-pinned TF-A FORK (mainline TF-A has no sun55i_a523 platform yet —
-  bean gosd-cjr6 tracks the repin); the A523 uses no SCP firmware
-  (`SCP=/dev/null`). USB gadget is MUSB (`allwinner,sun8i-a33-musb`
-  fallback), not dwc3, and the board DT pins peripheral mode — no DTS patch
-  needed. Per-board LPDDR4 DRAM tuning lives in the board's U-Boot
-  defconfig, so a new Allwinner board is only buildable once ITS defconfig
-  is merged upstream — and U-Boot defconfigs can be RENAMED between the
-  mailing-list posting and the merge (`radxa-a5e_defconfig` landed as
-  `radxa-cubie-a5e_defconfig`; searching the list name produced a false
-  "not merged" — verify against the tree at the pinned tag, never the
-  posting).
+- **A new Allwinner board needs its own U-Boot defconfig merged upstream
+  first** — per-board LPDDR4 DRAM tuning lives there, so there's no generic
+  Allwinner DRAM init to fall back to. U-Boot defconfigs can be RENAMED
+  between the mailing-list posting and the merge — verify against the tree
+  at the pinned tag, never the posting name (see
+  [this board's development notes](docs/development/cubie-a5e.md) for how
+  this played out on the fleet's first Allwinner board, epic gosd-h1wv).
 - **Adding or activating a board is checked mechanically**, so don't work
   from a remembered list: `internal/repocheck/boards_test.go` derives from
   the board registry that every board has a `kernelspec` entry and a

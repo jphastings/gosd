@@ -1,11 +1,54 @@
 # Developing for the Radxa Cubie A5E (`cubie-a5e`)
 
 Bench/bring-up knowledge from board-support work (epic `gosd-h1wv`) that
-isn't captured elsewhere. Locked design decisions — the sunxi boot chain,
-the TF-A fork pin, the MUSB gadget controller, and the headline DRAM-variant
-call — live in CLAUDE.md; this file is for things a future agent or
-developer would otherwise have to rediscover by hand, in particular the
-three real hardware bugs this board's bring-up found and fixed.
+isn't captured elsewhere. The headline DRAM-variant call itself is locked
+in CLAUDE.md; the reasoning behind it, and the fleet's first Allwinner
+board's own architecture facts, live here, along with the three real
+hardware bugs this board's bring-up found and fixed.
+
+## Architecture facts, proven at the fleet tag (bean `gosd-jpc8`)
+
+Verified against primary sources (kernel.org, U-Boot, and TF-A trees at the
+exact pinned refs) before any bring-up started — recorded here since a
+future Allwinner board's own research bean should treat these as this
+board's specifics, not fleet-wide Allwinner facts, until re-verified:
+
+- **The whole boot chain is one raw write.** `u-boot-sunxi-with-spl.bin`
+  (SPL + FIT with BL31, U-Boot proper, DTB) goes at byte 8192 (`bs=1k
+  seek=8`) — this sits inside the MBR's own pre-partition gap, so no
+  `internal/image` changes were needed. The BootROM also probes a 128KiB
+  fallback location; unused by us.
+- **Blob-free, but BL31 compiles from a TF-A fork, not mainline.** Mainline
+  TF-A has no `sun55i_a523` platform at any release tag (confirmed at
+  v2.15.0, the latest at research time) — pages describing one are from
+  work-in-progress doc builds, not merge status. The community-standard
+  source is `jernejsk/arm-trusted-firmware`'s `a523` branch, pinned by
+  commit (the same pinning shape as the Pi boards' `raspberrypi/linux`
+  commit pin: source-compiled, BSD-3-Clause, still blob-free). The A523
+  needs no SCP firmware (`SCP=/dev/null` silences the build warning).
+- **USB gadget mode needed no DTS patch** — better than expected going in.
+  The board DT already pins `usb_otg { dr_mode = "peripheral"; }` on the
+  Type-C OTG port, backed by `allwinner,sun8i-a33-musb` →
+  `CONFIG_USB_MUSB_SUNXI`, not dwc3. (See below for why it doesn't work in
+  practice despite this correct DTS wiring — bean `gosd-3io0`.)
+- **Per-board LPDDR4 DRAM tuning lives in the board's own U-Boot
+  defconfig**, so a new Allwinner board is only buildable once *its*
+  defconfig is merged upstream — there's no generic "Allwinner DRAM init"
+  to fall back to. **U-Boot defconfigs can be renamed between the
+  mailing-list posting and the merge**: this board's pending-series name
+  (`radxa-a5e_defconfig`, from the original mailing-list posts) 404s
+  entirely post-merge — it landed as `radxa-cubie-a5e_defconfig`. Searching
+  for the posting name produced a false "not merged yet" result that cost
+  real research time; verify against the tree at the pinned tag, never the
+  mailing-list name.
+- **PCIe/NVMe, a second GbE (GMAC200), WiFi/BT, and header SPI are all
+  out of scope not by choice but by upstream kernel state at the fleet
+  tag**: no PCIe node exists for the A523 yet, `gmac1` isn't
+  enabled/drivered yet, the WiFi/BT module's driver isn't mainline, and
+  `sun55i-a523.dtsi` has no SPI nodes at all to attach a `spidev`
+  enablement patch to. None of these are Cubie-A5E-specific limitations —
+  they're upstream gaps that a later kernel tag bump could close; revisit
+  then rather than assuming they're permanent.
 
 ## The 1GB DRAM failure (bean `gosd-84b8`): how to read the failure and why it can't be fixed at our pin
 

@@ -1,12 +1,74 @@
 # Developing for the Raspberry Pi Zero W (`pi-zero-w`)
 
 Bench/bring-up knowledge from the initial board-support work (epic
-`gosd-ajpz`) that isn't captured elsewhere. Locked design decisions live in
-CLAUDE.md (the DMA `dma-ranges` patch, the mainline-vs-downstream DTB split,
-the SPI `__overrides__` gap, `SERIAL_8250_RUNTIME_UARTS`) and in
-[this board's kernel README](../../build/boards/pi-zero-w/README.md)
-(kernel build mechanics, toolchain, defconfig); this file is for things a
-future agent or developer would otherwise have to rediscover by hand.
+`gosd-ajpz`) that isn't captured elsewhere. The SPI `__overrides__` gap (this
+board's mainline-style DTS chain has no `dtparam=spi=on` mechanism) is a
+locked fact in CLAUDE.md/COMPATIBILITY.md; kernel build mechanics live in
+[this board's kernel README](../../build/boards/pi-zero-w/README.md); this
+file is for things a future agent or developer would otherwise have to
+rediscover by hand, including the two hardware bugs below that both trace
+back to this board being the fleet's one board built from the mainline-style
+DTS chain rather than the downstream one.
+
+## The first hardware boot had no console at all — a defconfig default, not our fragment
+
+`bcmrpi_defconfig` ships `CONFIG_SERIAL_8250_NR_UARTS=1` with
+**`CONFIG_SERIAL_8250_RUNTIME_UARTS=0`** — a defconfig baseline our own
+fragment never touched. With `nr_uarts` at 0, the entire ttyS `uart_driver`
+never registers at all (`serial8250_init()` bails early), so the mini-UART
+probe's own `uart_add_one_port()` call fails `-EINVAL` from
+`serial_core_add_one_port`'s `line >= drv->nr` check — not from a full port
+table, which is what the symptom looks like at first. Worse, the failed
+probe's error path clock-gates the AUX peripheral clock on its way out,
+which kills `earlycon` too (same peripheral), so diagnostic output stops
+dead around 2.6s into boot with no further clue.
+
+Raspberry Pi ships this default because their firmware injects
+`8250.nr_uarts=<n>` into the cmdline via `/chosen`, and the actual injected
+value depends on firmware state (e.g. forced to 0 on netboot). Bench-proven
+this board's firmware was running with `nr_uarts=0` at boot; pi-zero-2w
+carries the *identical* defconfig default and got a full working console —
+its firmware evidently does inject the value there (see
+[the pi-zero-2w notes](pi-zero-2w.md) for how that was proven without a
+console at all). Fixed by baking `CONFIG_SERIAL_8250_RUNTIME_UARTS=1`
+directly into `build/boards/pi-zero-w/kernel.fragment`, removing the
+dependency on firmware behavior entirely. Bean `gosd-md4w`.
+
+## SD card I/O died on the very first partition-table read — a DMA `dma-ranges` gap, not a driver bug
+
+Right after the console fix made `dmesg` visible, the SD card would enumerate
+(`mmcblk0: mmc0:aaaa SC16G 14.8 GiB`) but every read failed with a `DMA addr
+0xffffffff+4 overflow` WARN and `unable to read partition table`, wedging the
+controller badly enough that even `reboot(2)` hung for 10+ minutes waiting on
+the stuck I/O. Two plausible fixes died fast: the mainline `sdhost-bcm2835`
+driver (the only one left in the pinned tree — the old downstream
+`bcm2835_sdhost.c` PIO-fallback driver doesn't exist here anymore) has no
+module parameters to force PIO, and blacklisting the DMA controller's probe
+just makes sdhost `-EPROBE_DEFER` forever with no card detected at all.
+
+Root cause: this board ships the **mainline-style** `bcm2835.dtsi` (not the
+downstream `bcm2708.dtsi` every other board in the fleet uses), and mainline's
+`soc` node only maps RAM in `dma-ranges` — no window for the peripheral
+region at all. A recent downstream commit (`372f4e66dad6`, already in our
+pin) made `dma_direct_map_phys` route MMIO physical addresses through that
+`dma-ranges` table; with no matching entry, `phys_to_dma()` returns
+`DMA_MAPPING_ERROR` (`0xffffffff` on 32-bit) for the SD controller's FIFO
+register, and `bcm2835-dma.c` never checks for that failure before
+programming it into the transfer descriptor. The downstream `bcm2708.dtsi`
+(and pi-zero-2w's downstream-style DTB, which shares the same sdhost driver
+and works fine) carries a second `dma-ranges` entry mapping the VideoCore
+peripheral window — exactly what's missing here. Confirmed as a known
+upstream regression class: raspberrypi/linux#7136 reports the identical
+failure on a different board against the same 6.18 DMA-API series.
+
+Fix shipped as a one-hunk DTS patch
+(`build/boards/pi-zero-w/kernel/patches/0001-soc-peripheral-dma-ranges.patch`)
+adding that second `dma-ranges` entry to the mainline-style `bcm2835.dtsi`,
+byte-for-byte the window the downstream DT already carries — rather than
+switching this board to the downstream DTB wholesale, which would fix this
+too but silently drag in a different DT's untaudited nodes/overrides for a
+much larger blast radius. No kernel-config change was needed. Bean
+`gosd-1ey5`.
 
 ## WiFi enumeration needs `CONFIG_MMC_SDHCI_IPROC` — and phantom radios get there first
 

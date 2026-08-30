@@ -81,6 +81,34 @@ rather than something to keep chasing, and rescoped the project's original
 rock-4se's ~9.2s wired). Don't read a ~25s WiFi boot-to-HTTP figure on this
 board as a regression.
 
+## Proving a dead console is a wiring fault, not a software one, with no console to test with
+
+This board's kernel shares the exact same `CONFIG_SERIAL_8250_RUNTIME_UARTS=0`
+defconfig default that killed [pi-zero-w's console outright](pi-zero-w.md) —
+a real, initially-alarming inconsistency once noticed. But this board's
+console had already gone silent on the bench for an unrelated reason (see
+below), so the two symptoms briefly looked like the same bug. Settling
+which one was real needed a diagnostic technique worth reusing whenever a
+board's serial line dies and standard filesystem inspection is unavailable
+too: **flash a purpose-built app whose `/data` is FAT32** (so a plain macOS
+mount can read its output) **that dumps the kernel's own view of its own
+state** — `/proc/cmdline`, `/proc/consoles`, and a `/dev/kmsg` drain (which
+retains everything despite `quiet`) — to a file on that partition.
+
+That app proved, entirely without a working serial link: the Pi firmware
+*does* inject `8250.nr_uarts=1` into the cmdline on this board (so the
+RUNTIME_UARTS=0 defconfig default is harmless here, unlike pi-zero-w), the
+`ttyS0` console registers and is marked preferred in `/proc/consoles`, and a
+direct `/dev/gpiomem` register read of `GPFSEL1` confirmed GPIO14/15 are
+correctly muxed to the mini-UART's ALT5 function — every software layer
+checked out. That leaves only the physical link, which is exactly what made
+the next section's "reseat the jumpers" fix the right call rather than a
+guess: with every software layer positively confirmed, a dead console can
+only be the wire, the adapter, or a pin-labeling mixup. Bean `gosd-ehkt`
+(closed as "not a bug" on this board, but the technique is the lasting
+value — it's the same shape later reused for a completely different board's
+bring-up when its BMC-mediated console turned out to be unreliable too).
+
 ## Bench gotchas from the hardware bring-up session
 
 - **Reseat the GPIO14/15 serial jumpers if the console suddenly goes dead
