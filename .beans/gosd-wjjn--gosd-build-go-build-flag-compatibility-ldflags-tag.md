@@ -1,11 +1,11 @@
 ---
 # gosd-wjjn
 title: 'gosd build: go build flag compatibility (--ldflags, --tags, --trimpath, --gcflags, --asmflags)'
-status: completed
+status: in-progress
 type: feature
 priority: normal
 created_at: 2026-08-24T10:38:27Z
-updated_at: 2026-08-25T06:19:06Z
+updated_at: 2026-08-25T06:28:20Z
 ---
 
 `gosd build`'s app-compile step doesn't accept the `go build` flags a Go
@@ -238,6 +238,10 @@ required adding `.changeset/go-build-flag-compatibility.md` (gosd: minor).
 Awaiting JP's review; not self-merging per project convention.
 
 ## Increment C — `--ldflags` can reference `--app-version`'s resolved value
+
+Shipped as **PR #371** (JP merged #369 while this was in progress — the
+work landed on a stray, disconnected recreated branch; cherry-picked onto
+a fresh branch off main rather than lost).
 
 Added during PR #369 review (not originally in this bean): JP pointed out
 that `--ldflags` has no equivalent to `--app-version`'s `git:v*.*.*`
