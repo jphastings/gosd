@@ -3,6 +3,10 @@
 /gosd
 /tio_*
 
+# gosd build-kernel -o out/, when run from the repo root (as its README.md
+# examples show) rather than a board's own build/boards/<id>/ directory
+/out/
+
 # nix build's output symlink
 /result
 

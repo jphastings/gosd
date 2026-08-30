@@ -1,10 +1,11 @@
 ---
 # gosd-7676
 title: 'Board support: Raspberry Pi CM4'
-status: todo
+status: in-progress
 type: epic
+priority: normal
 created_at: 2026-08-30T10:25:34Z
-updated_at: 2026-08-30T10:25:34Z
+updated_at: 2026-08-30T11:08:22Z
 ---
 
 ## What

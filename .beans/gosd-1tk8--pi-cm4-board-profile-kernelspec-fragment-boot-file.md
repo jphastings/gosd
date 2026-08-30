@@ -1,10 +1,11 @@
 ---
 # gosd-1tk8
 title: 'Pi CM4: board profile, kernelspec + fragment, boot files manifest (internal registration)'
-status: todo
+status: completed
 type: task
+priority: normal
 created_at: 2026-08-30T10:25:55Z
-updated_at: 2026-08-30T10:25:55Z
+updated_at: 2026-08-30T11:08:16Z
 parent: gosd-7676
 ---
 
@@ -37,3 +38,23 @@ Note: registering the board (even internal-only) makes
 `kernel.config` immediately — per the turing-rk1 precedent (PR #372), this
 means the board-profile and kernel-build work land together in one PR,
 even though they're tracked as separate beans.
+
+
+## Summary of Changes
+
+Shipped in PR (branch bean/gosd-1tk8-pi-cm4-board-profile), landed together
+with the real kernel build (gosd-u5yz) per the turing-rk1 precedent (a new
+board's kernelspec entry needs a real committed kernel.config the moment
+it's registered, even internal-only).
+
+- `internal/boards/picm4`: board profile mirroring pi-3b's shape (BCM2711,
+  arm64, GPU-ROM boot, no U-Boot). `UsbGadgetSupport()` returns
+  `Supported: false` with an "uncharacterized, not proven unsupported"
+  reason (epic gosd-7676's "?" decision), unlike pi-3b's hardware-fact
+  reason.
+- `build/boards/pi-cm4/`: manifest.json (GPU firmware only, no
+  wifiFirmware group), kernel.fragment (native GENET, BCM2711 iProc SDHCI
+  storage, dwc2 gadget compiled in but not claimed supported, no WiFi/BT).
+- `internal/kernelspec`: new "pi-cm4" entry, DTB
+  `bcm2711-rpi-cm4.dtb` (the official CM4 IO Board's DTS).
+- Registered internal-only in `internal/boardset/boardset.go`.
