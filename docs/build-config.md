@@ -15,6 +15,8 @@ incantation. A flag passed on the command line always wins over the file, so
 any developer can override any recorded option for one invocation without
 editing anything.
 
+Run `gosd init` to write a starter file, prefilled with whatever it can confirm (a detected main package, a tagged repo's `git:` version, a derived `label-prefix`) — the rest of this document explains every key you'll fill in by hand.
+
 ## Where gosd looks
 
 `gosd build` and `gosd run` read `gosd-build.toml` from the **working

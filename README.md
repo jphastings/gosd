@@ -153,7 +153,8 @@ for what's shipped; per-board verification status lives in
   app's image needs (boards, partition sizes, an ingress tunnel, placeholder
   files) in a file next to your code: every key is a `gosd build` flag of
   the same name, a bare `gosd build` reproduces the repo's canonical image,
-  and a flag on the command line still wins per option:
+  and a flag on the command line still wins per option
+  (`gosd init` writes a starter one for you, prefilled with what it can auto-detect):
   [checked-in build options](docs/build-config.md)
 - **Custom kernels** (`gosd build-kernel`) — need a driver GoSD's stock,
   trimmed kernels cut (a USB DVB-T tuner, a niche sensor)? An opt-in,
