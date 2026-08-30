@@ -23,6 +23,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 )
 
 // Scheme prefixes an app-version value that resolves from git tags at
@@ -35,6 +36,32 @@ const abbrevLen = 7
 // IsGitSource reports whether raw names a git-resolved version source.
 func IsGitSource(raw string) bool {
 	return strings.HasPrefix(raw, Scheme)
+}
+
+// HasAnyTag reports whether the git repository enclosing dir has at least
+// one tag of any kind (lightweight or annotated) — the minimal positive
+// signal a caller needs to decide whether a "git:" version source is
+// worth defaulting to, without running Resolve's own HEAD-reachability/
+// nearest-tag search. dir outside a git repository, or a repository with
+// zero tags, both report false — never an error, since both simply mean
+// "not eligible for a git: default" to the one caller (gosd init) that
+// needs this.
+func HasAnyTag(dir string) bool {
+	repo, err := git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		return false
+	}
+	iter, err := repo.Tags()
+	if err != nil {
+		return false
+	}
+	defer iter.Close()
+	found := false
+	_ = iter.ForEach(func(*plumbing.Reference) error {
+		found = true
+		return storer.ErrStop
+	})
+	return found
 }
 
 // Resolve turns a Scheme-prefixed version source into a version string,
