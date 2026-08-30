@@ -143,7 +143,7 @@ func toolchainEnv() []string {
 	return kept
 }
 
-func requireMainPackage(pkgPath string) error {
+func mainPackageName(pkgPath string) (string, error) {
 	// "--" for the same reason CrossCompile passes it: pkgPath must reach
 	// the toolchain as an operand, never as a flag.
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", "--", pkgPath)
@@ -159,15 +159,38 @@ func requireMainPackage(pkgPath string) error {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return explainBuildFailure(
+		return "", explainBuildFailure(
 			fmt.Sprintf("could not inspect package %s", pkgPath),
 			fmt.Sprintf("go list %s", pkgPath),
 			stderr.String())
 	}
 
 	name := strings.TrimSpace(stdout.String())
+	return name, nil
+}
+
+func requireMainPackage(pkgPath string) error {
+	name, err := mainPackageName(pkgPath)
+	if err != nil {
+		return err
+	}
+
 	if name != "main" {
 		return fmt.Errorf("%s is package %q, not \"main\"; gosd build requires a runnable command (package main with a func main)", pkgPath, name)
 	}
 	return nil
+}
+
+// IsMainPackage reports whether pkgPath names a Go package that is
+// package main, inspected under the same GOOS every gosd build targets
+// (targetGOOS) so a linux-gated main package (e.g. examples/gpioinfo)
+// is recognized even from a non-Linux dev machine. Any failure to
+// inspect the package (not found, build errors, ...) reports false,
+// never an error — callers that need an explanation call
+// requireMainPackage (via CrossCompile) instead; this is for
+// best-effort detection (gosd init), where "can't confirm" and "is
+// definitely not main" are the same outcome.
+func IsMainPackage(pkgPath string) bool {
+	name, err := mainPackageName(pkgPath)
+	return err == nil && name == "main"
 }
