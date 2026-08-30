@@ -435,6 +435,18 @@ say so in the bean rather than silently diverging.
 
 ## Board work & artifact releases
 
+- **Bench/bring-up knowledge that isn't a locked decision lives in
+  `docs/development/<board-id>.md`, one file per board** — real hardware
+  surprises, debugging techniques that worked, DT-research assumptions
+  later corrected on real hardware, benign-vs-real warning signs. This
+  file stays for locked decisions (the board's own permanent facts);
+  `docs/development/` is for the "how we found that out" a future
+  bring-up would otherwise have to rediscover by hand. Boards hosted on a
+  Turing Pi 2 also share
+  [the shared Turing Pi 2 BMC notes](docs/development/turing-pi-2-bmc.md)
+  for BMC/tooling knowledge that isn't specific to any one node type.
+  Update the relevant file during or right after a bench session, the
+  same way a locked decision that proves wrong gets corrected here.
 - **Kernel-build source of truth is `internal/kernelspec`** (a declarative
   Go `KernelSpec` per board), not shell scripts — `gosd build-kernel`
   (`internal/kernelbuild`) reads it directly. Change a board's kernel build
