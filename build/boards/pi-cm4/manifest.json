@@ -1,0 +1,28 @@
+{
+  "board": "pi-cm4",
+  "bootFiles": {
+    "source": {
+      "repo": "https://github.com/raspberrypi/firmware",
+      "ref": "1.20260521",
+      "commit": "09267f5354d40519d82fbd2193b9e211ec304055"
+    },
+    "destDir": "",
+    "files": [
+      {
+        "name": "bootcode.bin",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/bootcode.bin",
+        "sha256": "e8b59fe10a4daa3cd2b127479f40b9856cfe3677154e8f24ae2aa70e3bb7c8eb"
+      },
+      {
+        "name": "start.elf",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/start.elf",
+        "sha256": "55049e2e35d6ddff3e5b93d6cface5cdc6df4e7ab1474af78d1af6ce8db4c9df"
+      },
+      {
+        "name": "fixup.dat",
+        "url": "https://raw.githubusercontent.com/raspberrypi/firmware/09267f5354d40519d82fbd2193b9e211ec304055/boot/fixup.dat",
+        "sha256": "b2d19b8c300b5a4ddbd0fcff3a0f7de61a171046269d8724e74f616058417d4b"
+      }
+    ]
+  }
+}

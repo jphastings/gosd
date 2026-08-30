@@ -14,6 +14,7 @@ import (
 	"github.com/jphastings/gosd/internal/boards/cubiea5e"
 	"github.com/jphastings/gosd/internal/boards/nanopizero2"
 	"github.com/jphastings/gosd/internal/boards/pi3b"
+	"github.com/jphastings/gosd/internal/boards/picm4"
 	"github.com/jphastings/gosd/internal/boards/pizero2w"
 	"github.com/jphastings/gosd/internal/boards/pizerow"
 	"github.com/jphastings/gosd/internal/boards/qemuvirt"
@@ -56,6 +57,11 @@ func init() {
 	// (non---artifacts-dir) fetch for this board would fail. Flip to
 	// Register once that release lands (bean gosd-wf58).
 	boards.RegisterInternal(turingrk1.New())
+	// pi-cm4 is internal-only for now: its kernel artifacts haven't been
+	// published in an artifacts release yet, so a real
+	// (non---artifacts-dir) fetch for this board would fail. Flip to
+	// Register once that release lands (bean gosd-6hdc).
+	boards.RegisterInternal(picm4.New())
 }
 
 // Registered returns every board this package registers - public and

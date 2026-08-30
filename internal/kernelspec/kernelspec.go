@@ -47,6 +47,7 @@ import (
 	cubiea5ekernel "github.com/jphastings/gosd/build/boards/cubie-a5e/kernel"
 	nanopikernel "github.com/jphastings/gosd/build/boards/nanopi-zero2/kernel"
 	pi3bmanifest "github.com/jphastings/gosd/build/boards/pi-3b"
+	picm4manifest "github.com/jphastings/gosd/build/boards/pi-cm4"
 	pizero2wmanifest "github.com/jphastings/gosd/build/boards/pi-zero-2w"
 	pizerowmanifest "github.com/jphastings/gosd/build/boards/pi-zero-w"
 	qemuvirtkernel "github.com/jphastings/gosd/build/boards/qemu-virt/kernel"
@@ -436,6 +437,49 @@ var specs = map[string]KernelSpec{
 		KernelFilename:   "kernel8.img",
 
 		RequiredY:       requiredYFromFragment(pi3bmanifest.KernelFragment),
+		ModulesDisabled: true,
+
+		Reproducibility: Reproducibility{
+			KBUILDBuildTimestamp: piZeroCommitDate,
+			KBUILDBuildUser:      "gosd",
+			KBUILDBuildHost:      "gosd-ci",
+		},
+	},
+
+	"pi-cm4": {
+		BoardID: "pi-cm4",
+		Source: Source{
+			Repo:       piZeroRepo,
+			Ref:        piZeroCommitRef,
+			RefKind:    CommitRef,
+			CommitDate: piZeroCommitDate,
+		},
+		Defconfig: "bcm2711_defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: picm4manifest.KernelFragment,
+
+		// No DTSPatches: unlike every other Pi board, whether this
+		// carrier (a Turing Pi 2 node) even wires an LED to the SoC is
+		// unverified, so there's no known node to write a retain-state
+		// patch against - see build/boards/pi-cm4/README.md's board
+		// notes and bean gosd-5trv.
+
+		// The official CM4 IO Board's DTS - the closest available match
+		// for any third-party CM4 carrier, including this board's
+		// target hardware (bean gosd-1tk8; carrier fidelity unverified
+		// until hardware bring-up, same as the LED question above).
+		DTB: &DTB{
+			MakeTarget: "dtbs",
+			SourcePath: "arch/arm64/boot/dts/broadcom/bcm2711-rpi-cm4.dtb",
+			Filename:   "bcm2711-rpi-cm4.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "kernel8.img",
+
+		RequiredY:       requiredYFromFragment(picm4manifest.KernelFragment),
 		ModulesDisabled: true,
 
 		Reproducibility: Reproducibility{
