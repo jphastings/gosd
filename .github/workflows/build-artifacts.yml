@@ -101,6 +101,30 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # pi-cm4 is internal-only for now: its kernel artifacts haven't been
+  # published in an artifacts release yet, so a real (non---artifacts-dir)
+  # fetch for this board would fail. Built and packaged here so a future
+  # activation (bean gosd-6hdc) can carry it from day one, mirroring
+  # turing-rk1's own internal-only CI treatment below - deliberately NOT in
+  # the "Upload assets to the knope-published release" gh command yet.
+  pi-cm4-kernel:
+    name: Build pi-cm4 kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board pi-cm4 --staging staging/ -o out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pi-cm4
+          path: staging/pi-cm4
+          if-no-files-found: error
+          retention-days: 1
+
   radxa-zero-3e-kernel:
     name: Build radxa-zero-3e kernel
     runs-on: ubuntu-latest
@@ -328,6 +352,7 @@ jobs:
         pi-zero-2w-kernel,
         pi-zero-w-kernel,
         pi-3b-kernel,
+        pi-cm4-kernel,
         radxa-zero-3e-kernel,
         radxa-zero-3e-uboot,
         nanopi-zero2-kernel,
@@ -371,6 +396,11 @@ jobs:
         with:
           name: pi-3b
           path: staging/pi-3b
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pi-cm4
+          path: staging/pi-cm4
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

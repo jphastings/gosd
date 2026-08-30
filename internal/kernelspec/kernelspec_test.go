@@ -239,6 +239,7 @@ func TestPiRequiredYIsDerivedFromFragment(t *testing.T) {
 		"pi-zero-2w": "../../build/boards/pi-zero-2w/kernel.fragment",
 		"pi-zero-w":  "../../build/boards/pi-zero-w/kernel.fragment",
 		"pi-3b":      "../../build/boards/pi-3b/kernel.fragment",
+		"pi-cm4":     "../../build/boards/pi-cm4/kernel.fragment",
 	}
 
 	for id, fragmentPath := range cases {

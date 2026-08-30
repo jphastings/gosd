@@ -19,6 +19,7 @@ var kernelConfigSnapshotPath = map[string]string{
 	"pi-zero-2w":    "../../build/boards/pi-zero-2w/kernel.config",
 	"pi-zero-w":     "../../build/boards/pi-zero-w/kernel.config",
 	"pi-3b":         "../../build/boards/pi-3b/kernel.config",
+	"pi-cm4":        "../../build/boards/pi-cm4/kernel.config",
 	"radxa-zero-3e": "../../build/boards/radxa-zero-3e/kernel/kernel.config",
 	"nanopi-zero2":  "../../build/boards/nanopi-zero2/kernel/kernel.config",
 	"rock-4se":      "../../build/boards/rock-4se/kernel/kernel.config",
