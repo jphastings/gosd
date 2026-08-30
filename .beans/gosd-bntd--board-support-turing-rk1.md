@@ -5,7 +5,7 @@ status: todo
 type: epic
 priority: normal
 created_at: 2026-08-25T10:25:26Z
-updated_at: 2026-08-25T10:30:33Z
+updated_at: 2026-08-30T07:36:55Z
 ---
 
 Eighth supported board and the first board with no SD/microSD slot at all: Turing RK1 —
@@ -84,3 +84,17 @@ Primary-source-verified against the fleet's ALREADY-pinned tags (v2026.04 U-Boot
 - Ethernet (gmac1/RTL8211F) and PCIe (both controllers enabled in DT) look clean at our pin; NVMe is still a bring-up-time confirmation, not a boot-path concern (out of scope for boot either way).
 
 Full findings: gosd-k4w2's Summary of Changes. Proceeding to the board-profile bean (gosd-jvtg).
+
+
+
+## Correction (2026-08-30, bean gosd-vh82): default console was wrong
+
+Hardware bring-up found `console=ttyS9` (locked from DT-only research,
+gosd-k4w2) panics on real hardware: "unable to open an initial console" ->
+"Kernel panic - not syncing: Attempted to kill init!". The generic 8250
+driver does not number this UART by its DT alias index -- this board has
+exactly one enabled UART node, so it becomes **ttyS0** regardless of the
+alias being named serial9. Confirmed booting cleanly end-to-end (U-Boot ->
+kernel -> gosd-init -> app) with `console=ttyS0,115200n8`. Fixed in
+internal/boards/turingrk1/templates/extlinux.conf.tmpl. The baud (115200)
+was correct; only the device name was wrong.

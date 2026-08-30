@@ -5,7 +5,7 @@ status: completed
 type: task
 priority: normal
 created_at: 2026-08-25T10:25:46Z
-updated_at: 2026-08-25T10:30:18Z
+updated_at: 2026-08-30T07:36:55Z
 parent: gosd-bntd
 ---
 
@@ -36,3 +36,17 @@ Primary-source-verified (GitHub raw fetches against the actual pinned tags/repos
 - **PCIe/NVMe** (informational only -- boot is out of scope per the epic; this is about NVMe-as-additional-storage later): `pcie3x4`, `pcie2x1l1`, `pcie30phy` all `status = "okay"` in the mainline DTSI at our pin, consistent with the historical NVMe pinmux bug (reported active ~end of 2024, expected fixed by 6.12/6.13) being resolved well before v6.18.37. Not hardware-verified; leave as a stretch goal per the epic, confirm for real during bring-up.
 
 **Verdict: GO.** No blockers found. Epic's locked decisions updated with a "Research outcome" section.
+
+
+
+## Correction (2026-08-30, bean gosd-vh82): ttyS9 was wrong on real hardware
+
+This bean's console finding was DT-only (stdout-path names the serial9
+alias) and turned out to not hold on real hardware: the generic 8250 driver
+does not number this UART by its DT alias index, and this board has only
+one enabled UART node, so it registers as **ttyS0**. console=ttyS9 panics
+("unable to open an initial console"). Confirmed by an actual hardware
+boot. This is exactly the kind of gap DT-only research (no real board yet)
+can leave -- recorded here so a future board's research bean weighs a
+DT alias claim about ttySN numbering as a hypothesis, not a fact, until
+hardware-confirmed.
