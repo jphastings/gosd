@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -334,6 +336,45 @@ func TestInitForceOverwritesExisting(t *testing.T) {
 	}
 	if string(got) == existing {
 		t.Error("gosd-build.toml was not overwritten by --force")
+	}
+}
+
+// commentedKeyLineRe matches a commented "# key = value" line in the
+// rendered template, whether it sits directly under a header comment (a
+// single space after #, e.g. "# board = [...]") or indented under the
+// "Also honoured" block ("#   usb-gadget = true").
+var commentedKeyLineRe = regexp.MustCompile(`^#\s+([a-z0-9-]+) = `)
+
+// TestInitTemplateCommentedLinesUncommentCleanly guards against the exact
+// bug class found in review: a commented key line that's misplaced (e.g.
+// under the wrong [section]) or misspelled parses fine as a comment, so
+// nothing catches it until a developer uncomments it. This renders the most
+// comment-dense case (main and version both undetected), then uncomments
+// each commented key line one at a time - leaving every other line exactly
+// as rendered - and asserts the result still parses.
+func TestInitTemplateCommentedLinesUncommentCleanly(t *testing.T) {
+	rendered := renderInitTemplate("", false, "myapp")
+	lines := strings.Split(rendered, "\n")
+
+	tested := 0
+	for i, line := range lines {
+		m := commentedKeyLineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		tested++
+
+		uncommented := slices.Clone(lines)
+		uncommented[i] = strings.TrimPrefix(line, "#")
+		candidate := strings.Join(uncommented, "\n")
+
+		if _, err := buildconfig.Parse([]byte(candidate)); err != nil {
+			t.Errorf("uncommenting key %q (line %q) failed to parse: %v", m[1], line, err)
+		}
+	}
+
+	if tested == 0 {
+		t.Fatal("no commented key lines matched in the rendered template; commentedKeyLineRe or the template's shape changed")
 	}
 }
 

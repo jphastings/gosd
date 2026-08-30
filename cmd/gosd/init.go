@@ -46,6 +46,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := validatePkgPath(args[0]); err != nil {
 			return err
 		}
+		if err := checkOverwrite(); err != nil {
+			return err
+		}
 		dir, err = filepath.Abs(args[0])
 		if err != nil {
 			return fmt.Errorf("resolving %q to an absolute path failed: %w; check the path exists and is accessible", args[0], err)
@@ -55,15 +58,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		pkgPath = args[0]
 	} else {
+		if err := checkOverwrite(); err != nil {
+			return err
+		}
 		pkgPath, dir = detectMainPackage(cwd)
 	}
 
 	labelPrefix := detectLabelPrefix(dir)
 	hasTag := detectVersionSource(dir)
-
-	if _, err := os.Stat(defaultBuildConfigFile); err == nil && !initForce {
-		return fmt.Errorf("%s already exists in the working directory; pass --force to overwrite it", defaultBuildConfigFile)
-	}
 
 	rendered := renderInitTemplate(pkgPath, hasTag, labelPrefix)
 	if err := os.WriteFile(defaultBuildConfigFile, []byte(rendered), 0o644); err != nil {
@@ -74,6 +76,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// checkOverwrite refuses if defaultBuildConfigFile already exists in the
+// working directory and --force wasn't given. Called before any main-
+// package detection runs, since detection can shell out to `go list`.
+func checkOverwrite() error {
+	if _, err := os.Stat(defaultBuildConfigFile); err == nil && !initForce {
+		return fmt.Errorf("%s already exists in the working directory; pass --force to overwrite it", defaultBuildConfigFile)
+	}
+	return nil
+}
+
 // commentedMainLine is [app].main's commented example, written when gosd
 // init could not confirm any main package.
 const commentedMainLine = "# main = \"./cmd/myapp\"  # the app to build, so a bare `gosd build` works"
@@ -81,7 +93,7 @@ const commentedMainLine = "# main = \"./cmd/myapp\"  # the app to build, so a ba
 // commentedVersionBlock is [app].version's commented example, written when
 // gosd init could not confirm the enclosing repository has any git tags.
 const commentedVersionBlock = "# version = \"1.4.2\"          # --app-version; or \"git:v*.*.*\" to resolve\n" +
-	"#                            # from your repo's tags at build time (see docs/build-config.md)"
+	"#                              from your repo's tags at build time (see docs/build-config.md)"
 
 // initTemplate is the starter gosd-build.toml gosd init writes: docs/build-
 // config.md's own example, with every key other than {{MAIN}}, {{VERSION}}
@@ -116,6 +128,17 @@ label-prefix = "{{LABEL_PREFIX}}"
 # relative to this file; dest is an absolute path inside the image.
 # with-external = ["./third_party/mpv:/bin/mpv"]
 
+# Also honoured, less commonly checked in (top level):
+#   usb-gadget = true
+#   console-baud = 115200
+#   artifacts-dir = "gosd-artifacts"
+#   gosd-init-src = "../gosd/gosd-init"
+#   ldflags = "-X main.version={{.AppVersion}}"
+#   tags = "myfeature"
+#   trimpath = true
+#   gcflags = "-m"
+#   asmflags = "-D FOO=1"
+
 [app]
 {{MAIN}}
 {{VERSION}}
@@ -140,24 +163,13 @@ label-prefix = "{{LABEL_PREFIX}}"
 [publish]
 # catalog = true             # --publish-catalog: emit rpi-imager os_list.json
 # base-url = "https://example.com/downloads"    # --publish-base-url
-
-# Also honoured, less commonly checked in:
-#   usb-gadget = true
-#   console-baud = 115200
-#   artifacts-dir = "gosd-artifacts"
-#   gosd-init-src = "../gosd/gosd-init"
-#   ldflags = "-X main.version={{.AppVersion}}"
-#   tags = "myfeature"
-#   trimpath = true
-#   gcflags = "-m"
-#   asmflags = "-D FOO=1"
 `
 
 // renderInitTemplate fills initTemplate's three tokens: {{MAIN}} and
 // {{VERSION}} default to commented examples unless pkgPath/hasTag confirm a
 // live value to write instead, and {{LABEL_PREFIX}} is always filled in
 // (detectLabelPrefix never returns empty). {{.AppVersion}} in the template's
-// trailing "also honoured" block is a different, literal string that
+// top-level "also honoured" block is a different, literal string that
 // strings.NewReplacer never matches, so it survives untouched.
 func renderInitTemplate(pkgPath string, hasTag bool, labelPrefix string) string {
 	mainBlock := commentedMainLine
@@ -168,7 +180,7 @@ func renderInitTemplate(pkgPath string, hasTag bool, labelPrefix string) string 
 	versionBlock := commentedVersionBlock
 	if hasTag {
 		versionBlock = "version = \"git:v*.*.*\"    # --app-version; resolved from your repo's tags\n" +
-			"                            # at build time (see docs/build-config.md)"
+			"                          # at build time (see docs/build-config.md)"
 	}
 
 	return strings.NewReplacer(
