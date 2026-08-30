@@ -90,13 +90,17 @@ say so in the bean rather than silently diverging.
   promotes to `latest`) — procedure in `js/PUBLISHING.md`; never publish
   from CI to `latest`.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
-  pi-zero-2w / pi-3b / radxa-zero-3e / nanopi-zero2 / rock-4se / cubie-a5e /
-  qemu-virt / turing-rk1, and `GOARCH=arm GOARM=6` for pi-zero-w (BCM2835 is
-  armv6, 32-bit only). The build pipeline compiles the app and gosd-init once
-  per architecture needed by the selected boards (decided 2026-07-06; was
-  arm64-only).
+  pi-zero-2w / pi-3b / pi-cm4 / radxa-zero-3e / nanopi-zero2 / rock-4se /
+  cubie-a5e / qemu-virt / turing-rk1, and `GOARCH=arm GOARM=6` for pi-zero-w
+  (BCM2835 is armv6, 32-bit only). The build pipeline compiles the app and
+  gosd-init once per architecture needed by the selected boards (decided
+  2026-07-06; was arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
   `pi-3b` (BCM2837, one image covers the 3B and 3B+ — epic gosd-xhc3),
+  `pi-cm4` (Raspberry Pi Compute Module 4, Lite/no-wireless variant, BCM2711
+  — the same defconfig pi-3b already builds against; SD-boot only in scope
+  for now, eMMC deferred — epic gosd-7676, internal only until its
+  artifacts release lands),
   `radxa-zero-3e`, `nanopi-zero2` (FriendlyElec RK3528A — epic gosd-cwjf),
   `rock-4se` (Radxa ROCK 4SE, RK3399-T — epic gosd-cuym),
   `cubie-a5e` (Radxa Cubie A5E, Allwinner A527 — first Allwinner board,
