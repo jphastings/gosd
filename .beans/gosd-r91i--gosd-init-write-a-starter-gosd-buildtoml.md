@@ -1,10 +1,11 @@
 ---
 # gosd-r91i
 title: 'gosd init: write a starter gosd-build.toml'
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-08-30T20:55:28Z
-updated_at: 2026-08-30T20:55:28Z
+updated_at: 2026-08-30T22:26:23Z
 ---
 
 `gosd-build.toml` (schema in internal/buildconfig/config.go, documented with
@@ -66,8 +67,7 @@ example. Plan reviewed and approved 2026-08-30.
   version has `board`/`output`/`ingress`/`placeholder`/`with-external` and
   every [boot]/[data]/[kernel]/[publish] key live as illustrative values,
   and copying those as-is would silently commit a fresh project to someone
-  else's board list and tunnel choice. See the approved plan (below) for
-  the exact target template text.
+  else's board list and tunnel choice.
 - Template storage: a plain Go backtick string constant in init.go, filled
   via `strings.NewReplacer` on three tokens ({{MAIN}}, {{VERSION}},
   {{LABEL_PREFIX}}) — not go:embed (no benefit for one string read once)
@@ -85,26 +85,65 @@ example. Plan reviewed and approved 2026-08-30.
 
 ## Todos
 
-[ ] internal/build: split requireMainPackage into mainPackageName + export
+[x] internal/build: split requireMainPackage into mainPackageName + export
     IsMainPackage; internal/build tests for IsMainPackage
-[ ] internal/gitversion: add HasAnyTag + tests (not-a-repo, zero-tag,
+[x] internal/gitversion: add HasAnyTag + tests (not-a-repo, zero-tag,
     lightweight-tag, annotated-tag) using the package's own newFixtureRepo
-[ ] cmd/gosd/initdetect.go: detection ladder (main package, version,
+[x] cmd/gosd/initdetect.go: detection ladder (main package, version,
     label-prefix)
-[ ] cmd/gosd/init.go: newInitCmd, runInit, template constant + rendering,
+[x] cmd/gosd/init.go: newInitCmd, runInit, template constant + rendering,
     --force handling
-[ ] cmd/gosd/main.go: register newInitCmd()
-[ ] cmd/gosd/init_test.go: behavioral tests per the plan's verification
+[x] cmd/gosd/main.go: register newInitCmd()
+[x] cmd/gosd/init_test.go: behavioral tests per the plan's verification
     list (parseable output on every branch, explicit-arg valid/invalid,
     flag-shaped-arg rejection, no-arg ladder rungs, tagged/untagged git,
     label-prefix derivation, overwrite refusal/--force, stdout message)
-[ ] cmd/gosd/pkgpath_test.go: add "init" to the flag-shaped-arg regression
+[x] cmd/gosd/pkgpath_test.go: add "init" to the flag-shaped-arg regression
     table
-[ ] docs/build-config.md + README.md: one-sentence pointers to `gosd init`
-[ ] Quality gates: go test ./..., go vet ./..., gofmt -l ., golangci-lint
+[x] docs/build-config.md + README.md: one-sentence pointers to `gosd init`
+[x] Quality gates: go test ./..., go vet ./..., gofmt -l ., golangci-lint
     run ./... and GOOS=linux golangci-lint run ./...
-[ ] Changeset for the new user-facing command (or `no release notes` label
+[x] Changeset for the new user-facing command (or `no release notes` label
     if not warranted)
 
 ## Summary of Changes
 
+Implemented via subagent-driven-development: 4 tasks, each with its own
+implementer + task review, then a final whole-branch review (opus) with
+one consolidated fix wave + scoped re-review. Every stage's review came
+back clean (task reviews: 3 clean, 1 with 2 minors deferred, 1 with a
+finding adjudicated as a reviewer misread; final review: approved "with
+fixes," fix wave addressed all 6 findings, re-review confirmed clean).
+
+- `internal/build`: split `requireMainPackage` into a shared
+  `mainPackageName` helper plus the existing error-producing caller and a
+  new exported `IsMainPackage(pkgPath string) bool` for best-effort
+  detection — `requireMainPackage`'s behavior/error text is byte-for-byte
+  unchanged, `CrossCompile`'s call site untouched.
+- `internal/gitversion`: added `HasAnyTag(dir string) bool`, reusing
+  `Resolve`'s git-opening approach; stops on the first tag found via
+  go-git's `storer.ErrStop`, verified correct against the installed
+  go-git v5.17.1 source.
+- `cmd/gosd`: new `init` command (`cmd/gosd/init.go`,
+  `cmd/gosd/initdetect.go`). `gosd init [path-to-main-package]` writes a
+  starter `gosd-build.toml`, mirroring `docs/build-config.md`'s own
+  example with every non-detected line commented out. Detects `[app].main`
+  (cwd itself, else a single unambiguous `cmd/*` subdirectory, else left
+  commented), `[app].version` (live `git:v*.*.*` only when the repo has a
+  confirmed tag), and `label-prefix` (always derived, since it's on-disk
+  ABI). Explicit positional args go through the existing `validatePkgPath`
+  security check before anything else. Refuses to overwrite an existing
+  file without `--force`/`-f`; the overwrite check runs before any
+  detection work (including `go list` subprocess calls) in both the arg
+  and no-arg paths, while `validatePkgPath` still runs first on the
+  explicit-arg path. A dedicated test renders the template and uncomments
+  every commented key individually to confirm each still parses under its
+  correct table — the regression test for the one real bug the final
+  review caught (a block of top-level keys briefly sitting under `[publish]`
+  post-render).
+- Manually verified end-to-end (built the binary, ran `gosd init` then
+  `gosd build` against a scratch module): the generated file round-trips
+  correctly through the reader.
+- Docs: one-sentence pointers to `gosd init` in `docs/build-config.md` and
+  `README.md`. Changeset: `.changeset/gosd-r91i.md` (minor bump, new
+  user-facing command).
