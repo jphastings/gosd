@@ -52,11 +52,11 @@ func init() {
 	// (non---artifacts-dir) fetches for this board now resolve (bean
 	// gosd-zh95's activation flip).
 	boards.Register(cubiea5e.New())
-	// turing-rk1 is internal-only for now: its kernel/U-Boot artifacts
-	// haven't been published in an artifacts release yet, so a real
-	// (non---artifacts-dir) fetch for this board would fail. Flip to
-	// Register once that release lands (bean gosd-wf58).
-	boards.RegisterInternal(turingrk1.New())
+	// turing-rk1 is public: its kernel and mainline U-Boot (rkbin DDR-init
+	// + BL31 blobs) are published in the artifacts/v0.10.4 release, so real
+	// (non---artifacts-dir) fetches for this board now resolve (bean
+	// gosd-wf58's activation flip).
+	boards.Register(turingrk1.New())
 	// pi-cm4 is internal-only for now: its kernel artifacts haven't been
 	// published in an artifacts release yet, so a real
 	// (non---artifacts-dir) fetch for this board would fail. Flip to

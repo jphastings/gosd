@@ -67,24 +67,25 @@ console → network up → mDNS + HTTP → power-cycle survival).
 | NanoPi Zero2 | Complete (`gosd-odp7`) |
 | Radxa ROCK 4SE | Complete (`gosd-sz6p`) |
 | Radxa Cubie A5E | Boot proven on the 1GB variant; 2GB/4GB unverified — see board notes (bean `gosd-6pfn`) |
+| Turing RK1 | Complete (`gosd-hycf`) |
 
 ## Board-specific features
 
-| Feature | Pi Zero 2W | Pi Zero W | Pi 3B | Radxa Zero 3E | NanoPi Zero2 | ROCK 4SE | Cubie A5E |
-|---|---|---|---|---|---|---|---|
-| Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ [^cubie-eth] |
-| WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] |
-| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ [^cubie-gadget] |
-| Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] |
-| ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
-| exFAT on the eMMC | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] |
-| NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] |
-| ext4 on attached disks (the default) | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ |
-| exFAT on attached disks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ext4 data partition (`gosd build --data-filesystem=ext4`; FAT32 is the default) | ✅ [^pi-data-ext4] | ✅ [^pi-data-ext4] | ✅ [^pi-data-ext4] | ✅ | ✅ | ✅ | ✅ |
-| [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] |
-| [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
-| [Ingress: Tailscale Funnel](docs/ingress.md) (`--ingress tailscale-funnel`) | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] |
+| Feature | Pi Zero 2W | Pi Zero W | Pi 3B | Radxa Zero 3E | NanoPi Zero2 | ROCK 4SE | Cubie A5E | Turing RK1 |
+|---|---|---|---|---|---|---|---|---|
+| Ethernet | ➖ | ➖ | ✅ | ✅ | ✅ | ✅ | ✅ [^cubie-eth] | ✅ |
+| WiFi (WPA2-PSK / open; hidden SSIDs) | ✅ | ✅ | ✅ [^pi3b-wifi] | ➖ | ➖ [^m2-wifi] | ❌ [^rock4se-wifi] | ❌ [^cubie-wifi] | ➖ |
+| USB gadget [^gadget-eth] | ✅ | ✅ | ➖ [^pi3b-gadget] | ✅ | ❌ [^nanopi-usb] | ✅ | ✅ [^cubie-gadget] | ❌ [^rk1-gadget] |
+| Onboard eMMC (`emmc` package) | ➖ | ➖ | ➖ | ✅ [^emmc-optional] | ✅ | ✅ [^emmc-optional] | ❌ [^cubie-emmc] | ✅ |
+| ext4 on the eMMC (the default) [^emmc-ext4] | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] | ✅ |
+| exFAT on the eMMC | ➖ | ➖ | ➖ | ✅ | ✅ | ✅ | ❌ [^cubie-emmc] | ✅ |
+| NVMe SSD (M.2) | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ | ❌ [^cubie-nvme] | ✅ |
+| ext4 on attached disks (the default) | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ [^pi-ext4] | ✅ | ✅ | ✅ | ✅ | ✅ |
+| exFAT on attached disks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ext4 data partition (`gosd build --data-filesystem=ext4`; FAT32 is the default) | ✅ [^pi-data-ext4] | ✅ [^pi-data-ext4] | ✅ [^pi-data-ext4] | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [Audio out](docs/sound.md) (via `gosd build-kernel`) | ✅ | ✅ | ✅ | 🚧 [^zero3e-audio] | ➖ | ✅ | ❌ [^cubie-audio] | ❌ [^rk1-audio] |
+| [Ingress: Cloudflare Tunnel](docs/ingress.md) (`--ingress cloudflared`) | ✅ [^cloudflared-bench] | ❌ [^cloudflared-armv6] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] | ✅ [^cloudflared-bench] |
+| [Ingress: Tailscale Funnel](docs/ingress.md) (`--ingress tailscale-funnel`) | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] | ✅ [^tsfunnel-bench] |
 
 **Legend:** ✅ supported · 🚧 in progress · ➖ no such hardware on this
 board · ❌ not supported (see footnote).
@@ -127,6 +128,12 @@ board · ❌ not supported (see footnote).
   presents as a brick: no kernel, no network, and the error visible only on
   a serial console. If you're running one, feedback (working or not) is
   very welcome on bean `gosd-6pfn`.
+- **Turing RK1** — has no SD/microSD slot at all; it boots from onboard
+  eMMC only, flashed via USB maskrom/rkdeveloptool or the Turing Pi 2
+  BMC rather than a card reader — see
+  [the flashing guide](docs/turing-rk1-flashing.md). The M.2 NVMe slot is
+  storage-only, not a boot target. GPIO is out of scope for this board
+  (no accessible header on this compute-module form factor).
 
 [^pi3b-wifi]: The 3B+'s BCM43455 WiFi firmware isn't bundled yet, so a
     3B+ is Ethernet-first for now (bean `gosd-oq0z`).
@@ -206,6 +213,19 @@ board · ❌ not supported (see footnote).
 
 [^cubie-audio]: The stock kernel disables `CONFIG_SOUND` entirely; no
     recipe has been written for this board yet (no bean filed).
+
+[^rk1-gadget]: The OTG-capable USB port's driver binding is host-only by
+    design (`&usb_host0_xhci`, XHCI-based — XHCI has no gadget-mode
+    implementation at all) — no dwc3/dwc2-style dual-role controller node
+    exists anywhere in this board's DTS. Confirmed on real hardware, not
+    just DT inspection (bean `gosd-tqme`); `gosd build --usb-gadget`
+    refuses with an actionable error.
+
+[^rk1-audio]: The stock kernel disables `CONFIG_SOUND` entirely; no recipe
+    has been written for this board yet (no bean filed) — the Turing Pi 2
+    baseboard does have an HDMI port a node can drive, so this may be
+    revisited if a display/audio use case comes into scope (see the
+    kernel-bloat follow-up, bean `gosd-vo5q`).
 
 [^cloudflared-bench]: Code-complete, unit- and QEMU-tested; not yet
     hardware-verified against a real Cloudflare Tunnel (bench bean

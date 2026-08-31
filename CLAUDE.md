@@ -107,8 +107,8 @@ say so in the bean rather than silently diverging.
   epic gosd-h1wv), `turing-rk1` (Turing Machines RK1, RK3588 — the fleet's
   first board with no SD/microSD slot at all; boots from onboard eMMC only,
   flashed via USB maskrom/rkdeveloptool or the Turing Pi 2 BMC rather than a
-  card reader, see `docs/turing-rk1-flashing.md` — epic gosd-bntd, internal
-  only until its artifacts release lands); also `qemu-virt` (internal —
+  card reader, see `docs/turing-rk1-flashing.md` — epic gosd-bntd); also
+  `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`
