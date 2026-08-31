@@ -1,10 +1,11 @@
 ---
 # gosd-qls9
 title: 'CI: release.yml''s merge-commit guard silently skips releases'
-status: in-progress
+status: completed
 type: bug
+priority: normal
 created_at: 2026-08-31T11:56:02Z
-updated_at: 2026-08-31T11:56:02Z
+updated_at: 2026-08-31T12:02:59Z
 ---
 
 `release.yml`'s trigger — `contains(github.event.head_commit.message, 'chore:
@@ -36,47 +37,55 @@ already-prepared state (v0.8.3 / artifacts 0.10.4 shipped 2026-08-31).
   it).
   - `.github/workflows/release.yml`: `if:` becomes
     `github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, 'chore: prepare release') || contains(github.event.head_commit.message, 'knope/release')`.
-    Add `workflow_dispatch:` alongside the existing `push:` trigger as a
+    Added `workflow_dispatch:` alongside the existing `push:` trigger as a
     clean manual recovery lever (dispatched against `main`, so
     `github.ref == refs/heads/main` — still branch-policy-compatible).
   - `.github/workflows/prepare-release.yml`: negate the same widened
     condition: `if: "!(contains(github.event.head_commit.message, 'chore: prepare release') || contains(github.event.head_commit.message, 'knope/release'))"`.
     Its own internal "Check for pending change files" step is the real
     safety net either way (safe no-op when `.changeset/` is empty), so
-    this widening is belt-and-suspenders, not load-bearing — but keep it
-    accurate rather than leave a guard that no longer matches its own
-    "exact complement of release.yml's guard" comment.
-  - Update both files' explanatory comments to describe why the check
+    this widening is belt-and-suspenders, not load-bearing.
+  - Both files' explanatory comments updated to describe why the check
     covers both the PR-title-in-message case (squash-merge-style) and the
     default-merge-commit-subject case (branch-name match), and to note
     `workflow_dispatch` as the recovery path (not an empty commit hack).
-- **docs/releasing.md**: replace the existing "Don't retitle the release
-  PR" warning box with an accurate account: the routing depends on the
-  merge commit's message containing either the PR's title OR the source
-  branch name `knope/release` (GitHub's default merge-commit subject
-  always includes the latter); retitling the PR *and* somehow avoiding
-  both matches would still break it, but the routing is no longer solely
-  dependent on the title surviving into the message. Explain how to
-  recognize a skipped release (CHANGELOG.md/go.mod on main show the bumped
-  version but no matching `vX.Y.Z`/`gosd/vX.Y.Z` tag exists) and the fix
-  (`gh workflow run release.yml` — or the Actions UI — dispatched against
-  `main`, now that `workflow_dispatch` exists; no more empty-commit hack).
-- No Go files touched — this is CI config + docs only. No changeset
-  needed for user-facing release notes (apply `no release notes` label:
-  this is an internal CI fix, not a package the `gosd`/`artifacts`/
-  `npm/gosd` change-file schema covers), per docs/releasing.md's own
-  "not every PR has a release note" rule.
+- **docs/releasing.md**: replaced the "Don't retitle the release PR"
+  warning box with an accurate account of both matched forms, plus a
+  concrete "how to recognize + recover from a skipped release" procedure
+  (compare the changelog/go.mod version on main against existing tags;
+  dispatch `release.yml` manually rather than an empty commit).
+- No Go files touched — CI config + docs only. No changeset: internal CI
+  fix, not a user-facing package release note (`no release notes` label
+  applied to the PR instead, per docs/releasing.md's own rule).
 
 ## Todos
 
-[ ] .github/workflows/release.yml: widen the `if:`, add `workflow_dispatch:`,
+[x] .github/workflows/release.yml: widen the `if:`, add `workflow_dispatch:`,
     update comments
-[ ] .github/workflows/prepare-release.yml: widen the negated `if:`, update
+[x] .github/workflows/prepare-release.yml: widen the negated `if:`, update
     comments
-[ ] docs/releasing.md: replace the "Don't retitle" warning box with the
+[x] docs/releasing.md: replace the "Don't retitle" warning box with the
     accurate account + recovery procedure
-[ ] Validate YAML syntax; confirm CI's own workflow-lint (if any) is green
-[ ] Apply `no release notes` label to the PR (or confirm CI's change-file
-    check accepts it)
+[x] Validate YAML syntax; confirm CI's own workflow-lint (if any) is green
+[x] Apply `no release notes` label to the PR
 
 ## Summary of Changes
+
+Fixed the actual bug from PR #381's silently-skipped release, and hardened
+against recurrence:
+
+- `internal/repocheck`'s `TestDocPathsAreLinkedNotNamed` caught a bare
+  `CHANGELOG.md` path reference introduced by the new docs/releasing.md
+  prose — fixed by hyperlinking a descriptive phrase per this repo's own
+  markdown convention, exactly the kind of thing that check exists to
+  catch.
+- Verified with `actionlint` (both edited workflow files clean) and the
+  full local gate (`go build`, `go test`, `go vet`, `gofmt`,
+  `golangci-lint`) — no Go files were touched, so these are unaffected/
+  clean by construction, run anyway per the project's standing quality-gate
+  rule.
+- Deliberately did NOT switch `release.yml` to a `pull_request` trigger —
+  investigated and rejected after confirming via the GitHub API that the
+  `knope-release` environment's branch policy would refuse it. Recorded as
+  a locked decision above so it isn't relitigated without re-checking that
+  policy first.
