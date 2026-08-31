@@ -272,3 +272,34 @@ func TestResolveSearchesUpwardFromTheAppDir(t *testing.T) {
 		t.Errorf("Resolve from a subdirectory = %q, want the enclosing repo's tag found (3.0.0, and untracked dirs are not dirt)", got)
 	}
 }
+
+func TestHasAnyTagNotARepository(t *testing.T) {
+	notARepo := t.TempDir()
+	if got := HasAnyTag(notARepo); got {
+		t.Errorf("HasAnyTag on a non-git directory = %v, want false", got)
+	}
+}
+
+func TestHasAnyTagNoTags(t *testing.T) {
+	f := newFixtureRepo(t)
+	f.commit()
+	if got := HasAnyTag(f.dir); got {
+		t.Errorf("HasAnyTag on a repo with no tags = %v, want false", got)
+	}
+}
+
+func TestHasAnyTagLightweightTag(t *testing.T) {
+	f := newFixtureRepo(t)
+	f.lightweightTag("v1.0.0", f.commit())
+	if got := HasAnyTag(f.dir); !got {
+		t.Errorf("HasAnyTag on a repo with a lightweight tag = %v, want true", got)
+	}
+}
+
+func TestHasAnyTagAnnotatedTag(t *testing.T) {
+	f := newFixtureRepo(t)
+	f.annotatedTag("v1.0.0", f.commit())
+	if got := HasAnyTag(f.dir); !got {
+		t.Errorf("HasAnyTag on a repo with an annotated tag = %v, want true", got)
+	}
+}

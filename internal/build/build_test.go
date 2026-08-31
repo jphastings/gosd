@@ -217,3 +217,29 @@ func TestAppGoBuildArgsOrdersEveryFlagBeforePackagePath(t *testing.T) {
 		t.Errorf("appGoBuildArgs(all opts) = %v, want %v", got, want)
 	}
 }
+
+func TestIsMainPackageDetectsMainPackage(t *testing.T) {
+	if !IsMainPackage("./testdata/hello") {
+		t.Error("IsMainPackage(\"./testdata/hello\") = false, want true")
+	}
+}
+
+func TestIsMainPackageRejectsNonMainPackage(t *testing.T) {
+	if IsMainPackage("./testdata/notmain") {
+		t.Error("IsMainPackage(\"./testdata/notmain\") = true, want false")
+	}
+}
+
+func TestIsMainPackageReturnsFalseForNonexistentPackage(t *testing.T) {
+	if IsMainPackage("./testdata/doesnotexist") {
+		t.Error("IsMainPackage(\"./testdata/doesnotexist\") = true, want false")
+	}
+}
+
+func TestIsMainPackageRecognizesLinuxOnlyMainPackage(t *testing.T) {
+	// Verify that a Linux-only main package is recognized even on non-Linux hosts,
+	// since IsMainPackage inspects under targetGOOS (same as CrossCompile).
+	if !IsMainPackage("./testdata/linuxonly") {
+		t.Error("IsMainPackage(\"./testdata/linuxonly\") = false, want true")
+	}
+}

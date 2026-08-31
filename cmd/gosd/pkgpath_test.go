@@ -33,7 +33,7 @@ func toolexecPayloadArg(t *testing.T) (arg, marker string) {
 // take a package path shared the hole, so both must refuse it, and neither
 // may have run the payload by the time it does.
 func TestFlagShapedPackagePathIsRejected(t *testing.T) {
-	for _, subcommand := range []string{"build", "run"} {
+	for _, subcommand := range []string{"build", "run", "init"} {
 		t.Run(subcommand, func(t *testing.T) {
 			arg, marker := toolexecPayloadArg(t)
 
