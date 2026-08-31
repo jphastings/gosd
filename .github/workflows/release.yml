@@ -9,16 +9,31 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual recovery lever (docs/releasing.md): dispatch against main when a
+  # push's merge commit message doesn't match the guard below and the
+  # release job gets silently skipped instead of running. Deliberately kept
+  # on the same push-branch-restricted trigger as prepare-release.yml
+  # rather than switching to a pull_request trigger: the knope-release
+  # environment's deployment branch policy is restricted to main, and a
+  # pull_request-triggered run's github.ref is refs/pull/<N>/merge, not
+  # refs/heads/main — it would be refused the environment's secrets
+  # outright (verified against the repo's actual environment config).
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   release:
-    # Exact complement of prepare-release.yml's guard: only the release PR's
-    # merge commit carries "chore: prepare release" (its title) in the
-    # message body. Retitling the release PR would break this routing — see
-    # docs/releasing.md.
-    if: "contains(github.event.head_commit.message, 'chore: prepare release')"
+    # Exact complement of prepare-release.yml's guard. GitHub's merge-commit
+    # message for the release PR isn't reliably one fixed string: a squash
+    # merge uses the PR title ("chore: prepare release"), but the default
+    # "Create a merge commit" button writes only the auto-generated subject
+    # "Merge pull request #N from jphastings/knope/release" and does NOT
+    # fold the PR title into the message — the release job silently skipped
+    # exactly this way merging PR #381 (bean gosd-qls9). Match both forms;
+    # retitling the release PR OR renaming its branch would each break this
+    # routing — see docs/releasing.md.
+    if: "github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, 'chore: prepare release') || contains(github.event.head_commit.message, 'knope/release')"
     runs-on: ubuntu-latest
     environment: knope-release
     steps:

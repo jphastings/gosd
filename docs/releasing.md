@@ -36,10 +36,23 @@ ordering discipline" below.
 > No such file or directory`. When adding a package to `knope.toml`, commit
 > its changelog file in the same PR, even if it is only a heading.
 
-> **Don't retitle the release PR.** Its merge commit's message — carrying
-> the "chore: prepare release" title — is what routes the next push to
-> `main` to the release workflow instead of the prepare workflow. A renamed
-> release PR merges without releasing anything.
+> **The release routing depends on the release PR's merge commit message,
+> and GitHub doesn't always put the PR title there.** `release.yml`/
+> `prepare-release.yml` route on whether that message contains either the
+> PR's title ("chore: prepare release") or its source branch name
+> ("knope/release") — the second check exists because GitHub's default
+> "Create a merge commit" button writes only the auto-generated subject
+> "Merge pull request #N from jphastings/knope/release", never the PR
+> title, so title-only matching missed it and silently skipped the release
+> (PR #381, bean gosd-qls9). Don't retitle the release PR or rename its
+> branch — either one breaks both matches at once. **If a release goes
+> missing**: compare [the changelog](../CHANGELOG.md)'s top entry / `go.mod`'s version
+> comment on `main` against `git tag -l 'v*'` — if `main` shows a version
+> with no matching `vX.Y.Z`/`gosd/vX.Y.Z` tag, the release job was skipped.
+> Recover by dispatching `release.yml` manually (Actions tab → Release →
+> Run workflow, against `main`; or `gh workflow run release.yml --ref
+> main`) rather than an empty commit — it runs `knope release` against
+> whatever's already prepared on `main`, so nothing needs re-preparing.
 
 ## Change-file format
 

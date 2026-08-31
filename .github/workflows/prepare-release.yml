@@ -15,10 +15,18 @@ permissions: {}
 
 jobs:
   prepare-release:
-    # Exact complement of release.yml's guard: the release PR's merge commit
-    # carries its title "chore: prepare release" in the message body, so
-    # every push to main runs exactly one of the two workflows.
-    if: "!contains(github.event.head_commit.message, 'chore: prepare release')"
+    # Exact complement of release.yml's push-triggered guard (its
+    # workflow_dispatch trigger has no push counterpart here, so it isn't
+    # part of this complement). Widened the same way release.yml's guard
+    # is: a release-PR merge commit's message carries either the PR's title
+    # ("chore: prepare release", on a squash merge) or the default
+    # merge-commit subject's branch name ("knope/release", on the default
+    # "Create a merge commit" button) — see release.yml and
+    # docs/releasing.md. This guard is belt-and-suspenders, not the real
+    # safety net: the "Check for pending change files" step below already
+    # no-ops cleanly when nothing's pending, which is what actually
+    # protects a false-negative match here.
+    if: "!(contains(github.event.head_commit.message, 'chore: prepare release') || contains(github.event.head_commit.message, 'knope/release'))"
     runs-on: ubuntu-latest
     environment: knope-release
     steps:
