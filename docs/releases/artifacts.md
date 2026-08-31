@@ -12,6 +12,18 @@ the artifacts documentation for the full tag-first, bump-second procedure.
 
 This file is maintained by knope from the change files in `.changeset/`; new
 versions are added below this heading.
+## 0.10.4 (2026-08-31)
+
+### Features
+
+#### Turing RK1 kernel and U-Boot are now published in artifacts releases
+
+The Turing RK1's compiled kernel and mainline U-Boot (idbloader + FIT with
+BL31, rkbin DDR-init blobs) are now attached to artifacts releases,
+alongside every other board's. The board itself isn't buildable via `gosd
+build` yet — that's a separate, later step — this just gets its compiled
+output into a real release for the first time.
+
 ## 0.10.3 (2026-08-20)
 
 ### Features
