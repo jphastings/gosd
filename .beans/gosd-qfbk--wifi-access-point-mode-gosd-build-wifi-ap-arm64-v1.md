@@ -1,10 +1,11 @@
 ---
 # gosd-qfbk
-title: 'WiFi Access Point mode: gosd build --wifi-ap (arm64 v1)'
+title: 'WiFi Access Point mode: gosd build --wifi-ap (arm64 + armv6)'
 status: todo
 type: epic
+priority: normal
 created_at: 2026-08-31T05:34:56Z
-updated_at: 2026-08-31T05:34:56Z
+updated_at: 2026-08-31T06:38:40Z
 ---
 
 JP request (2026-08-31, planning session): a gosd device should be able to
@@ -36,29 +37,40 @@ beans; plan session record:
    `runOnce`/backoff/logwriter shape), and runs the DHCP server.
 2. **This AMENDS the "mDNS is the only network listener in gosd-init" locked
    decision** (does not overturn it) — see the exact proposed CLAUDE.md
-   wording in bean 5. `gosd build --wifi-ap` lets gosd-init supervise a
-   GoSD-compiled hostapd binary (the same gosd-oyhi carve-out already granted
-   cloudflared/tailscale-funnel) plus an in-process DHCPv4 server
-   (`insomniacslk/dhcp/dhcpv4/server4`, already a direct dependency, unused
-   subpackage). Both bind exclusively to the WiFi interface this feature puts
-   into AP mode — never to any interface carrying a route to the internet or
-   to another network segment. v1 does NOT enable hostapd's own
-   `ctrl_interface` (a local unix socket, not network-reachable) — gosd-init
-   only start/stop/restart-supervises the process, no IPC needed — so the
-   only new listener surface this amendment authorizes is the DHCP server.
-3. **IP range `10.66.0.1/24`**, device at `.1`, DHCP pool `.10`–`.200`.
-   Deliberately distinct from bean gosd-30jz's planned `10.55.0.1/24` (USB
-   Ethernet gadget) so the two can never collide if both are ever baked on
-   one board.
+   wording drafted in bean gosd-auvn. `gosd build --wifi-ap` lets gosd-init
+   supervise a GoSD-compiled hostapd binary (the same gosd-oyhi carve-out
+   already granted cloudflared/tailscale-funnel) plus an in-process DHCPv4
+   server (`insomniacslk/dhcp/dhcpv4/server4`, already a direct dependency,
+   unused subpackage). Both bind exclusively to the WiFi interface this
+   feature puts into AP mode — never to any interface carrying a route to the
+   internet or to another network segment. v1 does NOT enable hostapd's own
+   `ctrl_interface` — see decision 12 and follow-up bean gosd-rb4u.
+3. **IP range `10.66.0.1/24`**, device at `.1`, DHCP pool `.10`–`.200`
+   (pool size confirmed by JP 2026-08-31). Deliberately distinct from bean
+   gosd-30jz's planned `10.55.0.1/24` (USB Ethernet gadget) so the two can
+   never collide if both are ever baked on one board.
 4. **AP and station mode are mutually exclusive on one physical interface in
-   v1.** If `config/wifi-ap/ssid` is set and hostapd was baked, `wifiap.Run`
-   runs instead of `wifiup.Run` on the WiFi interface — no virtual-interface/
+   v1** (confirmed by JP 2026-08-31). If the AP is enabled, `wifiap.Run` runs
+   instead of `wifiup.Run` on the WiFi interface — no virtual-interface/
    concurrent-mode juggling; hostapd puts the physical interface into AP mode
    itself. A dual-Ethernet+WiFi board (e.g. pi-3b) can still host AP-on-WiFi
    while using Ethernet as uplink today without any concurrency work.
-5. **v1 scope: arm64 boards only**, mirroring cloudflared's own initial
-   scoping and sidestepping armv6/pi-zero-w's existing WiFi bug history
-   (gosd-6nl2).
+5. **Scope: arm64 AND armv6 (pi-zero-w included)** — revised 2026-08-31 from
+   an initial arm64-only proposal, which had been borrowed from cloudflared's
+   scoping without checking whether the reasoning transferred. It does not:
+   cloudflared excludes armv6 because its *official prebuilt* binary is
+   GOARM=7 and faults on armv6 (gosd-aur4), whereas GoSD compiles hostapd
+   itself at whatever GOARM level it chooses. Nor does pi-zero-w's WiFi bug
+   history disqualify it — bean gosd-6nl2 was phantom `mac80211_hwsim`
+   interfaces plus a missing `CONFIG_MMC_SDHCI_IPROC`, fixed and
+   bench-verified 2026-07-26, and it *proved* the BCM43430 firmware does the
+   offloaded WPA2 handshake. BCM43430 + `brcmfmac` + `nl80211` + hostapd is a
+   well-documented AP configuration. Known brcmfmac AP-mode caveats to
+   respect in the generated `hostapd.conf`: no `ieee80211w`/MFP support in AP
+   mode, and 20MHz-only (skip 40MHz `ht_capab`) — neither of which this
+   feature needs. Remaining armv6 risk is ordinary build verification, not
+   architecture: bean gosd-hawd must prove the cross-compile, bean gosd-k6rr
+   must bench both boards.
 6. **`dhcpserver` (new package) is built generically** — range-based, not
    single-lease — so bean gosd-30jz can reuse it later as a degenerate
    one-address case. This epic does not wire gosd-30jz itself.
@@ -75,33 +87,64 @@ beans; plan session record:
 9. **Secret handling mirrors the existing WiFi-STA pattern exactly** — the
    AP passphrase gets a redaction rule alongside `boot/sequence.go`'s
    existing one; SSID stays unredacted (broadcast on purpose), same as STA.
-10. **hostapd joins the `artifacts/vX.Y.Z` compiled-and-redistributed
-    channel** (like the kernel and U-Boot), not the pinned-URL-and-sha256
-    third-party-blob channel — no prebuilt static hostapd exists for these
-    targets. Needs a small CLAUDE.md wording update alongside decision 2's
-    amendment (bean 5).
+10. **hostapd is BSD-3-clause, NOT GPL — corrected 2026-08-31.** An earlier
+    version of this bean called it GPL-2 and planned to treat redistribution
+    "the same as the kernel"; that was wrong and the framing is dropped.
+    hostapd/wpa_supplicant were dual BSD/GPLv2 historically but the project
+    **removed the GPLv2 option on 2012-02-11** and has shipped BSD-3-clause
+    only since (upstream `COPYING`: "As of February 11, 2012, the project has
+    chosen to use only the BSD license option for future distribution... any
+    distribution of this software after February 11, 2012 is no longer under
+    the GPL v2 option"; files still carrying GPLv2 pointers keep them "only
+    for attribution purposes"). Obligations are therefore attribution-only —
+    reproduce the copyright notice, license text and disclaimer with the
+    binary; no source-disclosure or copyleft requirement, and nothing that
+    touches GoSD's or an app's own licensing. Bundle hostapd's license text
+    with the artifact and keep recording source repo/commit/config as good
+    practice (reproducibility), not as GPL provenance. **Separate real
+    obligation to check in bean gosd-hawd:** hostapd's `nl80211` driver
+    normally links `libnl`, which is **LGPL-2.1** — a fully static musl build
+    statically links it, and LGPL-2.1 §6 then requires recipients be able to
+    relink against a modified libnl. Confirm whether a no-`libnl` build is
+    viable; if not, ship libnl's notice + relinkable objects/source
+    separately from hostapd's BSD notice. (Report:
+    scratchpad `gpl-license-report.md`, 2026-08-31.)
+11. **The AP's boot state is build-configurable, and the app can toggle it at
+    runtime through a new public Go package** (JP, 2026-08-31). Three parts:
+    (a) `gosd build --wifi-ap` accepts a default boot state
+    (enabled/disabled) via flag/`gosd.toml`; (b) the SSID defaults to one
+    derived from the device hostname when not set via flag/`gosd.toml`/the
+    config tree, so a baked image is usable with zero configuration; (c) a
+    **new top-level public package** (`wifiap/`, app-facing `Enable()`/
+    `Disable()`/`Status()`) lets the app turn the AP on and off
+    programmatically. That makes it **semver-relevant public API surface** —
+    CLAUDE.md's public-API bullet must gain it (bean gosd-auvn).
+    **Mechanism:** the public package writes a desired-state file under
+    `/run/gosd/wifiap/`, which gosd-init's supervisor watches and reconciles
+    — matching the existing cross-process marker-file idiom
+    (`/run/gosd/network-up`, `/run/gosd/time-synced`) and adding no IPC
+    socket, no listener, and no new interactive surface. Naming note: the
+    public package and gosd-init's internal one would share the short name
+    `wifiap` at different import paths; if that proves confusing during
+    implementation, rename the *internal* one (it is internal, so renaming
+    costs nothing).
+12. **No app-visible connected-client list in v1** (confirmed by JP
+    2026-08-31), and that is expected to be follow-up work rather than a
+    permanent no — tracked as bean **gosd-rb4u**. It needs hostapd's
+    `ctrl_interface`, which is a local unix-domain socket (not
+    network-reachable) but still a deliberate widening of decision 2's
+    narrow amendment, so it gets its own decision rather than riding along.
 
-## Open questions (defaults chosen above, flagged as negotiable — revisit if
-they turn out wrong rather than silently relitigating)
+## Bench status
 
-1. AP+STA concurrency: v1 exclusive per decision 4. A WiFi-only board can't
-   do both without per-chip concurrent-interface support (unverified).
-2. hostapd's GPL-2 license in the `artifacts/vX.Y.Z` redistribution channel —
-   architecturally identical to the kernel's already-solved GPL story, but a
-   new *kind* of artifact in that channel (not a kernel or bootloader).
-3. Default-SSID auto-enable vs. explicit opt-in: defaults to "empty SSID =
-   inert" (mirrors STA), to minimize the new listener's exposure window.
-4. arm64-only v1 (decision 5) vs. including armv6 from day one.
-5. Per-board hardware support is genuinely unverified and may simply fail on
-   some WiFi chips — unverifiable in CI (qemu-virt has no WiFi hardware),
-   bench-only; "not supported on this board" is a legitimate outcome.
-6. DHCP pool sizing (`.10`–`.200` proposed) — a genuinely multi-client
-   subnet, unlike gosd-30jz's single-host USB case.
-7. No app-visible "who's connected" list in v1 (needs hostapd
-   `ctrl_interface`, deliberately deferred) — confirm acceptable if the
-   product story is a pairing/provisioning flow.
+Nothing is on the bench as of 2026-08-31 (JP) — hardware verification (bean
+gosd-k6rr) is expected to happen later. Beans 1-5 are desk/CI work and are
+not blocked by this; per this project's convention the epic can close on
+shipped, CI-proven code with gosd-k6rr still open and re-parented.
 
 ## Child-bean order
 
-hostapd build rail → dhcpserver package → wifiap package → build-time wiring
-→ main.go wiring + CLAUDE.md amendment + docs → bench verification.
+hostapd build rail → dhcpserver package → wifiap package (+ public control
+package) → build-time wiring → main.go wiring + CLAUDE.md amendment + docs →
+bench verification. Follow-up (not blocking): gosd-rb4u, connected-client
+visibility.
