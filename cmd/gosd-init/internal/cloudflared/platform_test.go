@@ -104,3 +104,46 @@ func TestStartProcessReturnsErrorForMissingBinary(t *testing.T) {
 		t.Fatal("StartProcess succeeded launching a nonexistent binary, want an error")
 	}
 }
+
+// TestKillTerminatesARealProcess exercises the real, SIGTERM-backed Kill (no
+// fakes): a long-sleeping child, sent SIGTERM via Kill, must exit promptly
+// rather than run to completion.
+func TestKillTerminatesARealProcess(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on PATH; can't exercise a real child process")
+	}
+
+	pid, err := StartProcess(sh, []string{"-c", "trap 'exit 0' TERM; sleep 30 & wait"}, nil, &syncBuffer{}, &syncBuffer{})
+	if err != nil {
+		t.Fatalf("StartProcess: %v", err)
+	}
+
+	if err := Kill(pid); err != nil {
+		t.Fatalf("Kill(%d): %v", pid, err)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("FindProcess(%d): %v", pid, err)
+	}
+	done := make(chan struct{})
+	go func() { _, _ = proc.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child did not exit within 5s of Kill; SIGTERM was not delivered")
+	}
+}
+
+func TestKillReturnsErrorForNoSuchProcess(t *testing.T) {
+	// A pid that has already exited and been reaped: os.FindProcess itself
+	// always succeeds on Unix, so the failure surfaces from Signal.
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Skipf("could not run a throwaway process to obtain a dead pid: %v", err)
+	}
+	if err := Kill(cmd.Process.Pid); err == nil {
+		t.Fatal("Kill succeeded against an already-reaped pid, want an error")
+	}
+}

@@ -1,8 +1,11 @@
 package cloudflared
 
 import (
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"syscall"
 )
 
 // StartProcess is the real, os/exec-backed implementation of Deps.StartProcess:
@@ -27,4 +30,22 @@ func StartProcess(path string, args, env []string, stdout, stderr io.Writer) (in
 		return 0, err
 	}
 	return cmd.Process.Pid, nil
+}
+
+// Kill is the real implementation of Deps.Kill: it sends pid a SIGTERM,
+// asking cloudflared to shut down on its own terms. Used only for a
+// deliberate restart (Deps.RestartSignal firing, see supervise) — a network
+// blip or crash that ends cloudflared on its own is observed entirely
+// through Deps.Wait, never this. Like StartProcess, this needs no "linux"
+// build tag: os.Process.Signal(syscall.SIGTERM) works identically on macOS,
+// so it compiles and runs in tests there too.
+func Kill(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("finding pid %d: %w", pid, err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signaling pid %d: %w", pid, err)
+	}
+	return nil
 }

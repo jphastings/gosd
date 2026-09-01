@@ -170,15 +170,19 @@ type startCall struct {
 	stdout, stderr io.Writer
 }
 
-// fakeProcesses scripts Deps.StartProcess/Deps.Wait: each Start call is
-// assigned the next pid (starting at 1), and Wait for that pid blocks on a
-// per-pid channel until the test delivers an exit via exit().
+// fakeProcesses scripts Deps.StartProcess/Deps.Wait/Deps.Kill: each Start
+// call is assigned the next pid (starting at 1), and Wait for that pid
+// blocks on a per-pid channel until the test delivers an exit via exit().
+// Kill only records which pid it was called with — a test still has to
+// deliver that pid's exit via exit(), mirroring how a real SIGTERM only asks
+// a process to end.
 type fakeProcesses struct {
 	mu       sync.Mutex
 	calls    []startCall
 	nextPID  int
 	exits    map[int]chan waitResult
 	startErr error
+	kills    []int
 }
 
 type waitResult struct {
@@ -236,6 +240,38 @@ func (f *fakeProcesses) lastCall() startCall {
 func waitForStartCount(p *fakeProcesses, n int) bool {
 	deadline := time.Now().Add(2 * time.Second)
 	for p.startCount() < n {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
+func (f *fakeProcesses) Kill(pid int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.kills = append(f.kills, pid)
+	return nil
+}
+
+func (f *fakeProcesses) killCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.kills)
+}
+
+func (f *fakeProcesses) lastKilledPID() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.kills[len(f.kills)-1]
+}
+
+// waitForKillCount polls (using real, short sleeps) until p has recorded at
+// least n Kill calls.
+func waitForKillCount(p *fakeProcesses, n int) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for p.killCount() < n {
 		if time.Now().After(deadline) {
 			return false
 		}
