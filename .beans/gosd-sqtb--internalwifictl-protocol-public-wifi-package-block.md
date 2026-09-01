@@ -1,11 +1,11 @@
 ---
 # gosd-sqtb
 title: internal/wifictl protocol + public wifi/ package (blocking Join)
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-09-01T15:28:18Z
-updated_at: 2026-09-01T15:28:29Z
+updated_at: 2026-09-01T15:57:59Z
 parent: gosd-ojbm
 ---
 
@@ -34,3 +34,39 @@ Shared by the public package (this bean) and the wifiup reconciler (sibling bean
 - Branch `bean/gosd-sqtb-wifi-join-api` from main. PR titled for the public API; "Part of gosd-ojbm" in the body. Needs a `.changeset/*.md` change file (minor — new public package; format in docs/releasing.md).
 - Run every quality gate in CLAUDE.md (both golangci-lint invocations included) before pushing; foreground `gh pr checks <n> --watch --interval 30` after.
 - Do not merge the PR — JP reviews and merges.
+
+## Summary of Changes
+
+Delivered both packages exactly as specced, no gosd-init changes.
+
+- `internal/wifictl`: `Dir = "/run/gosd/wifi"`, `Request`/`Status` types with
+  `State` (`Joining`/`Joined`/`Failed`, `Terminal()` helper), `WriteRequest`/
+  `WriteStatus` (temp-file-in-same-dir + rename, file 0600, dir created
+  0700), and `ReadRequest`/`ReadStatus` returning `(value, ok, err)` so a
+  caller can tell "absent" (`ok=false, err=nil`) from "unparseable"
+  (`err!=nil`) and decide policy itself — deliberately not the
+  drop-silently behaviour of `faultdrop`/`secretreg`, since the bean called
+  for the two sides to disagree on what to do with a bad file.
+- `wifi/`: `Join(ctx, Credentials{SSID, Passphrase}, Options{Persist})
+  error`, docstringed throughout. Validates SSID non-empty, registers a
+  non-empty passphrase via `fault.RegisterSecretString` before writing
+  anything, writes a crypto/rand-hex request id, then polls `status.json`
+  every 500ms (configurable per-instance for tests) until a terminal status
+  carries that id. `device_gosd.go`/`device_other.go` mirror `fault/`'s
+  `gosd`-tag pair exactly (not `linux`/`!linux`); off the tag, `Join`
+  returns an immediate actionable error and touches no filesystem. Tests use
+  an unexported `joiner` type (mirroring `fault`'s `reporter` test seam) so
+  the polling/matching logic runs on any OS regardless of build tag, plus a
+  fake-reconciler goroutine driving success, failure-reason-surfaced,
+  ctx-cancellation, stale-id-ignored, and off-device cases.
+- `.changeset/wifi-join-api.md` (minor): scoped to the package/API
+  introduced here — deliberately doesn't claim persistence or the
+  automatic ingress reconnect, since those land with the dependent beans
+  (gosd-uy4x, gosd-t5zb) and don't work yet on `main` alone.
+
+All CLAUDE.md quality gates pass: `go test ./...`, `go vet ./...`,
+`gofmt -l .` (clean), `golangci-lint run ./...` and
+`GOOS=linux golangci-lint run ./...` (0 issues both).
+
+Nothing here relitigates any epic locked decision; none proved wrong in
+practice.
