@@ -34,6 +34,22 @@ func newTestDeps(clock *fakeClock, wifi *fakeWifiClient, links *fakeLinks, dhcp 
 	return deps, marked, cleared
 }
 
+// waitForLog polls until log contains substr or a generous deadline passes,
+// used by the three tests below: with decision 5's restructure Run no
+// longer returns immediately when there's nothing for the association loop
+// to do (the watcher, if any, still runs), so these can no longer just call
+// Run synchronously and check its log afterward.
+func waitForLog(t *testing.T, log *testLog, substr string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !log.contains(substr) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !log.contains(substr) {
+		t.Fatalf("log missing %q: %v", substr, log.snapshot())
+	}
+}
+
 func TestRunSkipsEverythingWhenNoCredentialsConfigured(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
 	wifi := &fakeWifiClient{}
@@ -42,13 +58,13 @@ func TestRunSkipsEverythingWhenNoCredentialsConfigured(t *testing.T) {
 	log := &testLog{}
 	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{ok: false}, log)
 
-	Run(deps, Options{})
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
 
+	waitForLog(t, log, "no WiFi credentials configured")
 	if wifi.interfacesCalls != 0 {
 		t.Errorf("Interfaces() called %d times, want 0 (no credentials configured)", wifi.interfacesCalls)
-	}
-	if !log.contains("no WiFi credentials configured") {
-		t.Errorf("log missing skip message: %v", log.snapshot())
 	}
 }
 
@@ -60,13 +76,13 @@ func TestRunLogsAndSkipsOnCredentialError(t *testing.T) {
 	log := &testLog{}
 	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{err: errBoom}, log)
 
-	Run(deps, Options{})
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
 
+	waitForLog(t, log, "reading WiFi credentials failed")
 	if wifi.interfacesCalls != 0 {
 		t.Errorf("Interfaces() called %d times, want 0 (credential error)", wifi.interfacesCalls)
-	}
-	if !log.contains("reading WiFi credentials failed") {
-		t.Errorf("log missing credential-error message: %v", log.snapshot())
 	}
 }
 
@@ -79,13 +95,13 @@ func TestRunSkipsUnsupportedSecurity(t *testing.T) {
 	creds := Credentials{SSID: "enterprise-net", Unsupported: "802.1X/EAP"}
 	deps, _, _ := newTestDeps(clock, wifi, links, dhcp, fakeCredentials{creds: creds, ok: true}, log)
 
-	Run(deps, Options{})
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop})
 
+	waitForLog(t, log, "802.1X/EAP")
 	if wifi.interfacesCalls != 0 {
 		t.Errorf("Interfaces() called %d times, want 0 (unsupported security)", wifi.interfacesCalls)
-	}
-	if !log.contains("802.1X/EAP") {
-		t.Errorf("log missing unsupported-security message: %v", log.snapshot())
 	}
 }
 

@@ -51,6 +51,27 @@ type Deps struct {
 	MarkNetworkUp  func(iface string) error
 	ClearNetworkUp func(iface string) error
 
+	// RegisterSecret registers a runtime join request's passphrase for
+	// crash-report redaction the moment the request is read, alongside
+	// boot/sequence.go's existing STA rule (epic gosd-ojbm decision 7) —
+	// belt and suspenders for a request that reached /run/gosd/wifi
+	// without going through wifi.Join's own fault.RegisterSecretString
+	// call. nil skips registration (tests that don't care).
+	RegisterSecret func(secret, label string)
+
+	// Persist writes a successful runtime join's ssid/passphrase into the
+	// card's config tree, via the same write path cloud-init seed
+	// consumption uses (epic decision 3). Called only when the request
+	// asked for it (Persist: true) and only after the join succeeds — never
+	// on failure. nil means persistence is unavailable; a request asking
+	// for it logs a failure and still reports the join itself as joined.
+	Persist func(ssid, passphrase string) error
+
+	// RestartIngress fires the ingress restart signal(s) after every
+	// successful runtime join, including a same-SSID one (epic decision
+	// 4). nil means no ingress is wired on this image.
+	RestartIngress func()
+
 	Log func(format string, args ...any)
 }
 
@@ -60,6 +81,17 @@ type Options struct {
 	// this nil so it runs for the life of the process, as PID 1 requires;
 	// tests set it to bound the otherwise-infinite loops.
 	Stop <-chan struct{}
+
+	// RequestDir is where the runtime-join request/status protocol
+	// (internal/wifictl) lives. Empty disables the watcher entirely — the
+	// zero value every pre-existing test gets, so tests that don't
+	// exercise runtime join never touch a filesystem for it; production
+	// wires this to wifictl.Dir (epic gosd-ojbm decision 5).
+	RequestDir string
+
+	// RequestPollInterval overrides the watcher's poll cadence. Zero uses
+	// DefaultRequestPollInterval.
+	RequestPollInterval time.Duration
 }
 
 // Run waits for credentials and a wlan interface, then associates and
@@ -68,38 +100,70 @@ type Options struct {
 // blocks /app's start: like netup.Run, it's meant to be launched in its
 // own goroutine.
 //
-// Run does nothing at all — not even waiting for an interface — when no
-// WiFi credentials are configured (empty SSID), so an Ethernet-only board
-// never spins a WiFi retry loop.
+// The runtime-join request watcher (see watchRequests) always runs
+// alongside the association loop whenever opts.RequestDir is set — even
+// when no WiFi credentials are configured at boot, and even when deps.Wifi
+// is nil (no WiFi hardware/driver at all) — so an app's wifi.Join call
+// gets an honest joined/failed answer rather than a silent hang (epic
+// gosd-ojbm decisions 5 and 8). With deps.Wifi nil, Run does nothing beyond
+// running that watcher, which fails every request "no WiFi interface".
 func Run(deps Deps, opts Options) {
-	creds, ok, err := deps.Credentials.Credentials()
-	if err != nil {
+	state := newCredState()
+
+	if creds, ok, err := deps.Credentials.Credentials(); err != nil {
 		deps.Log("reading WiFi credentials failed: %v", err)
-		return
-	}
-	if !ok {
-		deps.Log("no WiFi credentials configured; skipping WiFi bring-up")
-		return
-	}
-	if creds.Unsupported != "" {
+	} else if ok && creds.Unsupported != "" {
 		deps.Log("WiFi network %q requires %s, which gosd-init does not support (WPA2-PSK and open networks only); skipping WiFi bring-up", creds.SSID, creds.Unsupported)
+	} else if ok {
+		state.set(creds, nil)
+	} else {
+		deps.Log("no WiFi credentials configured; the runtime join watcher is still running")
+	}
+
+	if opts.RequestDir != "" {
+		go watchRequests(deps, opts, state)
+	}
+
+	if deps.Wifi == nil {
+		deps.Log("no WiFi interface available; skipping WiFi bring-up")
+		<-opts.Stop
 		return
 	}
 
-	ifi, ok := waitForInterface(deps, opts.Stop)
-	if !ok {
-		return // opts.Stop closed before a wlan interface appeared.
-	}
-	if !creds.Open {
-		ifi = skipWithoutOffloadedHandshake(deps, ifi)
-	}
-	deps.Log("using WiFi interface %s", ifi.Name)
+	for {
+		creds, ok, outcome, changed := state.current()
+		if !ok {
+			select {
+			case <-opts.Stop:
+				return
+			case <-changed:
+				continue
+			}
+		}
 
-	if err := deps.Links.SetUp(ifi.Name); err != nil {
-		deps.Log("bringing up %s failed: %v", ifi.Name, err)
-	}
+		ifi, ok := waitForInterface(deps, opts.Stop)
+		if !ok {
+			return // opts.Stop closed before a wlan interface appeared.
+		}
+		if !creds.Open {
+			ifi = skipWithoutOffloadedHandshake(deps, ifi)
+		}
+		deps.Log("using WiFi interface %s", ifi.Name)
 
-	runAssociationLoop(deps, ifi, creds, opts.Stop)
+		if err := deps.Links.SetUp(ifi.Name); err != nil {
+			deps.Log("bringing up %s failed: %v", ifi.Name, err)
+		}
+
+		runAssociationLoop(deps, ifi, creds, mergedStop(opts.Stop, changed), outcome)
+
+		select {
+		case <-opts.Stop:
+			return
+		default:
+			// changed fired: a runtime join request replaced the current
+			// creds. Loop again and pick them up (epic decision 6).
+		}
+	}
 }
 
 // waitForInterface polls for a wlan-station interface with backoff,
@@ -191,7 +255,27 @@ func skipWithoutOffloadedHandshake(deps Deps, picked Interface) Interface {
 // forever with backoff on failure (the AP may be down at boot), and runs
 // DHCP for as long as the association holds. It returns only when stop
 // is closed.
-func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan struct{}) {
+//
+// firstOutcome, if non-nil, is called exactly once — after the FIRST
+// associate attempt this call makes settles, joined or not — with the
+// joined result and, on failure, the most precise reason available. It
+// exists for the runtime-join reconciler (see handleRequest): Run's own
+// per-generation stop channel closes and this call returns whenever a new
+// request replaces the current creds, so "first attempt of this call" is
+// exactly "the attempt the reconciler is reporting a status for" (epic
+// gosd-ojbm decision 6 — after that one bounded attempt, the credentials
+// stay current and this loop's ordinary retry/reconnect logic owns them
+// silently, which is why firstOutcome fires at most once per call).
+func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan struct{}, firstOutcome func(joined bool, reason string)) {
+	report := firstOutcome
+	notify := func(joined bool, reason string) {
+		if report == nil {
+			return
+		}
+		report(joined, reason)
+		report = nil
+	}
+
 	watcher, err := deps.Wifi.WatchDisconnects(ifi)
 	if err != nil {
 		deps.Log("subscribing to %s disconnect events failed: %v; association losses will be logged without a reason code", ifi.Name, err)
@@ -209,6 +293,7 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 		}
 
 		if err := associate(deps, ifi, creds); err != nil {
+			notify(false, err.Error())
 			delay := backoff.Next()
 			deps.Log("associating %s with %q failed: %v; retrying in %s", ifi.Name, creds.SSID, err, delay)
 			select {
@@ -238,10 +323,24 @@ func runAssociationLoop(deps Deps, ifi Interface, creds Credentials, stop <-chan
 			watcher.TakeReason()
 		}
 
-		if associated := runUntilDisconnect(deps, ifi, watcher, stop); associated {
+		// notify(true, "") must fire the MOMENT association is first
+		// confirmed, not after runUntilDisconnect returns: that only
+		// happens once the connection is later LOST (or stop fires) —
+		// watchAssociation keeps polling indefinitely for as long as
+		// Associated keeps reporting true, by design, since its job is to
+		// maintain the connection, not just confirm it once. (notify itself
+		// is already a fire-at-most-once guard, so onFirstAssociated can be
+		// wired straight to it with no extra bookkeeping here.)
+		associated, reason, hasReason := runUntilDisconnect(deps, ifi, watcher, stop, func() { notify(true, "") })
+		if associated {
 			backoff.Reset()
 			continue
 		}
+		reasonText := "connection was never confirmed (the handshake likely failed or timed out)"
+		if hasReason {
+			reasonText = reason.String()
+		}
+		notify(false, reasonText)
 		delay := backoff.Next()
 		deps.Log("%s: %q accepted the connect but association was never confirmed; retrying in %s", ifi.Name, creds.SSID, delay)
 		select {
@@ -283,20 +382,26 @@ func associate(deps Deps, ifi Interface, creds Credentials) error {
 // runUntilDisconnect runs netup.RunDHCP on ifi until either the
 // association is lost (detected by polling WifiClient.Associated) or
 // stop is closed, then returns so runAssociationLoop can reconnect. The
-// returned bool reports whether ifi was ever actually confirmed
+// returned associated bool reports whether ifi was ever actually confirmed
 // associated during the run (see watchAssociation) — false means the
 // CONNECT was acked but the handshake never completed (e.g. a wrong
 // PSK), which the caller must treat like a failed associate rather than
-// resetting its backoff.
-func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, stop <-chan struct{}) bool {
+// resetting its backoff. reason/hasReason carry the most recent nl80211
+// disconnect reason observed before the loss was noticed, if any — used by
+// runAssociationLoop's firstOutcome reporting. onFirstAssociated, if
+// non-nil, is called (from the internal watcher goroutine, synchronized
+// with this function's own return via watchDone below) the moment
+// Associated is FIRST observed true — since this function otherwise only
+// returns on loss or stop, which for a healthy connection can be
+// arbitrarily far in the future.
+func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, stop <-chan struct{}, onFirstAssociated func()) (associated bool, reason DisconnectReason, hasReason bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var associated bool
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		associated = watchAssociation(deps, ifi, watcher, cancel, stop)
+		associated, reason, hasReason = watchAssociation(deps, ifi, watcher, cancel, stop, onFirstAssociated)
 	}()
 
 	ndeps := netup.Deps{
@@ -311,7 +416,7 @@ func runUntilDisconnect(deps Deps, ifi Interface, watcher DisconnectWatcher, sto
 
 	cancel()
 	<-watchDone
-	return associated
+	return associated, reason, hasReason
 }
 
 // associationPollPeriod is how often watchAssociation checks whether ifi
@@ -327,18 +432,24 @@ const associationPollPeriod = 3 * time.Second
 // context in runUntilDisconnect) as soon as it's lost, or when stop
 // closes — either way, disconnect must always be called exactly once
 // before this returns, or runUntilDisconnect would block forever waiting
-// on the now-uncancellable DHCP context. The returned bool reports
-// whether Associated was ever observed true before returning, so
-// runUntilDisconnect can tell a connect that was acked but never
-// actually associated (e.g. a wrong PSK) apart from a genuine, if
-// brief, association.
-func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disconnect context.CancelFunc, stop <-chan struct{}) bool {
-	var associated bool
+// on the now-uncancellable DHCP context. The returned associated bool
+// reports whether Associated was ever observed true before returning, so
+// runUntilDisconnect can tell a connect that was acked but never actually
+// associated (e.g. a wrong PSK) apart from a genuine, if brief,
+// association. reason/hasReason is whatever disconnect reason the watcher
+// most recently observed at the moment the loss was noticed — the same
+// value this function's own log line already renders, now also handed back
+// to the caller. onFirstAssociated, if non-nil, is called exactly once, the
+// moment Associated is first observed true — this function's OWN return
+// only happens on loss or stop, which for a healthy connection may never
+// come, so a caller that needs to know "confirmed at least once" without
+// waiting for that can't rely on the return alone.
+func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disconnect context.CancelFunc, stop <-chan struct{}, onFirstAssociated func()) (associated bool, reason DisconnectReason, hasReason bool) {
 	for {
 		select {
 		case <-stop:
 			disconnect()
-			return associated
+			return associated, reason, hasReason
 		case <-deps.Clock.After(associationPollPeriod):
 		}
 
@@ -348,10 +459,14 @@ func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disco
 			continue
 		}
 		if ok {
+			if !associated && onFirstAssociated != nil {
+				onFirstAssociated()
+			}
 			associated = true
 			continue
 		}
-		if reason, observed := takeReason(watcher); observed {
+		reason, hasReason = takeReason(watcher)
+		if hasReason {
 			deps.Log("%s lost its WiFi association (%s); reconnecting", ifi.Name, reason)
 		} else {
 			deps.Log("%s lost its WiFi association; reconnecting", ifi.Name)
@@ -368,7 +483,7 @@ func watchAssociation(deps Deps, ifi Interface, watcher DisconnectWatcher, disco
 			deps.Log("clearing network-up marker for %s failed: %v", ifi.Name, err)
 		}
 		disconnect()
-		return associated
+		return associated, reason, hasReason
 	}
 }
 

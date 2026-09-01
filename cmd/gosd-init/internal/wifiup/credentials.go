@@ -70,21 +70,36 @@ func (c ConfigCredentials) Credentials() (Credentials, bool, error) {
 	if wifi.SSID == "" {
 		return Credentials{}, false, nil
 	}
-	if wifi.Passphrase == "" {
-		return Credentials{SSID: wifi.SSID, Open: true}, true, nil
+	creds, err := resolveCredentials(wifi.SSID, wifi.Passphrase)
+	if err != nil {
+		return Credentials{}, false, err
+	}
+	return creds, true, nil
+}
+
+// resolveCredentials turns an ssid/passphrase pair into a Credentials,
+// resolving the passphrase exactly as ConfigCredentials.Credentials always
+// has: a 64-hex-character value is a pre-hashed PSK, anything else is run
+// through DerivePSK, and an empty passphrase means an open network. Shared
+// with the runtime-join reconciler (see handleRequest) so a request's
+// ssid/passphrase pair is resolved on the same terms as a boot-time one,
+// not a second copy of this logic.
+func resolveCredentials(ssid, passphrase string) (Credentials, error) {
+	if passphrase == "" {
+		return Credentials{SSID: ssid, Open: true}, nil
 	}
 
 	var (
 		psk [32]byte
 		err error
 	)
-	if isHexPSK(wifi.Passphrase) {
-		psk, err = ParsePSKHex(wifi.Passphrase)
+	if isHexPSK(passphrase) {
+		psk, err = ParsePSKHex(passphrase)
 	} else {
-		psk, err = DerivePSK(wifi.Passphrase, wifi.SSID)
+		psk, err = DerivePSK(passphrase, ssid)
 	}
 	if err != nil {
-		return Credentials{}, false, err
+		return Credentials{}, err
 	}
-	return Credentials{SSID: wifi.SSID, PSK: psk}, true, nil
+	return Credentials{SSID: ssid, PSK: psk}, nil
 }
