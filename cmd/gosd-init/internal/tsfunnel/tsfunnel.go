@@ -52,6 +52,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
 )
 
 // logPrefix is prepended to every line this package logs, including the
@@ -111,6 +112,28 @@ type Deps struct {
 	// exactly the hazard boot.AppStarter's doc comment, and
 	// cloudflared.Deps.Wait's, already document for their own children.
 	Wait func(pid int) (status int, err error)
+
+	// Kill sends the running child a termination signal. Used only when
+	// RestartSignal fires while a child is running — production wires this
+	// to this package's own Kill (platform.go), NEVER anything routed
+	// through an *exec.Cmd's own process handle, for the same reaper-race
+	// reason Wait's doc comment gives above. Unused (may be left nil) when
+	// RestartSignal is nil.
+	Kill func(pid int) error
+
+	// RestartSignal, if non-nil, lets code elsewhere in gosd-init request a
+	// deliberate restart of the currently-supervised shim (epic gosd-ojbm
+	// decision 4 — the runtime-WiFi-join epic's ingress reconnect is the
+	// first producer, wired by a sibling bean, not this package), mirroring
+	// cloudflared.Deps.RestartSignal exactly. Firing it while the shim is
+	// running terminates it (via Kill) and resets the restart backoff, since
+	// a deliberate restart is not a crash; firing it while supervise is
+	// parked waiting for network-up, or during the backoff sleep between
+	// children, coalesces harmlessly (see restartsignal.Signal.Drain) since
+	// the next start already picks up whatever changed. Nil — the zero
+	// value, and every pre-existing test's default — makes supervise behave
+	// exactly as it did before this field existed.
+	RestartSignal *restartsignal.Signal
 
 	// NetworkUp reports whether the network-up marker file
 	// (netup.DefaultNetworkUpPath in production) currently exists. Run
@@ -314,6 +337,13 @@ func supervise(deps Deps, opts Options, m resolvedMode) {
 			return
 		}
 
+		// Discard any restart request that arrived while parked above or
+		// during the previous backoff sleep below: the shim about to start
+		// already reflects whatever changed, so acting on a stale request
+		// here would only kill and restart it again for nothing (epic
+		// gosd-ojbm decision 4's "coalesces harmlessly" case).
+		deps.RestartSignal.Drain()
+
 		runOnce(deps, opts, m, backoff)
 
 		select {
@@ -324,8 +354,12 @@ func supervise(deps Deps, opts Options, m resolvedMode) {
 	}
 }
 
-// runOnce starts the shim once, waits for it to exit, and resets backoff if
-// it ran long enough to be considered stable (StableAfter).
+// runOnce starts the shim once, waits for it to exit — or, if
+// deps.RestartSignal fires first, terminates it and waits for that exit
+// instead (see restartsignal.WaitOrKill) — and resets the restart backoff
+// either if the run was long enough to be considered stable (StableAfter) or
+// if the exit was a deliberate restart, since a deliberate restart is not a
+// crash (epic gosd-ojbm decision 4).
 func runOnce(deps Deps, opts Options, m resolvedMode, backoff *childbackoff.Backoff) {
 	startedAt := deps.Clock.Now()
 
@@ -339,7 +373,15 @@ func runOnce(deps Deps, opts Options, m resolvedMode, backoff *childbackoff.Back
 	}
 	deps.Log("tailscale-funnel: started (pid %d): %s %s", pid, opts.BinaryPath, strings.Join(args, " "))
 
-	status, err := deps.Wait(pid)
+	status, err, restarted := restartsignal.WaitOrKill(deps.RestartSignal,
+		func() (int, error) { return deps.Wait(pid) },
+		func() {
+			deps.Log("tailscale-funnel: restart requested; terminating pid %d", pid)
+			if err := deps.Kill(pid); err != nil {
+				deps.Log("tailscale-funnel: terminating pid %d failed: %v", pid, err)
+			}
+		},
+	)
 	_ = stdout.Close()
 	_ = stderr.Close()
 	ran := deps.Clock.Now().Sub(startedAt)
@@ -349,7 +391,7 @@ func runOnce(deps Deps, opts Options, m resolvedMode, backoff *childbackoff.Back
 		deps.Log("tailscale-funnel: pid %d exited with status %d after %s", pid, status, ran)
 	}
 
-	if ran >= StableAfter {
+	if restarted || ran >= StableAfter {
 		backoff.Reset()
 	}
 }

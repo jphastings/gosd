@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
 )
 
 func validConfig(t *testing.T) Config {
@@ -416,6 +417,114 @@ func TestSuperviseRegatesNetworkUpBeforeEachRestart(t *testing.T) {
 
 	if !waitForStartCount(procs, 2) {
 		t.Fatal("cloudflared never restarted once the network came back up")
+	}
+}
+
+// TestSuperviseRestartSignalTerminatesRunningChildAndResetsBackoff exercises
+// epic gosd-ojbm decision 4's core mechanism: a restart signal firing while
+// cloudflared is running terminates it via Kill, and the following restart
+// uses the reset (base) backoff rather than whatever it had escalated to —
+// a deliberate restart is not counted as a crash.
+func TestSuperviseRestartSignalTerminatesRunningChildAndResetsBackoff(t *testing.T) {
+	log := &testLog{}
+	clock := newFakeClock(time.Unix(0, 0))
+	procs := newFakeProcesses()
+	sig := restartsignal.NewSignal()
+	deps := baseTestDeps(clock, log)
+	deps.StartProcess = procs.Start
+	deps.Wait = procs.Wait
+	deps.Kill = procs.Kill
+	deps.RestartSignal = sig
+
+	stop := make(chan struct{})
+	opts := baseTestOptions(validConfig(t), stop)
+
+	done := make(chan struct{})
+	go func() { supervise(deps, opts); close(done) }()
+
+	// Escalate the backoff to 2s via one ordinary crash, so a reset back to
+	// the 1s base is observable below.
+	if !waitForStartCount(procs, 1) {
+		t.Fatal("start 1 never happened")
+	}
+	procs.exit(1, 1, nil)
+	if !waitForPending(clock, 1) {
+		t.Fatal("backoff timer 1 never registered")
+	}
+	clock.Advance(1 * time.Second)
+
+	if !waitForStartCount(procs, 2) {
+		t.Fatal("start 2 never happened")
+	}
+	sig.Notify()
+	if !waitForKillCount(procs, 1) {
+		t.Fatal("restart signal never terminated the running child")
+	}
+	if got := procs.lastKilledPID(); got != 2 {
+		t.Fatalf("Kill called with pid %d, want 2", got)
+	}
+	procs.exit(2, 0, nil) // the SIGTERM'd process actually exiting
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("backoff timer after the deliberate restart never registered")
+	}
+	// If the backoff had NOT reset, the next delay would be 4s (escalating
+	// from the earlier crash): advancing only the 1s base must already be
+	// enough to trigger the restart.
+	clock.Advance(1 * time.Second)
+	if !waitForStartCount(procs, 3) {
+		t.Fatal("supervise did not restart at the reset (base) delay after the deliberate restart")
+	}
+
+	close(stop)
+	procs.exit(3, 0, nil)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervise did not return after Stop was closed")
+	}
+}
+
+// TestSuperviseRestartSignalWhileParkedCoalescesHarmlessly exercises epic
+// gosd-ojbm decision 4's "coalesces harmlessly" case: a signal that fires
+// while supervise is parked waiting for network-up must not cause the child
+// it eventually starts to be immediately killed.
+func TestSuperviseRestartSignalWhileParkedCoalescesHarmlessly(t *testing.T) {
+	log := &testLog{}
+	clock := newFakeClock(time.Unix(0, 0))
+	procs := newFakeProcesses()
+	up := &flag{}
+	sig := restartsignal.NewSignal()
+	deps := baseTestDeps(clock, log)
+	deps.StartProcess = procs.Start
+	deps.Wait = procs.Wait
+	deps.Kill = procs.Kill
+	deps.RestartSignal = sig
+	deps.NetworkUp = func() (bool, error) { return up.get(), nil }
+
+	stop := make(chan struct{})
+	defer close(stop)
+	opts := baseTestOptions(validConfig(t), stop)
+	opts.NetworkUpPollInterval = time.Second
+
+	go supervise(deps, opts)
+
+	if !waitForPending(clock, 1) {
+		t.Fatal("cloudflared never parked waiting for network-up")
+	}
+	sig.Notify() // fires while parked, with no child running yet
+
+	up.set(true)
+	clock.Advance(opts.NetworkUpPollInterval)
+
+	if !waitForStartCount(procs, 1) {
+		t.Fatal("cloudflared never started once the network came up")
+	}
+	// The signal was drained before this start; since nothing has notified
+	// it again, no future Kill call can arrive for this pid either.
+	if got := procs.killCount(); got != 0 {
+		t.Fatalf("Kill called %d times, want 0 (a parked signal must coalesce, not survive to kill the next child)", got)
 	}
 }
 
