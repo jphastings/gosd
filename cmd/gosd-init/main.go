@@ -6,6 +6,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/durable"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/statusled"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/tsfunnel"
@@ -35,6 +37,8 @@ import (
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
+	"github.com/jphastings/gosd/internal/secretreg"
+	"github.com/jphastings/gosd/internal/wifictl"
 )
 
 const (
@@ -197,6 +201,21 @@ func main() {
 				func() error { return netup.ClearNetworkUp(netup.DefaultNetworkUpPath) },
 			)
 
+			// cloudflaredRestart/tsfunnelRestart let wifiup's runtime-join
+			// reconciler ask whichever ingress supervisor is actually
+			// running to restart its child on the new network, without
+			// either package importing the other (epic gosd-ojbm decision
+			// 4). Two separate signals, not one shared between them: a
+			// restartsignal.Signal is a single-slot channel, so sharing one
+			// between two independent consumers would let whichever
+			// supervisor reads it first silently swallow the notification
+			// the other never sees. Firing both on every successful runtime
+			// join is always safe — a signal nobody's listening to (the
+			// ingress that isn't baked, or isn't running yet) just sits
+			// there, per restartsignal.Signal's own doc.
+			cloudflaredRestart := restartsignal.NewSignal()
+			tsfunnelRestart := restartsignal.NewSignal()
+
 			// Each of these loops runs for the life of the device, and a
 			// panic escaping any of them would take PID 1 with it — so
 			// they run guarded, logging the stack and rebooting instead
@@ -233,7 +252,7 @@ func main() {
 			// an Ethernet-only board's early return (no WiFi hardware)
 			// can never skip starting it.
 			guard.Go("cloudflared", func() {
-				cloudflared.Run(cloudflaredDeps(log, exitCodeOnly(platform.Reaper.Wait)), cloudflared.Options{
+				cloudflared.Run(cloudflaredDeps(log, exitCodeOnly(platform.Reaper.Wait), cloudflaredRestart), cloudflared.Options{
 					BinaryPath:             cloudflaredBinaryPath,
 					Baked:                  cfg.IngressCloudflared,
 					Config:                 cloudflaredConfig(config),
@@ -249,7 +268,7 @@ func main() {
 			// Ethernet-only board's early return can never skip starting it
 			// either.
 			guard.Go("tailscale-funnel", func() {
-				tsfunnel.Run(tsfunnelDeps(log, exitCodeOnly(platform.Reaper.Wait)), tsfunnel.Options{
+				tsfunnel.Run(tsfunnelDeps(log, exitCodeOnly(platform.Reaper.Wait), tsfunnelRestart), tsfunnel.Options{
 					BinaryPath:             tsfunnelBinaryPath,
 					Baked:                  cfg.IngressTailscaleFunnel,
 					Config:                 tsfunnelConfig(config),
@@ -260,15 +279,22 @@ func main() {
 				})
 			})
 
-			wifiClient, err := wifiup.NewPlatform()
-			if err != nil {
-				// Expected on an Ethernet-only board with no WiFi
-				// hardware/driver at all; not fatal to boot.
-				log("WiFi unavailable, skipping: %v", err)
-				return
+			// wifiClient is nil when NewPlatform fails — expected on an
+			// Ethernet-only board with no WiFi hardware/driver at all, not
+			// fatal to boot. Run still runs regardless (epic gosd-ojbm
+			// decision 8): its runtime-join watcher must answer a request
+			// with an honest "no WiFi interface" failure rather than
+			// leaving an app's wifi.Join call to time out because nothing
+			// was listening at all.
+			wifiClient, wifiErr := wifiup.NewPlatform()
+			if wifiErr != nil {
+				log("WiFi unavailable: %v", wifiErr)
 			}
 			guard.Guard("wifiup", func() {
-				wifiup.Run(wifiupDeps(wifiClient, cfg, cardWifi(config), log, mdnsChanged, upSet), wifiup.Options{})
+				wifiup.Run(
+					wifiupDeps(wifiClient, cfg, cardWifi(config), log, mdnsChanged, upSet, wifiPersist(platform, config), wifiRestartIngress(cloudflaredRestart, tsfunnelRestart)),
+					wifiup.Options{RequestDir: wifictl.Dir},
+				)
 			})
 		},
 	}
@@ -559,8 +585,10 @@ func tsfunnelConfig(config cardconfig.Tree) tsfunnel.Config {
 // boot's consumeCloudInit), else config.json's baked-in wifi block. changed
 // and upSet are wired the same way netupDeps wires them (the same
 // *mdnsresponder.Signal and *netup.UpSet instances): see that function's
-// doc.
-func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, card wifiup.Wifi, log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet) wifiup.Deps {
+// doc. persist and restartIngress wire the runtime-join reconciler's own
+// two effects (epic gosd-ojbm decisions 3 and 4) — see wifiPersist and
+// wifiRestartIngress.
+func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, card wifiup.Wifi, log func(format string, args ...any), changed *mdnsresponder.Signal, upSet *netup.UpSet, persist func(ssid, passphrase string) error, restartIngress func()) wifiup.Deps {
 	platform := netup.NewPlatform()
 	return wifiup.Deps{
 		Wifi:            client,
@@ -580,8 +608,83 @@ func wifiupDeps(client wifiup.WifiClient, cfg initcfg.Config, card wifiup.Wifi, 
 			changed.Notify()
 			return err
 		},
-		Log: log,
+		RegisterSecret: registerRuntimeWifiSecret,
+		Persist:        persist,
+		RestartIngress: restartIngress,
+		Log:            log,
 	}
+}
+
+// wifiPersist wires a successful runtime join's persistence (epic gosd-ojbm
+// decision 3) through the exact same write path cloud-init seed consumption
+// uses (see boot's consumeCloudInit): remount the boot partition read-write
+// via platform.EditBootPartition, write into the config tree via config's
+// own Write — so the padding-is-the-reservation discipline pads against the
+// tree's already-known on-card content rather than a fresh zero value —
+// then remount read-only again. config is the tree gosd-init already read
+// this boot, the same one every other card setting is resolved from.
+func wifiPersist(platform *boot.Platform, config cardconfig.Tree) func(ssid, passphrase string) error {
+	return func(ssid, passphrase string) error {
+		return platform.EditBootPartition(bootTarget, func(root string) error {
+			return config.Write(filepath.Join(root, configtree.Dir), map[string]string{
+				wifiSSIDPath:       ssid,
+				wifiPassphrasePath: passphrase,
+			})
+		})
+	}
+}
+
+// wifiRestartIngress fires both ingress restart signals on every successful
+// runtime join, even a same-SSID one (epic decision 4): whichever ingress
+// is actually baked and running picks it up; the other's notification just
+// sits unread (see restartsignal.Signal's own doc).
+func wifiRestartIngress(cloudflaredRestart, tsfunnelRestart *restartsignal.Signal) func() {
+	return func() {
+		cloudflaredRestart.Notify()
+		tsfunnelRestart.Notify()
+	}
+}
+
+// registerRuntimeWifiSecret adds secret to the same /run/gosd/secrets.json
+// registration file fault.RegisterSecretString writes (internal/secretreg):
+// wifiup's reconciler calls this the moment it reads a runtime join
+// request, independently of whether the app that requested it already
+// registered the passphrase via wifi.Join (epic gosd-ojbm decision 7) —
+// belt and suspenders for a request that reached /run/gosd/wifi without
+// going through wifi.Join at all. A read-merge-write, not a blind
+// overwrite: unlike fault's own in-process reporter (which tracks its own
+// registrations and is the only writer for the life of that process),
+// gosd-init isn't the only writer of this file, so clobbering it would
+// discard whatever the app itself already registered.
+func registerRuntimeWifiSecret(secret, label string) {
+	if secret == "" {
+		return
+	}
+
+	var entries []secretreg.Entry
+	if data, err := os.ReadFile(secretreg.Path); err == nil {
+		_ = json.Unmarshal(data, &entries) // unparseable/oversized: start fresh, self-heal
+	}
+	for _, e := range entries {
+		if e.Secret == secret {
+			return
+		}
+	}
+
+	entries = append(entries, secretreg.Entry{Secret: secret, Replacement: label})
+	encoded, err := secretreg.Encode(entries)
+	if err != nil {
+		return // best-effort: too many/large, leave the existing file alone
+	}
+	if err := os.MkdirAll(filepath.Dir(secretreg.Path), 0o755); err != nil {
+		return
+	}
+	tmp := secretreg.Path + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, encoded, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, secretreg.Path)
 }
 
 // mdnsresponderDeps wires the real, pion/mdns-backed responder
@@ -620,15 +723,21 @@ func exitCodeOnly(wait func(pid int) (boot.ExitStatus, error)) func(pid int) (in
 // NetworkUp field through (timesync.NetworkUpMarkerExists); TimeSynced is
 // timeSyncedMarkerExists's twin of that same check for timesync's own
 // marker, which nothing outside timesync needed to read before cloudflared.
-func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (int, error)) cloudflared.Deps {
+// restart is wired to Kill (its own os/exec-backed terminator, platform.go)
+// and to RestartSignal — the epic gosd-ojbm decision 4 ingress-reconnect
+// mechanism, wifiup's runtime-join reconciler is the first producer of a
+// Notify on it (see wifiRestartIngress).
+func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (int, error), restart *restartsignal.Signal) cloudflared.Deps {
 	return cloudflared.Deps{
-		StartProcess: cloudflared.StartProcess,
-		Wait:         wait,
-		NetworkUp:    func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
-		TimeSynced:   timeSyncedMarkerExists,
-		MkdirAll:     os.MkdirAll,
-		WriteFile:    os.WriteFile,
-		Clock:        cloudflared.NewRealClock(),
+		StartProcess:  cloudflared.StartProcess,
+		Wait:          wait,
+		Kill:          cloudflared.Kill,
+		RestartSignal: restart,
+		NetworkUp:     func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
+		TimeSynced:    timeSyncedMarkerExists,
+		MkdirAll:      os.MkdirAll,
+		WriteFile:     os.WriteFile,
+		Clock:         cloudflared.NewRealClock(),
 		NewBackoff: func() *childbackoff.Backoff {
 			return childbackoff.NewBackoff(cloudflared.DefaultBackoffBase, cloudflared.DefaultBackoffCap)
 		},
@@ -644,15 +753,19 @@ func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (i
 // since both packages gate on the same network-up/time-synced markers; there
 // is no WriteFile here because, unlike cloudflared (which writes a
 // config.yml), tsfunnel's per-boot values travel entirely through argv/env
-// (see tsfunnel.runArgs/runEnv).
-func tsfunnelDeps(log func(format string, args ...any), wait func(pid int) (int, error)) tsfunnel.Deps {
+// (see tsfunnel.runArgs/runEnv). restart mirrors cloudflaredDeps's own
+// Kill/RestartSignal wiring exactly, for the same ingress-reconnect
+// mechanism (epic gosd-ojbm decision 4).
+func tsfunnelDeps(log func(format string, args ...any), wait func(pid int) (int, error), restart *restartsignal.Signal) tsfunnel.Deps {
 	return tsfunnel.Deps{
-		StartProcess: tsfunnel.StartProcess,
-		Wait:         wait,
-		NetworkUp:    func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
-		TimeSynced:   timeSyncedMarkerExists,
-		MkdirAll:     os.MkdirAll,
-		Clock:        tsfunnel.NewRealClock(),
+		StartProcess:  tsfunnel.StartProcess,
+		Wait:          wait,
+		Kill:          tsfunnel.Kill,
+		RestartSignal: restart,
+		NetworkUp:     func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
+		TimeSynced:    timeSyncedMarkerExists,
+		MkdirAll:      os.MkdirAll,
+		Clock:         tsfunnel.NewRealClock(),
 		NewBackoff: func() *childbackoff.Backoff {
 			return childbackoff.NewBackoff(tsfunnel.DefaultBackoffBase, tsfunnel.DefaultBackoffCap)
 		},
