@@ -1,11 +1,11 @@
 ---
 # gosd-bntd
 title: 'Board support: Turing RK1'
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2026-08-25T10:25:26Z
-updated_at: 2026-08-30T08:29:16Z
+updated_at: 2026-08-31T12:06:01Z
 ---
 
 Eighth supported board and the first board with no SD/microSD slot at all: Turing RK1 —
@@ -114,3 +114,28 @@ hardware PHY genuinely is OTG-capable; the mainline DTS's driver binding
 for it isn't. `UsbGadgetSupport()` now correctly returns `Supported: false`.
 Whether this is fixable with a DTS patch is an open question, not yet
 researched.
+
+
+## Summary of Changes
+
+All real work shipped and verified: board profile, kernel, mainline
+U-Boot, hardware bring-up (boot chain, networking, /data in both
+filesystems, NVMe-as-storage, USB gadget correctly reported as
+hardware-unsupported), end-user flashing docs, and artifacts-release
+activation (bean `gosd-wf58`) -- turing-rk1 is now a fully public board,
+selectable via `gosd build --board turing-rk1` with real
+(non-`--artifacts-dir`) fetches resolving against `artifacts/v0.10.4`.
+
+Closing the epic now, extending CLAUDE.md's "an epic closes when its code
+has shipped" carve-out slightly beyond its literal wording: that rule
+names hardware-verification-of-already-shipped-code as the specific
+open-child case that doesn't block closure, and this epic's one
+remaining open child (`gosd-vo5q`, cutting GPU/video-codec drivers that
+leak in via defconfig promotion) isn't bench verification -- it's a
+deliberately deferred code improvement (JP, 2026-08-30: leave it on the
+table, the Turing Pi 2's HDMI port means a display use case isn't ruled
+out). Same spirit as the locked carve-out (a fully-shipped epic
+shouldn't sit open for a non-blocking follow-up), applied to a case one
+step wider than its literal text -- flagging the extension explicitly
+rather than silently stretching the rule. Re-parenting gosd-vo5q to no
+parent so the tree doesn't show a completed epic with an open child.

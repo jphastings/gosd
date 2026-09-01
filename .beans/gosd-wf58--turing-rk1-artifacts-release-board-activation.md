@@ -1,11 +1,11 @@
 ---
 # gosd-wf58
 title: 'Turing RK1: artifacts release + board activation'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-25T10:26:48Z
-updated_at: 2026-08-30T20:27:49Z
+updated_at: 2026-08-31T12:05:32Z
 parent: gosd-bntd
 blocked_by:
     - gosd-phjh
@@ -61,3 +61,67 @@ confirmed live: flip to `Register`, bump `internal/artifacts.Version` +
 `ManifestSHA256`, add the `cmd/gosd/testdata/fake-artifacts/` fixtures,
 add the COMPATIBILITY.md bring-up row, update CLAUDE.md's Board IDs entry
 to drop the "internal only until..." caveat.
+
+
+## PR 1 merged, release confirmed live (2026-08-31) — starting PR 2
+
+PR #380 merged; the subsequent knope release PR also merged, cutting
+`artifacts/v0.10.4` (published 2026-08-31T10:28:50Z) with
+`turing-rk1.tar.zst` confirmed attached alongside every other board's
+tarball. Ready for PR 2 (bump-second): the actual activation.
+
+**PR 2 checklist** (mirrors gosd-zh95/gosd-h8a8's shape exactly):
+1. `internal/boardset/boardset.go`: flip
+   `boards.RegisterInternal(turingrk1.New())` -> `boards.Register(...)`.
+2. `internal/artifacts/artifacts.go`: bump `Version` to `v0.10.4` and
+   `ManifestSHA256` to the sha256 of that release's `manifest.json`
+   (`build/artifacts/pin-bump.sh` writes both together — use it, don't
+   hand-edit).
+3. Add `cmd/gosd/testdata/fake-artifacts/` fixtures for turing-rk1 (check
+   cubie-a5e's PR #205 for the pattern: dummy files matching the real
+   artifact names — kernel Image, its DTB, idbloader.img, u-boot.itb).
+4. Add the COMPATIBILITY.md bring-up row + feature-table column for
+   turing-rk1 (internal/repocheck's TestCompatibilityBringUpRows enforces
+   this once public).
+5. CLAUDE.md: drop the "internal only until its artifacts release lands"
+   caveat from the turing-rk1 Board IDs entry.
+6. Verify per CLAUDE.md's three-way artifact-bump rule: clean-machine
+   build (fresh HOME, no --board/--artifacts-dir), offline re-run (dead
+   proxy, succeeds from cache), content spot-check (e.g. dtc -I dtb -O
+   dts on the released DTB, or similar, confirming real compiled content
+   not a stub).
+7. No catalog-exclusion special-casing needed (see the correction above)
+   — RegisterInternal -> Register is the whole registration change.
+8. Branch: bean/gosd-wf58-turing-rk1-activation (PR 2 of 2). Needs its
+   own gosd:/artifacts: change file (this IS user-facing: gosd build
+   --board turing-rk1 becomes selectable for the first time) — no
+   "no release notes" label.
+
+
+## PR 2 complete, activation done (2026-08-31)
+
+`RegisterInternal` -> `Register` flipped, `internal/artifacts.Version`
+bumped to v0.10.4 (`ManifestSHA256` via `build/artifacts/pin-bump.sh`,
+not hand-edited), the missing `rk3588-turing-rk1.dtb` fixture added
+(the other three artifact names already existed as shared fixtures),
+COMPATIBILITY.md gained the bring-up row, a full feature-table column,
+two new footnotes (`rk1-gadget`, `rk1-audio`), and a board note (no
+SD/microSD slot, flashing guide pointer, GPIO out of scope). CLAUDE.md's
+"internal only until..." caveat dropped from the Board IDs entry. No
+catalog-exclusion special-casing needed, per the correction above.
+
+Three-way artifact-bump verification (CLAUDE.md's rule), all passed:
+- Clean-machine build: fresh HOME, `--board turing-rk1`, no
+  `--artifacts-dir` -> real download from artifacts/v0.10.4 succeeded.
+- Offline re-run: same fresh HOME, dead proxy (`HTTP(S)_PROXY=
+  http://127.0.0.1:1`) -> succeeded entirely from cache, no network hit.
+- Content spot-check: `dtc -I dtb -O dts` on the downloaded DTB shows
+  `compatible = "turing,rk1", "rockchip,rk3588"`, `model = "Turing
+  Machines RK1"` -- genuine compiled content, not a stub. `u-boot.itb`
+  (1358336 bytes, matches the original bring-up's recorded size) is a
+  valid FIT/DTB. `Image` is 67MB, `kernel.config` 270KB -- both real.
+
+All quality gates green: go build/vet/test, gofmt, golangci-lint (native
++ GOOS=linux).
+
+turing-rk1 is now a fully public board.
