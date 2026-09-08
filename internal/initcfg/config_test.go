@@ -54,6 +54,16 @@ func TestParseConfig(t *testing.T) {
 			want: Config{Hostname: "my-device"},
 		},
 		{
+			name: "appSignalsReady marks an app that imports the ready package",
+			data: `{"hostname":"my-device","appSignalsReady":true}`,
+			want: Config{Hostname: "my-device", AppSignalsReady: true},
+		},
+		{
+			name: "config predating appSignalsReady parses unchanged, not as an error",
+			data: `{"hostname":"my-device"}`,
+			want: Config{Hostname: "my-device"},
+		},
+		{
 			name: "ingressCloudflared marks a build with --ingress cloudflared baked in",
 			data: `{"hostname":"my-device","ingressCloudflared":true}`,
 			want: Config{Hostname: "my-device", IngressCloudflared: true},

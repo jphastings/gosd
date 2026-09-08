@@ -377,6 +377,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("assembling the %s configuration for %s failed: %w", configtree.Dir, b.Name(), err)
 		}
 
+		appSignalsReady, err := build.ImportsPackage(pkgPath, bin.appOpts, b.Arch(), readyImportPath)
+		if err != nil {
+			return fmt.Errorf("checking whether %s imports %s for %s failed: %w", pkgPath, readyImportPath, b.Name(), err)
+		}
+
 		opts := pipeline.Options{
 			Board:          b,
 			AppBinaryPath:  bin.appPath,
@@ -403,6 +408,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			Placeholders:           placeholderSpecs,
 			IngressCloudflared:     ingressSelected.Cloudflared,
 			IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
+			AppSignalsReady:        appSignalsReady,
 			AppName:                appName,
 			AppVersion:             appVersion,
 			SupportURL:             resolvedSupportURL,

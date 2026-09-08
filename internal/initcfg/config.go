@@ -140,6 +140,19 @@ type Config struct {
 	// (cmd/gosd/build_integration_test.go).
 	DataLabel string `json:"dataLabel"`
 
+	// AppSignalsReady marks an app that imports
+	// github.com/jphastings/gosd/ready — detected by gosd build inspecting
+	// the app's own dependency graph, not a flag (see that package's doc
+	// for why importing is the declaration). When true, gosd-init holds
+	// the status LED on "booting" past /app's process start and only
+	// flips it to "running" once the app calls ready.Signal (see
+	// docs/status-led.md); when false — including every config.json baked
+	// before this field existed — the LED flips the instant /app starts,
+	// exactly as it always has. Optional: omitted entirely when false, so
+	// an old config.json and a fresh one built for an app that doesn't
+	// import the package are indistinguishable.
+	AppSignalsReady bool `json:"appSignalsReady,omitempty"`
+
 	// IngressCloudflared marks an image built with `gosd build --ingress
 	// cloudflared`: a cloudflared binary is baked into the initramfs at
 	// /bin/cloudflared (see internal/cloudflaredpin and

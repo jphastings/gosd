@@ -236,6 +236,58 @@ func TestIsMainPackageReturnsFalseForNonexistentPackage(t *testing.T) {
 	}
 }
 
+const readyImportPath = "github.com/jphastings/gosd/ready"
+
+func TestImportsPackageDetectsAnUnconditionalImport(t *testing.T) {
+	got, err := ImportsPackage("./testdata/importsready", AppCompileOptions{}, arm64, readyImportPath)
+	if err != nil {
+		t.Fatalf("ImportsPackage: %v", err)
+	}
+	if !got {
+		t.Error("ImportsPackage(importsready) = false, want true")
+	}
+}
+
+func TestImportsPackageReportsFalseWhenNotImported(t *testing.T) {
+	got, err := ImportsPackage("./testdata/noimportsready", AppCompileOptions{}, arm64, readyImportPath)
+	if err != nil {
+		t.Fatalf("ImportsPackage: %v", err)
+	}
+	if got {
+		t.Error("ImportsPackage(noimportsready) = true, want false")
+	}
+}
+
+// TestImportsPackageHonoursTags is the keystone test for gosd-42vb's
+// per-board detection: testdata/importsreadytagged only imports the ready
+// package behind the withready build tag, so ImportsPackage must report
+// false with no tags and true once "withready" is passed — proving -tags
+// actually reached `go list -deps` rather than being silently dropped.
+func TestImportsPackageHonoursTags(t *testing.T) {
+	without, err := ImportsPackage("./testdata/importsreadytagged", AppCompileOptions{}, arm64, readyImportPath)
+	if err != nil {
+		t.Fatalf("ImportsPackage (no tags): %v", err)
+	}
+	if without {
+		t.Error("ImportsPackage(importsreadytagged, no tags) = true, want false")
+	}
+
+	with, err := ImportsPackage("./testdata/importsreadytagged", AppCompileOptions{Tags: "withready"}, arm64, readyImportPath)
+	if err != nil {
+		t.Fatalf("ImportsPackage (withready tag): %v", err)
+	}
+	if !with {
+		t.Error("ImportsPackage(importsreadytagged, withready) = false, want true")
+	}
+}
+
+func TestImportsPackageSurfacesBuildFailure(t *testing.T) {
+	_, err := ImportsPackage("./testdata/doesnotexist", AppCompileOptions{}, arm64, readyImportPath)
+	if err == nil {
+		t.Fatal("ImportsPackage succeeded on a missing package, want an error")
+	}
+}
+
 func TestIsMainPackageRecognizesLinuxOnlyMainPackage(t *testing.T) {
 	// Verify that a Linux-only main package is recognized even on non-Linux hosts,
 	// since IsMainPackage inspects under targetGOOS (same as CrossCompile).

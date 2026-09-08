@@ -186,9 +186,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 		_ = os.RemoveAll(workDir)
 	}()
 
+	appOpts := build.AppCompileOptions{Tags: boards.BuildTags(b)}
 	appBinary := filepath.Join(workDir, appName)
-	if err := build.CrossCompile(pkgPath, appBinary, build.AppCompileOptions{Tags: boards.BuildTags(b)}, b.Arch()); err != nil {
+	if err := build.CrossCompile(pkgPath, appBinary, appOpts, b.Arch()); err != nil {
 		return fmt.Errorf("cross-compiling %s failed: %w", pkgPath, err)
+	}
+
+	appSignalsReady, err := build.ImportsPackage(pkgPath, appOpts, b.Arch(), readyImportPath)
+	if err != nil {
+		return fmt.Errorf("checking whether %s imports %s failed: %w", pkgPath, readyImportPath, err)
 	}
 
 	initBinary := filepath.Join(workDir, "gosd-init")
@@ -260,6 +266,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		ExtraExecutables:       extraExecutables,
 		IngressCloudflared:     ingressSelected.Cloudflared,
 		IngressTailscaleFunnel: ingressSelected.TailscaleFunnel,
+		AppSignalsReady:        appSignalsReady,
 	}
 	report, err := pipeline.Assemble(ctx, opts)
 	if err != nil {

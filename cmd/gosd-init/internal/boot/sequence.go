@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/cardconfig"
@@ -212,6 +213,17 @@ type Deps struct {
 	// beyond that; production wires this to start both netup.Run (wired)
 	// and wifiup.Run (WiFi), tests leave it nil.
 	StartNetworking func(cfg initcfg.Config, config cardconfig.Tree, log func(format string, args ...any))
+
+	// AppReady reports whether the app has called
+	// github.com/jphastings/gosd/ready's Signal — checked by polling
+	// internal/readymark's marker file. Only consulted when cfg.
+	// AppSignalsReady is set (see waitForAppReady); production wires this
+	// to readymark.Marked(readymark.Dir), tests supply a fake. Nil-checked
+	// like the other optional deps: nil behaves as "never ready", so a
+	// test that leaves it unset and never sets AppSignalsReady is
+	// unaffected, and one that sets AppSignalsReady but forgets this dep
+	// holds forever rather than panicking.
+	AppReady func() bool
 }
 
 // Options holds the per-boot paths the sequence acts on.
@@ -479,14 +491,38 @@ func Run(deps Deps, opts Options) error {
 	// first successful start hands control to the app, so a later restart
 	// after a transient crash must not blink the LED back to "booting" —
 	// there are only three states, and a mid-boot-shaped flicker on every
-	// ordinary restart isn't one of them.
-	appHandedOver := false
+	// ordinary restart isn't one of them. It's an atomic.Bool rather than a
+	// plain bool because cfg.AppSignalsReady makes a second goroutine (the
+	// ready poller below) a writer too, alongside Start's own supervisor
+	// goroutine.
+	var appHandedOver atomic.Bool
+	// readyPollStarted guards gosd-42vb's ONE ready-poller goroutine: only
+	// the first successful start when cfg.AppSignalsReady is set launches
+	// it, so a later restart before the app ever signals ready doesn't pile
+	// up a second poller racing the first. Touched only from Start, which
+	// only ever runs on the single supervisor goroutine, so a plain bool
+	// is enough here.
+	readyPollStarted := false
 	sup := &Supervisor{
 		Start: func() (int, error) {
 			pid, err := deps.AppStarter.Start(opts.AppPath, env, appOutput, appOutput)
-			if err == nil && !appHandedOver {
-				appHandedOver = true
-				setStatusLED(deps, log, "running", StatusLED.Running)
+			if err == nil && !appHandedOver.Load() {
+				switch {
+				case cfg.AppSignalsReady && !readyPollStarted:
+					readyPollStarted = true
+					log(`status LED: holding "booting" until the app calls ready.Signal() — it imports github.com/jphastings/gosd/ready, so the LED only shows "running" once that call is made`)
+					guard.Go("app ready", func() {
+						if !waitForAppReady(deps, opts.Stop) {
+							return
+						}
+						appHandedOver.Store(true)
+						setStatusLED(deps, log, "running", StatusLED.Running)
+						log("status LED: app signalled ready")
+					})
+				case !cfg.AppSignalsReady:
+					appHandedOver.Store(true)
+					setStatusLED(deps, log, "running", StatusLED.Running)
+				}
 			}
 			return pid, err
 		},
@@ -1039,6 +1075,34 @@ func haltForDataCorruption(deps Deps, log func(format string, args ...any), repo
 			fs, dataLabel, orStartOver),
 		halt: true,
 	}, cause)
+}
+
+// DefaultAppReadyPollInterval is how often waitForAppReady polls
+// Deps.AppReady while cfg.AppSignalsReady holds the status LED on
+// "booting" — the tsfunnel network-up poll's own interval style (see
+// cmd/gosd-init/internal/tsfunnel's waitForNetworkUp).
+const DefaultAppReadyPollInterval = 500 * time.Millisecond
+
+// waitForAppReady polls deps.AppReady (checking immediately, then every
+// DefaultAppReadyPollInterval) until it reports true or stop closes. It
+// returns false only in the latter case, mirroring tsfunnel's own
+// waitForNetworkUp.
+func waitForAppReady(deps Deps, stop <-chan struct{}) bool {
+	after := deps.After
+	if after == nil {
+		after = time.After
+	}
+	for {
+		if deps.AppReady != nil && deps.AppReady() {
+			return true
+		}
+
+		select {
+		case <-stop:
+			return false
+		case <-after(DefaultAppReadyPollInterval):
+		}
+	}
 }
 
 // setStatusLED calls one of Deps.StatusLED's three state transitions —

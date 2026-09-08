@@ -153,6 +153,12 @@ Practical implications for your app:
   `internal/hostsfile`). Your device's own hostname resolves to `127.0.1.1`
   too, once `gosd-init` has settled on it during boot.
 
+Networking coming up after your app is one reason an app might not be
+genuinely ready the instant it starts. If yours needs to wait on something —
+WiFi, a network call, anything — before it's honestly "all okay",
+[holding the status LED on "booting" until you say otherwise](status-led.md#holding-booting-until-your-app-is-genuinely-ready)
+is the way to say so.
+
 `gosd-init` brings up wired Ethernet (interfaces matching `eth*`, `end*`,
 `enp*` — see `cmd/gosd-init/internal/netup/netup.go`) and, if the board
 has WiFi hardware, associates to a single WPA2-PSK or open network (see

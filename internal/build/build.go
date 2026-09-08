@@ -169,6 +169,45 @@ func mainPackageName(pkgPath string) (string, error) {
 	return name, nil
 }
 
+// ImportsPackage reports whether pkgPath's dependency graph — built under
+// the exact env and -tags a real compile of it would use (opts.Tags, arch;
+// see CrossCompile/archEnv) — includes importPath. It's how gosd build
+// detects an app opting into a package like
+// github.com/jphastings/gosd/ready purely by importing it: see that
+// package's doc for why importing is the declaration and there's no
+// separate build flag.
+//
+// A go list failure here is a hard build error, explained the same way
+// CrossCompile's own preflight failures are (via explainBuildFailure).
+func ImportsPackage(pkgPath string, opts AppCompileOptions, arch boards.Arch, importPath string) (bool, error) {
+	args := []string{"list", "-deps", "-f", "{{.ImportPath}}"}
+	if opts.Tags != "" {
+		args = append(args, "-tags", opts.Tags)
+	}
+	// "--" for the same reason CrossCompile passes it: pkgPath must reach
+	// the toolchain as an operand, never as a flag.
+	args = append(args, "--", pkgPath)
+
+	cmd := exec.Command("go", args...)
+	cmd.Env = archEnv(arch)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return false, explainBuildFailure(
+			fmt.Sprintf("could not inspect %s's dependencies", pkgPath),
+			fmt.Sprintf("go list -deps %s", pkgPath),
+			stderr.String())
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if line == importPath {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func requireMainPackage(pkgPath string) error {
 	name, err := mainPackageName(pkgPath)
 	if err != nil {

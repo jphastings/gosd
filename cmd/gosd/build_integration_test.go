@@ -2189,6 +2189,47 @@ func buildQemuVirtConfigJSON(t *testing.T, imgPath string, extraArgs ...string) 
 	return cfg
 }
 
+// TestBuildSetsAppSignalsReadyForAnAppThatImportsReady is the acceptance
+// test for gosd-42vb: gosd build inspects the app's own dependency graph
+// (see build.ImportsPackage) and bakes config.json's appSignalsReady when it
+// includes github.com/jphastings/gosd/ready - with no flag needed. The
+// network tripwire proves that inspection is a local `go list`, not a fetch.
+func TestBuildSetsAppSignalsReadyForAnAppThatImportsReady(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	imgPath := filepath.Join(t.TempDir(), "readyfixture-pi-zero-2w.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "./testdata/readyfixture",
+		"--board", "pi-zero-2w",
+		"--artifacts-dir", "testdata/fake-artifacts",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	if cfg := readConfigJSON(t, imgPath); !cfg.AppSignalsReady {
+		t.Error("config.json's appSignalsReady = false, want true for an app that imports github.com/jphastings/gosd/ready")
+	}
+}
+
+// TestBuildLeavesAppSignalsReadyUnsetByDefault is this test's counterpart:
+// examples/hello doesn't import the ready package, so config.json's
+// appSignalsReady must stay unset - proving the inference is genuinely
+// per-app, never a default that's always on.
+func TestBuildLeavesAppSignalsReadyUnsetByDefault(t *testing.T) {
+	imgPath := filepath.Join(t.TempDir(), "hello-pi-zero-2w.img")
+	if cfg := buildConfigJSON(t, imgPath); cfg.AppSignalsReady {
+		t.Error("config.json's appSignalsReady = true for examples/hello, want false (it doesn't import github.com/jphastings/gosd/ready)")
+	}
+}
+
 // TestBuildBakesImageIdentityIntoConfigJSON is the acceptance test for
 // gosd-acdn (docs/design/upgrade-path.md §4): config.json carries a
 // content-derived image identity - a hex SHA-256 digest, never a
