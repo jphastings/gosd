@@ -183,6 +183,14 @@ type Options struct {
 	// through to config.json.
 	IngressTailscaleFunnel bool
 
+	// AppSignalsReady is whether the app being built imports
+	// github.com/jphastings/gosd/ready — detected by cmd/gosd inspecting
+	// the app's own dependency graph (see build.ImportsPackage) - baked
+	// straight into config.json's AppSignalsReady field
+	// (initcfg.Config.AppSignalsReady's doc comment has the full
+	// build->runtime contract).
+	AppSignalsReady bool
+
 	// BootSizeBytes is the size of the FAT32 boot partition, passed
 	// straight through to image.Spec.BootSizeBytes. Zero means
 	// image.DefaultBootPartitionSizeBytes (256MiB).
@@ -396,6 +404,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		DataLabel:              opts.Labels.Data,
 		IngressCloudflared:     opts.IngressCloudflared,
 		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
+		AppSignalsReady:        opts.AppSignalsReady,
 		AppName:                opts.AppName,
 		AppVersion:             opts.AppVersion,
 		SupportURL:             opts.SupportURL,

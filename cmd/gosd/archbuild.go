@@ -9,6 +9,13 @@ import (
 	"github.com/jphastings/gosd/internal/build"
 )
 
+// readyImportPath is github.com/jphastings/gosd/ready's own import path -
+// the package whose mere presence in an app's dependency graph (see
+// build.ImportsPackage) is gosd build's signal to set config.json's
+// AppSignalsReady (see that package's doc for why importing is the
+// declaration, with no separate build flag).
+const readyImportPath = "github.com/jphastings/gosd/ready"
+
 // archBinaries is one board's cross-compiled binaries (the name predates
 // gosd-1937's per-board app tagging; initPath/tsfunnelPath may now be shared
 // with other boards on the same arch, while appPath never is).
@@ -20,6 +27,27 @@ type archBinaries struct {
 	// gosd-kzd3), empty unless needsTsfunnel was true - i.e. unless
 	// --ingress tailscale-funnel was selected.
 	tsfunnelPath string
+
+	// appOpts is exactly what appPath was compiled with - kept so a
+	// later, board-scoped `go list -deps` inspection (gosd-42vb's
+	// AppSignalsReady detection, see build.ImportsPackage) reuses this
+	// board's own Tags rather than recomputing appBuildTags a second time
+	// and risking the two falling out of step.
+	appOpts build.AppCompileOptions
+}
+
+// appBuildTags returns the -tags value compileForBoards compiles b's app
+// with: b's own mandatory boards.BuildTags, plus extraTags merged on when
+// the caller supplied any (--tags). Factored out so the per-board
+// AppSignalsReady inspection (cmd/gosd/build.go, cmd/gosd/run.go) can ask
+// "what tags would this board's app compile use" without duplicating the
+// merge logic.
+func appBuildTags(b boards.Board, extraTags []string) string {
+	tags := boards.BuildTags(b)
+	if len(extraTags) > 0 {
+		tags = strings.Join(append([]string{tags}, extraTags...), ",")
+	}
+	return tags
 }
 
 // compileForBoards cross-compiles, for every board in selected: the app at
@@ -67,12 +95,8 @@ func compileForBoards(
 
 	for _, b := range selected {
 		appBinary := filepath.Join(tempDir, "app-"+b.Name())
-		tags := boards.BuildTags(b)
-		if len(extraTags) > 0 {
-			tags = strings.Join(append([]string{tags}, extraTags...), ",")
-		}
 		opts := build.AppCompileOptions{
-			Tags:     tags,
+			Tags:     appBuildTags(b, extraTags),
 			LDFlags:  ldflags,
 			GCFlags:  gcflags,
 			ASMFlags: asmflags,
@@ -104,7 +128,7 @@ func compileForBoards(
 			}
 		}
 
-		binaries[b.Name()] = archBinaries{appPath: appBinary, initPath: initBinary, tsfunnelPath: tsfunnelBinary}
+		binaries[b.Name()] = archBinaries{appPath: appBinary, initPath: initBinary, tsfunnelPath: tsfunnelBinary, appOpts: opts}
 	}
 
 	return binaries, nil

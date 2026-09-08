@@ -14,14 +14,16 @@ and `gosd-init` uses it as that one signal:
 > your application runs, and goes solid on if a fatal error was recorded.
 
 This is automatic. There's no flag to turn it on, and nothing in your app
-needs to change.
+needs to change — unless your app wants to hold "booting" a little longer
+itself, which is what [the ready package](#holding-booting-until-your-app-is-genuinely-ready)
+below is for.
 
 ## The three states
 
 | State | LED behaviour | When |
 | --- | --- | --- |
-| Booting | Flashes evenly, 250ms on / 250ms off | From just after `gosd-init` opens the console, until your app starts |
-| Running | Blips briefly, 50ms on / 950ms off | `/app` has started successfully and been handed control |
+| Booting | Flashes evenly, 250ms on / 250ms off | From just after `gosd-init` opens the console, until your app is handed control (see below) |
+| Running | Blips briefly, 50ms on / 950ms off | By default, the instant `/app` starts successfully; an app that imports `github.com/jphastings/gosd/ready` instead holds Booting until it calls `ready.Signal()` |
 | Fatal | Solid on | A fatal error was recorded and the device has halted — see [the crash-report guide](crash-reports.md) |
 
 Booting and running are told apart by shape rather than speed alone: an even
@@ -30,6 +32,29 @@ an ordinary crash-and-restart (the common case — see "What you get for free"
 in the crash-report guide) does not return the LED to booting; the LED only
 moves to the fatal state on a **halt**, not a restart. There is no fourth
 "restarting" state.
+
+## Holding "booting" until your app is genuinely ready
+
+By default `gosd-init` flips the LED to Running the instant `/app`'s process
+starts — before your `main` has run a single line. That's fine for most
+apps, but not for one that needs WiFi, an external API, or a sensor
+initialized before it's genuinely "all okay": the LED would say Running
+while your app is still failing every request.
+
+Importing `github.com/jphastings/gosd/ready` opts an app out of that
+default: `gosd build` inspects your app's own dependency graph and, when it
+includes that package, holds the LED on Booting past process start. The LED
+only moves to Running once your app calls `ready.Signal()` — call it as soon
+as your app considers itself ready, however it defines that.
+
+There's no separate flag for this and no timeout: an app that imports the
+package and never calls `Signal` leaves the LED honestly stuck on Booting
+rather than lying that it's running, and `gosd-init` logs that explicitly at
+the first app start (its only way to warn you, since it has no shell or
+remote debug). An app that wants a solid LED plus a written explanation on
+the card instead calls `fault.Fatal` — see
+[the crash-report guide](crash-reports.md). Full API docs are on the `ready`
+package itself.
 
 **The two blinking states are driven by the kernel, not by `gosd-init`
 itself.** Both claim the LED's `timer` trigger and set its `delay_on` /

@@ -37,6 +37,7 @@ import (
 	"github.com/jphastings/gosd/internal/hostsfile"
 	"github.com/jphastings/gosd/internal/initcfg"
 	"github.com/jphastings/gosd/internal/provision"
+	"github.com/jphastings/gosd/internal/readymark"
 	"github.com/jphastings/gosd/internal/secretreg"
 	"github.com/jphastings/gosd/internal/wifictl"
 )
@@ -118,6 +119,7 @@ func main() {
 		// out to have none (qemu-virt, or any board with no gpio-leds LED
 		// at all).
 		StatusLED:   statusled.New(statusled.DefaultRoot),
+		AppReady:    appReady,
 		OpenConsole: platform.OpenConsole,
 		FallbackLog: fallbackLog,
 		ReadConfig:  readConfig,
@@ -349,6 +351,14 @@ func readCmdline() (initcfg.CmdlineArgs, error) {
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// appReady reports whether the app has called
+// github.com/jphastings/gosd/ready's Signal, by checking for the marker
+// file it drops (see internal/readymark). Only ever consulted when
+// config.json's AppSignalsReady is set.
+func appReady() bool {
+	return readymark.Marked(readymark.Dir)
 }
 
 // readConfigTree reads the config/ tree at the root of the boot partition —
