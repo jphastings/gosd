@@ -69,4 +69,5 @@ v2.15.0.
 **Not done: Mozilla CA bundle (`internal/cacerts`).** curl.se was
 unreachable from this session, so the dated snapshot pin wasn't bumped. The
 x509 fix concerns intermediates, which aren't in the roots bundle, so this
-PR doesn't depend on it — but a fresh pin is a sensible follow-up.
+PR doesn't depend on it — but a fresh pin is a sensible follow-up: bean
+gosd-c4rt.
