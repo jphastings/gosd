@@ -55,7 +55,7 @@ func TestNewServerAnswersQueries(t *testing.T) {
 
 // TestNewServerClosesSocketsOnStartResponderFailure exercises gosd-o6tp's
 // fix directly: real multicast sockets get opened (listenMulticast4/6 are
-// untouched), but startResponder — the seam over mdns.Server — is swapped
+// untouched), but startResponder — the seam over mdns.NewServer — is swapped
 // for a fake that fails deterministically, independent of whatever this
 // environment allows for a real multicast group join. NewServer must close
 // whichever of pc4/pc6 it opened before returning the error; this is
@@ -68,7 +68,7 @@ func TestNewServerClosesSocketsOnStartResponderFailure(t *testing.T) {
 	var pc6Seen *ipv6.PacketConn
 
 	original := startResponder
-	startResponder = func(pc4 *ipv4.PacketConn, pc6 *ipv6.PacketConn, _ *mdns.Config) (*mdns.Conn, error) {
+	startResponder = func(pc4 *ipv4.PacketConn, pc6 *ipv6.PacketConn, _ ...mdns.ServerOption) (*mdns.Conn, error) {
 		pc4Seen, pc6Seen = pc4, pc6
 		return nil, errBoom
 	}
@@ -106,7 +106,7 @@ func newQueryOnlyClient() (*mdns.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := mdns.Server(ipv4.NewPacketConn(l4), nil, &mdns.Config{Name: "gosd-smoketest-client"})
+	conn, err := mdns.NewServer(ipv4.NewPacketConn(l4), nil, responderOptions("gosd-smoketest-client")...)
 	if err != nil {
 		return nil, fmt.Errorf("starting query client: %w", err)
 	}
