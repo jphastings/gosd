@@ -13,7 +13,7 @@
     {
       packages = forAllSystems (pkgs: rec {
         default = gosd;
-        gosd = pkgs.buildGoModule {
+        gosd = pkgs.buildGoLatestModule {
           pname = "gosd";
           version = self.shortRev or self.dirtyShortRev or "unknown";
           src = self;
@@ -23,7 +23,7 @@
           #
           # Build time (compiling gosd itself, here): buildGoModule sets
           # GOTOOLCHAIN=local and a nix sandbox has no user PATH, so
-          # pkgs.go MUST already satisfy go.mod's `go` directive - there's
+          # pkgs.go_latest MUST already satisfy go.mod's `go` directive - there's
           # no toolchain fetch to fall back on. That directive can't be
           # relaxed to a bare major.minor either: `go mod tidy` raises it
           # to the maximum of every dependency's own floor (tailscale.com
@@ -34,6 +34,12 @@
           # once already, with "go.mod requires go >= 1.26.5 (running go
           # 1.26.4; GOTOOLCHAIN=local)".
           #
+          # go_latest/buildGoLatestModule rather than the unversioned
+          # go/buildGoModule: nixpkgs moves its unversioned `go` to a new
+          # major release months after shipping it, and tailscale.com
+          # adopts a new major's patch releases as its floor far sooner
+          # (go 1.27.3 arrived while pkgs.go was still 1.26.x).
+          #
           # Run time (gosd compiling the user's app): see postInstall.
 
           # Must match go.mod/go.sum. When they change, CI's "nix build"
@@ -41,7 +47,7 @@
           #   hash mismatch in fixed-output derivation ...
           #     got: sha256-...
           # Paste that "got:" value here.
-          vendorHash = "sha256-sN69e/WdzImP97t1os+WKM1Rp+ByIbtmbJdw5cubcXk=";
+          vendorHash = "sha256-DnzYpW3nof181Gu3Zco8j2+P6FA6wtomhJNO9UtAnPs=";
 
           subPackages = [ "cmd/gosd" ];
           env.CGO_ENABLED = "0";
@@ -90,7 +96,7 @@
             cp -r . $out/share/gosd-src
             wrapProgram $out/bin/gosd \
               --set-default GOSD_INIT_SRC $out/share/gosd-src/cmd/gosd-init \
-              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go ]}
+              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go_latest ]}
           '';
 
           meta = {

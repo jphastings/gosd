@@ -64,7 +64,15 @@ jobs:
           cache: true
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          version: v2.15.0
+          # Build golangci-lint with the go.mod toolchain setup-go just
+          # installed, rather than downloading the release binary: that one
+          # is built with whatever Go was current at golangci-lint's release,
+          # and refuses outright ("the Go language version ... used to build
+          # golangci-lint is lower than the targeted Go version") whenever
+          # go.mod's directive moves past it - as tailscale.com's floor does
+          # within days of every Go patch release.
+          install-mode: goinstall
 
   js:
     # Node 22 is both the package's engines floor and the toolchain's real

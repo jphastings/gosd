@@ -399,7 +399,7 @@ say so in the bean rather than silently diverging.
   the bundle exists so `nix run github:jphastings/gosd -- build ./cmd/myapp`
   works on a machine with no Go, as README promises. **go.mod's `go` directive
   is dependency-derived** — `go mod tidy` raises it to the maximum of every
-  dependency's own floor (`tailscale.com` sets today's `1.26.5`), so it cannot
+  dependency's own floor (`tailscale.com` sets today's `1.27.3`), so it cannot
   be hand-relaxed to a bare major.minor and a `go mod tidy` would undo the
   attempt. When a dependency bump raises it, **`nix flake update` belongs in
   the same PR**; if nixos-unstable hasn't shipped that Go patch release yet the

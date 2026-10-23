@@ -17,7 +17,7 @@ import (
 //
 // Do not use this constant for any version comparison: see CheckToolchain for
 // why.
-const MinGoVersion = "go1.26.5"
+const MinGoVersion = "go1.27.3"
 
 // CheckToolchain reports whether a `go` binary is on PATH at all. It
 // deliberately does not compare versions - GOTOOLCHAIN=auto is Go's default
