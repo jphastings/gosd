@@ -1,3 +1,26 @@
+## 0.8.5 (2026-10-23)
+
+### Fixes
+
+#### Update the bundled CA roots to the 2026-10-20 Mozilla snapshot
+
+Every image's `/etc/ssl/certs/ca-certificates.crt` now carries Mozilla's
+2026-10-20 root store (was 2026-07-16). Four roots are added (SECOM TLS RSA
+and ECC Root CA 2024, Telia EC and RSA TLS Root CA v3) and five are removed
+(three eMudhra emSign roots, ePKI Root Certification Authority and Atos
+TrustedRoot 2011). Rebuild and reflash to pick it up.
+
+#### Build with Go 1.27.3 for the crypto/x509 CA removal
+
+gosd now requires Go 1.27.3, the security release that makes `crypto/x509`
+reject certificate chains through eight distrusted intermediates. gosd-init
+and the `--ingress` shims are compiled with it, so rebuilding your image
+with this release gets them the fix. Your app's own HTTPS gets the fix only
+when your app is compiled with Go 1.27.3 or later. Any app that imports a
+gosd package now requires that version, and `GOTOOLCHAIN=auto` (Go's
+default) downloads it for you if your installed `go` is older. Every
+dependency is also on its latest release, including tailscale.com v1.104.2.
+
 ## 0.8.4 (2026-09-08)
 
 ### Features
