@@ -27,6 +27,6 @@ const InitramfsPath = "/etc/ssl/certs/" + ArtifactName
 // Pin is the dated Mozilla CA bundle snapshot gosd downloads and verifies
 // via internal/fetch. See the package doc comment for the bump procedure.
 var Pin = fetch.File{
-	URL:    "https://curl.se/ca/cacert-2026-07-16.pem",
-	SHA256: "3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf91",
+	URL:    "https://curl.se/ca/cacert-2026-10-20.pem",
+	SHA256: "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe",
 }
