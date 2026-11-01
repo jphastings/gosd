@@ -404,3 +404,49 @@ func TestRuntimeJoinUnparseableRequestSelfHeals(t *testing.T) {
 	}
 	awaitJoined(t, clock, wifi, dir, req.ID, 1)
 }
+
+// TestRuntimeJoinReportsJoinedOnlyAfterPersisting pins that wifi.Join (which
+// returns as soon as it reads Joined) cannot return while the credentials
+// are still being written to the card.
+func TestRuntimeJoinReportsJoinedOnlyAfterPersisting(t *testing.T) {
+	dir := t.TempDir()
+	clock := newFakeClock(time.Unix(0, 0))
+	wifi := &fakeWifiClient{interfacesResults: [][]Interface{{{Name: "wlan0", Index: 1}}}}
+	deps, _ := runtimeJoinTestDeps(clock, wifi, fakeCredentials{ok: false}, &testLog{})
+	persisting, release := make(chan struct{}), make(chan struct{})
+	deps.Persist = func(string, string) error {
+		close(persisting)
+		<-release
+		return nil
+	}
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go Run(deps, Options{Stop: stop, RequestDir: dir, RequestPollInterval: time.Millisecond})
+
+	req := wifictl.Request{ID: "req-1", SSID: "home-net", Persist: true}
+	if err := wifictl.WriteRequest(dir, req); err != nil {
+		t.Fatal(err)
+	}
+	if !advanceUntil(clock, associationPollPeriod, func() bool {
+		select {
+		case <-persisting:
+			return true
+		default:
+			return false
+		}
+	}) {
+		t.Fatal("persist never started")
+	}
+
+	for end := time.Now().Add(50 * time.Millisecond); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if status, ok, _ := wifictl.ReadStatus(dir); ok && status.ID == req.ID && status.State.Terminal() {
+			t.Fatalf("status = %+v while persist was still writing", status)
+		}
+	}
+
+	close(release)
+	if status := awaitStatus(t, dir, req.ID); status.State != wifictl.Joined {
+		t.Fatalf("status = %+v, want Joined", status)
+	}
+}

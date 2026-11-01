@@ -111,11 +111,11 @@ func watchRequests(deps Deps, opts Options, state *credState) {
 				break
 			}
 			lastBadContent = content
-			deps.Log("runtime WiFi join request could not be read: %v", err)
 			_ = wifictl.WriteStatus(opts.RequestDir, wifictl.Status{
 				State: wifictl.Failed,
 				Error: "request could not be parsed: " + err.Error(),
 			})
+			deps.Log("runtime WiFi join request could not be read: %v", err)
 		case ok && req.ID != lastGoodID:
 			lastGoodID = req.ID
 			lastBadContent = ""
@@ -179,7 +179,6 @@ func handleRequest(deps Deps, dir string, state *credState, req wifictl.Request)
 		}
 
 		deps.Log("runtime WiFi join to %q succeeded", req.SSID)
-		_ = wifictl.WriteStatus(dir, wifictl.Status{ID: req.ID, State: wifictl.Joined})
 
 		if req.Persist {
 			if deps.Persist == nil {
@@ -192,5 +191,10 @@ func handleRequest(deps Deps, dir string, state *credState, req wifictl.Request)
 		if deps.RestartIngress != nil {
 			deps.RestartIngress()
 		}
+
+		// Last, because wifi.Join returns the moment it reads Joined: an
+		// app that then tells its user "saved, you can unplug" must not
+		// outrun the card write or the ingress restart it implies.
+		_ = wifictl.WriteStatus(dir, wifictl.Status{ID: req.ID, State: wifictl.Joined})
 	})
 }
