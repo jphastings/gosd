@@ -13,8 +13,8 @@ import (
 const settingsDir = configtree.Dir + "/ingress/tailscale-funnel"
 
 // Config is the Tailscale Funnel a card declares, read straight off it: a
-// tagged, reusable auth key from the tailnet's admin console (tagging a key
-// disables that node's key expiry, so a shipped device never gets locked
+// tagged, non-ephemeral auth key from the tailnet's admin console (tagging a
+// key disables that node's key expiry, so a shipped device never gets locked
 // out — see epic gosd-65uy decision 4), the local app port to expose, and
 // two optional settings — the public hostname (defaults to the device's own
 // hostname) and which of Tailscale's three funnel ports to use (defaults to

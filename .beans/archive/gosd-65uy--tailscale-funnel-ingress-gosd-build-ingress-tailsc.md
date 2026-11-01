@@ -60,6 +60,9 @@ own bench bean gosd-79v8 remains hardware-gated.
    shipped devices). Auth keys expire ≤90 days but are needed only for FIRST
    registration — tsnet ignores the key once state exists (operators may
    delete it from gosd.toml afterwards).
+   **Amended 2026-11-01 (JP, bean gosd-7hys):** tagged and NOT ephemeral;
+   reusable is optional, since a fresh key with the same tag re-registers
+   a device just as well.
 5. **Plain ListenFunnel** (tailnet peers + internet), no FunnelOnly, no knob
    in v1: the URL is public anyway; with userspace netstack the only
    reachable endpoint is this listener; tailnet reachability is the
