@@ -375,8 +375,8 @@ actionable error at boot if they're missing (see "Troubleshooting" below):
 3. **The `funnel` node attribute**, granted to this device in your tailnet's
    ACL policy file (Access Controls in the admin console). Targeting a tag
    (rather than one specific device) is what makes this survive a device
-   being rebuilt or re-registered — see "Create a tagged, reusable auth
-   key" below — with a policy entry like:
+   being rebuilt or re-registered — see "Create a tagged auth key" below —
+   with a policy entry like:
 
    ```jsonc
    {
@@ -409,17 +409,20 @@ actionable error at boot if they're missing (see "Troubleshooting" below):
 2. **Set up the tailnet prerequisites** above, once per tailnet — not once
    per device.
 
-3. **Create a tagged, reusable auth key** in the admin console (Settings →
-   Keys → Generate auth key):
+3. **Create a tagged auth key** on [the admin console's keys
+   page](https://console.tailscale.com/admin/settings/keys) (Generate auth
+   key):
    - **Tagged**, with the same tag your ACL policy's `nodeAttrs` targets
      (`tag:gosd-device` in the example above). Tagging is what disables this
      node's key expiry: an *untagged* device's key expires after
      Tailscale's default 180 days, which would eventually disconnect a
      device nobody is sitting in front of to re-authenticate. A tag makes
      the identity permanent instead.
-   - **Reusable**, so the same key works for more than one device, or to
-     re-register this one later if it ever loses its state (see "Surviving
-     a reflash" below).
+   - **Not ephemeral.** Tailscale removes an ephemeral node soon after it
+     goes offline, so an unplugged device would come back as a new node
+     with a new public URL.
+   - Reusable is optional: a fresh key with the same tag re-registers a
+     device just as well (see "Surviving a reflash" below).
    - The key itself still expires — Tailscale caps auth keys at 90 days —
      but that only matters for this device's *first* registration.
      `gosd-tsfunnel` never looks at the key again once the device is
@@ -451,7 +454,7 @@ The device is reachable at `https://<hostname>.<tailnet>.ts.net`.
 
 | Setting | Required | Default | Notes |
 |---|---|---|---|
-| `authkey` | Only for first registration | — | A tagged, reusable auth key (see "Runbook" above). Safe to empty once the device has registered. Never logged. |
+| `authkey` | Only for first registration | — | A tagged, non-ephemeral auth key (see "Runbook" above). Safe to empty once the device has registered. Never logged. |
 | `port` | Yes | — | The local port your app listens on. |
 | `hostname` | No | The device's own hostname | Becomes the `<hostname>` in `https://<hostname>.<tailnet>.ts.net`. |
 | `funnel_port` | No | `443` | Which of Tailscale Funnel's three supported ports to listen on: `443`, `8443`, or `10000`. |
