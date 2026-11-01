@@ -517,6 +517,11 @@ var specs = map[string]KernelSpec{
 		// now-deleted docker-build.sh used to run (bean gosd-07fl) - this
 		// hand-maintained list is now the only copy.
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_DW",
 			"CONFIG_MMC_DW_ROCKCHIP",
@@ -569,6 +574,11 @@ var specs = map[string]KernelSpec{
 		// PHY_ROCKCHIP_NANENG_COMBO_PHY; PCI/NVMe/exFAT/mass-storage) come
 		// from bean gosd-je2r's research findings.
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_DW",
 			"CONFIG_MMC_DW_ROCKCHIP",
@@ -633,6 +643,11 @@ var specs = map[string]KernelSpec{
 		// are deliberately absent: out of scope for this epic (see
 		// gosd-bntd).
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_SDHCI_OF_DWCMSHC",
 			"CONFIG_PCI",
@@ -678,6 +693,11 @@ var specs = map[string]KernelSpec{
 		// See the radxa-zero-3e RequiredY comment above - same origin,
 		// now a hand-maintained literal list.
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
 			"CONFIG_ARCH_ROCKCHIP",
 			"CONFIG_MMC_DW",
 			"CONFIG_MMC_DW_ROCKCHIP",
@@ -759,6 +779,11 @@ var specs = map[string]KernelSpec{
 		// cldo3 rail, so without it the SD card vanishes mid-boot (bean
 		// gosd-jpc8).
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
 			"CONFIG_ARCH_SUNXI",
 			"CONFIG_PINCTRL_SUN55I_A523",
 			"CONFIG_PINCTRL_SUN55I_A523_R",
@@ -805,6 +830,12 @@ var specs = map[string]KernelSpec{
 		KernelFilename:   "Image",
 
 		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
+			"CONFIG_VIRTIO_VSOCKETS",
 			"CONFIG_VIRTIO_BLK",
 			"CONFIG_VIRTIO_NET",
 			"CONFIG_VIRTIO_PCI",
