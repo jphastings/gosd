@@ -432,6 +432,17 @@ say so in the bean rather than silently diverging.
   on. `--env`, `--env-file`, `--hostname`, `--wifi-ssid` and `--wifi-pass`
   are removed: the overlay directory is the developer's input, the wizard
   (or a hand-edit) is the operator's. See `docs/config.md`.
+- **Fail fast wherever gosd can know (decided 2026-11-01, JP).** People plug
+  a device in and walk away, so a failure gosd can already determine must
+  surface immediately and actionably — an error returned, a line logged, a
+  record a waiter can see — never as a timeout somebody has to sit out.
+  Retries, polls and deadlines are only for states that can still change:
+  something still coming up, or a failure fixed outside the device while a
+  supervisor keeps retrying (a bad auth key, a tailnet ACL). Whenever you add
+  a wait, ask "can we already know this will never succeed?", and reuse the
+  actionable line the code already logs as the reason rather than writing a
+  second wording. `ingress.URL`'s `ErrNoTunnel` (bean `gosd-merl`) is the
+  worked example.
 
 ## Board work & artifact releases
 
