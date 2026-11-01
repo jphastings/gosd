@@ -345,6 +345,29 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # jetson-nano is internal-only for now (epic gosd-72je): built and packaged
+  # here so its activation (bean gosd-uw32) can carry it from day one,
+  # mirroring pi-cm4 - deliberately NOT in the "Upload assets to the
+  # knope-published release" gh command yet. No U-Boot job: NVIDIA's
+  # bootloader lives in the module's own QSPI-NOR.
+  jetson-nano-kernel:
+    name: Build jetson-nano kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosd build-kernel
+        run: go run ./cmd/gosd build-kernel --board jetson-nano --staging staging/ -o out/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jetson-nano-kernel
+          path: staging/jetson-nano
+          if-no-files-found: error
+          retention-days: 1
+
   package-and-release:
     name: Package and publish release
     needs:
@@ -364,6 +387,7 @@ jobs:
         qemu-virt-kernel,
         turing-rk1-kernel,
         turing-rk1-uboot,
+        jetson-nano-kernel,
       ]
     runs-on: ubuntu-latest
     steps:
@@ -456,6 +480,11 @@ jobs:
         with:
           name: turing-rk1-uboot
           path: staging/turing-rk1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jetson-nano-kernel
+          path: staging/jetson-nano
 
       - name: Record U-Boot source provenance
         # gosd build-kernel already wrote each board's kernel source.json

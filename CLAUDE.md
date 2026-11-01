@@ -91,10 +91,10 @@ say so in the bean rather than silently diverging.
   from CI to `latest`.
 - **Target:** per-board architecture, all `GOOS=linux`: `GOARCH=arm64` for
   pi-zero-2w / pi-3b / pi-cm4 / radxa-zero-3e / nanopi-zero2 / rock-4se /
-  cubie-a5e / qemu-virt / turing-rk1, and `GOARCH=arm GOARM=6` for pi-zero-w
-  (BCM2835 is armv6, 32-bit only). The build pipeline compiles the app and
-  gosd-init once per architecture needed by the selected boards (decided
-  2026-07-06; was arm64-only).
+  cubie-a5e / qemu-virt / turing-rk1 / jetson-nano, and `GOARCH=arm GOARM=6`
+  for pi-zero-w (BCM2835 is armv6, 32-bit only). The build pipeline compiles
+  the app and gosd-init once per architecture needed by the selected boards
+  (decided 2026-07-06; was arm64-only).
 - **Board IDs:** `pi-zero-2w`, `pi-zero-w` (epic gosd-ajpz),
   `pi-3b` (BCM2837, one image covers the 3B and 3B+ — epic gosd-xhc3),
   `pi-cm4` (Raspberry Pi Compute Module 4, Lite/no-wireless variant, BCM2711
@@ -107,8 +107,11 @@ say so in the bean rather than silently diverging.
   epic gosd-h1wv), `turing-rk1` (Turing Machines RK1, RK3588 — the fleet's
   first board with no SD/microSD slot at all; boots from onboard eMMC only,
   flashed via USB maskrom/rkdeveloptool or the Turing Pi 2 BMC rather than a
-  card reader, see `docs/turing-rk1-flashing.md` — epic gosd-bntd); also
-  `qemu-virt` (internal —
+  card reader, see `docs/turing-rk1-flashing.md` — epic gosd-bntd),
+  `jetson-nano` (NVIDIA Jetson Nano SD-card dev kit, Tegra210 — boots
+  through NVIDIA's own firmware in the module's QSPI, so GoSD ships no
+  bootloader — epic gosd-72je, internal only until its artifacts release
+  lands); also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`

@@ -45,6 +45,7 @@ import (
 	"sort"
 
 	cubiea5ekernel "github.com/jphastings/gosd/build/boards/cubie-a5e/kernel"
+	jetsonnanokernel "github.com/jphastings/gosd/build/boards/jetson-nano/kernel"
 	nanopikernel "github.com/jphastings/gosd/build/boards/nanopi-zero2/kernel"
 	pi3bmanifest "github.com/jphastings/gosd/build/boards/pi-3b"
 	picm4manifest "github.com/jphastings/gosd/build/boards/pi-cm4"
@@ -805,6 +806,71 @@ var specs = map[string]KernelSpec{
 			"CONFIG_REGULATOR_AXP20X",
 			"CONFIG_RTC_DRV_SUN6I",
 			"CONFIG_SERIAL_8250_DW",
+		},
+		ModulesDisabled: true,
+		// Reproducibility left zero: this board's build doesn't set any of
+		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
+	},
+
+	// "jetson-nano" is the fleet's first NVIDIA member (epic gosd-72je):
+	// same fleet kernel tag, always booted on the mainline DTB (never the
+	// L4T one in QSPI). The arm64 defconfig already builds every Tegra210
+	// driver this board needs (the released rock-4se kernel.config, same
+	// defconfig and tag, shows each =y); RequiredY pins the boot path so a
+	// bump can't drop one silently. The MAX77620 PMIC stack is a hard boot
+	// dependency, like cubie-a5e's AXP717: it supplies the SD card's vqmmc
+	// and the PCIe rail the onboard RTL8111 sits behind (bean gosd-cxio).
+	"jetson-nano": {
+		BoardID: "jetson-nano",
+		Source: Source{
+			Repo:    fleetKernelRepo,
+			Ref:     fleetKernelTag,
+			RefKind: TagRef,
+		},
+		Defconfig: "defconfig",
+		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
+
+		ConfigFragment: jetsonnanokernel.ConfigFragment,
+		// No DTSPatches - see kernelassets.go's package doc.
+
+		// The 2GB kit's tegra210-p3541-0000.dts only lands upstream in
+		// v6.19, so this tag can't build it (bean gosd-cxio's findings).
+		DTB: &DTB{
+			MakeTarget: "nvidia/tegra210-p3450-0000.dtb",
+			SourcePath: "arch/arm64/boot/dts/nvidia/tegra210-p3450-0000.dtb",
+			Filename:   "tegra210-p3450-0000.dtb",
+		},
+
+		KernelMakeTarget: "Image",
+		KernelSourcePath: "arch/arm64/boot/Image",
+		KernelFilename:   "Image",
+
+		RequiredY: []string{
+			"CONFIG_VSOCKETS",
+			"CONFIG_VSOCKETS_DIAG",
+			"CONFIG_VSOCKETS_LOOPBACK",
+			"CONFIG_VHOST_VSOCK",
+			"CONFIG_VSOCKMON",
+			"CONFIG_ARCH_TEGRA",
+			"CONFIG_ARCH_TEGRA_210_SOC",
+			"CONFIG_TEGRA_MC",
+			"CONFIG_I2C_TEGRA",
+			"CONFIG_MFD_MAX77620",
+			"CONFIG_REGULATOR_MAX77620",
+			"CONFIG_GPIO_MAX77620",
+			"CONFIG_PINCTRL_MAX77620",
+			"CONFIG_REGULATOR_FIXED_VOLTAGE",
+			"CONFIG_MMC_SDHCI_TEGRA",
+			"CONFIG_EXFAT_FS",
+			"CONFIG_PCI",
+			"CONFIG_PCI_TEGRA",
+			"CONFIG_R8169",
+			"CONFIG_REALTEK_PHY",
+			"CONFIG_PHY_TEGRA_XUSB",
+			"CONFIG_USB_XHCI_TEGRA",
+			"CONFIG_GPIO_TEGRA",
+			"CONFIG_GPIO_CDEV",
+			"CONFIG_SERIAL_8250_TEGRA",
 		},
 		ModulesDisabled: true,
 		// Reproducibility left zero: this board's build doesn't set any of
