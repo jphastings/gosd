@@ -37,22 +37,22 @@ func TestKernelConfigSnapshotCoversEveryBoard(t *testing.T) {
 }
 
 // knownKernelConfigSnapshotDrift is a ratchet, not a suppression list: each
-// entry names a CONFIG symbol where, as of bean gosd-ilv8, the board's
-// COMMITTED kernel.config snapshot already disagrees with kernelspec's
-// CURRENT RequiredY/ForbiddenY/ModulesDisabled assertions - i.e. the
-// snapshot is stale and hasn't been regenerated since the assertion
-// changed. Regenerating a snapshot needs a real (20-75 minute, Docker-backed)
-// `gosd build-kernel` run, so this list exists purely so
-// TestKernelConfigSnapshotMatchesAssertions can gate on *new* drift starting
-// now without being blocked on rebuilding every board's kernel first; it is
-// not a statement that the drift is fine to leave. Follow-up: bean
-// gosd-dcov tracks regenerating these snapshots for real.
+// entry names a CONFIG symbol where a board's COMMITTED kernel.config
+// snapshot disagrees with kernelspec's CURRENT RequiredY/ForbiddenY/
+// ModulesDisabled assertions - i.e. the snapshot is stale and hasn't been
+// regenerated since the assertion changed. Regenerating a snapshot needs a
+// real (20-75 minute, Docker-backed) `gosd build-kernel` run - or a
+// workflow_dispatch of build-artifacts.yml, whose per-board uploads carry
+// kernel.config - so this list lets TestKernelConfigSnapshotMatchesAssertions
+// gate on *new* drift without blocking on a rebuild; it is not a statement
+// that the drift is fine to leave. Bean gosd-ilv8 seeded it with the drift
+// that predated this test; bean gosd-d6z2 regenerated every snapshot from a
+// real build and emptied it (closing gosd-dcov).
 //
 // This is the exact failure mode CLAUDE.md's "Board work" section already
 // names as having happened once (bean gosd-95yu believed "the Pi family has
-// no ext4" off a stale snapshot like these, for months after the fragment
-// actually gained it) - the entries below are that same class of staleness,
-// caught mechanically this time instead of by accident. The kernel.config
+// no ext4" off a stale snapshot, for months after the fragment actually
+// gained it) - caught mechanically now instead of by accident. The kernel.config
 // snapshot is documented as advisory, never authoritative (see each board's
 // README.md and kernelspec's package doc): a fragment/RequiredY change is
 // never blocked on updating it, and this test does not change that - it
@@ -61,25 +61,7 @@ func TestKernelConfigSnapshotCoversEveryBoard(t *testing.T) {
 // An entry that stops reproducing (the snapshot was regenerated, or the
 // assertion was relaxed) must be deleted: the test fails either way, so
 // this list can only shrink, never silently grow.
-var knownKernelConfigSnapshotDrift = map[string][]string{
-	// Every Pi board's kernel.fragment requires CONFIG_EXT4_FS=y (disk's
-	// ext4 default for attached USB mass storage, bean gosd-19kw), but none
-	// of the three committed snapshots have been regenerated since.
-	"pi-zero-2w": {"CONFIG_EXT4_FS"},
-	"pi-zero-w":  {"CONFIG_EXT4_FS", "CONFIG_MMC_SDHCI_IPROC"},
-	"pi-3b":      {"CONFIG_EXT4_FS"},
-	// Both Rockchip boards' fragments require CONFIG_EXFAT_FS=y (the `disk`
-	// package's exFAT support, same rationale as every other board's
-	// fragment), but neither committed snapshot has been regenerated since.
-	"radxa-zero-3e": {"CONFIG_EXFAT_FS"},
-	"nanopi-zero2":  {"CONFIG_EXFAT_FS"},
-	// qemu-virt's fragment explicitly forbids both symbols (see its
-	// ForbiddenY comments: the legacy mass-storage gadget auto-binds the
-	// UDC with no backing file, bean gosd-sz6p; nothing in gosd formats or
-	// mounts btrfs, bean gosd-10fn) but the committed snapshot predates both
-	// cuts and still has them =y.
-	"qemu-virt": {"CONFIG_USB_MASS_STORAGE", "CONFIG_BTRFS_FS"},
-}
+var knownKernelConfigSnapshotDrift = map[string][]string{}
 
 // trimConfigSuffix strips a trailing "=y"/"=m", mirroring
 // internal/kernelbuild's normalizeSymbols: RequiredY/ForbiddenY entries

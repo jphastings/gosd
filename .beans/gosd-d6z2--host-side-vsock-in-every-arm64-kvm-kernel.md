@@ -1,10 +1,11 @@
 ---
 # gosd-d6z2
 title: Host-side vsock in every arm64 KVM kernel
-status: in-progress
+status: completed
 type: task
+priority: normal
 created_at: 2026-11-01T09:21:46Z
-updated_at: 2026-11-01T09:21:46Z
+updated_at: 2026-11-01T10:08:52Z
 ---
 
 ## Why
@@ -27,7 +28,13 @@ Released artifacts v0.10.4: pi-cm4, pi-3b and pi-zero-2w already have the full s
 - [x] vsock block in the nine arm64 fragments (+ `VIRTIO_VSOCKETS` on qemu-virt)
 - [x] Mainline RequiredY lists in internal/kernelspec
 - [x] `artifacts:` change file
-- [ ] Dispatch build-artifacts.yml on the branch; regenerate all ten kernel.config snapshots from its outputs
-- [ ] Empty knownKernelConfigSnapshotDrift; complete gosd-dcov
-- [ ] Follow-up: Version bump PR + COMPATIBILITY.md row, after the release
-- [ ] ROCK 4SE bench: `/dev/kvm` + `/dev/vhost-vsock` exist, dmesg shows `kvm [1]: Hyp mode initialized`; record in docs/development/rock-4se.md
+- [x] Dispatch build-artifacts.yml on the branch; regenerate all ten kernel.config snapshots from its outputs
+- [x] Empty knownKernelConfigSnapshotDrift; complete gosd-dcov
+- [x] Follow-up bean for the Version bump, COMPATIBILITY.md row and ROCK 4SE KVM bench check: gosd-p4vl
+
+## Summary of Changes
+
+- Added a vsock block to all nine arm64 kernel fragments (pi-cm4, pi-3b, pi-zero-2w, radxa-zero-3e, nanopi-zero2, rock-4se, cubie-a5e, turing-rk1, qemu-virt) with `VSOCKETS`, `VSOCKETS_DIAG`, `VSOCKETS_LOOPBACK`, `VHOST_VSOCK` and `VSOCKMON`; qemu-virt also gets `VIRTIO_VSOCKETS`. The six mainline boards' hand-maintained RequiredY lists carry the same symbols; the Pi boards' RequiredY derives from the fragment.
+- `workflow_dispatch` run 41293550798 of build-artifacts.yml built all ten kernels green on this branch, so every new symbol survived olddefconfig. `strings` on the rock-4se `Image` and the pi-3b `kernel8.img` shows `vhost-vsock`.
+- Regenerated all ten `kernel.config` snapshots from that run's uploads and emptied `knownKernelConfigSnapshotDrift`, completing gosd-dcov.
+- `artifacts: minor` change file. The pin bump and the ROCK 4SE KVM check are gosd-p4vl.
