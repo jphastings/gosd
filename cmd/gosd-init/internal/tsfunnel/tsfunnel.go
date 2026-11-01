@@ -43,6 +43,7 @@
 package tsfunnel
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -53,6 +54,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 // logPrefix is prepended to every line this package logs, including the
@@ -161,6 +163,12 @@ type Deps struct {
 	// its tsnet state.
 	MkdirAll func(path string, perm os.FileMode) error
 
+	// WriteFile records that no tunnel will come up this boot where the
+	// public ingress package reads it (see recordOff); the shim writes its
+	// own URL itself. Matching os.WriteFile's exact signature lets
+	// production wiring assign it directly.
+	WriteFile func(path string, data []byte, perm os.FileMode) error
+
 	Clock Clock
 
 	// NewBackoff creates the restart backoff used by the supervise loop. A
@@ -233,6 +241,7 @@ func Run(deps Deps, opts Options) {
 		if m.log != "" {
 			deps.Log(m.log)
 		}
+		recordOff(deps, cmp.Or(m.log, "tailscale-funnel: this image wasn't built with --ingress tailscale-funnel"))
 		return
 	}
 
@@ -242,11 +251,30 @@ func Run(deps Deps, opts Options) {
 	waitForTimeSynced(deps, opts)
 
 	if err := deps.MkdirAll(StateDir, 0o700); err != nil {
-		deps.Log("tailscale-funnel: %s is not writable (%v); tailscale-funnel needs a data partition; rebuild with --data-size", StateDir, err)
+		line := fmt.Sprintf("tailscale-funnel: %s is not writable (%v); tailscale-funnel needs a data partition; rebuild with --data-size", StateDir, err)
+		deps.Log("%s", line)
+		recordOff(deps, line)
 		return
 	}
 
 	supervise(deps, opts, m)
+}
+
+// recordOff tells the app that no tunnel will come up this boot, so
+// ingress.URL can fail fast instead of waiting out its deadline. Failing to
+// is never worth changing what the supervisor does.
+func recordOff(deps Deps, reason string) {
+	if err := writeRecord(deps, ingressurl.OffRecord(reason)); err != nil {
+		deps.Log("tailscale-funnel: recording that no tunnel will start failed: %v", err)
+	}
+}
+
+// writeRecord stores rec where the public ingress package reads it.
+func writeRecord(deps Deps, rec []byte) error {
+	if err := deps.MkdirAll(ingressurl.Dir, 0o755); err != nil {
+		return err
+	}
+	return deps.WriteFile(ingressurl.TailscaleFunnelPath, rec, 0o644)
 }
 
 // waitForNetworkUp polls deps.NetworkUp (checking immediately, then every
@@ -309,6 +337,7 @@ func runArgs(m resolvedMode) []string {
 		"--hostname", m.hostname,
 		"--backend", fmt.Sprintf("http://localhost:%d", m.port),
 		"--funnel-port", strconv.Itoa(m.funnelPort),
+		"--url-file", ingressurl.TailscaleFunnelPath,
 	}
 }
 

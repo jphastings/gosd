@@ -60,6 +60,37 @@ Every agent shares the same shape, whichever one you pick:
 Per-agent sections follow below: Cloudflare Tunnel first, then Tailscale
 Funnel.
 
+## Your app's own public URL
+
+Inside an HTTP handler, the public name is already `r.Host`, and
+`X-Forwarded-Proto` is `https`: both agents forward the visitor's Host header
+unchanged.
+
+Outside a handler — logging it at startup, drawing a QR code, registering a
+webhook or OAuth redirect — ask [the `ingress` package](../ingress/ingress.go)
+instead. It waits until a tunnel reports its address, and returns
+`ingress.ErrNoTunnel` straight away, with the reason, when the device already
+knows no tunnel will come up this boot: no `--ingress` baked into the image,
+the card's settings empty or invalid, or a tunnel's local setup failing. It
+keeps waiting while a tunnel is retrying or still coming up, so pass a
+deadline: Funnel's name only exists once it has registered with your tailnet,
+and a bad auth key or tailnet ACL is fixed outside the device.
+
+```go
+go func() {
+	// Funnel's first registration can take several minutes.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if u, err := ingress.URL(ctx); err == nil {
+		log.Printf("reachable at %s", u)
+	}
+}()
+```
+
+If both agents are baked in, the Cloudflare Tunnel address wins. Off a device
+(a plain `go run`) `ingress.URL` returns an error immediately, so you can fall
+back to localhost.
+
 ## Cloudflare Tunnel (`gosd build --ingress cloudflared`)
 
 `gosd build --ingress cloudflared` bakes a [Cloudflare

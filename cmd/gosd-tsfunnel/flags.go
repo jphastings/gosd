@@ -21,6 +21,7 @@ type config struct {
 	backend         *url.URL
 	funnelPort      int
 	registerTimeout time.Duration
+	urlFile         string
 }
 
 // parseFlags parses and validates args, returning an actionable error for
@@ -33,6 +34,8 @@ func parseFlags(args []string) (config, error) {
 	backend := fs.String("backend", "", "local app URL to proxy Funnel traffic to, e.g. http://localhost:8080 (required)")
 	funnelPort := fs.Int("funnel-port", 443, "Funnel port to listen on (443, 8443, or 10000)")
 	registerTimeout := fs.Duration("register-timeout", 5*time.Minute, "how long to wait for tsnet to finish registering with the tailnet before giving up")
+
+	urlFile := fs.String("url-file", "", "file to record the public URL in once the Funnel listener is up, for the app to read (optional)")
 
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
@@ -69,5 +72,6 @@ func parseFlags(args []string) (config, error) {
 		backend:         backendURL,
 		funnelPort:      *funnelPort,
 		registerTimeout: *registerTimeout,
+		urlFile:         *urlFile,
 	}, nil
 }

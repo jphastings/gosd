@@ -36,6 +36,7 @@
 package cloudflared
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 // logPrefix is prepended to every line of cloudflared's relayed
@@ -225,6 +227,7 @@ func Run(deps Deps, opts Options) {
 		if m.log != "" {
 			deps.Log(m.log)
 		}
+		recordOff(deps, cmp.Or(m.log, "cloudflared: this image wasn't built with --ingress cloudflared"))
 		return
 	}
 
@@ -234,8 +237,13 @@ func Run(deps Deps, opts Options) {
 	waitForTimeSynced(deps, opts)
 
 	if err := writeRuntimeFiles(deps, m); err != nil {
-		deps.Log("cloudflared: writing runtime configuration failed: %v", err)
+		line := fmt.Sprintf("cloudflared: writing runtime configuration failed: %v", err)
+		deps.Log("%s", line)
+		recordOff(deps, line)
 		return
+	}
+	if err := writeRecord(deps, ingressurl.URLRecord("https://"+m.hostname)); err != nil {
+		deps.Log("cloudflared: recording the public URL for the app failed: %v", err)
 	}
 
 	supervise(deps, opts)
@@ -286,6 +294,24 @@ func waitForTimeSynced(deps Deps, opts Options) {
 			return
 		case <-deps.Clock.After(opts.TimeSyncedPollInterval):
 		}
+	}
+}
+
+// writeRecord stores rec where the public ingress package reads it, so the
+// app can learn its own address (or that it will never have one) outside an
+// HTTP request. Failing to is never worth stopping the tunnel for.
+func writeRecord(deps Deps, rec []byte) error {
+	if err := deps.MkdirAll(ingressurl.Dir, 0o755); err != nil {
+		return err
+	}
+	return deps.WriteFile(ingressurl.CloudflaredPath, rec, 0o644)
+}
+
+// recordOff tells the app that no tunnel will come up this boot, so
+// ingress.URL can fail fast instead of waiting out its deadline.
+func recordOff(deps Deps, reason string) {
+	if err := writeRecord(deps, ingressurl.OffRecord(reason)); err != nil {
+		deps.Log("cloudflared: recording that no tunnel will start failed: %v", err)
 	}
 }
 

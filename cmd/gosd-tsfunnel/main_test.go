@@ -95,3 +95,19 @@ func TestPrepareStateDir_LeavesOtherFilesAlone(t *testing.T) {
 		t.Errorf("unrelated file was removed: %v", err)
 	}
 }
+
+func TestPublicURL(t *testing.T) {
+	for _, tc := range []struct {
+		dnsName string
+		port    int
+		want    string
+	}{
+		{"pi.tail1234.ts.net.", 443, "https://pi.tail1234.ts.net"},
+		{"pi-1.tail1234.ts.net.", 8443, "https://pi-1.tail1234.ts.net:8443"},
+		{"pi.tail1234.ts.net", 10000, "https://pi.tail1234.ts.net:10000"},
+	} {
+		if got := publicURL(tc.dnsName, tc.port); got != tc.want {
+			t.Errorf("publicURL(%q, %d) = %q, want %q", tc.dnsName, tc.port, got, tc.want)
+		}
+	}
+}

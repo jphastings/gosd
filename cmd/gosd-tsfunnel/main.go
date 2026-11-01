@@ -24,7 +24,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
+	"github.com/jphastings/gosd/internal/ingressurl"
 	"tailscale.com/tsnet"
 )
 
@@ -65,7 +68,8 @@ func run(args []string, stderr io.Writer) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.registerTimeout)
 	defer cancel()
-	if _, err := srv.Up(ctx); err != nil {
+	st, err := srv.Up(ctx)
+	if err != nil {
 		// srv.Close() is deliberately NOT deferred until after a successful
 		// Up (see the defer below): tsnet's Close panics ("unreachable"
 		// from tsdial.PeerAPIHTTPClient) when Up failed before the dialer
@@ -83,7 +87,32 @@ func run(args []string, stderr io.Writer) error {
 	}
 	defer func() { _ = ln.Close() }()
 
+	if cfg.urlFile != "" {
+		if err := writeURLFile(cfg.urlFile, publicURL(st.Self.DNSName, cfg.funnelPort)); err != nil {
+			_, _ = fmt.Fprintf(stderr, "gosd-tsfunnel: recording the public URL for the app failed (the tunnel still works): %v\n", err)
+		}
+	}
+
 	return http.Serve(ln, newReverseProxy(cfg.backend))
+}
+
+// publicURL is the address Funnel serves the node at: its MagicDNS name
+// (which tsnet reports with a trailing dot, and which Tailscale may have
+// suffixed on a name collision, so it can't be predicted from the hostname),
+// plus the port unless it's the HTTPS default.
+func publicURL(dnsName string, port int) string {
+	u := "https://" + strings.TrimSuffix(dnsName, ".")
+	if port != 443 {
+		u += ":" + strconv.Itoa(port)
+	}
+	return u
+}
+
+func writeURLFile(path, url string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, ingressurl.URLRecord(url), 0o644)
 }
 
 // tsnetStateFiles are the JSON files tsnet.Server persists directly under

@@ -31,6 +31,9 @@ func TestParseFlags_Valid(t *testing.T) {
 	if cfg.registerTimeout != 5*time.Minute {
 		t.Errorf("registerTimeout default = %s, want 5m", cfg.registerTimeout)
 	}
+	if cfg.urlFile != "" {
+		t.Errorf("urlFile default = %q, want unset", cfg.urlFile)
+	}
 }
 
 func TestParseFlags_Overrides(t *testing.T) {
@@ -40,9 +43,13 @@ func TestParseFlags_Overrides(t *testing.T) {
 		"--backend", "http://localhost:9090",
 		"--funnel-port", "8443",
 		"--register-timeout", "90s",
+		"--url-file", "/run/gosd/ingress/tailscale-funnel",
 	})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.urlFile != "/run/gosd/ingress/tailscale-funnel" {
+		t.Errorf("urlFile = %q", cfg.urlFile)
 	}
 	if cfg.funnelPort != 8443 {
 		t.Errorf("funnelPort = %d, want 8443", cfg.funnelPort)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 const testDeviceHostname = "app.example.com"
@@ -29,6 +30,7 @@ func baseTestDeps(clock *fakeClock, log *testLog) Deps {
 		NetworkUp:    func() (bool, error) { return true, nil },
 		TimeSynced:   func() (bool, error) { return true, nil },
 		MkdirAll:     func(string, os.FileMode) error { return nil },
+		WriteFile:    func(string, []byte, os.FileMode) error { return nil },
 		Clock:        clock,
 		NewBackoff:   func() *childbackoff.Backoff { return childbackoff.NewBackoff(time.Second, 30*time.Second) },
 		Log:          log.Printf,
@@ -236,11 +238,22 @@ func TestRunLogsActionableLineWhenStateDirNotWritable(t *testing.T) {
 		started++
 		return 1, nil
 	}
-	deps.MkdirAll = func(string, os.FileMode) error { return errors.New("read-only file system") }
+	deps.MkdirAll = func(path string, _ os.FileMode) error {
+		if path == StateDir {
+			return errors.New("read-only file system")
+		}
+		return nil
+	}
+	var recorded []byte
+	deps.WriteFile = func(_ string, data []byte, _ os.FileMode) error { recorded = data; return nil }
 
 	opts := baseTestOptions(validConfig(), nil)
 
 	Run(deps, opts)
+
+	if !strings.Contains(string(recorded), "needs a data partition") {
+		t.Errorf("off record = %s, want the logged reason", recorded)
+	}
 
 	if started != 0 {
 		t.Errorf("StartProcess called %d times, want 0", started)
@@ -281,7 +294,7 @@ func TestSuperviseArgvAndEnvExactMatch(t *testing.T) {
 	if call.path != opts.BinaryPath {
 		t.Errorf("path = %q, want %q", call.path, opts.BinaryPath)
 	}
-	wantArgs := []string{"--statedir", StateDir, "--hostname", testDeviceHostname, "--backend", "http://localhost:8080", "--funnel-port", "443"}
+	wantArgs := []string{"--statedir", StateDir, "--hostname", testDeviceHostname, "--backend", "http://localhost:8080", "--funnel-port", "443", "--url-file", ingressurl.TailscaleFunnelPath}
 	if len(call.args) != len(wantArgs) {
 		t.Fatalf("args = %v, want %v", call.args, wantArgs)
 	}
@@ -633,5 +646,29 @@ func TestAuthkeyNeverAppearsInAnyLogOutput(t *testing.T) {
 		if strings.Contains(line, testAuthkey) {
 			t.Errorf("log line leaked the authkey: %q", line)
 		}
+	}
+}
+
+func TestRunRecordsTheLoggedReasonWhenNoTunnelWillComeUp(t *testing.T) {
+	log := &testLog{}
+	files := map[string][]byte{}
+	deps := baseTestDeps(newFakeClock(time.Unix(0, 0)), log)
+	deps.WriteFile = func(path string, data []byte, _ os.FileMode) error { files[path] = data; return nil }
+
+	opts := baseTestOptions(Config{}, nil)
+	opts.Baked = false
+	Run(deps, opts)
+
+	want := ingressurl.OffRecord("tailscale-funnel: this image wasn't built with --ingress tailscale-funnel")
+	if got := files[ingressurl.TailscaleFunnelPath]; string(got) != string(want) {
+		t.Errorf("unbaked: record = %s, want %s", got, want)
+	}
+
+	delete(files, ingressurl.TailscaleFunnelPath)
+	opts = baseTestOptions(Config{}, nil)
+	Run(deps, opts)
+
+	if rec := files[ingressurl.TailscaleFunnelPath]; !strings.Contains(string(rec), "nothing is set") {
+		t.Errorf("baked but unconfigured: record = %s, want the logged reason", rec)
 	}
 }

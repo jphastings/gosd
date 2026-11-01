@@ -760,11 +760,11 @@ func cloudflaredDeps(log func(format string, args ...any), wait func(pid int) (i
 // and wait is platform.Reaper.Wait — NEVER exec.Cmd.Wait, for the exact same
 // reaper-race reason cloudflaredDeps's doc comment gives. NetworkUp and
 // TimeSynced reuse the same two marker checks cloudflaredDeps wires through,
-// since both packages gate on the same network-up/time-synced markers; there
-// is no WriteFile here because, unlike cloudflared (which writes a
-// config.yml), tsfunnel's per-boot values travel entirely through argv/env
-// (see tsfunnel.runArgs/runEnv). restart mirrors cloudflaredDeps's own
-// Kill/RestartSignal wiring exactly, for the same ingress-reconnect
+// since both packages gate on the same network-up/time-synced markers.
+// WriteFile only records "no tunnel this boot" for the app: unlike
+// cloudflared (which writes a config.yml), tsfunnel's per-boot values travel
+// entirely through argv/env (see tsfunnel.runArgs/runEnv). restart mirrors
+// cloudflaredDeps's own Kill/RestartSignal wiring exactly, for the same ingress-reconnect
 // mechanism (epic gosd-ojbm decision 4).
 func tsfunnelDeps(log func(format string, args ...any), wait func(pid int) (int, error), restart *restartsignal.Signal) tsfunnel.Deps {
 	return tsfunnel.Deps{
@@ -775,6 +775,7 @@ func tsfunnelDeps(log func(format string, args ...any), wait func(pid int) (int,
 		NetworkUp:     func() (bool, error) { return timesync.NetworkUpMarkerExists(netup.DefaultNetworkUpPath) },
 		TimeSynced:    timeSyncedMarkerExists,
 		MkdirAll:      os.MkdirAll,
+		WriteFile:     os.WriteFile,
 		Clock:         tsfunnel.NewRealClock(),
 		NewBackoff: func() *childbackoff.Backoff {
 			return childbackoff.NewBackoff(tsfunnel.DefaultBackoffBase, tsfunnel.DefaultBackoffCap)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 func validConfig(t *testing.T) Config {
@@ -33,8 +34,8 @@ func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
 		t.Fatal("cloudflared never started")
 	}
 
-	if got := files.dirsCreated(); len(got) != 1 || got[0] != RuntimeDir {
-		t.Fatalf("MkdirAll calls = %v, want exactly [%q]", got, RuntimeDir)
+	if got := files.dirsCreated(); len(got) != 2 || got[0] != RuntimeDir {
+		t.Fatalf("MkdirAll calls = %v, want [%q, ...]", got, RuntimeDir)
 	}
 
 	credentials, ok := files.get(CredentialsPath)
@@ -44,6 +45,10 @@ func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
 	wantCredentials := `{"AccountTag":"` + testAccountTag + `","TunnelSecret":"` + testTunnelSecret + `","TunnelID":"` + testTunnelID + `"}`
 	if string(credentials) != wantCredentials {
 		t.Errorf("%s = %s, want %s", CredentialsPath, credentials, wantCredentials)
+	}
+
+	if rec, _ := files.get(ingressurl.CloudflaredPath); string(rec) != string(ingressurl.URLRecord("https://app.example.com")) {
+		t.Errorf("%s = %q, want the tunnel's public URL", ingressurl.CloudflaredPath, rec)
 	}
 
 	config, ok := files.get(ConfigPath)
@@ -584,5 +589,23 @@ func TestTokenNeverAppearsInAnyLogOutput(t *testing.T) {
 		if strings.Contains(line, token) {
 			t.Errorf("log line leaked the raw encoded token: %q", line)
 		}
+	}
+}
+
+func TestRunRecordsThatNoTunnelWillComeUpWhenNotBaked(t *testing.T) {
+	log := &testLog{}
+	files := newFakeFiles()
+	deps := baseTestDeps(newFakeClock(time.Unix(0, 0)), log)
+	deps.MkdirAll = files.MkdirAll
+	deps.WriteFile = files.WriteFile
+	opts := baseTestOptions(Config{}, nil)
+	opts.Baked = false
+
+	Run(deps, opts)
+
+	rec, _ := files.get(ingressurl.CloudflaredPath)
+	want := ingressurl.OffRecord("cloudflared: this image wasn't built with --ingress cloudflared")
+	if string(rec) != string(want) {
+		t.Errorf("%s = %s, want %s", ingressurl.CloudflaredPath, rec, want)
 	}
 }
