@@ -1,11 +1,11 @@
 ---
 # gosd-rsrd
 title: GPIO/I2C/SPI example app + docs for both boards
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-02T21:10:00Z
-updated_at: 2026-08-21T03:19:52Z
+updated_at: 2026-11-01T22:32:23Z
 parent: gosd-q6g6
 blocked_by:
     - gosd-m9dj
@@ -23,3 +23,13 @@ LED blinks on both physical boards from the same example source; docs reviewed a
 
 ## Superseded (2026-07-08)
 Split into per-bus feature beans: I2C = gosd-85pt (done, pending bench), GPIO = gosd-nyad, SPI = gosd-fnza. This umbrella can be closed once those three complete on hardware.
+
+
+## Summary of Changes
+
+Closed 2026-11-01 at JP's call, ahead of the "once those three complete on
+hardware" condition above, so this umbrella stops duplicating the per-bus
+beans. Its work lives on in gosd-nyad (GPIO), gosd-85pt (I2C) and gosd-fnza
+(SPI): each has its worked example, per-board pin docs and its own open
+bench-verification todo. The unchecked items above are carried there, not
+done here.

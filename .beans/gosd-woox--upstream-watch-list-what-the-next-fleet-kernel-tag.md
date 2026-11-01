@@ -5,7 +5,7 @@ status: todo
 type: task
 priority: deferred
 created_at: 2026-08-21T04:43:26Z
-updated_at: 2026-08-21T04:43:26Z
+updated_at: 2026-11-01T22:32:38Z
 ---
 
 Created 2026-08-21 (JP) to collapse four separately-tracked upstream-gated
@@ -169,9 +169,43 @@ then the usual artifacts release dance.
 
 ## Todos
 
-- [ ] T1 fired: a numbered stable release contains the RK3528 USB nodes
+- [x] T1 fired: a numbered stable release contains the RK3528 USB nodes — v7.2 and v7.3 (checked 2026-11-01), but no LTS yet; see "Upstream check (2026-11-01)"
 - [ ] W1 — fleet tag bump + nanopi-zero2 USB gadget enablement
 - [ ] W2 — re-survey cubie-a5e GMAC200 / header I2C / header SPI at the new tag
 - [ ] W3 — identify the Cubie A5E WiFi/BT module and apply the mainline-only rule
 - [ ] T2 fired: mainline TF-A ships `sun55i_a523`
 - [ ] W4 — repin cubie-a5e BL31 to mainline TF-A
+
+
+## Upstream check (2026-11-01)
+
+**T1 has fired, but not on an LTS.** Both commits (`5f3ae9b12a6c`,
+`ff660109f412`) are ancestors of `v7.2` and `v7.3` (GitHub compare against
+torvalds/linux). kernel.org's `releases.json` today: 7.3.1 stable, 7.2.15
+stable but already EOL, 7.4-rc1 mainline, and 6.18.60 still the newest
+longterm. No LTS newer than 6.18 exists yet. `fleetKernelTag`'s doc comment
+pins a *stable LTS* tag, so bumping now means pinning a non-LTS line (7.3,
+which will go EOL the way 7.2 already has) and is JP's call. Waiting means
+the next LTS: usually the year's last release, which would be 7.4 if the
+pattern holds.
+
+- **W1's open PHY question is answered:** `phy-rockchip-inno-usb2.c` has
+  `rk3528` entries at v7.3, and the upstream nanopi-zero2 DTS references
+  `usb_host0_xhci` and `usb2phy_otg`.
+- **W2 moved a lot at v7.3:**
+  - Second GbE: `sun55i-a523.dtsi` now has `gmac1`, stmmac has
+    `dwmac-sun55i.c`, and the upstream Cubie A5E DTS already enables `&gmac1`,
+    so it should arrive with the bump without a patch of our own.
+  - Header SPI: the dtsi now has `spi0`–`spi2` controller nodes, so a spidev
+    DTS patch becomes possible.
+  - Header I2C: unchanged; the nodes already existed.
+- **W3 not progressed:** the module is still unidentified. For what it's worth
+  before that's done, `drivers/net/wireless/` at v7.3 has no AIC-family
+  directory.
+
+**T2 has not fired.** TF-A's newest release is v2.15.0, and `plat/allwinner/`
+there and on `master` has no `sun55i_a523` (`master` gained only `sun50i_a133`).
+
+Separately, `fleetKernelTag` is `v6.18.37` while 6.18.60 is out. That's a
+point bump on the same LTS, for maintenance rather than capability, and not
+this bean's job.

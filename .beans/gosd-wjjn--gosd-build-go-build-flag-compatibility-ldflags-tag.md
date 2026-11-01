@@ -1,11 +1,11 @@
 ---
 # gosd-wjjn
 title: 'gosd build: go build flag compatibility (--ldflags, --tags, --trimpath, --gcflags, --asmflags)'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-08-24T10:38:27Z
-updated_at: 2026-08-25T06:28:20Z
+updated_at: 2026-11-01T22:31:57Z
 ---
 
 `gosd build`'s app-compile step doesn't accept the `go build` flags a Go
@@ -293,3 +293,11 @@ edit in place).
 
 All quality gates green (`go build`, `go test ./...` whole repo, `go vet`,
 `gofmt`, `golangci-lint` native + `GOOS=linux`).
+
+
+## Status correction (2026-11-01)
+
+All three increments are on main: A and B in #369, C in #371. #376 was meant
+to close this bean out, but its commit (6af8bd4) flipped the frontmatter from
+`completed` back to `in-progress` — that was its only status change — so this
+restores `completed`.
