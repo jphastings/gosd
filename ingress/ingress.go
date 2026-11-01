@@ -14,10 +14,14 @@
 //
 // # Limits
 //
-// There is no "this device has no tunnel" signal: on a device with none
-// configured, [URL] waits until its context ends, so always pass a deadline.
-// The file is an address, not a liveness signal — it is not removed when the
-// tunnel drops, only rewritten when the tunnel next comes up.
+// [URL] fails fast, with [ErrNoTunnel], wherever gosd-init already knows no
+// tunnel will come up this boot: no `--ingress` baked into the image, the
+// card's settings empty or invalid, or a tunnel's local setup failing. It
+// still waits while a tunnel is retrying or still coming up (Funnel's first
+// registration can take minutes, and a bad auth key or tailnet ACL is fixed
+// outside the device), so always pass a deadline. The file is an address, not
+// a liveness signal — it is not removed when the tunnel drops, only
+// rewritten when the tunnel next comes up.
 //
 // # Off a device
 //
@@ -30,18 +34,27 @@ package ingress
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jphastings/gosd/internal/ingressurl"
 )
+
+// ErrNoTunnel is returned (wrapped, with the reasons) by [URL] when
+// gosd-init has decided no ingress tunnel will come up on this device this
+// boot.
+var ErrNoTunnel = errors.New("ingress: no tunnel will come up on this device")
 
 // defaultPollInterval is how often URL checks for a recorded URL.
 const defaultPollInterval = 500 * time.Millisecond
 
 // URL returns the public URL this device's ingress tunnel serves the app at,
 // waiting until a tunnel reports one or ctx is done, in which case it
-// returns ctx.Err().
+// returns ctx.Err(). If gosd-init reports that no tunnel will come up this
+// boot, it returns an error wrapping [ErrNoTunnel] straight away, naming
+// why.
 //
 // Off a device — anything not built by `gosd build` — it returns an
 // immediate, actionable error: see the package doc.
@@ -69,8 +82,12 @@ func (l *lookup) url(ctx context.Context) (*url.URL, error) {
 	defer ticker.Stop()
 
 	for {
-		if u, ok := ingressurl.Read(l.dir); ok {
+		u, off := ingressurl.Read(l.dir)
+		if u != nil {
 			return u, nil
+		}
+		if len(off) > 0 {
+			return nil, fmt.Errorf("%w: %s", ErrNoTunnel, strings.Join(off, "; "))
 		}
 		select {
 		case <-ctx.Done():

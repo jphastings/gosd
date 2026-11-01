@@ -47,8 +47,8 @@ func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
 		t.Errorf("%s = %s, want %s", CredentialsPath, credentials, wantCredentials)
 	}
 
-	if url, _ := files.get(ingressurl.CloudflaredPath); string(url) != "https://app.example.com" {
-		t.Errorf("%s = %q, want the tunnel's public URL", ingressurl.CloudflaredPath, url)
+	if rec, _ := files.get(ingressurl.CloudflaredPath); string(rec) != string(ingressurl.URLRecord("https://app.example.com")) {
+		t.Errorf("%s = %q, want the tunnel's public URL", ingressurl.CloudflaredPath, rec)
 	}
 
 	config, ok := files.get(ConfigPath)
@@ -589,5 +589,23 @@ func TestTokenNeverAppearsInAnyLogOutput(t *testing.T) {
 		if strings.Contains(line, token) {
 			t.Errorf("log line leaked the raw encoded token: %q", line)
 		}
+	}
+}
+
+func TestRunRecordsThatNoTunnelWillComeUpWhenNotBaked(t *testing.T) {
+	log := &testLog{}
+	files := newFakeFiles()
+	deps := baseTestDeps(newFakeClock(time.Unix(0, 0)), log)
+	deps.MkdirAll = files.MkdirAll
+	deps.WriteFile = files.WriteFile
+	opts := baseTestOptions(Config{}, nil)
+	opts.Baked = false
+
+	Run(deps, opts)
+
+	rec, _ := files.get(ingressurl.CloudflaredPath)
+	want := ingressurl.OffRecord("cloudflared: this image wasn't built with --ingress cloudflared")
+	if string(rec) != string(want) {
+		t.Errorf("%s = %s, want %s", ingressurl.CloudflaredPath, rec, want)
 	}
 }

@@ -68,9 +68,13 @@ unchanged.
 
 Outside a handler — logging it at startup, drawing a QR code, registering a
 webhook or OAuth redirect — ask [the `ingress` package](../ingress/ingress.go)
-instead. It waits until a tunnel reports its address, so pass a deadline:
-there is no signal that a device has no tunnel configured, and Funnel's name
-only exists once it has registered with your tailnet.
+instead. It waits until a tunnel reports its address, and returns
+`ingress.ErrNoTunnel` straight away, with the reason, when the device already
+knows no tunnel will come up this boot: no `--ingress` baked into the image,
+the card's settings empty or invalid, or a tunnel's local setup failing. It
+keeps waiting while a tunnel is retrying or still coming up, so pass a
+deadline: Funnel's name only exists once it has registered with your tailnet,
+and a bad auth key or tailnet ACL is fixed outside the device.
 
 ```go
 go func() {

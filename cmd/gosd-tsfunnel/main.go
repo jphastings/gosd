@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jphastings/gosd/internal/ingressurl"
 	"tailscale.com/tsnet"
 )
 
@@ -111,7 +112,7 @@ func writeURLFile(path, url string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(url), 0o644)
+	return os.WriteFile(path, ingressurl.URLRecord(url), 0o644)
 }
 
 // tsnetStateFiles are the JSON files tsnet.Server persists directly under
