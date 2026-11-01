@@ -9,6 +9,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 func validConfig(t *testing.T) Config {
@@ -33,8 +34,8 @@ func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
 		t.Fatal("cloudflared never started")
 	}
 
-	if got := files.dirsCreated(); len(got) != 1 || got[0] != RuntimeDir {
-		t.Fatalf("MkdirAll calls = %v, want exactly [%q]", got, RuntimeDir)
+	if got := files.dirsCreated(); len(got) != 2 || got[0] != RuntimeDir {
+		t.Fatalf("MkdirAll calls = %v, want [%q, ...]", got, RuntimeDir)
 	}
 
 	credentials, ok := files.get(CredentialsPath)
@@ -44,6 +45,10 @@ func TestRunWritesCredentialsAndConfigFilesBeforeStarting(t *testing.T) {
 	wantCredentials := `{"AccountTag":"` + testAccountTag + `","TunnelSecret":"` + testTunnelSecret + `","TunnelID":"` + testTunnelID + `"}`
 	if string(credentials) != wantCredentials {
 		t.Errorf("%s = %s, want %s", CredentialsPath, credentials, wantCredentials)
+	}
+
+	if url, _ := files.get(ingressurl.CloudflaredPath); string(url) != "https://app.example.com" {
+		t.Errorf("%s = %q, want the tunnel's public URL", ingressurl.CloudflaredPath, url)
 	}
 
 	config, ok := files.get(ConfigPath)

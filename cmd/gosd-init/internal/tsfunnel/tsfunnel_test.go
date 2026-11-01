@@ -10,6 +10,7 @@ import (
 
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 const testDeviceHostname = "app.example.com"
@@ -281,7 +282,7 @@ func TestSuperviseArgvAndEnvExactMatch(t *testing.T) {
 	if call.path != opts.BinaryPath {
 		t.Errorf("path = %q, want %q", call.path, opts.BinaryPath)
 	}
-	wantArgs := []string{"--statedir", StateDir, "--hostname", testDeviceHostname, "--backend", "http://localhost:8080", "--funnel-port", "443"}
+	wantArgs := []string{"--statedir", StateDir, "--hostname", testDeviceHostname, "--backend", "http://localhost:8080", "--funnel-port", "443", "--url-file", ingressurl.TailscaleFunnelPath}
 	if len(call.args) != len(wantArgs) {
 		t.Fatalf("args = %v, want %v", call.args, wantArgs)
 	}

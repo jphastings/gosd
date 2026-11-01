@@ -53,6 +53,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 // logPrefix is prepended to every line this package logs, including the
@@ -309,6 +310,7 @@ func runArgs(m resolvedMode) []string {
 		"--hostname", m.hostname,
 		"--backend", fmt.Sprintf("http://localhost:%d", m.port),
 		"--funnel-port", strconv.Itoa(m.funnelPort),
+		"--url-file", ingressurl.TailscaleFunnelPath,
 	}
 }
 

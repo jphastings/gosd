@@ -45,6 +45,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/childbackoff"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/logwriter"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
+	"github.com/jphastings/gosd/internal/ingressurl"
 )
 
 // logPrefix is prepended to every line of cloudflared's relayed
@@ -237,6 +238,9 @@ func Run(deps Deps, opts Options) {
 		deps.Log("cloudflared: writing runtime configuration failed: %v", err)
 		return
 	}
+	if err := writePublicURL(deps, m); err != nil {
+		deps.Log("cloudflared: recording the public URL for the app failed: %v", err)
+	}
 
 	supervise(deps, opts)
 }
@@ -287,6 +291,16 @@ func waitForTimeSynced(deps Deps, opts Options) {
 		case <-deps.Clock.After(opts.TimeSyncedPollInterval):
 		}
 	}
+}
+
+// writePublicURL records https://<hostname> where the public ingress package
+// reads it, so the app can learn its own address outside an HTTP request.
+// Failing to is never worth stopping the tunnel for.
+func writePublicURL(deps Deps, m resolvedMode) error {
+	if err := deps.MkdirAll(ingressurl.Dir, 0o755); err != nil {
+		return err
+	}
+	return deps.WriteFile(ingressurl.CloudflaredPath, []byte("https://"+m.hostname), 0o644)
 }
 
 // writeRuntimeFiles creates RuntimeDir and writes CredentialsPath and
