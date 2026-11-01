@@ -70,7 +70,8 @@ import (
 //     shutdown; SPI now works on the Raspberry Pi Zero W.
 //   - v0.10.4: Turing RK1 kernel and U-Boot are now published in
 //     artifacts releases.
-const Version = "v0.10.4"
+//   - v0.10.5: vsock for hosting VMs in every arm64 kernel.
+const Version = "v0.10.5"
 
 // ManifestSHA256 is the SHA-256 (lowercase hex) of the manifest.json
 // published with the artifacts/<Version> release. It is the trust anchor for
@@ -84,7 +85,7 @@ const Version = "v0.10.4"
 // rewrites both (see docs/artifacts.md); by hand, it is
 //
 //	curl -sfL https://github.com/jphastings/gosd/releases/download/artifacts/<Version>/manifest.json | shasum -a 256
-const ManifestSHA256 = "6a74768859176c3ead4818e3380f58543b808dd01c9b0fee82f31fd28d6e18d2"
+const ManifestSHA256 = "ae16abda0734218cd06b94a37979590a342c6ab1a5e8a7e704b475d5d00e95cf"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
