@@ -182,6 +182,9 @@ func main() {
 		Sleep: time.Sleep,
 		Now:   time.Now,
 		After: time.After,
+		StepClock: func(floor time.Time, log func(format string, args ...any)) {
+			timesync.StepToFloor(time.Now(), floor, timesync.NewPlatform().System, log)
+		},
 		StartNetworking: func(cfg initcfg.Config, config cardconfig.Tree, log func(format string, args ...any)) {
 			// mdnsChanged is netup/wifiup's existing MarkNetworkUp/
 			// ClearNetworkUp hooks, additionally fanned out to the mDNS
@@ -238,6 +241,8 @@ func main() {
 					// package doc). cfg.BuildTime is the zero time.Time
 					// for a config.json baked before that field existed,
 					// which disables the floor rather than misfiring.
+					// Run never applies the floor to the clock; the
+					// boot-time StepClock does, forward only.
 					Floor:   cfg.BuildTime(),
 					MaxStep: timesync.DefaultMaxStep,
 				})
@@ -426,7 +431,7 @@ func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bo
 // clockSynced reports whether time has been set from a time server this
 // boot, which is what decides whether a crash report may print a timestamp
 // at all: no board in the fleet has a working RTC, so before the first sync
-// the clock reads ~1970 (see faultreport.Context.ClockSynced). A failed
+// the clock reads at best the image's build time (see faultreport.Context.ClockSynced). A failed
 // check reads as unsynced — the report says "unknown" rather than risking a
 // confidently wrong date.
 func clockSynced() bool {

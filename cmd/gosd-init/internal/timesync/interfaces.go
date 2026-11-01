@@ -61,10 +61,10 @@ const sntpLeapNotInSync = 3
 
 // SystemClock sets the OS wall-clock time. This — settimeofday(2) on
 // Linux — is the only way gosd-init ever corrects the running kernel's
-// clock: even on a board with a battery-backed RTC (see RTC and
+// clock, via StepToFloor at boot and then SNTP: even on a board with a battery-backed RTC (see RTC and
 // gosd-achn), the kernel's own HCTOSYS copies the RTC's value in at boot,
-// before gosd-init even starts, so by the time this package runs, SNTP is
-// the only source of a trustworthy time to Set.
+// before gosd-init even starts, so SNTP is the only source of a
+// trustworthy time to Set.
 type SystemClock interface {
 	Set(t time.Time) error
 }

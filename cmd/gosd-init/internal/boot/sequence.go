@@ -159,6 +159,12 @@ type Deps struct {
 	// failure via FaultReport and halts the device.
 	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error
 
+	// StepClock, if non-nil, is called right after config.json is read,
+	// before anything else starts, with the image's build time (zero when
+	// config.json predates it). Production raises an earlier system clock
+	// to that time; see timesync.StepToFloor.
+	StepClock func(floor time.Time, log func(format string, args ...any))
+
 	// WriteHosts appends the device's own hostname to /etc/hosts, once
 	// cfg.Hostname is as settled as it's going to get this boot — after
 	// the card, and any cloud-init seed consumed into it, have had their
@@ -289,6 +295,9 @@ func Run(deps Deps, opts Options) error {
 	// is optional) - nothing to eyeball on those, so nothing is logged.
 	if cfg.Identity != "" {
 		log("image identity: %s", cfg.ShortIdentity())
+	}
+	if deps.StepClock != nil {
+		deps.StepClock(cfg.BuildTime(), log)
 	}
 	// The board id config.json was baked with, captured before the
 	// gosd.board= cmdline override below can replace it. cmdline.txt is a

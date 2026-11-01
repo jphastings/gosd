@@ -232,11 +232,11 @@ consequence of the "no credentials file, hand-editable config" design
 ### Clock and TLS
 
 No GoSD board has a battery-backed real-time clock (see
-[`docs/runtime.md`'s "Clock" section](runtime.md#clock-starts-at-1970-until-sntp-syncs)) —
-the clock starts at the Unix epoch on every boot and only becomes correct
-once SNTP sync completes, which happens after networking comes up.
-cloudflared's QUIC connection to the Cloudflare edge is TLS, and a wildly
-wrong clock breaks certificate validity checks.
+[`docs/runtime.md`'s "Clock" section](runtime.md#clock-starts-at-the-build-time-until-sntp-syncs)) —
+`gosd-init` steps the clock forward to the image's build time on every boot,
+and it only becomes correct once SNTP sync completes, which happens after
+networking comes up. cloudflared's QUIC connection to the Cloudflare edge is
+TLS, and a wildly wrong clock breaks certificate validity checks.
 
 `gosd-init` doesn't block ingress on a perfect clock:
 
@@ -245,9 +245,8 @@ wrong clock breaks certificate validity checks.
   there's a network for it to use).
 - It then waits up to **2 minutes** for the time-synced marker
   (`/run/gosd/time-synced`), and starts cloudflared anyway if that window
-  elapses without a sync. The build's baked timestamp (a clock floor
-  `timesync` refuses to step backward past) keeps TLS validity mostly
-  correct even before NTP has actually landed, and cloudflared's own
+  elapses without a sync. The clock already sits at the build's baked timestamp, which keeps TLS
+  validity mostly correct before NTP lands, and cloudflared's own
   reconnect logic — plus this package's own restart backoff — absorbs
   whatever's left once the clock does settle.
 
@@ -514,9 +513,9 @@ at `--statedir`.
 ### Clock and TLS, and the restart backoff
 
 Same underlying gates as Cloudflare Tunnel — see
-[docs/runtime.md's "Clock" section](runtime.md#clock-starts-at-1970-until-sntp-syncs):
+[docs/runtime.md's "Clock" section](runtime.md#clock-starts-at-the-build-time-until-sntp-syncs):
 no GoSD board has a battery-backed clock, so it starts every boot at the
-Unix epoch until SNTP sync completes. `gosd-init` waits for the network-up
+image's build time until SNTP sync completes. `gosd-init` waits for the network-up
 marker first (parking indefinitely if the network never comes up), then
 waits up to **2 minutes** for the time-synced marker before starting the
 shim anyway — Tailscale's own control-plane and ACME retries, plus the
@@ -595,7 +594,7 @@ output relayed through the supervisor, so they appear on the console with
 - **Registration doesn't finish within 5 minutes** (usually an expired or
   wrong `TS_AUTHKEY`, or a clock still far from correct):
 
-  > `tailscale-funnel: gosd-tsfunnel: tsnet node did not finish registering within 5m0s: <error> — check that TS_AUTHKEY hasn't expired (auth keys expire within 90 days and are only needed for first registration; tsnet ignores the key once state already exists) and that the device clock is roughly correct (GoSD boards have no RTC and start every boot at the Unix epoch until SNTP syncs)`
+  > `tailscale-funnel: gosd-tsfunnel: tsnet node did not finish registering within 5m0s: <error> — check that TS_AUTHKEY hasn't expired (auth keys expire within 90 days and are only needed for first registration; tsnet ignores the key once state already exists) and that the device clock is roughly correct (GoSD boards have no RTC and start every boot at the image's build time until SNTP syncs)`
 
 - **The Funnel listener won't open** (one of the three tailnet prerequisites
   above isn't actually set):

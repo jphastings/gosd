@@ -74,8 +74,8 @@ const (
 
 	// DefaultTimeSyncedTimeout is how long Run waits for the time-synced
 	// marker before giving up and starting cloudflared anyway (locked
-	// decision): the build-timestamp clock floor keeps TLS validity checks
-	// mostly correct even before NTP has landed, and cloudflared's own
+	// decision): gosd-init steps an earlier clock forward to the build
+	// timestamp at boot, so TLS validity checks mostly pass before NTP lands, and cloudflared's own
 	// connection retries (plus this package's backoff) absorb the rest.
 	DefaultTimeSyncedTimeout = 2 * time.Minute
 
@@ -285,7 +285,7 @@ func waitForTimeSynced(deps Deps, opts Options) {
 		}
 
 		if !deps.Clock.Now().Before(deadline) {
-			deps.Log("cloudflared: time sync did not complete within %s; starting cloudflared anyway (this build's baked timestamp keeps TLS validity mostly correct)", opts.TimeSyncedTimeout)
+			deps.Log("cloudflared: time sync did not complete within %s; starting cloudflared anyway (the clock was stepped forward to this build's baked timestamp, which keeps TLS validity mostly correct)", opts.TimeSyncedTimeout)
 			return
 		}
 

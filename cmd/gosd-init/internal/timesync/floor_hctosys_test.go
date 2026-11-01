@@ -12,10 +12,10 @@ import (
 // Get, and the only two call sites of System.Set are stepClock (always
 // with an NTP-derived newTime) and nowhere else in the whole module (grep
 // for Settimeofday: platform_linux.go's unixSystemClock.Set is the only
-// implementation). opts.Floor is therefore purely a validity gate
-// (checkFloor, stepGuard.check's pre-floor-anchor fast path) on what NTP
-// is allowed to report — it is never itself written to the system clock —
-// so a system clock already correctly seeded by HCTOSYS from a
+// implementation). Within Run, opts.Floor is therefore purely a validity
+// gate (checkFloor, stepGuard.check's pre-floor-anchor fast path) on what
+// NTP is allowed to report — Run never writes it to the system clock (only
+// the separate boot-time StepToFloor does, and only forward) — so a system clock already correctly seeded by HCTOSYS from a
 // battery-backed RTC can never be clobbered backward by the floor logic.
 // These three tests correspond to the bean's three required scenarios.
 

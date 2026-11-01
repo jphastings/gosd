@@ -11,12 +11,12 @@ import (
 // keys expire within 90 days and are only needed for first registration;
 // tsnet ignores the key once state already exists) and a device clock that's
 // wrong enough to fail the tailnet's TLS handshake (GoSD boards have no
-// battery-backed RTC and start every boot at the Unix epoch until SNTP
-// syncs) — so the message names both rather than passing the bare tsnet
+// battery-backed RTC and start every boot at the image's build time until
+// SNTP syncs) — so the message names both rather than passing the bare tsnet
 // error through.
 func registerTimeoutError(timeout time.Duration, err error) error {
 	return fmt.Errorf(
-		"tsnet node did not finish registering within %s: %w — check that TS_AUTHKEY hasn't expired (auth keys expire within 90 days and are only needed for first registration; tsnet ignores the key once state already exists) and that the device clock is roughly correct (GoSD boards have no RTC and start every boot at the Unix epoch until SNTP syncs)",
+		"tsnet node did not finish registering within %s: %w — check that TS_AUTHKEY hasn't expired (auth keys expire within 90 days and are only needed for first registration; tsnet ignores the key once state already exists) and that the device clock is roughly correct (GoSD boards have no RTC and start every boot at the image's build time until SNTP syncs)",
 		timeout, err,
 	)
 }
