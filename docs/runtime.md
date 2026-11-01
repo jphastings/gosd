@@ -273,8 +273,8 @@ your app doesn't need to do anything to make this happen:
 - **`/run/gosd/time-synced`** is an empty marker file `gosd-init` creates
   on the first successful sync. Gate anything that checks certificate
   validity periods (TLS handshakes, `crypto/x509` verification) on this
-  file existing — attempting those before the clock is correct fails,
-  because the clock may still read the build time. Polling for the marker or
+  file existing — before it, the clock reads the build time, so a
+  certificate issued since then isn't valid yet. Polling for the marker or
   simply retrying TLS-dependent operations on failure both work; either
   way, don't treat an early failure as permanent, since the clock does
   become correct within moments of the network coming up.

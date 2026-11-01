@@ -431,9 +431,9 @@ func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bo
 // clockSynced reports whether time has been set from a time server this
 // boot, which is what decides whether a crash report may print a timestamp
 // at all: no board in the fleet has a working RTC, so before the first sync
-// the clock reads at best the image's build time (see faultreport.Context.ClockSynced). A failed
-// check reads as unsynced — the report says "unknown" rather than risking a
-// confidently wrong date.
+// the clock reads at best the image's build time (see
+// faultreport.Context.ClockSynced). A failed check reads as unsynced — the
+// report says "unknown" rather than risking a confidently wrong date.
 func clockSynced() bool {
 	synced, err := timeSyncedMarkerExists()
 	return err == nil && synced
