@@ -199,7 +199,7 @@ independent of `gosd`'s own release cadence. See `examples/sattrack/main.go`
 for the pattern in production use, calling a TLE API over HTTPS.
 
 This is a separate concern from the clock (below): a valid CA bundle
-doesn't help if the clock still reads 1970, since certificate validity
+doesn't help if the clock is wrong, since certificate validity
 periods won't check out either — see "Clock" for that gotcha.
 
 ### Ingress: reaching your app from the internet (`--ingress`)
@@ -253,11 +253,12 @@ Practical notes:
 - A malformed or partially-written provisioning file is logged and
   skipped; it never blocks boot.
 
-## Clock: starts at 1970 until SNTP syncs
+## Clock: starts at the build time until SNTP syncs
 
 No GoSD board has a battery-backed real-time clock. On boot, the system
-clock starts at the Unix epoch and only becomes correct once SNTP sync
-completes.
+clock starts at the Unix epoch; `gosd-init` immediately steps it forward to
+the image's build time (never backward, never written to an RTC), and it
+only becomes correct once SNTP sync completes.
 
 `gosd-init` syncs the clock itself (`cmd/gosd-init/internal/timesync`) —
 your app doesn't need to do anything to make this happen:
@@ -272,8 +273,8 @@ your app doesn't need to do anything to make this happen:
 - **`/run/gosd/time-synced`** is an empty marker file `gosd-init` creates
   on the first successful sync. Gate anything that checks certificate
   validity periods (TLS handshakes, `crypto/x509` verification) on this
-  file existing — attempting those before the clock is correct fails,
-  because the clock may still read 1970. Polling for the marker or
+  file existing — before it, the clock reads the build time, so a
+  certificate issued since then isn't valid yet. Polling for the marker or
   simply retrying TLS-dependent operations on failure both work; either
   way, don't treat an early failure as permanent, since the clock does
   become correct within moments of the network coming up.
@@ -286,6 +287,11 @@ your app doesn't need to do anything to make this happen:
   following resync reports a consistent value too, which is what lets a
   device that was genuinely powered off for a long time still catch up
   instead of being stuck refusing forever.
+- Until SNTP lands, a certificate that expired after the build still
+  validates, and anyone on-path who blocks UDP 123 can hold the clock at the
+  build time. Go doesn't check revocation, so expiry is what bounds a leaked
+  key; this pins that bound at the build date, and it loosens as the image
+  ages. The alternative is no TLS before SNTP at all.
 
 ## Storage
 

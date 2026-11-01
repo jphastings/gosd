@@ -2,7 +2,8 @@
 // Not every board has a battery-backed RTC — the Pi family has none at
 // all — and even where one exists, without a coin cell it survives a warm
 // reboot but not a power cut (see gosd-achn). So on many boots the clock
-// still starts at or near the Unix epoch and must be corrected before
+// still starts at or near the Unix epoch (StepToFloor raises it to the
+// build time at boot) and must be corrected before
 // anything relying on wall-clock time — most importantly TLS/x509
 // certificate validity checks — can be trusted. Once SNTP does correct it,
 // this package writes the result back to the RTC, if the board has one,

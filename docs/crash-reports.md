@@ -63,9 +63,9 @@ from a 3B+.
 
 **The clock is often wrong, and the file says so rather than guessing.** The
 Pi family has no real-time clock at all, and the boards that do have one need
-a coin cell fitted, so a device commonly starts up believing it is 1970 and
-stays there until it reaches a time server — and a crash before networking is
-up is exactly the kind a report exists for. `uptime` and `boot` are true
+a coin cell fitted, so a device commonly starts up believing it is the moment
+its image was built and stays there until it reaches a time server — and a
+crash before networking is up is exactly the kind a report exists for. `uptime` and `boot` are true
 regardless, and are what actually answer "did it die instantly or after four
 days?".
 

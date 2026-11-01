@@ -126,7 +126,7 @@ type Context struct {
 	Timestamp time.Time
 	// ClockSynced reports whether the clock has been set from a time
 	// server this boot. No board in the fleet has a working RTC, so before
-	// the first successful sync the clock reads ~1970 — and a crash before
+	// the first successful sync the clock reads at best the image's build time — and a crash before
 	// networking comes up is exactly the case a report exists for. False
 	// renders "timestamp: unknown" rather than a confidently wrong date.
 	ClockSynced bool
