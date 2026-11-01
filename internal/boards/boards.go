@@ -385,3 +385,10 @@ func IDs() []string {
 func IsInternal(id string) bool {
 	return internalOnly[id]
 }
+
+// InitramfsLimiter is implemented by a Board whose bootloader can load an
+// initramfs (the compressed file on the boot partition) only up to a fixed
+// size. The pipeline refuses to write an image that exceeds it.
+type InitramfsLimiter interface {
+	MaxInitramfsBytes() int64
+}

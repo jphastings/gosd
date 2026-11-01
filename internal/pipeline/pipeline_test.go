@@ -1036,3 +1036,33 @@ func TestAssembleWritesTheConfigTreeAndReportsItsValueRanges(t *testing.T) {
 		}
 	}
 }
+
+type limitedBoard struct {
+	fakeBoard
+	limit int64
+}
+
+func (b *limitedBoard) MaxInitramfsBytes() int64 { return b.limit }
+
+func TestAssembleRefusesAnInitramfsBeyondTheBoardsLimit(t *testing.T) {
+	dir := t.TempDir()
+	appPath := writeTempFile(t, dir, "app", "app")
+	initPath := writeTempFile(t, dir, "gosd-init", "init")
+
+	assemble := func(limit int64) error {
+		_, err := pipeline.Assemble(context.Background(), pipeline.Options{
+			Labels: testLabels,
+			Board:  &limitedBoard{fakeBoard: fakeBoard{name: "tiny-board"}, limit: limit}, AppBinaryPath: appPath, InitBinaryPath: initPath,
+			OutputPath: filepath.Join(t.TempDir(), "out.img"),
+		})
+		return err
+	}
+
+	err := assemble(1)
+	if err == nil || !strings.Contains(err.Error(), "tiny-board") || !strings.Contains(err.Error(), "but its bootloader can load only 0.0 MiB") {
+		t.Fatalf("Assemble() over the limit error = %v, want one naming the board and both sizes", err)
+	}
+	if err := assemble(1 << 30); err != nil {
+		t.Fatalf("Assemble() under the limit: %v", err)
+	}
+}

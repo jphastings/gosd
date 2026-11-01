@@ -122,3 +122,13 @@ func TestFirmwareFilesShipsXUSBWhereXHCILooksForIt(t *testing.T) {
 		t.Errorf("xusb.bin content = %q, want the resolved artifact's", got)
 	}
 }
+
+func TestDeclaresTheFourteenMiBInitramfsCeiling(t *testing.T) {
+	limiter, ok := jetsonnano.New().(boards.InitramfsLimiter)
+	if !ok {
+		t.Fatal("jetson-nano does not implement boards.InitramfsLimiter")
+	}
+	if got := limiter.MaxInitramfsBytes(); got != 14_680_064 {
+		t.Fatalf("MaxInitramfsBytes() = %d, want 14,680,064", got)
+	}
+}

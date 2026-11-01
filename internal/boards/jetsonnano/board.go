@@ -51,7 +51,16 @@ const (
 	displayName = "NVIDIA Jetson Nano"
 )
 
+// maxInitramfsBytes is the room NVIDIA's U-Boot leaves for the initramfs:
+// it loads the initrd at ramdisk_addr_r (0x83200000) and then the kernel at
+// kernel_addr_r (0x84000000), so 0x84000000-0x83200000 = 0xE00000 bytes
+// (tegra210-common.h, L4T R32.6.1; docs/development/jetson-nano.md).
+const maxInitramfsBytes = 0x84000000 - 0x83200000
+
 type board struct{}
+
+// MaxInitramfsBytes implements boards.InitramfsLimiter.
+func (board) MaxInitramfsBytes() int64 { return maxInitramfsBytes }
 
 // New returns the jetson-nano Board implementation.
 func New() boards.Board { return board{} }
