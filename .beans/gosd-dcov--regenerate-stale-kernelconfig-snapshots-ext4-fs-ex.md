@@ -1,11 +1,11 @@
 ---
 # gosd-dcov
 title: Regenerate stale kernel.config snapshots (EXT4_FS, EXFAT_FS, MMC_SDHCI_IPROC missing; qemu-virt's forbidden USB_MASS_STORAGE/BTRFS_FS still =y)
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-20T05:12:05Z
-updated_at: 2026-08-20T05:12:05Z
+updated_at: 2026-11-01T10:08:25Z
 ---
 
 Discovered by bean gosd-ilv8's new TestKernelConfigSnapshotMatchesAssertions (internal/kernelspec/kernelconfigsnapshot_test.go): six of the eight committed build/boards/*/kernel.config snapshots already disagree with kernelspec's current RequiredY/ForbiddenY assertions, i.e. they were never regenerated after the assertion that now contradicts them landed.
@@ -27,7 +27,11 @@ Regenerate each affected board's committed kernel.config via a real 'gosd build-
 
 ## Todos
 
-- [ ] Regenerate pi-zero-2w, pi-zero-w, pi-3b's kernel.config (fold into the next real Pi kernel build/artifact bump if one's already planned, to avoid a build purely for this)
-- [ ] Regenerate radxa-zero-3e, nanopi-zero2's kernel.config
-- [ ] Regenerate qemu-virt's kernel.config
-- [ ] Remove each regenerated board's entry from knownKernelConfigSnapshotDrift
+- [x] Regenerate pi-zero-2w, pi-zero-w, pi-3b's kernel.config (fold into the next real Pi kernel build/artifact bump if one's already planned, to avoid a build purely for this)
+- [x] Regenerate radxa-zero-3e, nanopi-zero2's kernel.config
+- [x] Regenerate qemu-virt's kernel.config
+- [x] Remove each regenerated board's entry from knownKernelConfigSnapshotDrift
+
+## Summary of Changes
+
+Folded into bean gosd-d6z2 (vsock in every arm64 kernel), which changed every kernel fragment except pi-zero-w's and so needed a real build anyway. A `workflow_dispatch` run of build-artifacts.yml on that branch built all ten kernels; each board's uploaded `kernel.config` was copied over its committed snapshot (pi-zero-w included), and `knownKernelConfigSnapshotDrift` is now empty. The regenerated snapshots are plain build output, so the old hand-written headers (which still pointed at the retired build.sh) are gone, matching the pi-cm4 and turing-rk1 snapshots that were already plain copies.
