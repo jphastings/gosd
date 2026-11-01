@@ -1,3 +1,19 @@
+## 0.8.8 (2026-11-01)
+
+### Fixes
+
+#### gosd-init steps the clock forward to the image's build time at boot
+
+A board with no working RTC used to run at the Unix epoch until SNTP answered, so every TLS handshake failed in that window. `gosd-init` now raises an earlier clock to the image's build time before anything else starts, so cloudflared, tailscale-funnel and your app can validate certificates before NTP lands. The clock is only ever moved forward, the RTC is not written, and `/run/gosd/time-synced` still appears only after a real sync. Until then a certificate that expired after the build still validates; see the runtime contract's clock section.
+
+#### The Tailscale auth key's explain file says how to make one
+
+`config/ingress/tailscale-funnel/authkey.explain.md` on the card now walks
+through generating the key: open the Tailscale admin console's keys page,
+click "Generate auth key", leave Ephemeral off and add your Funnel tag. The
+key no longer needs to be reusable. A fresh key with the same tag
+re-registers a device just as well.
+
 ## 0.8.7 (2026-11-01)
 
 ### Fixes
