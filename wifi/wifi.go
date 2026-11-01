@@ -58,7 +58,9 @@ type Options struct {
 	// config tree once the join succeeds, so the device rejoins this
 	// network on its next boot too. Left false, a successful join is
 	// in-memory only: the next boot uses whatever the config tree
-	// already had. A failed join is never persisted either way.
+	// already had. A failed join is never persisted either way. When
+	// Persist is set, Join returns only after the credentials have been
+	// written to the card.
 	Persist bool
 }
 
