@@ -268,7 +268,7 @@ func TestPiRequiredYIsDerivedFromFragment(t *testing.T) {
 // ForbiddenY entry that's a typo'd CONFIG_ name, and a RequiredY entry for a
 // config this board's own fragment never actually sets.
 var nonPiBoardsWithHandWrittenRequiredY = []string{
-	"radxa-zero-3e", "nanopi-zero2", "rock-4se", "cubie-a5e", "qemu-virt",
+	"radxa-zero-3e", "nanopi-zero2", "rock-4se", "cubie-a5e", "qemu-virt", "jetson-nano",
 }
 
 // TestNonPiRequiredYForbiddenYAppearInOwnFragment is the cross-check bean

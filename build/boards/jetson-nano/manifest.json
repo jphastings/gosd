@@ -1,0 +1,19 @@
+{
+  "board": "jetson-nano",
+  "firmware": {
+    "source": {
+      "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git",
+      "ref": "20261019",
+      "commit": "a2dcb924f0897368b0b4f305cbf9808cdda90ce0"
+    },
+    "destDir": "nvidia/tegra210",
+    "files": [
+      {
+        "name": "xusb.bin",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/nvidia/tegra210/xusb.bin?id=a2dcb924f0897368b0b4f305cbf9808cdda90ce0",
+        "sha256": "941873a6a70993b5c40a608cedc4608c281458c11949092d4bce125b96a92025"
+      }
+    ],
+    "notes": "XUSB Falcon firmware for xhci-tegra (drivers/usb/host/xhci-tegra.c requests nvidia/tegra210/xusb.bin at probe). Every USB host port on the Nano sits behind XUSB, so without it there is no USB host at all. Licence: Redistributable, LICENCE.nvidia (WHENCE, xhci-tegra entry). The blob was last changed by linux-firmware commit 520d85beec013a29ac365871c621916c221c901f ('Update Tegra210 XUSB firmware to v50.29'; WHENCE still says v50.24); the pin is the 20261019 tag's commit, and the blob is byte-identical at both (sha256 verified by independent download from git.kernel.org and the gitlab.com/kernel-firmware mirror on 2026-11-01, bean gosd-cxio)."
+  }
+}
