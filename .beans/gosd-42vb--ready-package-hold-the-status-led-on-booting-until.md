@@ -1,10 +1,11 @@
 ---
 # gosd-42vb
 title: 'ready package: hold the status LED on "booting" until the app signals ready'
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-09-08T12:22:43Z
-updated_at: 2026-09-08T12:22:43Z
+updated_at: 2026-11-01T22:31:57Z
 ---
 
 An app that needs WiFi (or anything else) before it is genuinely "all okay" currently cannot stop the status LED showing "running": gosd-init flips the LED the instant `/app`'s process starts (`Supervisor.Start` in `cmd/gosd-init/internal/boot/sequence.go`), before `main` has run a line, and networking never blocks that (a locked decision — see "Networking comes up after your app does" in docs/runtime.md). This bean lets an app hold the LED in the "booting" flash until it has done its own checks and says so.
@@ -79,3 +80,6 @@ it on macOS" — implemented as `Deps.AppReady func() bool`, checked via
 `waitForAppReady`, mirroring `Deps.StartNetworking`'s existing shape
 rather than adding a `readymark` import to the `boot` package itself
 (kept out of `sequence.go` entirely; only `main.go` imports it).
+
+
+Shipped in #390.

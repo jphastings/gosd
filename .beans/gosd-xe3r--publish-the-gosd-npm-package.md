@@ -1,11 +1,11 @@
 ---
 # gosd-xe3r
 title: Publish the gosd npm package
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-08-04T10:10:22Z
-updated_at: 2026-08-04T12:30:27Z
+updated_at: 2026-11-01T22:32:22Z
 ---
 
 Follow-up to gosd-hcyn: publish js/packages/gosd to npm.
@@ -16,9 +16,23 @@ The package publishes as `@jphastings/gosd` — the bare name `gosd` was 403'd b
 
 ## Remaining (JP console actions — can't be done from the repo)
 
-- [ ] Create the `npm-publish` GitHub environment with yourself as required reviewer (repo Settings → Environments)
-- [ ] Bootstrap publish of @jphastings/gosd@0.1.0 from your machine (`cd js && pnpm install --frozen-lockfile && cd packages/gosd && npm publish --access public --tag next`) — npm can only attach a trusted publisher to an EXISTING package
-- [ ] On npmjs.com → @jphastings/gosd → Access: add the trusted publisher (jphastings / gosd / publish-npm.yml / environment npm-publish) and set publishing to require 2FA-or-trusted-publisher (disables token publishing)
-- [ ] Promote when happy: `npm dist-tag add @jphastings/gosd@0.1.0 latest`
+- [x] Create the `npm-publish` GitHub environment with yourself as required reviewer (repo Settings → Environments)
+- [x] Bootstrap publish of @jphastings/gosd@0.1.0 from your machine (`cd js && pnpm install --frozen-lockfile && cd packages/gosd && npm publish --access public --tag next`) — npm can only attach a trusted publisher to an EXISTING package
+- [x] On npmjs.com → @jphastings/gosd → Access: add the trusted publisher (jphastings / gosd / publish-npm.yml / environment npm-publish) and set publishing to require 2FA-or-trusted-publisher (disables token publishing)
+- [x] Promote when happy: `npm dist-tag add @jphastings/gosd@0.1.0 latest`
 
 Full procedure: js/PUBLISHING.md.
+
+
+## Summary of Changes
+
+Verified against the live registry and GitHub on 2026-11-01:
+
+- The `npm-publish` environment exists, with jphastings as its required reviewer.
+- `@jphastings/gosd@0.1.0` was bootstrap-published by jphastings on 2026-08-04.
+- Every release since, `0.1.1` through `0.3.2`, was published by GitHub Actions
+  through trusted publishing, with provenance attestations.
+- `latest` is `0.3.1`; `next` is `0.3.2`.
+
+Not checkable from the public registry: the package's "require 2FA or a
+trusted publisher" access setting.

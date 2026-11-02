@@ -1,11 +1,11 @@
 ---
 # gosd-0nl7
 title: 'Pi 3B: trimmed arm64 kernel build (kernel8.img) + CI artifacts job'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-07-25T23:22:20Z
-updated_at: 2026-07-26T10:22:52Z
+updated_at: 2026-11-01T22:32:03Z
 parent: gosd-xhc3
 blocked_by:
     - gosd-ypg1
@@ -47,7 +47,7 @@ the registry — CLAUDE.md's registration-before-kernel coupling).
 
 - [x] Local gosd build-kernel run green; kernel.config committed with provenance
 - [x] Fragment-survival spot-checks recorded here
-- [ ] build-artifacts.yml job + packaging entries; dispatch run URL recorded
+- [x] build-artifacts.yml job + packaging entries; dispatch run URL recorded — the dispatch run was superseded by the real release: artifacts/v0.8.0 shipped pi-3b.tar.zst from this job
 - [x] Quality gates + actionlint on the workflow file
 
 
@@ -87,3 +87,10 @@ so the NEXT artifacts release is the first that can carry pi-3b — per the
 epic's batching decision it rides whichever release window comes first
 (gosd-36yy's fleet bump or an earlier forced release), then gosd-7wv9
 activates the board against it.
+
+
+## Summary of Changes
+
+The pi-3b kernel job and its packaging entries in `build-artifacts.yml`
+merged in #125. `artifacts/v0.8.0` was the first release to carry
+`pi-3b.tar.zst`, and gosd-7wv9 activated the board against it.

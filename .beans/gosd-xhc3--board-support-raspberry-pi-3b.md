@@ -1,11 +1,11 @@
 ---
 # gosd-xhc3
 title: 'Board support: Raspberry Pi 3B'
-status: in-progress
+status: completed
 type: epic
 priority: normal
 created_at: 2026-07-25T23:20:08Z
-updated_at: 2026-07-26T12:55:00Z
+updated_at: 2026-11-01T22:32:14Z
 ---
 
 Add the Raspberry Pi 3B (board ID pi-3b, BCM2837 SoC, arm64) as a GoSD board. Same Broadcom family and GPU-ROM boot flow as pi-zero-2w; joins the existing Pi fleet kernel pin. Headline feature vs the Zeros: onboard wired Ethernet (LAN9514 USB hub + 100Mbit). Planned 2026-07-26; decomposition mirrors the ROCK 4SE epic (gosd-cuym) adapted to the Pi family (no U-Boot, no viability-research bean: mainline-tree presence was verified up front, see below).
@@ -13,9 +13,9 @@ Add the Raspberry Pi 3B (board ID pi-3b, BCM2837 SoC, arm64) as a GoSD board. Sa
 ## Children
 
 - gosd-ypg1 — board profile, kernelspec + fragment, firmware manifest (internal registration; first PR) — completed
-- gosd-0nl7 — trimmed arm64 kernel build (kernel8.img) + CI artifacts job — code merged (#125); bean bookkeeping (dispatch-run todo) still open, though artifacts/v0.8.0 shipping pi-3b.tar.zst proves the wiring end-to-end
+- gosd-0nl7 — trimmed arm64 kernel build (kernel8.img) + CI artifacts job — completed: code merged (#125), first shipped in artifacts/v0.8.0
 - gosd-7wv9 — artifacts release + board activation — completed 2026-07-26: pi-3b is public, pinned to artifacts/v0.8.0, cataloged (`pi3-64bit`, live-verified), and in COMPATIBILITY.md; the activation milestone is done
-- gosd-f5xm — hardware bring-up and boot-time measurement — in progress (maiden boot done, formal checklist open); the epic stays open until it lands
+- gosd-f5xm — hardware bring-up and boot-time measurement — in progress (maiden boot done, formal checklist open); re-parented to no parent when this epic closed
 
 ## Locked decisions
 
@@ -142,3 +142,13 @@ RESULTS (2026-07-26 — the planned stock-image hack was superseded: a real pi-3
 - Ethernet came up via **lan78xx** (the 3B+'s LAN7515 GbE chip), NOT smsc95xx (the 3B's LAN9514) — CONFIG_USB_LAN78XX was present only by defconfig luck; the fragment asserted only SMSC95XX at the time.
 - USB-attached Ethernet is why the wrong-model DTB still worked: both chips self-enumerate on USB, DTB-agnostic.
 - **Locked decision (JP, 2026-07-26): the pi-3b board covers the whole Pi 3B family — 3B and 3B+ — in one image.** Bean gosd-oq0z ships both DTBs (firmware picks by board rev) and promotes CONFIG_USB_LAN78XX=y into the fragment. Discovered follow-up recorded there: 3B+ WiFi is a BCM43455 (needs the 43455 blob set + 3-model-b-plus aliases, not this epic's current manifest).
+
+
+## Summary of Changes
+
+Closed 2026-11-01 under CLAUDE.md's shipped-epic rule. The board profile
+(gosd-ypg1), kernel build and CI artifacts job (gosd-0nl7) and activation
+(gosd-7wv9) are all on main: pi-3b is public, ships in every artifacts release
+from `artifacts/v0.8.0` on, and is catalogued. The only open child was
+hardware verification of that shipped code, gosd-f5xm, which is re-parented
+to no parent and carries the remaining bench checklist.

@@ -5,8 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-07-25T23:22:33Z
-updated_at: 2026-07-26T09:51:15Z
-parent: gosd-xhc3
+updated_at: 2026-11-01T22:32:07Z
 blocked_by:
     - gosd-7wv9
 ---
