@@ -21,7 +21,7 @@ Tag-first, bump-second: this PR ships the pin plus an `artifacts:` change file o
 - [x] Sweep remaining `6.18.37` mentions and classify
 - [x] Prove every fleet DTS patch applies at v6.18.60
 - [x] Change file (`artifacts: patch`)
-- [ ] Pre-merge artifacts build via `workflow_dispatch` goes green
+- [ ] Pre-merge artifacts build via `workflow_dispatch` goes green: https://github.com/jphastings/gosd/actions/runs/41375787585
 - [ ] Follow-up PR bumping `internal/artifacts.Version` after release
 
 ## Patch application at v6.18.60 (f45ed76d6791)
