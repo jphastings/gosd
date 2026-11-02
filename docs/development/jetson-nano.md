@@ -60,6 +60,9 @@ initrd first and the kernel second, so an initramfs over 14 MiB has its
 tail silently overwritten by the kernel load. On serial that shows up as
 "Initramfs unpacking failed", followed by a `panic=10` reboot loop.
 
+`gosd build` now refuses a jetson-nano image whose initramfs exceeds this
+ceiling, at build time, rather than leaving the failure to the device.
+
 Measured initramfs sizes:
 
 - `examples/hello` built for this board: 10.4 MiB.

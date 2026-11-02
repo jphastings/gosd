@@ -446,6 +446,13 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 	if err := initramfs.Build(&initramfsBuf, initramfs.Spec{Files: files, Dirs: mountPointDirs}); err != nil {
 		return image.WriteReport{}, fmt.Errorf("building the initramfs for %s: %w", opts.Board.Name(), err)
 	}
+	if limiter, ok := opts.Board.(boards.InitramfsLimiter); ok && int64(initramfsBuf.Len()) > limiter.MaxInitramfsBytes() {
+		const mib = 1 << 20
+		return image.WriteReport{}, fmt.Errorf("the initramfs for %s is %.1f MiB but its bootloader can load only %.1f MiB, so the device would fail to boot: "+
+			"the bootloader (in the board's own flash) loads the initramfs at a fixed address with no more room before the kernel; "+
+			"try shrinking what goes into it - drop --ingress or --with-external binaries, or strip your app with --ldflags=\"-s -w\"",
+			opts.Board.Name(), float64(initramfsBuf.Len())/mib, float64(limiter.MaxInitramfsBytes())/mib)
+	}
 	resolved.Initramfs = &initramfsBuf
 	bootFiles[initramfsKey] = &initramfsBuf
 
