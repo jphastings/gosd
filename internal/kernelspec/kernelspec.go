@@ -290,7 +290,7 @@ const (
 // previously Rockchip-only fleet, bean gosd-axtv) - see
 // build/boards/radxa-zero-3e/kernel/README.md.
 const (
-	fleetKernelTag  = "v6.18.37"
+	fleetKernelTag  = "v6.18.60"
 	fleetKernelRepo = "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
 )
 
