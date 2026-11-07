@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-07T22:10:28Z
+updated_at: 2026-11-07T22:18:22Z
 parent: gosd-72je
 ---
 
@@ -31,7 +31,8 @@ So the app ran with an empty, read-only `/data`.
 - [x] Kernel: `CONFIG_BLK_DEV_NVME=y` and `CONFIG_NVME_MULTIPATH` off in the jetson-nano kernel (defconfig, per the board's `kernel.config` snapshot); `CONFIG_PCI_TEGRA=y` is in the fragment. Pinning `BLK_DEV_NVME` in the fragment is the sibling bean gosd-wxy7's.
 - [x] Crash-ordering argument (below).
 - [x] Independent adversarial review pass (CLAUDE.md: this formats and adopts on-disk state). It found no path that formats a drive holding someone's data; its fixes are in the second commit and folded into the sections below.
-- [ ] Bench: blank drive → formatted; reboot → adopted; reflash → adopted, settings restored; drive holding something else → refused; drive removed → read-only `/data` at once. Expected console lines are in the Jetson Nano development notes.
+- [x] Bench, drive holding something else → refused (2026-11-07): node 4's drive held an ext4 volume labelled `DISKTEST`. gosd-init named it, refused to reformat it as `hello-data`, wrote nothing, and mounted `/data` read-only; the app started.
+- [ ] Bench: blank drive → formatted; reboot → adopted; reflash → adopted, settings restored; drive removed → read-only `/data` at once. Expected console lines are in the Jetson Nano development notes.
 
 ## Design
 

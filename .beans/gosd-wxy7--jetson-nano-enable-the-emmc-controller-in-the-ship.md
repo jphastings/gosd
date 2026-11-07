@@ -5,7 +5,7 @@ status: in-progress
 type: task
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-07T21:46:01Z
+updated_at: 2026-11-07T22:18:22Z
 parent: gosd-72je
 ---
 
@@ -18,7 +18,7 @@ Ship a kernel-build DTS patch under `build/boards/jetson-nano/kernel/patches/`, 
 - [x] Pin the `mmcblk` numbering with `aliases`, so `APP` is a predictable `mmcblkNp1`. gosd-init only tries `mmcblk0p1`, `mmcblk1p1` and `vda1`.
 - [x] Check what gosd-init's data candidates (`mmcblk{0,1}p2`) then hit. That's NVIDIA's raw `DTB` partition, so the mount should fail harmlessly, but confirm it. `/data` belongs on the NVMe (see the NVMe data bean).
 - [ ] Do the artifacts release: tag first, bump second.
-- [ ] Bench: gosd-init mounts the boot partition and reads its config tree.
+- [x] Bench (2026-11-07, Turing Pi 2 node 4, kernel v6.18.60 built locally with this patch): `mmc0: new HS400 MMC card at address 0001` (DG4016, 14.7 GiB), `mmcblk0: p1 ... p17` plus `mmcblk0boot0`/`boot1`/`rpmb`, then gosd-init's `boot partition mounted at /boot from /dev/mmcblk0p1`; the app started and served HTTP.
 
 ## Implementation notes
 
