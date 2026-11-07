@@ -62,6 +62,11 @@ type board struct{}
 // MaxInitramfsBytes implements boards.InitramfsLimiter.
 func (board) MaxInitramfsBytes() int64 { return maxInitramfsBytes }
 
+// DataOnNVMe implements boards.NVMeDataBoard: NVIDIA's GPT owns the eMMC
+// and every flash rewrites it, so /data lives on the M.2 NVMe drive (epic
+// gosd-72je, decided 2026-11-07).
+func (board) DataOnNVMe() bool { return true }
+
 // New returns the jetson-nano Board implementation.
 func New() boards.Board { return board{} }
 

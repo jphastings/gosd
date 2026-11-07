@@ -263,7 +263,8 @@ Reflashing writes a whole new boot partition — `config/` included — so
 without anything more, every value you'd typed onto a card would be
 overwritten with whatever the new image shipped, every single time. An
 image built with a data partition (`gosd build --data-size=expand`, or any
-non-zero `--data-size`) avoids that: `gosd-init` keeps a copy of your
+non-zero `--data-size`), or a Jetson Nano with its NVMe drive fitted,
+avoids that: `gosd-init` keeps a copy of your
 settings on `/data`, and puts them back onto a freshly flashed card
 automatically.
 

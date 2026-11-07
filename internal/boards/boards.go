@@ -392,3 +392,20 @@ func IsInternal(id string) bool {
 type InitramfsLimiter interface {
 	MaxInitramfsBytes() int64
 }
+
+// NVMeDataBoard is implemented by a Board whose /data lives on an attached
+// NVMe drive rather than in partition 2 of the media it boots from — because
+// something other than GoSD owns that media's partition table, as NVIDIA's
+// layout owns the Jetson Nano's eMMC. Such a board's image ships no data
+// partition, and gosd-init formats or adopts the drive itself (see
+// initcfg.Config.DataOnNVMe).
+type NVMeDataBoard interface {
+	DataOnNVMe() bool
+}
+
+// DataOnNVMe reports whether b keeps /data on an NVMe drive (see
+// NVMeDataBoard).
+func DataOnNVMe(b Board) bool {
+	n, ok := b.(NVMeDataBoard)
+	return ok && n.DataOnNVMe()
+}

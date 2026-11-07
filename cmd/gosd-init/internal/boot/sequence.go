@@ -159,6 +159,14 @@ type Deps struct {
 	// failure via FaultReport and halts the device.
 	ExpandData func(bootPartitionDevice string, fs diskfmt.FS, dataLabel string, expand bool, log func(format string, args ...any)) error
 
+	// MountNVMeData mounts /data (target) from the board's NVMe drive,
+	// formatting a blank one as fs labelled dataLabel, for an image whose
+	// config.json says dataOnNVMe (see cmd/gosd-init/internal/nvmedata).
+	// It replaces both ExpandData and the partition-2 candidates for such
+	// a board, and a failure falls back to the same read-only /data as a
+	// missing data partition. Only called when dataOnNVMe is set.
+	MountNVMeData func(fs diskfmt.FS, dataLabel, target string, log func(format string, args ...any)) error
+
 	// StepClock, if non-nil, is called right after config.json is read,
 	// before anything else starts, with the image's build time (zero when
 	// config.json predates it). Production raises an earlier system clock
@@ -396,19 +404,29 @@ func Run(deps Deps, opts Options) error {
 		log("data partition flush: %t (%s)", dataFlush, dataFlushSource)
 	}
 
-	// dataexpand also needs to run for a fixed-size ext4 image (config.json's
-	// dataFilesystem, not dataExpand): unlike FAT32, ext4 ships pre-formatted
-	// at diskfmt's checked-in golden size and needs a one-time grow to the
-	// partition's real size on its actual first boot — see
-	// cmd/gosd-init/internal/dataexpand's package comment.
-	if deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4) {
+	mount := func() error {
+		return MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, dataFilesystem, dataFlush, deps.Sleep, deps.Now)
+	}
+	switch {
+	case cfg.DataOnNVMe:
+		// Partition 2 of this board's boot media isn't GoSD's (on a
+		// jetson-nano it is NVIDIA's DTB partition), so neither dataexpand
+		// nor the partition-2 candidates may touch it.
+		mount = func() error { return deps.MountNVMeData(dataFilesystem, cfg.DataLabel, opts.DataTarget, log) }
+	case deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4):
+		// dataexpand also needs to run for a fixed-size ext4 image
+		// (config.json's dataFilesystem, not dataExpand): unlike FAT32,
+		// ext4 ships pre-formatted at diskfmt's checked-in golden size and
+		// needs a one-time grow to the partition's real size on its actual
+		// first boot — see cmd/gosd-init/internal/dataexpand's package
+		// comment.
 		if err := deps.ExpandData(bootDevice, dataFilesystem, cfg.DataLabel, cfg.DataExpand, log); errors.Is(err, dataexpand.ErrDataCorrupt) {
 			return haltForDataCorruption(deps, log, report, cfg.DataLabel, dataFilesystem, cfg.DataExpand, err)
 		} else if err != nil {
 			log("expanding the data partition failed; continuing without it: %v", err)
 		}
 	}
-	mountData(deps, opts, dataFilesystem, dataFlush, log)
+	mountData(deps, opts, mount, log)
 
 	// The settings that survive a re-flash are kept on the data partition,
 	// so this is the earliest point they can be reached — and the last
@@ -758,17 +776,16 @@ func dataFlushEnvValue(flush bool) string {
 	return "0"
 }
 
-// mountData mounts the data partition (fs — FAT32 or ext4, see
-// resolveDataFilesystem) read-write at opts.DataTarget when it exists, and
-// otherwise mounts an empty read-only tmpfs there so that app writes fail
-// loudly with EROFS instead of silently landing in the RAM-backed rootfs
-// and vanishing on reboot (see MountDataReadOnlyFallback). Nothing here is
-// ever fatal: a missing partition (an image built with --data-size=0, or
-// from before the partition existed) or a failing mount just means no
-// persistent storage this boot. flush is the effective data-flush setting
-// (see effectiveDataFlush), passed through to MountDataPartition (a no-op
-// for anything other than FAT32 — see dataMountOption).
-func mountData(deps Deps, opts Options, fs diskfmt.FS, flush bool, log func(format string, args ...any)) {
+// mountData mounts /data read-write at opts.DataTarget with mount — the data
+// partition (see MountDataPartition), or a board's NVMe drive (see
+// Deps.MountNVMeData) — and otherwise mounts an empty read-only tmpfs there
+// so that app writes fail loudly with EROFS instead of silently landing in
+// the RAM-backed rootfs and vanishing on reboot (see
+// MountDataReadOnlyFallback). Nothing here is ever fatal: a missing
+// partition (an image built with --data-size=0, or from before the
+// partition existed), a missing drive or a failing mount just means no
+// persistent storage this boot.
+func mountData(deps Deps, opts Options, mount func() error, log func(format string, args ...any)) {
 	if opts.DataTarget == "" {
 		return
 	}
@@ -782,7 +799,7 @@ func mountData(deps Deps, opts Options, fs diskfmt.FS, flush bool, log func(form
 		}
 	}
 
-	if err := MountDataPartition(deps.Mounter, opts.DataTarget, opts.DataDevices, opts.DataTimeout, fs, flush, deps.Sleep, deps.Now); err != nil {
+	if err := mount(); err != nil {
 		if errors.Is(err, ErrDataPartitionMissing) {
 			log("no data partition on this image; mounting %s read-only", opts.DataTarget)
 		} else {

@@ -47,12 +47,41 @@ the Turing Pi side is in [the shared Turing Pi 2 BMC notes](turing-pi-2-bmc.md).
   SDMMC1 and SDMMC3, and aliases the eMMC to `mmc0`, so `APP` should
   become `/dev/mmcblk0p1`. That's not yet proven on the bench.
 - **U-Boot sees the M.2 NVMe drive.** That's `nvme0`, the 477 GB drive in
-  node 4's slot, where `/data` will live (bean `gosd-j18s`). U-Boot also
-  gets a DHCP lease, so PCIe and Ethernet work before Linux does.
+  node 4's slot, where `/data` lives (see below). U-Boot also gets a DHCP
+  lease, so PCIe and Ethernet work before Linux does.
 - **The status LED is a silent no-op,** as expected: there's no `gpio-leds`
   node.
 - **The initramfs fits.** `hello`'s 10.9 MB initramfs loads within the
   14 MiB ceiling below.
+
+## Where `/data` lives: the NVMe drive
+
+NVIDIA's GPT owns the eMMC: partition 2 is its raw `DTB`, and U-Boot itself
+is in `LNX`. So the board declares `boards.NVMeDataBoard`, the build bakes
+`dataOnNVMe` into `config.json` and ships no data partition, and gosd-init
+never tries a partition-2 candidate or runs dataexpand. Instead it hands
+the drive to `internal/blockmount`, the machinery behind the public `disk`
+package, as a whole-device ext4 volume labelled `<prefix>-data` (bean
+`gosd-j18s` has the design and the crash-ordering argument). Only names
+matching `nvme<N>n<N>` are ever candidates, so nothing on the eMMC can be
+chosen.
+
+On the console, after `data partition filesystem: ext4`, expect one of:
+
+| The drive | gosd-init says |
+| --- | --- |
+| blank | `formatting the NVMe drive at /dev/nvme0n1 as ext4, labelled <prefix>-data`, then `/data is a new ext4 volume on the NVMe drive at /dev/nvme0n1` |
+| this app's volume | `/data is the ext4 volume labelled <prefix>-data already on the NVMe drive at /dev/nvme0n1` |
+| anything else | `mounting data partition failed; mounting /data read-only: the NVMe drive at /dev/nvme0n1 already holds …; refusing to reformat it … — GoSD only formats a blank drive, …` |
+| not fitted | `mounting data partition failed; mounting /data read-only: no NVMe drive found: the PCIe bus has no NVMe controller on it; …` |
+
+Every success then logs `data partition mounted read-write at /data`.
+"Blank" means the drive's first MiB reads as zeroes. U-Boot's `No partition
+table - nvme 0` doesn't prove that, and it stays true after GoSD has
+formatted the drive, since the volume has no partition table.
+
+The first boot on a blank drive takes longer: it writes GoSD's 512 MiB ext4
+seed image, then grows it online to fill the drive.
 
 ## Things that look alarming but aren't
 

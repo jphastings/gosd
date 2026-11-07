@@ -421,6 +421,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("building %s for %s failed: %w", appName, b.Name(), err)
 		}
 		printBootVolumeUsage(cmd, b.Name(), report)
+		if boards.DataOnNVMe(b) {
+			cmd.PrintErrf("gosd build: %s keeps /data on its NVMe drive (ext4, labelled %s), so --data-size, --data-filesystem and --data-flush don't apply to it\n", b.Name(), labels.Data)
+		}
 
 		manifestPath, err := inject.WriteManifest(outputs[b.Name()], inject.ManifestSpec{
 			Board:        b.Name(),

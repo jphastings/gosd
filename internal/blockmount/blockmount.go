@@ -22,6 +22,12 @@
 // pick one however its own Rank is written (bean gosd-b6jl, finishing what
 // gosd-ix38 deliberately scoped out).
 //
+// gosd-init is a third caller, putting /data on the NVMe drive of a board
+// whose boot media isn't GoSD's to partition (cmd/gosd-init/internal/nvmedata,
+// bean gosd-j18s). It selects only NVMe namespaces, never passes
+// destructive, and swaps the refusals' destructive=true advice for an
+// operator's (Storage.Remedy); every decision below is unchanged for it.
+//
 // Every volume this package creates is established through one crash-safe
 // sequence — format → sync → mount → (grow, ext4 only) → marker — and a
 // volume found on a later boot is adopted only against the marker that
@@ -240,6 +246,19 @@ type Storage struct {
 	Noun string
 	// Deps are the operations to run.
 	Deps Deps
+	// Remedy, when set, replaces the "pass destructive=true to …" advice
+	// that ends every refusal, for a caller with no destructive option to
+	// offer — gosd-init, whose reader is whoever is at the serial console.
+	Remedy string
+}
+
+// remedy is the advice a refusal ends with: s.Remedy, or else how to
+// consent through Run's destructive argument to doing what.
+func (s Storage) remedy(what string) string {
+	if s.Remedy != "" {
+		return s.Remedy
+	}
+	return "pass destructive=true to " + what
 }
 
 // Run is the orchestration behind both packages' FormatAndMount: decide, from
@@ -297,13 +316,13 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 		// that would hand back a filesystem the caller never asked for —
 		// so it is treated like any other foreign content.
 		if !destructive {
-			return "", fmt.Errorf("the %s at %s already holds %s, but %s was requested for it; %w it as %s without permission — pass destructive=true to reformat it as %s (or match the filesystem already there)",
-				s.Noun, device, describe(contents), fs, ErrRefusedFormat, fs, fs)
+			return "", fmt.Errorf("the %s at %s already holds %s, but %s was requested for it; %w it as %s without permission — %s",
+				s.Noun, device, describe(contents), fs, ErrRefusedFormat, fs, s.remedy(fmt.Sprintf("reformat it as %s (or match the filesystem already there)", fs)))
 		}
 		action = "reformatting"
 	case contents.Blank:
 	case !destructive:
-		return "", fmt.Errorf("the %s at %s already holds %s; %w it as %q without permission — pass destructive=true to wipe it", s.Noun, device, describe(contents), ErrRefusedFormat, label)
+		return "", fmt.Errorf("the %s at %s already holds %s; %w it as %q without permission — %s", s.Noun, device, describe(contents), ErrRefusedFormat, label, s.remedy("wipe it"))
 	default:
 		action = "reformatting"
 	}
@@ -484,7 +503,7 @@ func establish(s Storage, device string, fs diskfmt.FS, label, mountpoint string
 				_ = s.Deps.EstablishMarker(mountpoint, fs)
 				return device, nil
 			case used && !destructive:
-				return "", fmt.Errorf("the %s at %s already holds a %s volume labelled %q with content in it, but no establishment marker (either an interrupted format, or something removed the marker); %w it without permission — pass destructive=true to overwrite it", s.Noun, device, fs, label, ErrRefusedFormat)
+				return "", fmt.Errorf("the %s at %s already holds a %s volume labelled %q with content in it, but no establishment marker (either an interrupted format, or something removed the marker); %w it without permission — %s", s.Noun, device, fs, label, ErrRefusedFormat, s.remedy("overwrite it"))
 			case used:
 				action = "reformatting"
 			}
@@ -504,7 +523,7 @@ func establish(s Storage, device string, fs diskfmt.FS, label, mountpoint string
 			// ErrUnmountable alongside ErrRefusedFormat, since this refusal
 			// is specifically about the caller's own volume rather than
 			// foreign content (see ErrUnmountable's doc).
-			return "", fmt.Errorf("the %s at %s already carries a %s volume labelled %q, but %w (%v); it may hold real data that cannot be read to check, so %w it without permission — pass destructive=true to reformat it anyway", s.Noun, device, fs, label, ErrUnmountable, mountErr, ErrRefusedFormat)
+			return "", fmt.Errorf("the %s at %s already carries a %s volume labelled %q, but %w (%v); it may hold real data that cannot be read to check, so %w it without permission — %s", s.Noun, device, fs, label, ErrUnmountable, mountErr, ErrRefusedFormat, s.remedy("reformat it anyway"))
 		} else {
 			action = "reformatting"
 		}

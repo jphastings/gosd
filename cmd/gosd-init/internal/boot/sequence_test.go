@@ -2289,6 +2289,55 @@ func TestRunContinuesToTheDataFallbackWhenExpansionFails(t *testing.T) {
 	}
 }
 
+// nvmeTestDeps is expandTestDeps for a board whose config.json says
+// dataOnNVMe, with a MountNVMeData hook returning mountErr and recording
+// what it was asked for.
+func nvmeTestDeps(mounter *fakeMounter, stop chan struct{}, mountErr error, expandedWith *[]string, asked *[]string) Deps {
+	deps := expandTestDeps(mounter, newFakeClock(time.Unix(0, 0)), stop, true, nil, expandedWith)
+	deps.ReadConfig = func() (initcfg.Config, error) {
+		return initcfg.Config{DataOnNVMe: true, DataExpand: true, DataFilesystem: "ext4", DataLabel: testDataLabel}, nil
+	}
+	deps.MountNVMeData = func(fs diskfmt.FS, dataLabel, target string, _ func(string, ...any)) error {
+		*asked = append(*asked, fmt.Sprintf("%s %s %s", fs, dataLabel, target))
+		return mountErr
+	}
+	return deps
+}
+
+func TestRunPutsDataOnNVMeAndNeverTouchesPartitionTwo(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith, asked []string
+
+	opts := testDataOptions()
+	opts.Stop = stop
+	if err := Run(nvmeTestDeps(mounter, stop, nil, &expandedWith, &asked), opts); err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if want := "ext4 " + testDataLabel + " /data"; len(asked) != 1 || asked[0] != want {
+		t.Errorf("MountNVMeData asked for %v, want exactly [%s]", asked, want)
+	}
+	if len(expandedWith) != 0 || mounter.callsFor("/data") != 0 {
+		t.Errorf("ExpandData ran on %v and /data saw %d direct mounts, want neither: partition 2 isn't GoSD's", expandedWith, mounter.callsFor("/data"))
+	}
+}
+
+func TestRunFallsBackToReadOnlyDataWhenTheNVMeCantBeUsed(t *testing.T) {
+	mounter := &fakeMounter{}
+	stop := make(chan struct{})
+	var expandedWith, asked []string
+
+	opts := testDataOptions()
+	opts.Stop = stop
+	if err := Run(nvmeTestDeps(mounter, stop, errBoom, &expandedWith, &asked), opts); err != nil {
+		t.Fatalf("Run() = %v, want nil (an unusable drive is never fatal)", err)
+	}
+	calls := mounter.recordedCalls("/data")
+	if len(calls) != 1 || calls[0].fstype != "tmpfs" || calls[0].flags&msRdOnly == 0 {
+		t.Errorf("/data mounts = %+v, want only the read-only tmpfs fallback", calls)
+	}
+}
+
 func TestRunHaltsAndRecordsWhenTheDataPartitionIsCorrupt(t *testing.T) {
 	// An established expand partition whose filesystem is gone may still
 	// hold recoverable app data: the device must record what happened to

@@ -331,6 +331,18 @@ same per-app prefix as the boot partition, e.g. `hello-data`), sized by
 there survives reboots and power cycles. There's no environment variable
 to consult — `/data` is always the path; just write to it.
 
+**On a Jetson Nano, `/data` is the NVMe drive.** NVIDIA's own layout owns
+the module's eMMC and every flash rewrites it, so a `jetson-nano` image has
+no data partition, and `--data-size`, `--data-filesystem` and
+`--data-flush` don't apply to it. `gosd-init` uses the drive in the M.2
+slot instead: always ext4, labelled `<prefix>-data`, with no partition
+table. A blank drive is formatted on first boot, and the same app's volume
+is mounted as it is, so `/data` survives every reflash. Anything else on
+the drive — including this app's old volume after a `--label-prefix`
+change — is refused, never erased, and `/data` stays read-only until the
+drive is erased on another computer or a blank one is fitted. With no
+drive fitted, `/data` is read-only.
+
 **Don't rename the volumes.** The data label is what the device compares an
 established data partition against on every boot, so relabelling it from a
 computer looks exactly like a corrupted partition: the device halts rather

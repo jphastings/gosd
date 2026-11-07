@@ -14,8 +14,9 @@ takes about a minute.
 
 > **Status:** GoSD's kernel boots from the eMMC this way, but gosd-init
 > can't run apps yet. It needs the eMMC enabled in GoSD's device tree
-> (bean `gosd-wxy7`) and `/data` on an NVMe drive (bean `gosd-j18s`). A
-> single Go tool that replaces this whole procedure is bean `gosd-32dw`.
+> (bean `gosd-wxy7`). `/data` on the NVMe drive is built but not yet
+> proven on the bench (bean `gosd-j18s`). A single Go tool that replaces
+> this whole procedure is bean `gosd-32dw`.
 
 Don't reach for `tpi flash`. It writes a whole disk image over the eMMC,
 which wipes out NVIDIA's boot chain, and it can't speak NVIDIA's flashing
@@ -25,6 +26,10 @@ protocol anyway.
 
 - The module in a Turing Pi 2 node. This was proven on a v2.4 board, in
   node 4, with BMC firmware 2.3.4.
+- An NVMe drive in that node's M.2 slot, for `/data`. GoSD formats it on
+  first boot only if it's blank, and never erases one that holds anything
+  else. Flashing never touches it, so `/data` survives every reflash (see
+  [where `/data` lives](runtime.md#persistent-storage-data)).
 - **A microSD card in the BMC's own slot**, which the BMC mounts at
   `/mnt/sdcard`. The BMC's internal storage is far too small: a 24 MB
   overlay, plus `/tmp` in 58 MB of RAM. You need room for:
