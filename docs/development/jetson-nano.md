@@ -1,45 +1,106 @@
 # Developing for the NVIDIA Jetson Nano (`jetson-nano`)
 
-Bench and bring-up knowledge for the original Jetson Nano SD-card dev kit
-(Tegra210; P3450 carrier, P3448-0000 module). The locked decisions live in
-epic `gosd-72je` and CLAUDE.md; this file is for what a future bring-up
-would otherwise have to rediscover. Everything below was established from
-source before any hardware was on the bench, so treat each claim as a
-hypothesis until bench bean `gosd-9o0m` confirms it.
+Bench and bring-up knowledge for the Jetson Nano 16GB eMMC production
+module (Tegra210, P3448-0002), the only Nano GoSD targets since 2026-11-07.
+The SD-card developer kit (P3448-0000) was dropped, together with its
+QSPI-firmware prerequisite. The locked decisions live in epic `gosd-72je`
+and CLAUDE.md; this file is for what a future bring-up would otherwise have
+to rediscover.
 
-The U-Boot facts come from NVIDIA's L4T U-Boot source as imported by OE4T,
-[branch `l4t/l4t-r32.6.1-v2020.04`](https://github.com/OE4T/u-boot-tegra/tree/46e4604c78d3804ccd4cf9624460a86ea5318a61).
-It's the newest NVIDIA import there; no R32.7.x source was found, so the
-final R32.7.6 firmware is assumed unchanged until the bench's `printenv`
-says otherwise.
+The bench is a v2.4 Turing Pi 2, node 4, BMC firmware 2.3.4. The module
+reports `pm board id is 3448-0002-401`, revision G.0. How it gets flashed
+is in [the Jetson Nano flashing guide](../jetson-nano-flashing.md), and
+the Turing Pi side is in [the shared Turing Pi 2 BMC notes](turing-pi-2-bmc.md).
 
-## The QSPI firmware must be R32.6.1 (JetPack 4.6) or newer
+## What the bench proved (2026-11-07, bean `gosd-9o0m`)
 
-Not merely R32.5, as the epic first stated. In R32.5.x, U-Boot copies
-`/chosen/bootargs` out of CBoot's DTB into the DTB we supply after writing
-our `APPEND` line into it, so our kernel command line is silently replaced
-(`fdt_copy_prop_paths` in `include/configs/tegra210-common.h` on
-[the R32.5 branch](https://github.com/OE4T/u-boot-tegra/blob/l4t/l4t-r32.5-v2020.04/include/configs/tegra210-common.h)).
-NVIDIA fixed it as bug 3323547
-([commit e9ee05aa](https://github.com/OE4T/u-boot-tegra/commit/e9ee05aa8e07b7da360a63a24ed85f1b6a40b8bb)),
-and R32.6.1 no longer copies it. The recovery the epic already prescribes,
-booting NVIDIA's JetPack 4.6 SD image once, lands on R32.6.1, so it still
-works. User-facing docs should say JetPack 4.6 or newer.
+- **A blank module does nothing visible.** Straight from the distributor,
+  it prints nothing on its console, presents no recovery-mode USB device and
+  sends no network traffic. The Ethernet link still comes up at 100 Mbps,
+  but that's just the network chip's default, so it's no sign of life.
+- **NVIDIA's U-Boot boots our FAT32 boot partition from `APP`.** The flash
+  writes GoSD's boot partition into `APP`, partition 1 of NVIDIA's GPT
+  (sectors 0x22 to 0x1c00021, 14 GiB). The U-Boot is the R32.7.6 build,
+  `U-Boot 2020.04-g904285e3a7 (Nov 04 2024)`:
+  - It runs distro boot: `boot_targets=mmc1 mmc0 usb0 nvme0 pxe dhcp`, with
+    `bootdelay=2`.
+  - It reports `bad CRC, using default environment`, so no saved
+    environment overrides anything.
+  - It prints `Scanning mmc 0:1... Found /extlinux/extlinux.conf`, then
+    loads our initramfs, `Image` and DTB.
 
-## Serial console
+  So the open question of whether a Nano boots from FAT is settled: it does.
+- **The mainline kernel comes up.** With our command line, 6.18.37 brings
+  up:
+  - `r8169` (RTL8168f/8111f), with the MAC that CBoot puts in
+    `/chosen/nvidia,ethernet-mac` and U-Boot copies into our DTB. CBoot
+    logs the EEPROM's own MAC fields as blank (`all 0xff`) on this module,
+    so where it gets the address from is NVIDIA's business;
+  - `tegra-xusb`, with our pinned `xusb.bin` loaded;
+  - the SDMMC1 and SDMMC3 controllers.
+- **gosd-init can't find its boot partition yet.** It tries
+  `/dev/mmcblk0p1`, `/dev/mmcblk1p1` and `/dev/vda1` for 10 s, logs
+  `fatal: mounting boot partition failed`, and reboots about every 20 s.
+  The mainline `tegra210-p3450-0000` DTS leaves SDMMC4 (`mmc@700b0600`,
+  the eMMC) disabled, because the dev kit's module has none. The fix is
+  bean `gosd-wxy7`.
+- **U-Boot sees the M.2 NVMe drive.** That's `nvme0`, the 477 GB drive in
+  node 4's slot, where `/data` will live (bean `gosd-j18s`). U-Boot also
+  gets a DHCP lease, so PCIe and Ethernet work before Linux does.
+- **The status LED is a silent no-op,** as expected: there's no `gpio-leds`
+  node.
+- **The initramfs fits.** `hello`'s 10.9 MB initramfs loads within the
+  14 MiB ceiling below.
 
-UART-A as `ttyS0`, 115200n8, 3.3 V. On the B01 carrier it's J50 pins 4
-(TX), 3 (RX), and 7 (GND); on the A02 carrier it's J44. The DTS aliases
-`serial0` to UART-A, and `8250_tegra` numbers its port by that alias
-(`uart_read_port_properties`), so `ttyS0` is expected. Confirm it on the
-first boot anyway: turing-rk1's alias-derived device name was wrong on
-real hardware.
+## Things that look alarming but aren't
+
+On every boot, CBoot logs EEPROM read failures for `1-a0` and `3-ae`, and
+U-Boot logs `phandle mismatch` for `external-memory-controller@7001b000`
+and `Can't set DT prop /bpmp/carveout-start: FDT_ERR_BADOFFSET`. The boot
+carries on regardless. The EEPROM failures are the carrier-board EEPROMs a
+Turing Pi doesn't have; the module's own EEPROM, `3-a0`, reads fine.
+
+## How flashing was found to work (and not)
+
+- **U-Boot's `ums` doesn't get through a Turing Pi 2.** NVIDIA's U-Boot
+  includes `ums`, and `ums 0 mmc 0:1` starts and exposes exactly `APP`
+  (`sector 0x22, count 0x1c00000`). But nothing enumerates, on the BMC or on
+  a computer on the `USB_OTG` socket, whichever `tpi usb` routing is used.
+  That's despite the boot ROM's recovery device coming through the same
+  port. The best guess is that U-Boot's gadget waits for VBUS, which the
+  slot doesn't present; that hasn't been proven. So the flash writes `APP`
+  together with NVIDIA's boot chain instead.
+- **Flashing from a VM on a Mac failed, every way we tried.** The
+  configurations:
+  - an x86 VM with QEMU's `usb-host` on emulated xHCI and on EHCI, with
+    and without `pipeline=off`;
+  - UTM's `usbredir` sharing, with x86 and with arm64 guests;
+  - an arm64 VM at native speed under HVF.
+
+  About 30 attempts produced one complete flash. The module's own log says
+  why (`Data recieve from host failure with error 0x120000` mid-transfer):
+  data doesn't arrive intact, even when the host side reports every byte
+  sent. Slow hosts fail sooner, because the boot ROM applet and CBoot only
+  wait briefly between steps. A gap of about 0.6 s between the BCT and the
+  bootloader sometimes worked; about 3.7 s never did.
+- **Gotchas when running NVIDIA's tools on arm64 Linux.** The tools are
+  static 32-bit x86. Offline signing works under Ubuntu's stock
+  `qemu-user-static`. Their USB calls only work with the emulated program
+  mapped at address 0 (`QEMU_GUEST_BASE=0`), because qemu 6.2 passes
+  `USBDEVFS_BULK` data pointers to the kernel untranslated (`EFAULT`
+  otherwise). That in turn
+  needs the position-independent `qemu-i386` from the `qemu-user` package,
+  and `vm.mmap_min_addr=0`. None of this matters for the BMC procedure: on
+  a 32-bit host, the pointers line up anyway.
+- **What works: NVIDIA's tools on the BMC.** NVIDIA's offline massflash
+  blob, with its scripts run on the BMC under a 32-bit ARM `qemu-i386`,
+  flashed first time, in about a minute.
 
 ## Load-address budget: the initramfs is the tight one
 
-The stock R32.6.1 U-Boot loads at fixed addresses (`tegra210-common.h`
-lines 53-60). Tegra210 doesn't use the `calculated_vars` mechanism the
-later SoCs do.
+The eMMC module runs the same `p3450-0000` U-Boot build as the dev kit, and
+it loads at fixed addresses (`tegra210-common.h` lines 53-60). Tegra210
+doesn't use the `calculated_vars` mechanism the later SoCs do.
 
 | Variable | Address | Room before the next thing |
 | --- | --- | --- |
@@ -59,32 +120,15 @@ The initramfs is the problem. `label_boot` in `cmd/pxe_utils.c` loads the
 initrd first and the kernel second, so an initramfs over 14 MiB has its
 tail silently overwritten by the kernel load. On serial that shows up as
 "Initramfs unpacking failed", followed by a `panic=10` reboot loop.
-
-`gosd build` now refuses a jetson-nano image whose initramfs exceeds this
+`gosd build` refuses a jetson-nano image whose initramfs exceeds this
 ceiling, at build time, rather than leaving the failure to the device.
 
 Measured initramfs sizes:
 
 - `examples/hello` built for this board: 10.4 MiB.
 - `sattrack` and `usbwebsite`, measured on qemu-virt: 11.5-11.7 MiB.
-- Any `--ingress cloudflared` build: about 27 MiB, which won't boot.
-
-Nothing in `gosd build` guards this limit yet.
-
-Two other ways the layout could differ from the table above:
-
-- Meta-tegra (Yocto) builds of this U-Boot move `kernel_addr_r` to
-  `0x83200000` and `ramdisk_addr_r` to `0x87200000`
-  ([OE4T commit 14b16137](https://github.com/OE4T/u-boot-tegra/commit/14b16137af48979270d096efbd209b74b03d2627)).
-  That caps the kernel at 64 MiB, and our `image_size` overlaps the initrd
-  by 768 KiB. This only matters if the QSPI was flashed from a Yocto build
-  rather than by NVIDIA's tools.
-- The environment is stored in the QSPI (and in eMMC on the production
-  module). An old `saveenv` overrides every default above.
-
-So the first bench step is `printenv kernel_addr_r ramdisk_addr_r
-fdt_addr_r board soc fdtfile` at the U-Boot prompt
-(`Tegra210 (P3450-0000) #`).
+- Any `--ingress cloudflared` build: about 27 MiB, which `gosd build`
+  refuses.
 
 The `u-boot-preboot.scr` hook in `p3450-0000.h` can't lift the limit. It
 looks like it could, but `CONFIG_USE_PREBOOT` is off in
@@ -98,8 +142,8 @@ edits the DTB we supply:
 - **GPU:** it enables the GM20B node.
 - **Copied nodes:** it copies these nodes from CBoot's DTB:
   - `/memory@80000000`, which gives the real RAM size (useful).
-  - `/external-memory-controller@7001b000`. Expect a "phandle mismatch"
-    skip here; it's benign.
+  - `/external-memory-controller@7001b000`, though it skips this one with a
+    benign "phandle mismatch" (seen on the bench).
   - Several `/chosen/*-board` nodes.
 - **Copied properties:** it copies the BPMP carveout, the MACs,
   `/serial-number`, and `linux,initrd-start` and `linux,initrd-end`.
@@ -117,46 +161,21 @@ an `fdt` file is missing, U-Boot skips the label. If an `fdtdir` lookup
 misses, it falls back to CBoot's L4T DTB at `fdt_addr`, and the epic
 forbids that pairing.
 
-## Things to watch on the first boots
+The U-Boot facts here come from NVIDIA's L4T U-Boot source as imported by
+OE4T,
+[branch `l4t/l4t-r32.6.1-v2020.04`](https://github.com/OE4T/u-boot-tegra/tree/46e4604c78d3804ccd4cf9624460a86ea5318a61).
+The bench's `printenv` agreed with them for R32.7.6.
 
-- **FAT boot.** No report of a Nano booting from FAT was found, so this is
-  the first thing to check.
-- **USB.** If `tegra-xusb` says "failed to request firmware", USB will be
-  missing: `xusb.bin` has to be in the initramfs under
-  `nvidia/tegra210/`.
-- **SD card or Ethernet doesn't probe.** Check the MAX77620 PMIC first
-  (i2c@7000d000, address 0x3c). It supplies the SD card's I/O rail and the
-  PCIe rail the RTL8111 sits behind.
-- **RAM speed.** The fleet config leaves `CONFIG_TEGRA210_EMC` unset, so
-  RAM stays at its boot clock. This is expected.
-- **QSPI is hidden on purpose.** The QSPI controller driver is cut, so no
-  `/dev/mtd*` exposes the boot flash to app code.
-- **Status LED.** The dev kit has none that software can drive: there's no
-  `gpio-leds` node, and the power LED is hard-wired. The status LED is
-  therefore a silent no-op, as on qemu-virt.
+## Follow-ups
 
-## Follow-ups not done in the board-profile bean
-
-- **The 2GB kit (P3541).** NVIDIA's side is proven:
-  - The flash tooling puts the `p3541-0000` U-Boot build on module SKU 0003
-    (`p3448-0000.conf.common` lines 58-66 in
-    [an R32.7.6 BSP mirror](https://github.com/ackPeng/r32.7.6/blob/e32c0213e16de6bac4d5e33fa97dd8b193d1155b/p3448-0000.conf.common)).
-  - That build's default environment has `board=p3541-0000` and
-    `soc=tegra210`, and no `fdtfile`.
-  - So `fdtdir` would resolve to `tegra210-p3541-0000.dtb` by itself
-    (`cmd/pxe_utils.c` lines 564-605).
-
-  What's missing is the mainline DTS. It only lands in v6.19
-  ([commit ba97758a63b7](https://github.com/torvalds/linux/commit/ba97758a63b78f7e494ebdfb74ba8a8af702a33a)),
-  after the fleet's v6.18 tag. Once the fleet moves to v6.19:
-  - ship both DTBs (an `AdditionalDTBs` entry);
-  - switch the template to `fdtdir /`.
-- **Header I2C and SPI.** The J41 header's I2C buses (`i2c@7000c000`,
-  `i2c@7000c400`) and SPI buses (`spi@7000d400`, `spi@7000d600`) are
-  disabled in `tegra210.dtsi`, and the p3450 DTS doesn't enable them. They
-  need a kernel-build DTS patch. The drivers are already built: I2C_TEGRA
-  is required for the PMIC anyway, and SPI_TEGRA114 comes from defconfig.
-  Header GPIO works now through the Tegra gpiochip.
+- **Header I2C and SPI.** On a Turing Pi 2, which header pins reach a
+  node's I2C and SPI buses is the carrier's business. Either way, the I2C
+  buses (`i2c@7000c000`, `i2c@7000c400`) and SPI buses (`spi@7000d400`,
+  `spi@7000d600`) are disabled in `tegra210.dtsi`, and the p3450 DTS
+  doesn't enable them. They need the same kind of kernel-build DTS patch as
+  the eMMC. The drivers are already built: I2C_TEGRA is required for the
+  PMIC anyway, and SPI_TEGRA114 comes from defconfig.
 - **Lifting the 14 MiB initramfs ceiling** (see the budget section above).
-- **USB gadget.** It's claimed from the DTS and the fleet's config, but it
-  hasn't been verified on hardware.
+- **USB gadget.** It's claimed from the DTS and the fleet's config, but
+  hasn't been verified on hardware. Given what `ums` showed above, a
+  Turing Pi 2 may not deliver it.

@@ -31,6 +31,13 @@ root:<password> -k https://turingpi.local/api/bmc?...`) and for SSH
 (`ssh root@turingpi.local`) — all three surfaces (CLI, REST, SSH) share one
 login.
 
+**Simpler still: run `tpi` on the BMC itself.** The BMC ships its own `tpi`,
+which talks to `127.0.0.1` and needs no login at all, so `ssh
+root@turingpi.local tpi power status` just works once SSH keys are set up.
+Restarting `bmcd` (below) invalidates a laptop's cached `tpi` token, which
+then fails with that same `Device not configured` until you log in again. The
+BMC-side `tpi` is unaffected.
+
 ## Getting a node's console: `tpi uart get`, not the physical header
 
 For CM4 nodes specifically: **the 40-pin GPIO header's UART pins (8/10) are
@@ -76,17 +83,51 @@ stty -F /dev/ttyS<N> 115200 raw -echo
 cat /dev/ttyS<N>            # or: timeout unavailable on this busybox — background it and check a file instead
 ```
 
-**The `/dev/ttyS*` device numbers do NOT match node numbers 1:1.** Confirmed
-against [BMC-Firmware#181](https://github.com/turing-machines/BMC-Firmware/issues/181):
-"`/dev/ttyS4` corresponds to node 3." Don't assume `ttyS<N>` is node `<N>`;
-verify empirically instead — power on only the node you care about and read
-all four `ttyS1`–`ttyS4` simultaneously; whichever shows a fresh BootROM
-banner is the real mapping for that node right now. Only one of the four
-tty capture streams above showed genuine silence during a node-1-only test
-while the other three showed a byte of floating-line noise each — a
-plausible sign that a fully idle line looks different from a genuinely
-disconnected/dead one, worth another data point before trusting either
-reading in isolation.
+**On BMC firmware 2.1.0 and later, node `<N>` is `/dev/ttyS<N>`.** The BMC
+ships a helper per node (`/usr/bin/node1` to `node4`); `node4` is `exec picocom
+/dev/ttyS4 -b 115200`, and `bmcd` uses the same mapping. That means
+`ssh -t root@turingpi.local node4` is a live console with no setup at all.
+[BMC-Firmware#181](https://github.com/turing-machines/BMC-Firmware/issues/181)'s
+"`/dev/ttyS4` corresponds to node 3" describes the mapping before 2.1.0, which
+these notes used to repeat. If you're on older firmware, check empirically:
+power on only the node you care about, read all four ttys, and see which one
+shows a fresh banner.
+
+**`tpi uart get` returns `bmcd`'s whole ring buffer (16 KiB) every time, and
+never clears it.** So the same old boot output coming back on every call is
+normal, not stale. It only means stale when nothing new is ever appended, which
+is the case the `bmcd` restart above fixes.
+
+## Jetson nodes
+
+Found with a Jetson Nano eMMC module in node 4 of a v2.4 board (see
+[the Jetson Nano development notes](jetson-nano.md)):
+
+- **The console is only on the node's "UART2 DEBUG" header**, one per node
+  for nodes 2-4, on the top of the board near the BMC's buttons, at 3.3 V.
+  Turing Pi's spec says a Jetson's debug UART goes to the BMC, but nothing at
+  all reached `/dev/ttyS4` or `tpi uart`, while the module was printing
+  happily on the header.
+- **Wire the adapter's RX only, plus GND.** With the adapter's TX attached to
+  the module's RX, recovery-mode flashing failed at the bootloader send every
+  time, until it was removed.
+- **`tpi usb flash -n <N>` holds the module's recovery strap** and routes its
+  recovery USB port to the `USB_OTG` socket, or to the BMC with `--bmc`. After
+  a power-on, NVIDIA's recovery device (`0955:7f21 NVIDIA Corp. APX`) appears
+  there. `tpi usb device -n <N> --bmc` releases the strap again.
+- **NVIDIA U-Boot's `ums` gadget never enumerated, in any routing mode,** even
+  though the boot ROM's recovery device uses the same port.
+- **`tpi flash` and `tpi advanced msd` don't work for Jetsons.** `bmcd` only
+  looks for rpiboot and rockusb devices. Flash with NVIDIA's own tools run on
+  the BMC instead ([the Jetson Nano flashing guide](../jetson-nano-flashing.md)).
+
+## The BMC as a host for bench tools
+
+Firmware 2.3.4 is Buildroot on a 32-bit ARMv7 (Allwinner T113). It has 116 MB
+of RAM, a 24 MB overlay root and a 58 MB `/tmp` in RAM, so anything sizeable
+belongs on the microSD card in the BMC's own slot, mounted at `/mnt/sdcard`
+(exFAT). `bash`, `bunzip2`, `picocom` and `microcom` are there. The kernel has
+usbfs (`/dev/bus/usb`) and USB mass storage, but no USB/IP.
 
 ## `tpi advanced msd` (eMMC-boot workaround) can leave a node in a boot loop
 

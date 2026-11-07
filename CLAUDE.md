@@ -108,10 +108,14 @@ say so in the bean rather than silently diverging.
   first board with no SD/microSD slot at all; boots from onboard eMMC only,
   flashed via USB maskrom/rkdeveloptool or the Turing Pi 2 BMC rather than a
   card reader, see `docs/turing-rk1-flashing.md` — epic gosd-bntd),
-  `jetson-nano` (NVIDIA Jetson Nano SD-card dev kit, Tegra210 — boots
-  through NVIDIA's own firmware in the module's QSPI, so GoSD ships no
-  bootloader — epic gosd-72je, internal only until its artifacts release
-  lands); also `qemu-virt` (internal —
+  `jetson-nano` (NVIDIA Jetson Nano 16GB **eMMC module** P3448-0002 only,
+  Tegra210 — the SD-card dev kit was dropped 2026-11-07. Each flash writes
+  NVIDIA's whole boot chain plus GoSD's FAT boot partition into NVIDIA's
+  `APP` partition, using NVIDIA's offline massflash blob run from a Turing
+  Pi 2 BMC, see `docs/jetson-nano-flashing.md`; never `tpi flash`, and never
+  through a Mac VM's USB passthrough, which loses data. GoSD ships no
+  bootloader; `/data` lives on NVMe. Epic gosd-72je, internal only until
+  its artifacts release lands); also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default
   build set, and catalog generation). `gosd build` with no `--board`
