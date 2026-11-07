@@ -1,10 +1,11 @@
 ---
 # gosd-32dw
-title: 'Jetson Nano: flash from the Turing Pi 2 BMC entirely in Go'
-status: todo
+title: 'jetson-flash: flash a Jetson Nano eMMC module without NVIDIA''s tools'
+status: in-progress
 type: feature
+priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-07T20:59:10Z
+updated_at: 2026-11-07T23:37:18Z
 parent: gosd-72je
 ---
 
@@ -41,3 +42,20 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
 - Whether NVIDIA's BSP licence permits automated download and use this way.
 - Where the binary lives: a `gosd` subcommand, or a separate binary copied to the BMC (a `tpi flash`-like experience).
 - Whether one blob per app is worth caching. NVIDIA's chain is identical for every app; only `APP` differs.
+
+
+## Decisions (JP, 2026-11-07)
+
+- **A separate binary, `jetson-flash`, not a `gosd` subcommand.** It's released next to `gosd`, for people more advanced than the usual "download an `.img`, flash an SD card" audience, who may still have no Go toolchain. So it ships prebuilt and static. It runs where the Nano's recovery USB is: on a Turing Pi 2 that's the BMC (`linux/arm`, ARMv7), otherwise any Linux PC cabled to the recovery port (`linux/arm64`, `linux/amd64`). Its input is the `.img` that `gosd build --board jetson-nano` produces; the image's boot partition becomes `APP`. Per JP's Go-CLI conventions: `cmd/jetson-flash/` holds only `main` and the Cobra commands, and the logic lives in `internal/`.
+- **Clean-room protocol work, in order:**
+  1. NVIDIA's open-source `tegrarcm` (`nv3p.c`), plus experiments against the device.
+  2. Only if that stalls: watching NVIDIA's tools' USB traffic while they run.
+
+  Never disassembling NVIDIA's binaries, which clause 2.2 of their licence forbids.
+- **Licence handling:** signed images are generated on the user's machine and never redistributed (clauses 1.1(d) and 2.3). `jetson-flash` asks the user to accept NVIDIA's licence before its first download of NVIDIA's kit.
+- **Research spec** (boot ROM handshake, `nv3p` framing, zero-key AES-CMAC signing, verified against NVIDIA's own signed files): see the 2026-11-07 research notes summarised in the first spike PR.
+
+## Spike (first PR)
+
+- [ ] A static Go helper on the BMC. It reads the boot ROM's UID, sends the signed `rcm_0`/`rcm_1` messages (expecting `0x00210001` and `0` back), and the recovery applet runs.
+- [ ] It drives the applet over `nv3p` to download the BCT, then `ebt` (cboot) and `rp1` (DTB), then boots into recovery, using files NVIDIA's tools already signed. CBoot answers.
