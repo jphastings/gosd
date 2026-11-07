@@ -158,6 +158,9 @@ func TestDTSPatchesOnlyOnExpectedBoards(t *testing.T) {
 		// status-LED retain-state-shutdown patch every board with an LED
 		// carries (bean gosd-54j8).
 		"cubie-a5e": true,
+		// Mainline only describes the SD-card dev kit; the patch enables
+		// the eMMC module's eMMC (bean gosd-wxy7).
+		"jetson-nano": true,
 	}
 
 	for _, id := range allBoardIDs {

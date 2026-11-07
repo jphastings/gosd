@@ -42,8 +42,10 @@ the Turing Pi side is in [the shared Turing Pi 2 BMC notes](turing-pi-2-bmc.md).
   `/dev/mmcblk0p1`, `/dev/mmcblk1p1` and `/dev/vda1` for 10 s, logs
   `fatal: mounting boot partition failed`, and reboots about every 20 s.
   The mainline `tegra210-p3450-0000` DTS leaves SDMMC4 (`mmc@700b0600`,
-  the eMMC) disabled, because the dev kit's module has none. The fix is
-  bean `gosd-wxy7`.
+  the eMMC) disabled, because the dev kit's module has none. Bean
+  `gosd-wxy7` adds a kernel-build DTS patch that enables SDMMC4, disables
+  SDMMC1 and SDMMC3, and aliases the eMMC to `mmc0`, so `APP` should
+  become `/dev/mmcblk0p1`. That's not yet proven on the bench.
 - **U-Boot sees the M.2 NVMe drive.** That's `nvme0`, the 477 GB drive in
   node 4's slot, where `/data` will live (bean `gosd-j18s`). U-Boot also
   gets a DHCP lease, so PCIe and Ethernet work before Linux does.

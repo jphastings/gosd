@@ -154,8 +154,9 @@ type KernelSpec struct {
 
 	// DTSPatches are device-tree patches applied, in order, before the
 	// config step. Populated for the Rockchip-family boards (peripheral
-	// enablement) and cubie-a5e (a USB-gadget variant DTB), and for every
-	// Pi board and pi-zero-w (retain-state-shutdown/default-state on the
+	// enablement), cubie-a5e (a USB-gadget variant DTB), jetson-nano (the
+	// dev kit's DTB adapted to the eMMC module - bean gosd-wxy7), and for
+	// every Pi board and pi-zero-w (retain-state-shutdown/default-state on the
 	// status LED — bean gosd-54j8; pi-zero-w also carries its mainline-style
 	// DT's downstream peripheral dma-ranges window — bean gosd-1ey5). Empty
 	// only for qemu-virt, which has no DTB of its own to patch.
@@ -812,14 +813,17 @@ var specs = map[string]KernelSpec{
 		// the KBUILD_BUILD_* pins today - see Reproducibility's doc comment.
 	},
 
-	// "jetson-nano" is the fleet's first NVIDIA member (epic gosd-72je):
-	// same fleet kernel tag, always booted on the mainline DTB (never the
-	// L4T one in QSPI). The arm64 defconfig already builds every Tegra210
-	// driver this board needs (the released rock-4se kernel.config, same
-	// defconfig and tag, shows each =y); RequiredY pins the boot path so a
-	// bump can't drop one silently. The MAX77620 PMIC stack is a hard boot
-	// dependency, like cubie-a5e's AXP717: it supplies the SD card's vqmmc
-	// and the PCIe rail the onboard RTL8111 sits behind (bean gosd-cxio).
+	// "jetson-nano" is the fleet's first NVIDIA member (epic gosd-72je), the
+	// 16GB eMMC module (P3448-0002): same fleet kernel tag, always booted on
+	// the mainline DTB (never NVIDIA's L4T one). The arm64 defconfig already
+	// builds every Tegra210 driver this board needs (the released rock-4se
+	// kernel.config, same defconfig and tag, shows each =y); RequiredY pins
+	// the boot path so a bump can't drop one silently. That path is the
+	// eMMC's GPT (EFI_PARTITION: NVIDIA's APP partition holds the boot
+	// partition) and the NVMe drive /data lives on (bean gosd-j18s). The
+	// MAX77620 PMIC stack is a hard boot dependency, like cubie-a5e's
+	// AXP717: it supplies the eMMC's vqmmc and the PCIe rail the onboard
+	// RTL8111 and the NVMe sit behind (bean gosd-cxio).
 	"jetson-nano": {
 		BoardID: "jetson-nano",
 		Source: Source{
@@ -831,10 +835,10 @@ var specs = map[string]KernelSpec{
 		Toolchain: Toolchain{KernelArch: "arm64", CrossCompile: "aarch64-linux-gnu-"},
 
 		ConfigFragment: jetsonnanokernel.ConfigFragment,
-		// No DTSPatches - see kernelassets.go's package doc.
+		DTSPatches:     loadPatches(jetsonnanokernel.PatchesFS, "patches"),
 
-		// The 2GB kit's tegra210-p3541-0000.dts only lands upstream in
-		// v6.19, so this tag can't build it (bean gosd-cxio's findings).
+		// Mainline has no DTS for the eMMC module, so this is the dev
+		// kit's, patched for it - see kernelassets.go's package doc.
 		DTB: &DTB{
 			MakeTarget: "nvidia/tegra210-p3450-0000.dtb",
 			SourcePath: "arch/arm64/boot/dts/nvidia/tegra210-p3450-0000.dtb",
@@ -861,9 +865,12 @@ var specs = map[string]KernelSpec{
 			"CONFIG_PINCTRL_MAX77620",
 			"CONFIG_REGULATOR_FIXED_VOLTAGE",
 			"CONFIG_MMC_SDHCI_TEGRA",
+			"CONFIG_EFI_PARTITION",
 			"CONFIG_EXFAT_FS",
 			"CONFIG_PCI",
 			"CONFIG_PCI_TEGRA",
+			"CONFIG_NVME_CORE",
+			"CONFIG_BLK_DEV_NVME",
 			"CONFIG_R8169",
 			"CONFIG_REALTEK_PHY",
 			"CONFIG_PHY_TEGRA_XUSB",
