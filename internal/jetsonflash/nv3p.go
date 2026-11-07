@@ -16,7 +16,8 @@ import (
 // T20-T124 generation; whether T210 kept them is what bean gosd-32dw's
 // spike is testing.
 const (
-	nv3pVersion = 1
+	// T210's applet NACKs tegrarcm's version 1 and speaks version 2.
+	nv3pVersion = 2
 
 	packetCmd  = 1
 	packetData = 2
@@ -106,6 +107,11 @@ type session struct {
 func (s *session) send(typ, seq uint32, fields ...[]byte) error {
 	for _, t := range frame(typ, seq, fields...) {
 		if err := s.c.Write(t, replyTimeout); err != nil {
+			if errors.Is(err, errTimeout) {
+				// A device that stops reading may have something to say
+				// first; fetch it so the trace shows it.
+				_ = s.fill(quietWait)
+			}
 			return err
 		}
 	}

@@ -9,9 +9,9 @@ import (
 )
 
 // The device posts one USB read per field, so the transfer boundaries are
-// part of the protocol. Bytes are the worked examples in the research spec.
+// part of the protocol.
 func TestCommandGoesOutOneFieldPerTransfer(t *testing.T) {
-	dev := &fakeDevice{in: [][]byte{unhex(t, "01000000 04000000 00000000 fbffffff")}}
+	dev := &fakeDevice{in: [][]byte{unhex(t, "02000000 04000000 00000000 faffffff")}}
 	s := &session{c: dev, log: io.Discard}
 
 	if err := s.command(cmdGetPlatformInfo, nil); err != nil {
@@ -19,10 +19,10 @@ func TestCommandGoesOutOneFieldPerTransfer(t *testing.T) {
 	}
 
 	want := [][]byte{
-		unhex(t, "01000000 01000000 00000000"),
+		unhex(t, "02000000 01000000 00000000"),
 		unhex(t, "00000000"),
 		unhex(t, "01000000"),
-		unhex(t, "fdffffff"),
+		unhex(t, "fcffffff"),
 	}
 	if !slices.EqualFunc(dev.out, want, bytes.Equal) {
 		t.Errorf("sent % x, want % x", dev.out, want)
@@ -68,7 +68,7 @@ func TestDeviceRefusalsAreErrors(t *testing.T) {
 	}{
 		"NACK":             {devicePacket(packetNack, 0, le32s(2)), "bad command"},
 		"failed STATUS":    {devicePacket(packetCmd, 0, le32s(4), le32s(cmdStatus, 9)), "status 9"},
-		"corrupt checksum": {unhex(t, "01000000 04000000 00000000 fcffffff"), "checksum"},
+		"corrupt checksum": {unhex(t, "02000000 04000000 00000000 fbffffff"), "checksum"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &session{c: &fakeDevice{in: [][]byte{tc.reply}}, log: io.Discard}
