@@ -164,7 +164,8 @@ type Deps struct {
 	// config.json says dataOnNVMe (see cmd/gosd-init/internal/nvmedata).
 	// It replaces both ExpandData and the partition-2 candidates for such
 	// a board, and a failure falls back to the same read-only /data as a
-	// missing data partition. Only called when dataOnNVMe is set.
+	// missing data partition. Only called when dataOnNVMe is set;
+	// nil-checked like the other optional deps, falling back the same way.
 	MountNVMeData func(fs diskfmt.FS, dataLabel, target string, log func(format string, args ...any)) error
 
 	// StepClock, if non-nil, is called right after config.json is read,
@@ -412,7 +413,12 @@ func Run(deps Deps, opts Options) error {
 		// Partition 2 of this board's boot media isn't GoSD's (on a
 		// jetson-nano it is NVIDIA's DTB partition), so neither dataexpand
 		// nor the partition-2 candidates may touch it.
-		mount = func() error { return deps.MountNVMeData(dataFilesystem, cfg.DataLabel, opts.DataTarget, log) }
+		mount = func() error {
+			if deps.MountNVMeData == nil {
+				return errors.New("config.json says /data is on an NVMe drive, but this gosd-init can't mount one")
+			}
+			return deps.MountNVMeData(dataFilesystem, cfg.DataLabel, opts.DataTarget, log)
+		}
 	case deps.ExpandData != nil && (cfg.DataExpand || dataFilesystem == diskfmt.EXT4):
 		// dataexpand also needs to run for a fixed-size ext4 image
 		// (config.json's dataFilesystem, not dataExpand): unlike FAT32,

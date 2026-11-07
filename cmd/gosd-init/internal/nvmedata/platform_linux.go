@@ -55,26 +55,32 @@ const pciDevicesDir = "/sys/bus/pci/devices"
 // non-volatile memory (08), NVMe programming interface (02).
 const nvmeClass = "0x010802"
 
-// pci counts the PCI functions in sysfs and the NVMe controllers among them.
-// A function whose class can't be read isn't counted at all, so it can never
-// be the reason awaitDrive decides no drive is coming.
-func pci() (functions, nvme int, err error) {
+// pci reads the PCIe bus from sysfs. A function whose class can't be read
+// isn't counted at all, so it can never be the reason awaitDrives decides
+// no drive is coming.
+func pci() (PCIBus, error) {
+	var bus PCIBus
 	entries, err := os.ReadDir(pciDevicesDir)
 	if os.IsNotExist(err) {
-		return 0, 0, nil
+		return bus, nil
 	}
 	if err != nil {
-		return 0, 0, err
+		return bus, err
 	}
 	for _, e := range entries {
-		class, err := os.ReadFile(filepath.Join(pciDevicesDir, e.Name(), "class"))
+		dir := filepath.Join(pciDevicesDir, e.Name())
+		class, err := os.ReadFile(filepath.Join(dir, "class"))
 		if err != nil {
 			continue
 		}
-		functions++
-		if strings.TrimSpace(string(class)) == nvmeClass {
-			nvme++
+		bus.Functions++
+		if strings.TrimSpace(string(class)) != nvmeClass {
+			continue
+		}
+		bus.NVMe++
+		if _, err := os.Lstat(filepath.Join(dir, "driver")); err == nil {
+			bus.NVMeBound++
 		}
 	}
-	return functions, nvme, nil
+	return bus, nil
 }

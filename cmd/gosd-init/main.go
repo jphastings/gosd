@@ -431,20 +431,25 @@ func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bo
 	})
 }
 
-// nvmeWait bounds how long mountNVMeData waits for an NVMe drive that may
-// still be coming up — PCIe enumeration, then the controller's asynchronous
-// namespace scan. A PCIe bus that has enumerated without one isn't waited
-// for at all (see nvmedata's awaitDrive).
-const nvmeWait = 10 * time.Second
+// nvmeWait bounds how long mountNVMeData waits for an NVMe controller to
+// appear on the PCIe bus; nvmeNamespaceWait, once one has, for a namespace on
+// it, since a controller can take tens of seconds to report ready. A bus that
+// has enumerated without a controller is believed after a few seconds rather
+// than waited out (see nvmedata's awaitDrives).
+const (
+	nvmeWait          = 10 * time.Second
+	nvmeNamespaceWait = 30 * time.Second
+)
 
 // mountNVMeData puts /data on the board's NVMe drive, for an image whose
 // config.json says dataOnNVMe (see cmd/gosd-init/internal/nvmedata).
 func mountNVMeData(fs diskfmt.FS, dataLabel, target string, log func(format string, args ...any)) error {
 	return nvmedata.Mount(nvmedata.NewDeps(log), nvmedata.Options{
-		Filesystem: fs,
-		Label:      dataLabel,
-		Mountpoint: target,
-		Wait:       nvmeWait,
+		Filesystem:    fs,
+		Label:         dataLabel,
+		Mountpoint:    target,
+		Wait:          nvmeWait,
+		NamespaceWait: nvmeNamespaceWait,
 	})
 }
 

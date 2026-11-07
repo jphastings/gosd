@@ -73,7 +73,10 @@ On the console, after `data partition filesystem: ext4`, expect one of:
 | blank | `formatting the NVMe drive at /dev/nvme0n1 as ext4, labelled <prefix>-data`, then `/data is a new ext4 volume on the NVMe drive at /dev/nvme0n1` |
 | this app's volume | `/data is the ext4 volume labelled <prefix>-data already on the NVMe drive at /dev/nvme0n1` |
 | anything else | `mounting data partition failed; mounting /data read-only: the NVMe drive at /dev/nvme0n1 already holds …; refusing to reformat it … — GoSD only formats a blank drive, …` |
-| not fitted | `mounting data partition failed; mounting /data read-only: no NVMe drive found: the PCIe bus has no NVMe controller on it; …` |
+| not fitted | after 3 s: `mounting data partition failed; mounting /data read-only: no NVMe drive found: the PCIe bus has had no NVMe controller on it for 3s; …` |
+| no driver takes it | after 30 s: `… an NVMe controller is on the PCIe bus, but no driver took it within 30s; …` |
+| no namespace | after 30 s: `… the NVMe driver took the controller, but no writable namespace on it appeared within 30s; …` |
+| several namespaces | `found NVMe namespaces …; /data is the one labelled <prefix>-data, …` when exactly one carries it, otherwise `… so GoSD won't guess which is /data; …` and nothing is written |
 
 Every success then logs `data partition mounted read-write at /data`.
 "Blank" means the drive's first MiB reads as zeroes. U-Boot's `No partition
@@ -81,7 +84,9 @@ table - nvme 0` doesn't prove that, and it stays true after GoSD has
 formatted the drive, since the volume has no partition table.
 
 The first boot on a blank drive takes longer: it writes GoSD's 512 MiB ext4
-seed image, then grows it online to fill the drive.
+seed image, superblock last, then grows it online to fill the drive. A
+power cut part-way through leaves the first MiB still zero, so the next boot
+simply formats again.
 
 ## Things that look alarming but aren't
 

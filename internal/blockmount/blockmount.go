@@ -108,11 +108,11 @@ const ext4MaxLabelLen = 16
 // because on none of the three filesystems is a probe-passing signature, or
 // even a successful mount, proof that a format finished:
 //
-//   - ext4: diskfmt.FormatEXT4 streams a ~512MiB golden image onto the device
-//     before this package ever sees it, and a crash partway through that
-//     stream — or between the online grow and this marker — leaves a
-//     filesystem that inspects, and often even mounts, perfectly fine over
-//     truncated or unwritten backing data.
+//   - ext4: diskfmt.FormatEXT4 writes its superblock last, after flushing
+//     the rest of a ~512MiB golden image, so an interrupted stream reads as
+//     blank — but a crash between the online grow and this marker leaves a
+//     filesystem that inspects and mounts perfectly fine at the golden's
+//     size, never grown.
 //   - FAT32 and exFAT: diskfmt never fsyncs mid-format (see
 //     diskfmt.eraseLeadingRegion's doc, which states that policy), so until
 //     the caller's own SyncDevice returns, ANY SUBSET of a format's writes
@@ -359,14 +359,15 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 //
 // # The establishment sequence, and what each step makes durable
 //
-//  1. Format writes the whole new filesystem to the raw device. diskfmt
-//     fsyncs nothing mid-format, on any of the three filesystems — it says so
-//     outright in diskfmt.eraseLeadingRegion's doc ("this package never
-//     fsyncs mid-format; durability is the caller's job, once, at the end of
-//     a whole establish sequence"). So at this point NOTHING is durable, and
-//     no ordering among Format's own writes is durable either: writeback
-//     order is not program order, so an arbitrary SUBSET of them may be on
-//     the medium.
+//  1. Format writes the whole new filesystem to the raw device. For FAT32
+//     and exFAT, diskfmt fsyncs nothing mid-format — it says so outright in
+//     diskfmt.eraseLeadingRegion's doc — so at this point NOTHING is
+//     durable, and no ordering among Format's own writes is durable either:
+//     writeback order is not program order, so an arbitrary SUBSET of them
+//     may be on the medium. ext4 is the exception (bean gosd-j18s): its
+//     formatter erases the first MiB, flushes, writes the rest, flushes, and
+//     only then writes and flushes the first MiB, so until that last write
+//     lands the device reads as blank.
 //  2. SyncDevice fsyncs the device node. When it returns, every byte Format
 //     wrote is on the medium. This is the step that turns "the filesystem is
 //     complete" from a hope into a fact, and the step the FAT32/exFAT path
@@ -392,7 +393,10 @@ func Run(s Storage, fs diskfmt.FS, label, mountpoint string, destructive bool) (
 //     Inspect probes before writing anything into it, and exFAT's rewrites
 //     all of it (see diskfmt.eraseLeadingRegion), so a boot sector that never
 //     landed leaves Contents.Blank — which Run formats freely, no consent
-//     needed, nothing lost.
+//     needed, nothing lost. ext4's superblock-last order makes this the
+//     outcome of any crash before its final head write; only a crash during
+//     that one write can leave a superblock that won't mount, which Run
+//     refuses (see the mount-failure case below).
 //   - The new filesystem under a label that is not the caller's. Both
 //     formatters write the volume label into the root directory (go-diskfs
 //     reads FAT32's label from there, not from the BPB), which is late in the
@@ -560,13 +564,23 @@ func establish(s Storage, device string, fs diskfmt.FS, label, mountpoint string
 	}
 	if fs == diskfmt.EXT4 {
 		if err := s.Deps.Grow(device, mountpoint); err != nil {
-			return "", fmt.Errorf("growing the newly formatted %s at %s to its partition size failed: %w", s.Noun, device, err)
+			return "", s.unmountAfter(mountpoint, fmt.Errorf("growing the newly formatted %s at %s to its partition size failed: %w", s.Noun, device, err))
 		}
 	}
 	if err := s.Deps.EstablishMarker(mountpoint, fs); err != nil {
-		return "", fmt.Errorf("recording the completed format on the %s at %s failed: %w", s.Noun, device, err)
+		return "", s.unmountAfter(mountpoint, fmt.Errorf("recording the completed format on the %s at %s failed: %w", s.Noun, device, err))
 	}
 	return device, nil
+}
+
+// unmountAfter releases a volume establish mounted but couldn't finish, so a
+// half-established volume is never left mounted for anything to write to,
+// and returns err with any failure to unmount it added.
+func (s Storage) unmountAfter(mountpoint string, err error) error {
+	if uerr := s.Deps.Unmount(mountpoint); uerr != nil {
+		return fmt.Errorf("%w (and unmounting it from %s again failed: %v)", err, mountpoint, uerr)
+	}
+	return err
 }
 
 // remedyFor is the actionable half of the unsupported-filesystem error. FAT32

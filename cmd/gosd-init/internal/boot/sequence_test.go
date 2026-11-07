@@ -2323,18 +2323,26 @@ func TestRunPutsDataOnNVMeAndNeverTouchesPartitionTwo(t *testing.T) {
 }
 
 func TestRunFallsBackToReadOnlyDataWhenTheNVMeCantBeUsed(t *testing.T) {
-	mounter := &fakeMounter{}
-	stop := make(chan struct{})
-	var expandedWith, asked []string
+	for name, unwire := range map[string]bool{"the drive is unusable": false, "no NVMe hook is wired": true} {
+		t.Run(name, func(t *testing.T) {
+			mounter := &fakeMounter{}
+			stop := make(chan struct{})
+			var expandedWith, asked []string
 
-	opts := testDataOptions()
-	opts.Stop = stop
-	if err := Run(nvmeTestDeps(mounter, stop, errBoom, &expandedWith, &asked), opts); err != nil {
-		t.Fatalf("Run() = %v, want nil (an unusable drive is never fatal)", err)
-	}
-	calls := mounter.recordedCalls("/data")
-	if len(calls) != 1 || calls[0].fstype != "tmpfs" || calls[0].flags&msRdOnly == 0 {
-		t.Errorf("/data mounts = %+v, want only the read-only tmpfs fallback", calls)
+			deps := nvmeTestDeps(mounter, stop, errBoom, &expandedWith, &asked)
+			if unwire {
+				deps.MountNVMeData = nil
+			}
+			opts := testDataOptions()
+			opts.Stop = stop
+			if err := Run(deps, opts); err != nil {
+				t.Fatalf("Run() = %v, want nil (an unusable drive is never fatal)", err)
+			}
+			calls := mounter.recordedCalls("/data")
+			if len(calls) != 1 || calls[0].fstype != "tmpfs" || calls[0].flags&msRdOnly == 0 {
+				t.Errorf("/data mounts = %+v, want only the read-only tmpfs fallback", calls)
+			}
+		})
 	}
 }
 
