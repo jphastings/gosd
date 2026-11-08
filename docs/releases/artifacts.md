@@ -12,6 +12,18 @@ the artifacts documentation for the full tag-first, bump-second procedure.
 
 This file is maintained by knope from the change files in `.changeset/`; new
 versions are added below this heading.
+## 0.10.6 (2026-11-08)
+
+### Fixes
+
+#### Mainline-fleet kernels move to Linux 6.18.60
+
+The Radxa Zero 3E, ROCK 4SE, Turing RK1, NanoPi Zero2, Cubie A5E and Jetson Nano kernels (and the internal qemu-virt one) are rebuilt from Linux v6.18.60, up from v6.18.37. This is the same 6.18 long-term line, so it carries 23 point releases of upstream stable fixes and no change in supported hardware.
+
+#### The Jetson Nano kernel finds the eMMC module's eMMC
+
+The Jetson Nano's device tree now describes the 16GB eMMC module rather than the SD-card developer kit: the eMMC controller is enabled and always appears as `/dev/mmcblk0`, so gosd-init can mount its boot partition from NVIDIA's `APP` partition. The developer kit's SD slot and M.2 Key E SDIO controllers, which the eMMC module doesn't have, are switched off. The kernel also keeps NVMe support built in, for the drive `/data` will live on.
+
 ## 0.10.5 (2026-11-01)
 
 ### Features

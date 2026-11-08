@@ -1,4 +1,4 @@
-module github.com/jphastings/gosd // v0.8.8
+module github.com/jphastings/gosd // v0.8.9
 
 go 1.27.3
 
