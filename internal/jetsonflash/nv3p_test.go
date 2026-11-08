@@ -79,3 +79,10 @@ func TestDeviceRefusalsAreErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusMessageEndsAtTheFirstNUL(t *testing.T) {
+	p := packet{typ: packetCmd, cmd: cmdStatus, body: append(le32s(1), "bad\x00junk\x00more"...)}
+	if _, msg, _ := p.status(); msg != "bad" {
+		t.Errorf("message %q, want %q", msg, "bad")
+	}
+}

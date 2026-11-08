@@ -68,9 +68,20 @@ func loadSpikeFiles(dir string) (spikeFiles, error) {
 	return f, nil
 }
 
-// spike reopens the device for each step, as NVIDIA's nvaflash.sh runs a
-// separate tool for each, and each of those opens with the version query.
+// spike runs bootToServer, then opens one more session to prove the server
+// answers.
 func spike(open func() (conn, error), f spikeFiles, log io.Writer) error {
+	if err := bootToServer(open, f, log, log); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(log, "== querying CBoot's flashing server")
+	return inSession(open, log, func(*session) error { return nil })
+}
+
+// bootToServer takes a module from the boot ROM to CBoot's flashing server,
+// reopening the device for each step as NVIDIA's nvaflash.sh runs a separate
+// tool for each. Progress goes to out and the protocol detail to log.
+func bootToServer(open func() (conn, error), f spikeFiles, out, log io.Writer) error {
 	err := withConn(open, func(c conn) error {
 		uid, err := bootROM(c, f.rcm0, f.rcm1)
 		if err == nil {
@@ -82,11 +93,10 @@ func spike(open func() (conn, error), f spikeFiles, log io.Writer) error {
 		return fmt.Errorf("talking to the boot ROM: %w", err)
 	}
 
-	type step struct {
+	steps := []struct {
 		name string
 		run  func(*session) error
-	}
-	steps := []step{
+	}{
 		{"downloading the BCT", func(s *session) error { return s.download("bct", f.bct, bctSettle) }},
 		{"downloading ebt and rp1", func(s *session) error {
 			if err := s.download("ebt", f.ebt, quietWait); err != nil {
@@ -94,25 +104,26 @@ func spike(open func() (conn, error), f spikeFiles, log io.Writer) error {
 			}
 			return s.download("rp1", f.rp1, quietWait)
 		}},
+		{"booting CBoot's flashing server", (*session).bootFlashingServer},
 	}
-	steps = append(steps,
-		step{"booting CBoot's flashing server", (*session).bootFlashingServer},
-		step{"querying CBoot's flashing server", func(*session) error { return nil }},
-	)
 	for _, st := range steps {
-		_, _ = fmt.Fprintf(log, "== %s\n", st.name)
-		err := withConn(open, func(c conn) error {
-			s := &session{c: c, log: log}
-			if err := s.version(); err != nil {
-				return fmt.Errorf("version query: %w", err)
-			}
-			return st.run(s)
-		})
-		if err != nil {
+		_, _ = fmt.Fprintf(out, "== %s\n", st.name)
+		if err := inSession(open, log, st.run); err != nil {
 			return fmt.Errorf("%s: %w", st.name, err)
 		}
 	}
 	return nil
+}
+
+// inSession runs f in a fresh session, which opens with the version query.
+func inSession(open func() (conn, error), log io.Writer, f func(*session) error) error {
+	return withConn(open, func(c conn) error {
+		s := &session{c: c, log: log}
+		if err := s.version(); err != nil {
+			return fmt.Errorf("version query: %w", err)
+		}
+		return f(s)
+	})
 }
 
 func withConn(open func() (conn, error), f func(conn) error) error {
