@@ -140,6 +140,20 @@ type Config struct {
 	// (cmd/gosd/build_integration_test.go).
 	DataLabel string `json:"dataLabel"`
 
+	// DataOnNVMe marks an image for a board whose /data lives on an attached
+	// NVMe drive rather than in partition 2 of the media it boots from (see
+	// boards.NVMeDataBoard; today only jetson-nano, whose eMMC NVIDIA's own
+	// partition layout owns). gosd-init then never considers a partition-2
+	// candidate or runs dataexpand: it waits for the drive and formats or
+	// adopts it, labelled DataLabel, through internal/blockmount (see
+	// cmd/gosd-init/internal/nvmedata). The build bakes DataFilesystem as
+	// ext4 alongside it, with DataExpand and DataFlush false: the
+	// --data-size, --data-filesystem and --data-flush flags describe a
+	// partition this image doesn't have. Optional: absent - including
+	// every config.json baked before this field existed - means partition
+	// 2, as always.
+	DataOnNVMe bool `json:"dataOnNVMe,omitempty"`
+
 	// AppSignalsReady marks an app that imports
 	// github.com/jphastings/gosd/ready — detected by gosd build inspecting
 	// the app's own dependency graph, not a flag (see that package's doc

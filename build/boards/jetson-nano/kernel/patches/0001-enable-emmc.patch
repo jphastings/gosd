@@ -1,0 +1,110 @@
+Enable the Jetson Nano eMMC module's eMMC and pin it to mmc0
+
+GoSD's jetson-nano board targets the 16GB eMMC production module
+(P3448-0002), but mainline only describes the SD-card developer kit:
+tegra210-p3450-0000.dts is a P3448-0000 module, which has no eMMC, on a
+P3449 carrier. Booted on the eMMC module, that DTB leaves SDMMC4 disabled,
+so the eMMC never appears and gosd-init cannot find its boot partition in
+NVIDIA's APP partition (bean gosd-wxy7).
+
+This patch makes four changes:
+
+- SDMMC4 (mmc@700b0600), the eMMC, is enabled with an 8-bit bus and marked
+  non-removable, exactly as mainline enables the eMMC on the Jetson TX1
+  module (tegra210-p2180.dtsi). Its supplies are the rails NVIDIA's L4T
+  power tree for the P3448 module gives SDMMC4: vqmmc from the MAX77620's
+  SD3 (max77620_sd3, 1.8 V; vdd_1v8 here) and vmmc from p3448_vdd_3v3_sys
+  (vdd_3v3_sys here). Speed modes are left as tegra210.dtsi's SDMMC4 node
+  declares them: mmc-hs400-1_8v with its dqs-trim and pad calibration,
+  which is what the TX1 runs on. NVIDIA's DTS also runs this module's eMMC
+  at HS400, with enhanced strobe on top; no mainline Tegra210 DTS enables
+  enhanced strobe, so it is left out.
+- SDMMC1 (mmc@700b0000) is disabled. It is the microSD slot on the
+  P3448-0000 module, and NVIDIA's DTS for the eMMC module disables it.
+- SDMMC3 (mmc@700b0400) is disabled. Mainline enabled it for SDIO cards in
+  the P3449 carrier's M.2 Key E slot (commit 1f32a31fe27e); NVIDIA's DTS
+  leaves it disabled on this module, and GoSD's kernel builds no WLAN
+  drivers.
+- An mmc0 alias pins the eMMC to mmc0. mmcblk device names follow the host
+  index (drivers/mmc/core/block.c), so NVIDIA's APP partition is always
+  /dev/mmcblk0p1, gosd-init's first boot-partition candidate.
+
+Sources:
+- Linux v6.18.60: arch/arm64/boot/dts/nvidia/tegra210.dtsi,
+  tegra210-p2180.dtsi and tegra210-p3450-0000.dts.
+- NVIDIA L4T R32.7.6's device trees, as mirrored by OE4T
+  (github.com/OE4T/linux-tegra-4.9, branch oe4t-patches-l4t-r32.7.6, under
+  nvidia/platform/t210/porg/kernel-dts/): tegra210-p3448-0002-p3449-0000-b00.dts,
+  tegra210-porg-p3448-common.dtsi and
+  porg-platforms/tegra210-porg-power-tree-p3448-0000-a00.dtsi.
+
+--- a/arch/arm64/boot/dts/nvidia/tegra210-p3450-0000.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra210-p3450-0000.dts
+@@ -13,6 +13,12 @@
+ 
+ 	aliases {
+ 		ethernet = "/pcie@1003000/pci@2,0/ethernet@0,0";
++		/*
++		 * GoSD (github.com/jphastings/gosd): pins the eMMC to mmc0 so
++		 * it is always /dev/mmcblk0 and NVIDIA's APP partition, which
++		 * holds GoSD's boot partition, is /dev/mmcblk0p1.
++		 */
++		mmc0 = "/mmc@700b0600";
+ 		rtc0 = "/i2c@7000d000/pmic@3c";
+ 		rtc1 = "/rtc@7000e000";
+ 		serial0 = &uarta;
+@@ -554,7 +560,13 @@
+ 	};
+ 
+ 	mmc@700b0000 {
+-		status = "okay";
++		/*
++		 * GoSD (github.com/jphastings/gosd): SDMMC1 is the microSD slot
++		 * on the dev kit's P3448-0000 module. The eMMC module
++		 * (P3448-0002) GoSD targets has no slot, and NVIDIA's own
++		 * tegra210-p3448-0002-p3449-0000-b00.dts disables it too.
++		 */
++		status = "disabled";
+ 		bus-width = <4>;
+ 
+ 		cd-gpios = <&gpio TEGRA_GPIO(Z, 1) GPIO_ACTIVE_LOW>;
+@@ -565,7 +577,14 @@
+ 	};
+ 
+ 	mmc@700b0400 {
+-		status = "okay";
++		/*
++		 * GoSD (github.com/jphastings/gosd): SDMMC3 is SDIO to the
++		 * P3449 carrier's M.2 Key E slot (mainline commit
++		 * 1f32a31fe27e). It belongs to that carrier, not the module:
++		 * NVIDIA's DTS for the eMMC module leaves it disabled, and
++		 * GoSD's kernel has no WLAN drivers for a card there anyway.
++		 */
++		status = "disabled";
+ 		bus-width = <4>;
+ 
+ 		vqmmc-supply = <&vdd_1v8>;
+@@ -577,6 +596,23 @@
+ 		wakeup-source;
+ 	};
+ 
++	mmc@700b0600 {
++		/*
++		 * GoSD (github.com/jphastings/gosd): SDMMC4 is the eMMC on
++		 * the P3448-0002 module. Bus width and non-removable follow
++		 * mainline's Jetson TX1 module (tegra210-p2180.dtsi); the
++		 * supplies are the rails NVIDIA's DTS for this module names
++		 * (MAX77620 SD3 at 1.8 V, and VDD_3V3_SYS). Speed modes come
++		 * from tegra210.dtsi's SDMMC4 node, as on the TX1.
++		 */
++		status = "okay";
++		bus-width = <8>;
++		non-removable;
++
++		vqmmc-supply = <&vdd_1v8>;
++		vmmc-supply = <&vdd_3v3_sys>;
++	};
++
+ 	usb@700d0000 {
+ 		status = "okay";
+ 		phys = <&micro_b>;

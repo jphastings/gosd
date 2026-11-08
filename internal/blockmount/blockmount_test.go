@@ -1058,6 +1058,26 @@ func TestRunEXT4GrowFailureSurfacesActionableErrorAndSkipsMarker(t *testing.T) {
 	}
 }
 
+// TestRunUnmountsAVolumeItCouldNotFinishEstablishing: a volume mounted for
+// its grow or marker, which then failed, must not stay mounted for anything
+// to write into an unestablished filesystem (bean gosd-j18s).
+func TestRunUnmountsAVolumeItCouldNotFinishEstablishing(t *testing.T) {
+	errBoom := errors.New("boom")
+	for name, f := range map[string]*fakeDeps{
+		"grow fails":   {contents: diskfmt.Contents{Blank: true}, growErr: errBoom},
+		"marker fails": {contents: diskfmt.Contents{Blank: true}, establishErr: errBoom},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Run(f.storage(), diskfmt.EXT4, "APPDATA", "/storage", false); !errors.Is(err, errBoom) {
+				t.Fatalf("Run() = %v, want the failure", err)
+			}
+			if got := f.calls[len(f.calls)-1]; got != "unmount" {
+				t.Errorf("calls = %v, want the volume unmounted after the failure", f.calls)
+			}
+		})
+	}
+}
+
 // TestRunEXT4UnmountFailureDuringDebrisRepairSurfacesError confirms a failed
 // unmount of discovered debris is reported, not silently ignored — Format
 // must never be attempted against a device something still has mounted.

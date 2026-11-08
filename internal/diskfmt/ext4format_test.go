@@ -249,8 +249,67 @@ func TestWriteEXT4FailsHonestlyWhenTheUnderlyingWriteFails(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	fw := &failingWriterAt{w: f, failAt: 2 << 20} // fail partway through the first few chunks
-	if err := writeEXT4(EXT4GoldenData, fw, ext4golden.Data.RawBytes, "GOSD-DATA"); err == nil {
+	if err := writeEXT4(EXT4GoldenData, fw, ext4golden.Data.RawBytes, "GOSD-DATA", f.Sync); err == nil {
 		t.Fatal("writeEXT4 with a failing underlying writer = nil error, want a failure")
+	}
+}
+
+// TestFormatEXT4InterruptedReadsAsBlank pins the superblock-last order (bean
+// gosd-j18s): a reformat that dies on its last body write leaves no
+// superblock at all — not the one it was writing, and not the old volume's —
+// so Inspect sees a blank device that may simply be formatted again.
+func TestFormatEXT4InterruptedReadsAsBlank(t *testing.T) {
+	path := backingFile(t, ext4golden.Data.RawBytes)
+	if err := FormatEXT4(EXT4GoldenData, path, "OLD"); err != nil {
+		t.Fatalf("FormatEXT4: %v", err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("opening backing file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	fw := &failingWriterAt{w: f, failAt: ext4golden.Data.RawBytes - 1}
+	if err := writeEXT4(EXT4GoldenData, fw, ext4golden.Data.RawBytes, "NEW", f.Sync); err == nil {
+		t.Fatal("writeEXT4 with a failing underlying writer = nil error, want a failure")
+	}
+
+	if got, err := Inspect(path); err != nil || !got.Blank {
+		t.Errorf("Inspect after an interrupted format = %+v, %v; want Blank", got, err)
+	}
+}
+
+// orderRecorder notes each write as Z (zeroes at the head), H (the head's
+// real content) or B (anything after the head, runs collapsed), and each
+// flush as S.
+type orderRecorder struct{ events []byte }
+
+func (r *orderRecorder) WriteAt(p []byte, off int64) (int, error) {
+	event := byte('B')
+	if off == 0 {
+		event = 'H'
+		if bytes.Count(p, []byte{0}) == len(p) {
+			event = 'Z'
+		}
+	}
+	if n := len(r.events); event != 'B' || n == 0 || r.events[n-1] != 'B' {
+		r.events = append(r.events, event)
+	}
+	return len(p), nil
+}
+
+func (r *orderRecorder) sync() error {
+	r.events = append(r.events, 'S')
+	return nil
+}
+
+func TestWriteEXT4FlushesTheBodyBeforeWritingTheSuperblock(t *testing.T) {
+	r := &orderRecorder{}
+	if err := writeEXT4(EXT4GoldenData, r, ext4golden.Data.RawBytes, "GOSD-DATA", r.sync); err != nil {
+		t.Fatalf("writeEXT4: %v", err)
+	}
+	if got, want := string(r.events), "ZSBSHS"; got != want {
+		t.Errorf("write/flush order = %s, want %s (erase head, flush, body, flush, head, flush)", got, want)
 	}
 }
 

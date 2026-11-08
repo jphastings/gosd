@@ -233,6 +233,15 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		return image.WriteReport{}, err
 	}
 
+	// The data-partition options describe partition 2, which a board keeping
+	// /data on NVMe doesn't have; its drive is always ext4 (see
+	// initcfg.Config.DataOnNVMe).
+	dataOnNVMe := boards.DataOnNVMe(opts.Board)
+	if dataOnNVMe {
+		opts.DataSizeBytes, opts.DataExpand, opts.DataFlush = 0, false, false
+		opts.DataFilesystem = diskfmt.EXT4
+	}
+
 	resolved, err := boards.ResolveArtifacts(ctx, opts.Board.Name(), opts.Board.Artifacts(), opts.ArtifactsDir, opts.CacheDir, fetchBoardArtifacts)
 	if err != nil {
 		return image.WriteReport{}, fmt.Errorf("resolving artifacts for %s: %w", opts.Board.Name(), err)
@@ -402,6 +411,7 @@ func Assemble(ctx context.Context, opts Options) (image.WriteReport, error) {
 		DataFlush:              opts.DataFlush,
 		DataFilesystem:         string(opts.DataFilesystem),
 		DataLabel:              opts.Labels.Data,
+		DataOnNVMe:             dataOnNVMe,
 		IngressCloudflared:     opts.IngressCloudflared,
 		IngressTailscaleFunnel: opts.IngressTailscaleFunnel,
 		AppSignalsReady:        opts.AppSignalsReady,

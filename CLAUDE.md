@@ -114,7 +114,10 @@ say so in the bean rather than silently diverging.
   `APP` partition, using NVIDIA's offline massflash blob run from a Turing
   Pi 2 BMC, see `docs/jetson-nano-flashing.md`; never `tpi flash`, and never
   through a Mac VM's USB passthrough, which loses data. GoSD ships no
-  bootloader; `/data` lives on NVMe. Epic gosd-72je, internal only until
+  bootloader; `/data` lives on NVMe, always whole-device ext4 through
+  `internal/blockmount` whatever `--data-filesystem` says, and gosd-init
+  never touches an eMMC partition but `APP` — `boards.NVMeDataBoard`,
+  bean gosd-j18s. Epic gosd-72je, internal only until
   its artifacts release lands); also `qemu-virt` (internal —
   see the "qemu-virt board" decision below: registered and buildable via
   explicit `--board=qemu-virt`, but excluded from `--help` text, the default

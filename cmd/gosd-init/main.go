@@ -24,6 +24,7 @@ import (
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/durable"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/mdnsresponder"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/netup"
+	"github.com/jphastings/gosd/cmd/gosd-init/internal/nvmedata"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/restartsignal"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/statusled"
 	"github.com/jphastings/gosd/cmd/gosd-init/internal/timesync"
@@ -95,7 +96,8 @@ const (
 var bootDevices = []string{"/dev/mmcblk0p1", "/dev/mmcblk1p1", "/dev/vda1"}
 
 // dataDevices are the candidate device nodes for the optional data
-// partition: partition 2 of the same devices bootDevices covers.
+// partition: partition 2 of the same devices bootDevices covers. A board
+// whose config.json says dataOnNVMe never tries them (see mountNVMeData).
 var dataDevices = []string{"/dev/mmcblk0p2", "/dev/mmcblk1p2", "/dev/vda2"}
 
 func main() {
@@ -147,6 +149,7 @@ func main() {
 		EnsureDataMountpoint: ensureDataMountpoint,
 		EnsureDataMarker:     ensureDataMarker,
 		ExpandData:           expandData,
+		MountNVMeData:        mountNVMeData,
 		// ReserveDevices writes down which of this board's block devices
 		// belong to GoSD, for gadget.MassStorage to refuse against —
 		// plain file operations, not platform ones, since /run is an
@@ -425,6 +428,28 @@ func expandData(bootPartition string, fs diskfmt.FS, dataLabel string, expand bo
 		Filesystem:      fs,
 		DataLabel:       dataLabel,
 		Expand:          expand,
+	})
+}
+
+// nvmeWait bounds how long mountNVMeData waits for an NVMe controller to
+// appear on the PCIe bus; nvmeNamespaceWait, once one has, for a namespace on
+// it, since a controller can take tens of seconds to report ready. A bus that
+// has enumerated without a controller is believed after a few seconds rather
+// than waited out (see nvmedata's awaitDrives).
+const (
+	nvmeWait          = 10 * time.Second
+	nvmeNamespaceWait = 30 * time.Second
+)
+
+// mountNVMeData puts /data on the board's NVMe drive, for an image whose
+// config.json says dataOnNVMe (see cmd/gosd-init/internal/nvmedata).
+func mountNVMeData(fs diskfmt.FS, dataLabel, target string, log func(format string, args ...any)) error {
+	return nvmedata.Mount(nvmedata.NewDeps(log), nvmedata.Options{
+		Filesystem:    fs,
+		Label:         dataLabel,
+		Mountpoint:    target,
+		Wait:          nvmeWait,
+		NamespaceWait: nvmeNamespaceWait,
 	})
 }
 

@@ -157,25 +157,23 @@ func isPowerOf(n, base uint64) bool {
 // grow the filesystem to fill a larger device — that is a mount-time
 // EXT4_IOC_RESIZE_FS step outside this package's scope (bean gosd-1c0x).
 //
-// A device FormatEXT4 has written to is not yet "established" in the sense
-// GoSD's crash-ordering convention uses the word: like FAT32's
-// dataexpand.EstablishedMarker, a probe that decompresses and parses fine —
-// even one that reads back the label and UUID just stamped — is not proof
-// the whole golden image reached the medium; a crash partway through
-// streaming it can leave a superblock (which lands in the first bytes
-// written) that looks perfect while later blocks are truncated. FormatEXT4
-// itself declares nothing established; that write → sync → marker → sync
-// commit is blockmount's territory once its own marker lands (bean
-// gosd-1c0x), the same way dataexpand's marker — not a FAT probe — is what
-// proves a FAT32 format finished.
+// The superblock is written last, after everything else is flushed (see
+// writeEXT4): erase the head, flush, write the body, flush, write the head,
+// flush. A crash before that final write leaves a head of zeroes, which
+// Inspect reports as Contents.Blank — the state a format may always start
+// over from — and never a superblock over a body that didn't arrive (bean
+// gosd-j18s). The head's erase is also what removes any prior filesystem's
+// signature, so, unlike FormatFAT32, this needs no separate
+// eraseLeadingRegion call.
 //
-// Unlike FormatFAT32, this needs no separate eraseLeadingRegion call: the
-// golden image is streamed starting at offset 0, and even the smaller of the
-// two goldens is 32 MiB, so a successful call here has already overwritten
-// every byte in [0, golden.MinBytes()) — vastly more than the
-// blankProbeBytes window any of Inspect's probes ever reads — with the
-// golden's own content. Nothing a prior filesystem left in that range can
-// survive.
+// A device FormatEXT4 has written to is still not "established" in the sense
+// GoSD's crash-ordering convention uses the word: a crash part-way through
+// that one head write can land a superblock without the rest of it, and the
+// online grow that follows a format has its own window. FormatEXT4 declares
+// nothing established; that write → sync → marker → sync commit is
+// blockmount's territory once its own marker lands (bean gosd-1c0x), the
+// same way dataexpand's marker — not a FAT probe — is what proves a FAT32
+// format finished.
 func FormatEXT4(golden EXT4Golden, devicePath, volumeLabel string) (err error) {
 	d, err := openDisk(devicePath, false)
 	if err != nil {
@@ -191,7 +189,11 @@ func FormatEXT4(golden EXT4Golden, devicePath, volumeLabel string) (err error) {
 	if err != nil {
 		return fmt.Errorf("opening %s for writing failed: %w", devicePath, err)
 	}
-	if err := writeEXT4(golden, w, d.Size, volumeLabel); err != nil {
+	f, ok := w.(interface{ Sync() error })
+	if !ok {
+		return fmt.Errorf("%s can't be flushed mid-format, which writing its superblock last depends on", devicePath)
+	}
+	if err := writeEXT4(golden, w, d.Size, volumeLabel, f.Sync); err != nil {
 		return fmt.Errorf("writing an ext4 filesystem to %s failed: %w", devicePath, err)
 	}
 	return nil
@@ -282,7 +284,7 @@ func (g EXT4Golden) SizeLimitReason() string {
 // medium, and the write → sync → marker → sync commit record that makes it
 // so is blockmount's responsibility, not this function's.
 func WriteEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel string) error {
-	return writeEXT4(golden, w, sizeBytes, volumeLabel)
+	return writeEXT4(golden, w, sizeBytes, volumeLabel, func() error { return nil })
 }
 
 // writeEXT4 streams one of the embedded ext4 golden images into w, patching
@@ -290,7 +292,19 @@ func WriteEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel st
 // UUID as they pass through. It is separated from FormatEXT4 so the on-disk
 // result can be built and read back in tests without a block device, exactly
 // as writeExFAT is.
-func writeEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel string) error {
+//
+// The head — the first ext4FormatChunkBytes, which hold the primary
+// superblock (and so the label Inspect reads) — is written last: zeroes
+// first, then sync, then everything after the head, then sync, then the
+// head, then sync. Until that last write lands, the head reads as zeroes,
+// which Inspect reports as Contents.Blank; so an interrupted format is
+// indistinguishable from the blank device it started as, never a
+// probe-passing superblock over a body that never arrived. What is left is
+// the one head write itself: a crash that lands only part of it can still
+// leave a superblock that won't mount. sync is how w is made durable between
+// those steps; a writer whose order doesn't matter (an image file being
+// assembled) passes a no-op.
+func writeEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel string, sync func() error) error {
 	seed, err := golden.seed()
 	if err != nil {
 		return err
@@ -316,41 +330,50 @@ func writeEXT4(golden EXT4Golden, w io.WriterAt, sizeBytes int64, volumeLabel st
 	}
 	defer zr.Close()
 
-	var backupOffsets []int64
 	buf := make([]byte, ext4FormatChunkBytes)
-	var written int64
+	if _, err := w.WriteAt(buf, 0); err != nil {
+		return fmt.Errorf("erasing the start of the target before writing the %s ext4 golden image failed: %w", seed.Name, err)
+	}
+	if err := sync(); err != nil {
+		return fmt.Errorf("flushing the erased start of the target failed: %w", err)
+	}
+
+	head := make([]byte, ext4FormatChunkBytes)
+	if _, err := io.ReadFull(zr, head); err != nil {
+		return fmt.Errorf("decompressing the embedded %s ext4 golden image failed: %w", seed.Name, err)
+	}
+	sbBytes := head[ext4SuperblockOffset : ext4SuperblockOffset+ext4SuperblockSize]
+	sb, err := parseEXT4Superblock(sbBytes)
+	if err != nil {
+		return fmt.Errorf("the embedded %s ext4 golden image's own superblock failed to parse: %w", seed.Name, err)
+	}
+	if err := requireEXT4StampableFeatures(sb); err != nil {
+		return err
+	}
+	backupOffsets, err := ext4BackupSuperblockOffsets(sb)
+	if err != nil {
+		return err
+	}
+	patchEXT4Superblock(sbBytes, uuid, label)
+	patchBackups := func(chunk []byte, offset int64) {
+		for _, bo := range backupOffsets {
+			if bo >= offset && bo < offset+int64(len(chunk)) {
+				rel := bo - offset
+				patchEXT4Superblock(chunk[rel:rel+ext4SuperblockSize], uuid, label)
+			}
+		}
+	}
+	patchBackups(head, 0)
+	written := int64(len(head))
 
 readLoop:
 	for {
 		n, rerr := io.ReadFull(zr, buf)
 		if n > 0 {
 			chunk := buf[:n]
-			offset := written
-
-			if offset == 0 {
-				sbBytes := chunk[ext4SuperblockOffset : ext4SuperblockOffset+ext4SuperblockSize]
-				sb, perr := parseEXT4Superblock(sbBytes)
-				if perr != nil {
-					return fmt.Errorf("the embedded %s ext4 golden image's own superblock failed to parse: %w", seed.Name, perr)
-				}
-				if perr := requireEXT4StampableFeatures(sb); perr != nil {
-					return perr
-				}
-				backupOffsets, perr = ext4BackupSuperblockOffsets(sb)
-				if perr != nil {
-					return perr
-				}
-				patchEXT4Superblock(sbBytes, uuid, label)
-			}
-			for _, bo := range backupOffsets {
-				if bo >= offset && bo < offset+int64(len(chunk)) {
-					rel := bo - offset
-					patchEXT4Superblock(chunk[rel:rel+ext4SuperblockSize], uuid, label)
-				}
-			}
-
-			if _, werr := w.WriteAt(chunk, offset); werr != nil {
-				return fmt.Errorf("writing the %s ext4 golden image at offset %d failed: %w", seed.Name, offset, werr)
+			patchBackups(chunk, written)
+			if _, werr := w.WriteAt(chunk, written); werr != nil {
+				return fmt.Errorf("writing the %s ext4 golden image at offset %d failed: %w", seed.Name, written, werr)
 			}
 			written += int64(n)
 		}
@@ -367,6 +390,15 @@ readLoop:
 
 	if written != seed.RawBytes {
 		return fmt.Errorf("the embedded %s ext4 golden image decompressed to %d bytes, want %d — the embedded asset may be corrupt", seed.Name, written, seed.RawBytes)
+	}
+	if err := sync(); err != nil {
+		return fmt.Errorf("flushing the %s ext4 golden image before writing its superblock failed: %w", seed.Name, err)
+	}
+	if _, err := w.WriteAt(head, 0); err != nil {
+		return fmt.Errorf("writing the %s ext4 golden image's superblock failed: %w", seed.Name, err)
+	}
+	if err := sync(); err != nil {
+		return fmt.Errorf("flushing the %s ext4 golden image's superblock failed: %w", seed.Name, err)
 	}
 	return nil
 }

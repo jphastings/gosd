@@ -1361,6 +1361,67 @@ func TestBuildDefaultDataFilesystemIsStillFAT32(t *testing.T) {
 	}
 }
 
+// TestBuildForJetsonNanoPutsDataOnNVMe covers bean gosd-j18s: only the boot
+// partition of a jetson-nano image is ever flashed (into NVIDIA's APP), so
+// the data-partition flags are ignored for it, and config.json tells
+// gosd-init to keep /data on the NVMe drive as ext4 instead.
+func TestBuildForJetsonNanoPutsDataOnNVMe(t *testing.T) {
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected network request to %s during a --artifacts-dir build", r.URL)
+		return nil, errors.New("network access is disabled in this test")
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	// jetson-nano is internal-only, so testdata/fake-artifacts can't carry
+	// its fixtures (internal/repocheck refuses names no public board uses).
+	artifacts := t.TempDir()
+	for name, content := range map[string]string{
+		"Image":                   "fake jetson-nano kernel",
+		"tegra210-p3450-0000.dtb": "fake jetson-nano dtb",
+		"xusb.bin":                "fake xusb.bin",
+		"ca-certificates.crt":     caCertsFixtureContent,
+	} {
+		if err := os.WriteFile(filepath.Join(artifacts, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	imgPath := filepath.Join(t.TempDir(), "hello-jetson-nano.img")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"build", "../../examples/hello",
+		"--board", "jetson-nano",
+		"--artifacts-dir", artifacts,
+		"--data-size", "1GiB",
+		"--data-flush",
+		"-o", imgPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gosd build failed: %v", err)
+	}
+
+	d, err := diskfs.Open(imgPath, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		t.Fatalf("reopening the built image failed: %v", err)
+	}
+	if part2, err := d.GetPartition(2); err == nil && part2.GetSize() != 0 {
+		t.Errorf("partition 2 has size %d, want none: a jetson-nano's /data is on its NVMe", part2.GetSize())
+	}
+	_ = d.Close()
+
+	type dataFields struct {
+		OnNVMe        bool
+		FS, Label     string
+		Expand, Flush bool
+	}
+	cfg := readConfigJSON(t, imgPath)
+	got := dataFields{cfg.DataOnNVMe, cfg.DataFilesystem, cfg.DataLabel, cfg.DataExpand, cfg.DataFlush}
+	if want := (dataFields{OnNVMe: true, FS: "ext4", Label: helloDataLabel}); got != want {
+		t.Errorf("config.json's data fields = %+v, want %+v", got, want)
+	}
+}
+
 // TestBuildCatalogForQemuVirtOnlyWritesNothing confirms gosd-2v40's chosen
 // behavior for --publish-catalog when every selected board is internal-only: no
 // os_list.json is written, and the build itself still succeeds (this is not
