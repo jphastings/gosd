@@ -3,6 +3,7 @@ package l4t
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -22,8 +23,9 @@ var zeroKey [16]byte
 // Build signs the kit's raw files into a BootChain. The BCT is built without
 // bootloader entries, which booting into recovery does not need.
 func Build(in Inputs) (BootChain, error) {
-	if len(in.CBoot) < blHeaderLen {
-		return BootChain{}, fmt.Errorf("cboot.bin is %d bytes, shorter than its %d-byte signature header; the kit member is damaged, so download it again", len(in.CBoot), blHeaderLen)
+	cboot, err := signHeadered("cboot.bin", in.CBoot)
+	if err != nil {
+		return BootChain{}, err
 	}
 	bct, err := buildBCT(in.BCTConfig)
 	if err != nil {
@@ -33,8 +35,8 @@ func Build(in Inputs) (BootChain, error) {
 		RCM0:  rcm(opcodeNoPayload, nil, 0),
 		RCM1:  rcm(opcodeRecoveryApplet, in.Recovery, recoveryLoadAddress),
 		BCT:   bct,
-		CBoot: signCBoot(in.CBoot),
-		DTB:   signDTB(in.DTB),
+		CBoot: cboot,
+		DTB:   wrap("DTB\x00", in.DTB, unspecified),
 	}, nil
 }
 
@@ -90,33 +92,108 @@ func rcm(opcode uint32, payload []byte, arg0 uint32) []byte {
 	return msg
 }
 
-// signCBoot signs cboot.bin, whose first 0x400 bytes already reserve the
-// signature header.
-func signCBoot(raw []byte) []byte {
+// signHeadered signs a kit file whose first 0x400 bytes already reserve the
+// signature header, as cboot.bin's and nvtboot_cpu.bin's do.
+func signHeadered(name string, raw []byte) ([]byte, error) {
+	if len(raw) < blHeaderLen {
+		return nil, fmt.Errorf("%s is %d bytes, shorter than its %d-byte signature header; the kit member is damaged, so download it again", name, len(raw), blHeaderLen)
+	}
 	img := bytes.Clone(raw)
 	le().PutUint64(img[0x8:], uint64(len(img)))
 	le().PutUint64(img[0x240:], uint64(len(img)))
 	putCMAC(img, blCMACAt, blSignedFrom)
-	return img
+	return img, nil
 }
 
-func signDTB(raw []byte) []byte {
-	padded := len(raw) + 1 + (-(len(raw) + 1))&0xF
-	total := blHeaderLen + padded
+// putBLHeader fills the unsigned fields of a signature header.
+func putBLHeader(h []byte, magic string, total int, load uint64) {
+	copy(h[4:], magic)
+	le().PutUint64(h[0x8:], uint64(total))
+	le().PutUint64(h[0x10:], load)
+	fill(h[0x18:0x118], 0xAA)
+	fill(h[0x118:0x228], 0xEE)
+	fill(h[0x230:0x240], 0xCC)
+	le().PutUint64(h[0x240:], uint64(total))
+	le().PutUint64(h[0x248:], load)
+	le().PutUint64(h[0x250:], unspecified)
+}
 
-	img := make([]byte, total)
-	copy(img[4:], "DTB\x00")
-	le().PutUint64(img[0x8:], uint64(total))
-	le().PutUint64(img[0x10:], unspecified)
-	fill(img[0x18:0x118], 0xAA)
-	fill(img[0x118:0x228], 0xEE)
-	fill(img[0x230:0x240], 0xCC)
-	le().PutUint64(img[0x240:], uint64(total))
-	le().PutUint64(img[0x248:], unspecified)
-	le().PutUint64(img[0x250:], unspecified)
+// wrap signs raw behind a signature header of its own, padding it to whole
+// 16-byte blocks.
+func wrap(magic string, raw []byte, load uint64) []byte {
+	padded := len(raw) + 1 + (-(len(raw) + 1))&0xF
+	img := make([]byte, blHeaderLen+padded)
+	putBLHeader(img, magic, len(img), load)
 	copy(img[blHeaderLen:], raw)
 	img[blHeaderLen+len(raw)] = 0x80
 	putCMAC(img, blCMACAt, blSignedFrom)
+	return img
+}
+
+const (
+	sc7EntryLoad = 0x400
+
+	wb0HeaderLen = 0x240
+	wb0Load      = 0x40010000 + wb0HeaderLen
+)
+
+// signWB0 fills warmboot.bin's zeroed header, the layout U-Boot calls
+// wb_header.
+func signWB0(raw []byte) ([]byte, error) {
+	if len(raw) < wb0HeaderLen || len(raw)%16 != 0 || !bytes.Equal(raw[:wb0HeaderLen], make([]byte, wb0HeaderLen)) {
+		return nil, fmt.Errorf("warmboot.bin is %d bytes and not a zeroed 0x240-byte header over 16-byte-aligned code, unlike R32.7.6's; the kit member is damaged, so download it again", len(raw))
+	}
+	img := bytes.Clone(raw)
+	n := uint32(len(img))
+	le().PutUint32(img[0x0:], n)
+	le().PutUint32(img[0x230:], n)
+	le().PutUint32(img[0x234:], wb0Load)
+	le().PutUint32(img[0x238:], wb0Load)
+	le().PutUint32(img[0x23C:], n-wb0HeaderLen)
+	putCMAC(img, 0x110, 0x220)
+	return img, nil
+}
+
+// signTOS appends the trusted OS image's CMAC.
+func signTOS(raw []byte) ([]byte, error) {
+	if len(raw)%16 != 0 {
+		return nil, fmt.Errorf("tos-mon-only.img is %d bytes, not whole 16-byte blocks like R32.7.6's; the kit member is damaged, so download it again", len(raw))
+	}
+	sum := cmac(zeroKey, raw)
+	return append(bytes.Clone(raw), sum[:]...), nil
+}
+
+const (
+	bootPage = 2048
+	// lnxHeaderAt puts the signed region at 2000 bytes in, where NVIDIA's
+	// images_list.xml says LNX's signature starts.
+	lnxHeaderAt = 2000 - blSignedFrom
+	lnxCmdline  = "root=/dev/mmcblk0p1 rw rootwait rootfstype=ext4 console=ttyS0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0 sdhci_tegra.en_boot_part_access=1 "
+)
+
+// signLNX packs U-Boot into an Android boot image (version 0, mkbootimg's
+// defaults, no ramdisk) and signs it with a header in the gap mkbootimg
+// leaves zeroed.
+func signLNX(uboot []byte) []byte {
+	img := make([]byte, bootPage+(len(uboot)+bootPage-1)/bootPage*bootPage)
+	copy(img, "ANDROID!")
+	for i, v := range []uint32{uint32(len(uboot)), 0x10008000, 0, 0x11000000, 0, 0x10F00000, 0x10000100, bootPage} {
+		le().PutUint32(img[8+4*i:], v)
+	}
+	copy(img[0x30:], "mmcblk0p1")
+	copy(img[0x40:], lnxCmdline)
+	// The id hashes the kernel, ramdisk and second stage, each followed by
+	// its length; the last two are empty.
+	id := sha1.New()
+	id.Write(uboot)
+	id.Write(binary.LittleEndian.AppendUint32(nil, uint32(len(uboot))))
+	id.Write(make([]byte, 8))
+	copy(img[0x240:], id.Sum(nil))
+	copy(img[bootPage:], uboot)
+
+	h := img[lnxHeaderAt:]
+	putBLHeader(h, "LNX\x00", len(img), unspecified)
+	putCMAC(h, blCMACAt, blSignedFrom)
 	return img
 }
 

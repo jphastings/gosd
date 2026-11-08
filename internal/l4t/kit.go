@@ -30,20 +30,37 @@ var R32_7_6 = Kit{
 	LicenseURL: "https://developer.nvidia.com/downloads/embedded/l4t/r32_release_v7.6/t186/tegra_software_license_agreement-tegra-linux.txt",
 }
 
-// Inputs are the four kit members the boot chain is built from.
+// Inputs are the kit members the boot chain and a first flash are built from.
 type Inputs struct {
 	Recovery, CBoot, BCTConfig, DTB []byte
+
+	NVTBoot, NVTBootCPU, WarmBoot, SC7Entry, TOS, EKS, BMP, RP4, UBoot []byte
+	// Layout is the eMMC partition layout template.
+	Layout []byte
 }
 
-const (
-	memberRecovery  = "Linux_for_Tegra/bootloader/nvtboot_recovery.bin"
-	memberCBoot     = "Linux_for_Tegra/bootloader/t210ref/cboot.bin"
-	memberBCTConfig = "Linux_for_Tegra/bootloader/t210ref/BCT/P3448_A00_lpddr4_204Mhz_P987.cfg"
-	memberDTB       = "Linux_for_Tegra/kernel/dtb/tegra210-p3448-0002-p3449-0000-b00.dtb"
+func (in *Inputs) members() map[string]*[]byte {
+	const bl = "Linux_for_Tegra/bootloader/"
+	return map[string]*[]byte{
+		bl + "nvtboot_recovery.bin":                                         &in.Recovery,
+		bl + "t210ref/cboot.bin":                                            &in.CBoot,
+		bl + "t210ref/BCT/P3448_A00_lpddr4_204Mhz_P987.cfg":                 &in.BCTConfig,
+		"Linux_for_Tegra/kernel/dtb/tegra210-p3448-0002-p3449-0000-b00.dtb": &in.DTB,
+		bl + "t210ref/nvtboot.bin":                                          &in.NVTBoot,
+		bl + "nvtboot_cpu.bin":                                              &in.NVTBootCPU,
+		bl + "t210ref/warmboot.bin":                                         &in.WarmBoot,
+		bl + "t210ref/sc7entry-firmware.bin":                                &in.SC7Entry,
+		bl + "tos-mon-only.img":                                             &in.TOS,
+		bl + "eks.img":                                                      &in.EKS,
+		bl + "bmp.blob":                                                     &in.BMP,
+		bl + "rp4.blob":                                                     &in.RP4,
+		bl + "t210ref/p3450-0000/u-boot.bin":                                &in.UBoot,
+		bl + "t210ref/cfg/flash_l4t_t210_emmc_p3448.xml":                    &in.Layout,
+	}
+}
 
-	// maxMemberSize is several times the largest member (cboot.bin, 475 KiB).
-	maxMemberSize = 4 << 20
-)
+// maxMemberSize is several times the largest member (u-boot.bin, 650 KiB).
+const maxMemberSize = 4 << 20
 
 // Download fetches the kit from k.URL and returns its members, per [Kit.Read].
 func (k Kit) Download(ctx context.Context, c *http.Client) (Inputs, error) {
@@ -63,13 +80,14 @@ func (k Kit) Download(ctx context.Context, c *http.Client) (Inputs, error) {
 }
 
 // Read consumes a whole kit .tbz2 stream in one pass, returning its members
-// only if the stream matches the pinned hash and size. Once all four members
-// are in hand the rest is only hashed, since decompression is the slow part.
+// only if the stream matches the pinned hash and size. Once every member is
+// in hand the rest is only hashed, since decompression is the slow part.
 func (k Kit) Read(r io.Reader) (Inputs, error) {
 	h := sha256.New()
 	raw := &countingReader{r: io.TeeReader(r, h)}
 
-	members := map[string][]byte{memberRecovery: nil, memberCBoot: nil, memberBCTConfig: nil, memberDTB: nil}
+	var in Inputs
+	members := in.members()
 	found := 0
 	tr := tar.NewReader(bzip2.NewReader(raw))
 	for found < len(members) {
@@ -80,7 +98,8 @@ func (k Kit) Read(r io.Reader) (Inputs, error) {
 		if err != nil {
 			return Inputs{}, fmt.Errorf("reading the kit archive failed: %w; the download is probably corrupt, so retry it or download it from NVIDIA", err)
 		}
-		if _, want := members[hdr.Name]; !want || members[hdr.Name] != nil {
+		dst, want := members[hdr.Name]
+		if !want || *dst != nil {
 			continue
 		}
 		// Nothing is verified until the stream ends, so don't let it claim
@@ -95,7 +114,7 @@ func (k Kit) Read(r io.Reader) (Inputs, error) {
 		if data == nil {
 			data = []byte{}
 		}
-		members[hdr.Name] = data
+		*dst = data
 		found++
 	}
 
@@ -106,16 +125,11 @@ func (k Kit) Read(r io.Reader) (Inputs, error) {
 		return Inputs{}, fmt.Errorf("the kit is %d bytes with sha256 %s, but L4T R32.7.6 is %d bytes with sha256 %s; the download is corrupt or is not R32.7.6, so retry it or download it from NVIDIA", raw.n, got, k.Size, k.SHA256)
 	}
 	for name, data := range members {
-		if data == nil {
+		if *data == nil {
 			return Inputs{}, errors.New("the kit matches its hash but has no " + name + "; this is a bug in gosd, please report it")
 		}
 	}
-	return Inputs{
-		Recovery:  members[memberRecovery],
-		CBoot:     members[memberCBoot],
-		BCTConfig: members[memberBCTConfig],
-		DTB:       members[memberDTB],
-	}, nil
+	return in, nil
 }
 
 type countingReader struct {

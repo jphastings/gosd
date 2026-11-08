@@ -32,6 +32,17 @@ func syntheticInputs() Inputs {
 		CBoot:     bytes.Repeat([]byte{9}, 0x400+100),
 		BCTConfig: syntheticConfig(nil),
 		DTB:       []byte("fake-dtb"),
+
+		NVTBoot:    bytes.Repeat([]byte{1}, 1000),
+		NVTBootCPU: bytes.Repeat([]byte{2}, 0x400+64),
+		WarmBoot:   append(make([]byte, 0x240), bytes.Repeat([]byte{3}, 64)...),
+		SC7Entry:   []byte("sc7"),
+		TOS:        bytes.Repeat([]byte{4}, 32),
+		EKS:        []byte("eks"),
+		BMP:        []byte("bmp"),
+		RP4:        []byte("rp4"),
+		UBoot:      []byte("u-boot"),
+		Layout:     syntheticLayout(),
 	}
 }
 

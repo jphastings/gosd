@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"path"
 	"strings"
 	"testing"
 )
@@ -19,17 +20,16 @@ func fixtureKit(t *testing.T, name string) (Kit, []byte) {
 	return Kit{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw))}, raw
 }
 
-func TestReadExtractsTheFourMembers(t *testing.T) {
+func TestReadExtractsEveryMember(t *testing.T) {
 	kit, raw := fixtureKit(t, "kit.tbz2")
 	in, err := kit.Read(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := []string{string(in.Recovery), string(in.CBoot), string(in.BCTConfig), string(in.DTB)}
-	want := []string{"recovery-applet", "cboot", "config", "dtb"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("member %d = %q, want %q", i, got[i], want[i])
+	// Each fixture member holds its own file name.
+	for name, data := range in.members() {
+		if string(*data) != path.Base(name) {
+			t.Errorf("%s = %q", name, *data)
 		}
 	}
 }
