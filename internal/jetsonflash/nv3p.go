@@ -83,7 +83,9 @@ func (p packet) status() (code uint32, msg string, ok bool) {
 	if p.typ != packetCmd || p.cmd != cmdStatus || len(p.body) < 4 {
 		return 0, "", false
 	}
-	return le32(p.body), string(bytes.TrimRight(p.body[4:], "\x00")), true
+	// CBoot follows an empty message with uninitialised memory.
+	text, _, _ := bytes.Cut(p.body[4:], []byte{0})
+	return le32(p.body), string(text), true
 }
 
 // frame splits one packet into the bulk transfers NVIDIA's T210 tool uses:
@@ -106,7 +108,8 @@ type session struct {
 	c       conn
 	log     io.Writer
 	seq     uint32
-	pending []byte // bytes read from the device but not yet parsed
+	pending []byte       // bytes read from the device but not yet parsed
+	onData  func([]byte) // called with each DATA payload drain receives
 }
 
 func (s *session) send(typ, seq uint32, body []byte) error {
@@ -190,6 +193,9 @@ func (s *session) drain(first time.Duration) error {
 		case packetNack:
 			return fmt.Errorf("the device refused it: %v", p)
 		case packetCmd, packetData:
+			if p.typ == packetData && s.onData != nil {
+				s.onData(p.body)
+			}
 			if err := s.send(packetAck, p.seq, nil); err != nil {
 				return err
 			}
