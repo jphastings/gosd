@@ -44,7 +44,7 @@ const (
 	// writes nv3p data 16 KiB at a time, and older kernels refuse more.
 	maxTransfer = 16384
 	// maxDeviceField bounds a length the device asks us to buffer.
-	maxDeviceField = 1 << 16
+	maxDeviceField = 1 << 24
 
 	replyTimeout = 5 * time.Second
 	// quietWait is how long the device must stay silent before we take it

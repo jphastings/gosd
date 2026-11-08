@@ -77,3 +77,26 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
   - CBoot's STATUS 0 after the version query carries an empty message followed by about 300 bytes of what looks like uninitialised memory, so read the message only up to its first NUL.
   - nvtboot logs `Error in NvTbootGetTOSBinaryLength: 0x11 !` because no TOS image is sent, and carries on into the flashing server regardless.
   - The `0x05`/`0x06` probes left the eMMC untouched: the module booted GoSD from it normally afterwards.
+
+## CBoot's flashing server (second PR)
+
+- [x] Map the server's commands by experiment (`jetson-flash probe`, hidden).
+- [x] Write `APP` and cold-boot into it.
+- [ ] A `jetson-flash` command that reflashes `APP` from a gosd `.img`.
+- [ ] Offline signing in Go, so no NVIDIA tool runs at all.
+- [ ] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
+- [ ] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
+
+### Bench findings (2026-11-08, node 3)
+
+Found by device experiments alone, reading CBoot's console as they ran. No NVIDIA tool was traced.
+
+- **The framing is the applet's.** Each session opens with the version query, and STATUS takes two ACKs. A successful STATUS's message is uninitialised memory too, so only its code means anything.
+- **Commands:**
+  - `0x02` read: args are the partition name, NUL-terminated. The device answers `CMD 0x08 {8}`, a DATA holding the partition's u64 size, then the contents as DATA (EKS's 80 KiB came as one packet), then STATUS 0.
+  - `0x03` write: args are exactly `{char name[40]; u64 size}`. The device answers `CMD 0x08 {0}` and takes DATA packets of up to 1 MiB, each ACKed, then sends STATUS 0 (`partition <name> write successful`). A size larger than the partition is refused; a smaller one is fine.
+  - `0x04` erase a partition by name. `0x05` runs OEM commands (args not yet known). `0x06` with u32 `0` cold-boots: the device drops off USB, and boots from the eMMC even while the BMC still holds the recovery strap.
+  - `0x0a` flushes to storage. `0x0c` skips the eMMC sanitize. `0x0b` looks like an eMMC firmware update (`firmware size not 512 aligned`) and was left alone. `0x07`–`0x09` and `0x0d`–`0x20` are "unknown command".
+- **Args longer than a command's struct hang the server.** It ACKs them, then logs `Command receive is failed with error 0x120000` and `hanging in flashing server`, and needs a power cycle. Shorter args are padded with whatever was in its buffer, which is how an empty write revealed its size field.
+- **Reflashing is one write.** Writing hello A's 256 MiB boot partition to `APP` over hello B took 33 s (about 8 MB/s). A cold boot then came up as hello A (identity `43f466623cf1`, `loglevel=7`). So a module NVIDIA's layout is already on needs only the boot chain, whose signed files are the same for every app, one `APP` write and a cold boot.
+- Reading `EKS`, writing the same bytes back and reading it again round-tripped byte for byte. CBoot's `EKS magic header mismatch` warning predates the write.

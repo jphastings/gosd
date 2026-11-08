@@ -62,3 +62,18 @@ func TestProbeOutCapturesRepliesButNotTheVersionQuery(t *testing.T) {
 		t.Errorf("captured %q, want only the command's reply", out.String())
 	}
 }
+
+func TestStreamSendsTheWholeFileInChunks(t *testing.T) {
+	file := bytes.Repeat([]byte{7}, dataChunk+1)
+	dev := &fakeDevice{in: [][]byte{devicePacket(packetAck, 0, nil), devicePacket(packetAck, 1, nil)}}
+	s := &session{c: dev, log: &strings.Builder{}}
+
+	if err := s.stream(bytes.NewReader(file)); err != nil {
+		t.Fatal(err)
+	}
+
+	want := slices.Concat(frame(packetData, 0, file[:dataChunk]), frame(packetData, 1, file[dataChunk:]))
+	if !slices.EqualFunc(dev.out, want, bytes.Equal) {
+		t.Errorf("sent %d transfers, want the file as two DATA packets", len(dev.out))
+	}
+}

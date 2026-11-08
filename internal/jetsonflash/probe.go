@@ -34,11 +34,14 @@ func RunProbe(specs []string, opts ProbeOptions, log io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	var data []byte
+	var data io.ReadSeeker
 	if opts.DataFile != "" {
-		if data, err = os.ReadFile(opts.DataFile); err != nil {
+		f, err := os.Open(opts.DataFile)
+		if err != nil {
 			return err
 		}
+		defer func() { err = errors.Join(err, f.Close()) }()
+		data = f
 	}
 	var out io.Writer
 	if opts.OutFile != "" {
@@ -88,7 +91,7 @@ func parseProbeSpecs(specs []string) ([]probeCmd, error) {
 	return cmds, nil
 }
 
-func probe(open func() (conn, error), cmds []probeCmd, data []byte, wait time.Duration, out, log io.Writer) error {
+func probe(open func() (conn, error), cmds []probeCmd, data io.ReadSeeker, wait time.Duration, out, log io.Writer) error {
 	for _, pc := range cmds {
 		_, _ = fmt.Fprintf(log, "== %v\n", pc)
 		c, err := open()
@@ -108,7 +111,7 @@ func probe(open func() (conn, error), cmds []probeCmd, data []byte, wait time.Du
 
 // probeOne returns the command's own failure separately from the failure of
 // the version query that opens every session, which is fatal to the probe.
-func probeOne(c conn, pc probeCmd, data []byte, wait time.Duration, out, log io.Writer) (cmdErr, fatal error) {
+func probeOne(c conn, pc probeCmd, data io.ReadSeeker, wait time.Duration, out, log io.Writer) (cmdErr, fatal error) {
 	s := &session{c: c, log: log}
 	if err := s.version(); err != nil {
 		return nil, fmt.Errorf("version query: %w", err)
@@ -122,8 +125,30 @@ func probeOne(c conn, pc probeCmd, data []byte, wait time.Duration, out, log io.
 	if cmdErr = s.drain(wait); cmdErr != nil || data == nil {
 		return cmdErr, nil
 	}
-	if cmdErr = s.data(data); cmdErr != nil {
+	if cmdErr = s.stream(data); cmdErr != nil {
 		return cmdErr, nil
 	}
 	return s.drain(wait), nil
+}
+
+// stream sends data from its start in DATA packets of at most dataChunk
+// bytes, so a partition image needn't fit in the BMC's memory.
+func (s *session) stream(data io.ReadSeeker) error {
+	if _, err := data.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	buf := make([]byte, dataChunk)
+	for {
+		n, err := io.ReadFull(data, buf)
+		if n > 0 {
+			if err := s.data(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
 }
