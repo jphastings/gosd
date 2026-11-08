@@ -146,6 +146,44 @@ A good boot shows, in order:
 3. `Found /extlinux/extlinux.conf`.
 4. Linux starting with GoSD's command line.
 
+## Reflashing a later image without NVIDIA's tools
+
+Once a module has had NVIDIA's layout from the flash above, a later image
+only needs `APP` rewritten. `jetson-flash` does that from the BMC, and
+needs no emulator. It writes nothing else, so a module that has never had
+NVIDIA's layout is refused with a pointer back to this guide.
+
+1. Keep the unpacked blob from the first flash.
+2. Build `jetson-flash` for the BMC and copy it over, with the new `.img`:
+
+   ```sh
+   CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build ./cmd/jetson-flash
+   ```
+
+3. Put the node into recovery mode. Wait between off and on: a back-to-back
+   cycle doesn't always reset a Jetson.
+
+   ```sh
+   tpi usb flash -n 4 --bmc
+   tpi power -n 4 off
+   sleep 10
+   tpi power -n 4 on
+   ```
+
+4. Flash:
+
+   ```sh
+   ./jetson-flash flash myapp-jetson-nano.img /mnt/sdcard/gosd-jetson/mfi_jetson-nano-devkit-emmc
+   ```
+
+   It prints a line per step, and ends with `done: the module is booting
+   the new image`. Add `--trace` to log every USB transfer.
+5. Release the recovery strap:
+
+   ```sh
+   tpi usb device -n 4 --bmc
+   ```
+
 ## If something goes wrong
 
 - **"the Nano never appeared in recovery mode".** Check `tpi usb status`.

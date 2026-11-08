@@ -130,25 +130,3 @@ func probeOne(c conn, pc probeCmd, data io.ReadSeeker, wait time.Duration, out, 
 	}
 	return s.drain(wait), nil
 }
-
-// stream sends data from its start in DATA packets of at most dataChunk
-// bytes, so a partition image needn't fit in the BMC's memory.
-func (s *session) stream(data io.ReadSeeker) error {
-	if _, err := data.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	buf := make([]byte, dataChunk)
-	for {
-		n, err := io.ReadFull(data, buf)
-		if n > 0 {
-			if err := s.data(buf[:n]); err != nil {
-				return err
-			}
-		}
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil
-		} else if err != nil {
-			return err
-		}
-	}
-}

@@ -14,6 +14,9 @@ import (
 type fakeDevice struct {
 	in  [][]byte
 	out [][]byte
+	// gone, once the script runs out, is what Read fails with instead of
+	// timing out.
+	gone error
 }
 
 func (f *fakeDevice) Write(p []byte, _ time.Duration) error {
@@ -23,6 +26,9 @@ func (f *fakeDevice) Write(p []byte, _ time.Duration) error {
 
 func (f *fakeDevice) Read(p []byte, _ time.Duration) (int, error) {
 	if len(f.in) == 0 {
+		if f.gone != nil {
+			return 0, f.gone
+		}
 		return 0, errTimeout
 	}
 	in := f.in[0]

@@ -34,6 +34,13 @@ const (
 	// cmdStatus is how T210's applet reports an outcome, with args
 	// {u32 code; char msg[32]}. tegrarcm's STATUS was 0x0a, message first.
 	cmdStatus = 0x07
+	// cmdWritePartition is the same command number as cmdDownload: CBoot's
+	// flashing server takes {char name[40]; u64 size} and then DATA.
+	cmdWritePartition = 0x03
+	// cmdColdBoot takes u32 args {0}; the device drops off USB as it resets.
+	cmdColdBoot = 0x06
+	// cmdFlush makes CBoot's flashing server flush written data to storage.
+	cmdFlush = 0x0a
 	// cmdBoot takes a u32 boot type.
 	cmdBoot = 0x09
 	// bootFlashingServer is the boot type that brings up CBoot's flashing
@@ -102,6 +109,16 @@ func frame(typ, seq uint32, body []byte) [][]byte {
 	return append(transfers, le32s(-(byteSum(hdr) + byteSum(body))))
 }
 
+// statusError is a non-zero STATUS the device reported.
+type statusError struct {
+	code uint32
+	msg  string
+}
+
+func (e statusError) Error() string {
+	return fmt.Sprintf("the device reported status %#x: %s", e.code, e.msg)
+}
+
 // session is one nv3p conversation. Like NVIDIA's tools, each one starts
 // its sequence numbers from zero.
 type session struct {
@@ -155,6 +172,28 @@ func (s *session) data(b []byte) error {
 	return nil
 }
 
+// stream sends data from its start in DATA packets of at most dataChunk
+// bytes, so a partition image needn't fit in the BMC's memory.
+func (s *session) stream(data io.ReadSeeker) error {
+	if _, err := data.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	buf := make([]byte, dataChunk)
+	for {
+		n, err := io.ReadFull(data, buf)
+		if n > 0 {
+			if err := s.data(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
+}
+
 func (s *session) expectAck(seq uint32) error {
 	p, err := s.read(replyTimeout)
 	if err != nil {
@@ -206,7 +245,7 @@ func (s *session) drain(first time.Duration) error {
 			}
 		}
 		if code, msg, ok := p.status(); ok && code != 0 {
-			return fmt.Errorf("the device reported status %#x: %s", code, msg)
+			return statusError{code, msg}
 		}
 	}
 }

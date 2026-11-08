@@ -16,7 +16,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(newSpikeCmd(), newProbeCmd())
+	cmd.AddCommand(newFlashCmd(), newSpikeCmd(), newProbeCmd())
 	return cmd
 }
 
