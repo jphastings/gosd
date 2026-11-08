@@ -40,6 +40,9 @@ const (
 	memberCBoot     = "Linux_for_Tegra/bootloader/t210ref/cboot.bin"
 	memberBCTConfig = "Linux_for_Tegra/bootloader/t210ref/BCT/P3448_A00_lpddr4_204Mhz_P987.cfg"
 	memberDTB       = "Linux_for_Tegra/kernel/dtb/tegra210-p3448-0002-p3449-0000-b00.dtb"
+
+	// maxMemberSize is several times the largest member (cboot.bin, 475 KiB).
+	maxMemberSize = 4 << 20
 )
 
 // Download fetches the kit from k.URL and returns its members, per [Kit.Read].
@@ -79,6 +82,11 @@ func (k Kit) Read(r io.Reader) (Inputs, error) {
 		}
 		if _, want := members[hdr.Name]; !want || members[hdr.Name] != nil {
 			continue
+		}
+		// Nothing is verified until the stream ends, so don't let it claim
+		// more memory than a real member needs.
+		if hdr.Size > maxMemberSize {
+			return Inputs{}, fmt.Errorf("the kit's %s is %d bytes, far more than R32.7.6's; the download is corrupt or is not R32.7.6, so retry it or download it from NVIDIA", hdr.Name, hdr.Size)
 		}
 		data, err := io.ReadAll(tr)
 		if err != nil {

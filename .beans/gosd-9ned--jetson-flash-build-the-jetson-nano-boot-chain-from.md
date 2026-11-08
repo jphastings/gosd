@@ -1,10 +1,11 @@
 ---
 # gosd-9ned
 title: 'jetson-flash: build the Jetson Nano boot chain from NVIDIA''s kit in Go'
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-11-08T09:08:55Z
-updated_at: 2026-11-08T09:08:55Z
+updated_at: 2026-11-08T09:22:46Z
 parent: gosd-72je
 ---
 
@@ -49,3 +50,18 @@ Expected sha256 of the five files built from the pinned kit:
 - [x] `internal/l4t`: fetch and verify the kit, streaming, and extract the four inputs.
 - [x] Build the five boot-chain files, with CMAC from RFC 4493.
 - [x] Tests: RFC 4493 vectors, synthetic inputs, and a test gated on a local copy of the kit that checks the hashes above.
+
+## Summary of Changes
+
+- `internal/l4t` (new):
+  - `Kit` pins R32.7.6's URL, sha256, size and licence URL.
+  - `Kit.Read` and `Kit.Download` stream the kit in one pass, keeping only the four members, and return nothing unless the whole stream matches the pin. A member larger than 4 MiB is refused before it's buffered, since nothing is verified until the stream ends.
+  - `Build` turns the members into the five signed files.
+  - `cmac.go` is RFC 4493 AES-CMAC.
+- Tests:
+  - RFC 4493 vectors.
+  - Small synthetic `.tbz2` fixtures, never NVIDIA's files.
+  - The signing rules on synthetic inputs.
+  - `TestGoldenAgainstTheRealKit`, which runs only when `GOSD_L4T_KIT` names a real kit. It checks the five sha256s above, which are the files that booted on the bench.
+- On the Turing Pi 2's BMC (32-bit ARM), the golden test passed, producing the same hashes, in 5 min 13 s with about 25 MB of RAM in use. About 21 s of that on a Mac. That's a one-off cost once the wiring caches the five built files (about 1 MB) per pinned kit.
+- Not done here: wiring it into `jetson-flash flash` (the licence prompt, caching, dropping the blob argument), once gosd-32dw's PRs merge.
