@@ -8,4 +8,3 @@ gosd: patch
 v0.10.6, which brings:
 
 - Mainline-fleet kernels move to Linux 6.18.60
-- The Jetson Nano kernel finds the eMMC module's eMMC
