@@ -1,6 +1,7 @@
 package jetsonflash
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -25,9 +26,14 @@ const (
 	packetNack = 5
 
 	cmdGetPlatformInfo = 0x01
-	cmdDownloadBCT     = 0x04
-	cmdDownloadBL      = 0x06
-	cmdStatus          = 0x0a
+	// cmdDownload loads an image into the applet (T210; tegrarcm's DL_BCT
+	// and DL_BL were 0x04 and 0x06).
+	cmdDownload = 0x03
+	// dataChunk is the most one DATA packet carries.
+	dataChunk = 1 << 20
+	// cmdStatus is how T210's applet reports an outcome, with args
+	// {u32 code; char msg[32]}. tegrarcm's STATUS was 0x0a, message first.
+	cmdStatus = 0x07
 
 	// maxTransfer is the largest single bulk transfer: NVIDIA's T210 tool
 	// writes nv3p data 16 KiB at a time, and older kernels refuse more.
@@ -58,6 +64,9 @@ func (p packet) String() string {
 		code := le32(p.body)
 		return fmt.Sprintf("NACK seq %d: %d (%s)", p.seq, code, nackReasons[code])
 	case packetCmd:
+		if code, msg, ok := p.status(); ok {
+			return fmt.Sprintf("STATUS seq %d: code %#x %q", p.seq, code, msg)
+		}
 		return fmt.Sprintf("CMD %#x seq %d, %d-byte args: %s", p.cmd, p.seq, len(p.body), hexPrefix(p.body, 64))
 	case packetData:
 		return fmt.Sprintf("DATA seq %d, %d bytes: %s", p.seq, len(p.body), hexPrefix(p.body, 64))
@@ -65,34 +74,25 @@ func (p packet) String() string {
 	return fmt.Sprintf("packet type %d seq %d", p.typ, p.seq)
 }
 
-// status is the code in a device STATUS command. tegrarcm's STATUS args are
-// {char msg[32]; u32 code; u32 flags}; a 4-byte form is taken to be the
-// code alone.
-func (p packet) status() (uint32, bool) {
-	if p.typ != packetCmd || p.cmd != cmdStatus {
-		return 0, false
+func (p packet) status() (code uint32, msg string, ok bool) {
+	if p.typ != packetCmd || p.cmd != cmdStatus || len(p.body) < 4 {
+		return 0, "", false
 	}
-	switch len(p.body) {
-	case 40:
-		return le32(p.body[32:]), true
-	case 4:
-		return le32(p.body), true
-	}
-	return 0, false
+	return le32(p.body), string(bytes.TrimRight(p.body[4:], "\x00")), true
 }
 
 // frame splits one packet into the bulk transfers NVIDIA's T210 tool uses:
-// the header, then each field (in pieces of at most maxTransfer), then the
-// checksum. The checksum makes the byte sum of the whole packet zero.
-func frame(typ, seq uint32, fields ...[]byte) [][]byte {
+// the header, the body's length (CMD and DATA only), the body in pieces of
+// at most maxTransfer, then the checksum. The checksum makes the byte sum of
+// the header and body zero; on T210 it leaves the length out.
+func frame(typ, seq uint32, body []byte) [][]byte {
 	hdr := le32s(nv3pVersion, typ, seq)
-	sum := byteSum(hdr)
 	transfers := [][]byte{hdr}
-	for _, f := range fields {
-		sum += byteSum(f)
-		transfers = slices.AppendSeq(transfers, slices.Chunk(f, maxTransfer))
+	if typ == packetCmd || typ == packetData {
+		transfers = append(transfers, le32s(uint32(len(body))))
 	}
-	return append(transfers, le32s(-sum))
+	transfers = slices.AppendSeq(transfers, slices.Chunk(body, maxTransfer))
+	return append(transfers, le32s(-(byteSum(hdr) + byteSum(body))))
 }
 
 // session is one nv3p conversation. Like NVIDIA's tools, each one starts
@@ -104,13 +104,14 @@ type session struct {
 	pending []byte // bytes read from the device but not yet parsed
 }
 
-func (s *session) send(typ, seq uint32, fields ...[]byte) error {
-	for _, t := range frame(typ, seq, fields...) {
+func (s *session) send(typ, seq uint32, body []byte) error {
+	for _, t := range frame(typ, seq, body) {
 		if err := s.c.Write(t, replyTimeout); err != nil {
 			if errors.Is(err, errTimeout) {
 				// A device that stops reading may have something to say
 				// first; fetch it so the trace shows it.
-				_ = s.fill(quietWait)
+				for s.fill(quietWait) == nil {
+				}
 			}
 			return err
 		}
@@ -123,22 +124,27 @@ func (s *session) command(cmd uint32, args []byte) error {
 	seq := s.seq
 	s.seq++
 	s.logf("→ CMD %#x seq %d, %d-byte args: % x", cmd, seq, len(args), args)
-	if err := s.send(packetCmd, seq, le32s(uint32(len(args))), append(le32s(cmd), args...)); err != nil {
+	if err := s.send(packetCmd, seq, append(le32s(cmd), args...)); err != nil {
 		return err
 	}
 	return s.expectAck(seq)
 }
 
-// data sends one DATA packet carrying all of b and waits for the
-// acknowledgement. NVIDIA's T210 tool sends a whole file as one packet.
+// data sends b in DATA packets of at most dataChunk bytes, waiting for each
+// to be acknowledged.
 func (s *session) data(b []byte) error {
-	seq := s.seq
-	s.seq++
-	s.logf("→ DATA seq %d, %d bytes", seq, len(b))
-	if err := s.send(packetData, seq, le32s(uint32(len(b))), b); err != nil {
-		return err
+	for chunk := range slices.Chunk(b, dataChunk) {
+		seq := s.seq
+		s.seq++
+		s.logf("→ DATA seq %d, %d bytes", seq, len(chunk))
+		if err := s.send(packetData, seq, chunk); err != nil {
+			return err
+		}
+		if err := s.expectAck(seq); err != nil {
+			return err
+		}
 	}
-	return s.expectAck(seq)
+	return nil
 }
 
 func (s *session) expectAck(seq uint32) error {
@@ -148,6 +154,8 @@ func (s *session) expectAck(seq uint32) error {
 	}
 	switch {
 	case p.typ == packetNack:
+		// The applet follows a NACK with a report saying why; log it.
+		_ = s.drain(quietWait)
 		return fmt.Errorf("the device refused it: %v", p)
 	case p.typ != packetAck:
 		return fmt.Errorf("expected an ACK, got %v", p)
@@ -177,12 +185,17 @@ func (s *session) drain(first time.Duration) error {
 		case packetNack:
 			return fmt.Errorf("the device refused it: %v", p)
 		case packetCmd, packetData:
-			if err := s.send(packetAck, p.seq); err != nil {
+			if err := s.send(packetAck, p.seq, nil); err != nil {
 				return err
 			}
+			if _, _, isStatus := p.status(); isStatus {
+				if err := s.send(packetAck, p.seq, nil); err != nil {
+					return err
+				}
+			}
 		}
-		if code, ok := p.status(); ok && code != 0 {
-			return fmt.Errorf("the device reported status %d", code)
+		if code, msg, ok := p.status(); ok && code != 0 {
+			return fmt.Errorf("the device reported status %#x: %s", code, msg)
 		}
 	}
 }
@@ -218,12 +231,13 @@ func (s *session) read(timeout time.Duration) (packet, error) {
 		if l, err = take(4); err != nil {
 			break
 		}
+		sum -= byteSum(l)
 		n := le32(l)
 		if n > maxDeviceField {
 			return p, fmt.Errorf("the device announced a %d-byte field, which is implausible", n)
 		}
-		if p.typ == packetCmd {
-			n += 4
+		if p.typ == packetCmd && n < 4 {
+			return p, fmt.Errorf("the device sent a CMD too short to hold a command: % x", l)
 		}
 		if p.body, err = take(int(n)); err == nil && p.typ == packetCmd {
 			p.cmd, p.body = le32(p.body), p.body[4:]

@@ -32,8 +32,8 @@ func (f *fakeDevice) Read(p []byte, _ time.Duration) (int, error) {
 
 func (f *fakeDevice) Close() error { return nil }
 
-func devicePacket(typ, seq uint32, fields ...[]byte) []byte {
-	return bytes.Join(frame(typ, seq, fields...), nil)
+func devicePacket(typ, seq uint32, body []byte) []byte {
+	return bytes.Join(frame(typ, seq, body), nil)
 }
 
 func unhex(t *testing.T, s string) []byte {

@@ -20,7 +20,7 @@ func TestCommandGoesOutOneFieldPerTransfer(t *testing.T) {
 
 	want := [][]byte{
 		unhex(t, "02000000 01000000 00000000"),
-		unhex(t, "00000000"),
+		unhex(t, "04000000"),
 		unhex(t, "01000000"),
 		unhex(t, "fcffffff"),
 	}
@@ -29,8 +29,8 @@ func TestCommandGoesOutOneFieldPerTransfer(t *testing.T) {
 	}
 }
 
-func TestDataGoesOutIn16KiBWritesWithAValidChecksum(t *testing.T) {
-	dev := &fakeDevice{in: [][]byte{devicePacket(packetAck, 0)}}
+func TestDataGoesOutIn16KiBWrites(t *testing.T) {
+	dev := &fakeDevice{in: [][]byte{devicePacket(packetAck, 0, nil)}}
 	s := &session{c: dev, log: io.Discard}
 
 	if err := s.data(bytes.Repeat([]byte{0xa5}, 40000)); err != nil {
@@ -40,14 +40,11 @@ func TestDataGoesOutIn16KiBWritesWithAValidChecksum(t *testing.T) {
 	if got, want := sizes(dev.out), []int{12, 4, 16384, 16384, 7232, 4}; !slices.Equal(got, want) {
 		t.Errorf("transfer sizes %v, want %v", got, want)
 	}
-	if sum := byteSum(bytes.Join(dev.out[:len(dev.out)-1], nil)) + le32(dev.out[len(dev.out)-1]); sum != 0 {
-		t.Errorf("packet doesn't checksum to zero: %#x", sum)
-	}
 }
 
-func TestDrainAcksEachPacketEvenWhenTheyArriveTogether(t *testing.T) {
-	info := devicePacket(packetData, 7, le32s(72), make([]byte, 72))
-	status := devicePacket(packetCmd, 8, le32s(4), le32s(cmdStatus, 0))
+func TestDrainAcksEachPacketAndStatusTwice(t *testing.T) {
+	info := devicePacket(packetData, 7, make([]byte, 72))
+	status := devicePacket(packetCmd, 8, append(le32s(cmdStatus, 0), make([]byte, 32)...))
 	dev := &fakeDevice{in: [][]byte{append(info, status...)}}
 	s := &session{c: dev, log: io.Discard}
 
@@ -55,23 +52,27 @@ func TestDrainAcksEachPacketEvenWhenTheyArriveTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := append(frame(packetAck, 7), frame(packetAck, 8)...)
+	// The applet takes a second ACK after a STATUS; with only one, it
+	// swallows the next command (bench, 2026-11-08).
+	want := slices.Concat(frame(packetAck, 7, nil), frame(packetAck, 8, nil), frame(packetAck, 8, nil))
 	if !slices.EqualFunc(dev.out, want, bytes.Equal) {
-		t.Errorf("sent % x, want ACKs for sequences 7 and 8", dev.out)
+		t.Errorf("sent % x, want an ACK for sequence 7 and two for 8", dev.out)
 	}
 }
 
+// The NACK and STATUS replies are bytes the T210 applet sent on the bench.
 func TestDeviceRefusalsAreErrors(t *testing.T) {
 	for name, tc := range map[string]struct {
-		reply []byte
+		reply string
 		want  string
 	}{
-		"NACK":             {devicePacket(packetNack, 0, le32s(2)), "bad command"},
-		"failed STATUS":    {devicePacket(packetCmd, 0, le32s(4), le32s(cmdStatus, 9)), "status 9"},
-		"corrupt checksum": {unhex(t, "02000000 04000000 00000000 fbffffff"), "checksum"},
+		"NACK": {"02000000 05000000 00000000 03000000 f6ffffff", "bad data"},
+		"failed STATUS": {"02000000 01000000 00000000 28000000 07000000 00001200" +
+			"556e77616e746564206572726f7220696e20337020736572766572 0000000000 e3f5ffff", "Unwanted error in 3p server"},
+		"corrupt checksum": {"02000000 04000000 00000000 fbffffff", "checksum"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s := &session{c: &fakeDevice{in: [][]byte{tc.reply}}, log: io.Discard}
+			s := &session{c: &fakeDevice{in: [][]byte{unhex(t, tc.reply)}}, log: io.Discard}
 			if err := s.drain(quietWait); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("got %v, want an error mentioning %q", err, tc.want)
 			}

@@ -58,9 +58,18 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
 ## Spike (first PR)
 
 - [x] A static Go helper on the BMC. It reads the boot ROM's UID, sends the signed `rcm_0`/`rcm_1` messages (expecting `0x00210001` and `0` back), and the recovery applet runs.
-- [ ] It drives the applet over `nv3p` to download the BCT, then `ebt` (cboot) and `rp1` (DTB), then boots into recovery, using files NVIDIA's tools already signed. CBoot answers.
+- [x] It drives the applet over `nv3p` to download the BCT, then `ebt` (cboot) and `rp1` (DTB), then boots into recovery, using files NVIDIA's tools already signed. CBoot answers.
 
 ### Bench findings (2026-11-07, node 4)
 
 - **Boot ROM: proven.** `jetson-flash spike` on the BMC read the 16-byte UID (BR_CID `0x32101001643c270718000000150100c0`, identical to NVIDIA's tool's), sent `rcm_0_encrypt.rcm` (one 1032-byte write) and got `01 00 21 00`, then sent `rcm_1_encrypt.rcm` (4 KiB writes) and got `00 00 00 00`. The applet logged `Processing in recovery mode` and `Established communication link with host`. The device kept its enumeration (same sysfs node, `2-1`).
 - **T210's nv3p is version 2, not tegrarcm's 1.** Sent a version-1 CMD header, the applet stopped reading after the 12-byte header and answered `02 00 00 00 05 00 00 00 00 00 00 00`: a NACK in protocol version 2.
+- **What T210's nv3p turned out to be (2026-11-08, found by device experiments alone; no NVIDIA tool was traced):**
+  - Packets: header `{u32 version = 2, u32 type, u32 seq}`. CMD and DATA then carry a u32 length (for a CMD it counts the command word too), the body, and a u32 checksum. The checksum is the negated byte sum of the header and body **but not the length**. Each field goes as its own bulk transfer.
+  - After every STATUS the applet takes **two** ACKs. With one, it ACKs the next command and silently drops it.
+  - `0x01`: version query. The device answers `CMD 0x08 {16}`, `DATA` (`01 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00` from the applet, `02 …` from CBoot), then `STATUS 0`.
+  - `0x08` is how the device announces its own return data; the host never sends it.
+  - `0x07` is STATUS: args `{u32 code; char msg[]}`, for example `0x120000 "Unwanted error in 3p server"` or `4 "Unknown command"`.
+  - `0x03`: download, with args `{char type[4]; u32 load; u32 entry; u32 length}`. The type is NVIDIA's CLI name: `"bct"`, `"ebt"`, `"rp1"`. Load and entry come from the image's signature header (`0x92c00000`/`0x92c00258` for cboot, zero for the BCT and the DTB). The device answers `CMD 0x08 {0}`; the host ACKs it, sends one DATA packet with the whole file, and gets an ACK, then STATUS 0 (about 220 ms later for the BCT, while it trains SDRAM). UART: `Downloaded BCT successfully`, `Downloaded Bootloader successfully`, `Downloaded rp1 successfully`.
+  - `0x09`: boot, with a u32 type. `0` brings up CBoot's flashing server (`Proceeding to flashing Server`, `nv3p_priv_usbf_open USB configuration success`), which answers the same version query. `1` tries to boot a kernel image from RAM. Any other value gets "Boot type is not supported".
+  - Others probed in the applet: `0x02` gets "image read is not supported"; `0x05` returns an empty result; `0x06` with a u32 argument made the device drop off USB (`ESHUTDOWN`), presumably a reset; `0x04`, `0x08`, `0x0a`–`0x12` and `0x7f` are "Unknown command".

@@ -18,5 +18,6 @@ func newSpikeCmd() *cobra.Command {
 	}
 	cmd.Flags().Uint32Var(&o.VersionCmd, "version-cmd", 0, "nv3p command each session opens with (0: GET_PLATFORM_INFO)")
 	cmd.Flags().Uint32Var(&o.BootCmd, "boot-cmd", 0, "nv3p command that boots CBoot's flashing server (0: stop after rp1)")
+	cmd.Flags().BytesHexVar(&o.BootArgs, "boot-args", nil, "hex-encoded args for --boot-cmd")
 	return cmd
 }

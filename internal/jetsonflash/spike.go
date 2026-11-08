@@ -25,6 +25,8 @@ type SpikeOptions struct {
 	// BootCmd boots the applet into CBoot's flashing server. Zero stops
 	// after downloading rp1.
 	BootCmd uint32
+	// BootArgs are BootCmd's arguments.
+	BootArgs []byte
 }
 
 const (
@@ -100,17 +102,17 @@ func spike(open func() (conn, error), f spikeFiles, o SpikeOptions, log io.Write
 		run  func(*session) error
 	}
 	steps := []step{
-		{"downloading the BCT", func(s *session) error { return s.downloadBCT(f.bct) }},
+		{"downloading the BCT", func(s *session) error { return s.download("bct", f.bct, bctSettle) }},
 		{"downloading ebt and rp1", func(s *session) error {
-			if err := s.downloadBL(f.ebt); err != nil {
+			if err := s.download("ebt", f.ebt, quietWait); err != nil {
 				return err
 			}
-			return s.downloadBL(f.rp1)
+			return s.download("rp1", f.rp1, quietWait)
 		}},
 	}
 	if o.BootCmd != 0 {
 		steps = append(steps,
-			step{"booting recovery", func(s *session) error { return s.boot(o.BootCmd) }},
+			step{"booting recovery", func(s *session) error { return s.boot(o.BootCmd, o.BootArgs) }},
 			step{"querying CBoot's flashing server", func(*session) error { return nil }},
 		)
 	}
@@ -148,28 +150,15 @@ func (s *session) version(cmd uint32) error {
 	return s.drain(quietWait)
 }
 
-// downloadBCT follows tegrarcm's DL_BCT: the command carries the length,
-// then one DATA packet carries the BCT.
-func (s *session) downloadBCT(bct []byte) error {
-	if err := s.command(cmdDownloadBCT, le32s(uint32(len(bct)))); err != nil {
-		return err
-	}
-	if err := s.drain(quietWait); err != nil {
-		return err
-	}
-	if err := s.data(bct); err != nil {
-		return err
-	}
-	return s.drain(bctSettle)
-}
-
-// downloadBL follows tegrarcm's DL_BL: a u64 length, then load address and
-// entry point, both zero as nvaflash.sh passes them, so the applet takes
-// them from the image's own signature header.
-func (s *session) downloadBL(img []byte) error {
-	args := binary.LittleEndian.AppendUint64(nil, uint64(len(img)))
-	args = append(args, le32s(0, 0)...)
-	if err := s.command(cmdDownloadBL, args); err != nil {
+// download sends one image as T210's applet takes it: CMD 0x03 with args
+// {char type[4]; u32; u32; u32 length}, which the applet answers with an
+// empty CMD 0x08, then one DATA packet carrying the image, then a STATUS
+// once it has checked (and, for the BCT, applied) it. The two middle words
+// are zero, as nvaflash.sh passes "0 0" for the load address and entry.
+func (s *session) download(typ string, img []byte, settle time.Duration) error {
+	load, entry := loadAddrs(img)
+	args := append([]byte(typ+"\x00"), le32s(load, entry, uint32(len(img)))...)
+	if err := s.command(cmdDownload, args); err != nil {
 		return err
 	}
 	if err := s.drain(quietWait); err != nil {
@@ -178,12 +167,23 @@ func (s *session) downloadBL(img []byte) error {
 	if err := s.data(img); err != nil {
 		return err
 	}
-	return s.drain(quietWait)
+	return s.drain(settle)
 }
 
-func (s *session) boot(cmd uint32) error {
-	if err := s.command(cmd, nil); err != nil {
+func (s *session) boot(cmd uint32, args []byte) error {
+	if err := s.command(cmd, args); err != nil {
 		return err
 	}
 	return s.drain(quietWait)
+}
+
+// loadAddrs reads the load address and entry point from a T210 signature
+// header (bytes 0x10 and 0x250), or returns zeros for an image without
+// one, or whose header leaves them unspecified.
+func loadAddrs(img []byte) (load, entry uint32) {
+	const unspecified = 0xfeeddeadbeefbab1
+	if len(img) < 0x400 || binary.LittleEndian.Uint64(img[0x10:]) == unspecified {
+		return 0, 0
+	}
+	return le32(img[0x10:]), le32(img[0x250:])
 }

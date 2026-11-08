@@ -39,7 +39,7 @@ func (t tracedConn) Read(p []byte, timeout time.Duration) (int, error) {
 }
 
 func (t tracedConn) trace(dir string, p []byte, err error) {
-	line := fmt.Sprintf("%9.3fs %s %6d  %s", time.Since(t.start).Seconds(), dir, len(p), hexPrefix(p, 32))
+	line := fmt.Sprintf("%9.3fs %s %6d  %s", time.Since(t.start).Seconds(), dir, len(p), hexPrefix(p, 64))
 	if err != nil {
 		line += "  error: " + err.Error()
 	}
