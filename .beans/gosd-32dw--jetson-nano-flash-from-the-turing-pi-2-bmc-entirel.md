@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-08T08:46:10Z
+updated_at: 2026-11-08T21:18:41Z
 parent: gosd-72je
 ---
 
@@ -83,9 +83,12 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
 - [x] Map the server's commands by experiment (`jetson-flash probe`, hidden).
 - [x] Write `APP` and cold-boot into it.
 - [x] A `jetson-flash` command that reflashes `APP` from a gosd `.img`: `jetson-flash flash`. On the bench (2026-11-08, node 3) it reflashed hello A to hello B in 36 s from power-on, reading `APP` straight out of the `.img` with the first flash's blob for the boot chain, and the module came up as hello B (`loglevel=8`).
-- [ ] Offline signing in Go, so no NVIDIA tool runs at all.
-- [ ] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
+- [x] Offline signing in Go, so no NVIDIA tool runs at all.
+  - `flash` builds the boot chain and every partition from NVIDIA's L4T kit with `internal/l4t` (beans gosd-9ned and gosd-le3i); the blob-dir argument, the blob loader and `spike` are gone.
+- [x] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
+  - Every `flash` is now a first flash, in the order the bench proved step by step; its first run as one command is still to come.
 - [ ] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
+  - Acceptance is done (third PR, below). Releases are a later PR.
 
 ### Bench findings (2026-11-08, node 3)
 
@@ -100,3 +103,38 @@ Found by device experiments alone, reading CBoot's console as they ran. No NVIDI
 - **Args longer than a command's struct hang the server.** It ACKs them, then logs `Command receive is failed with error 0x120000` and `hanging in flashing server`, and needs a power cycle. Shorter args are padded with whatever was in its buffer, which is how an empty write revealed its size field.
 - **Reflashing is one write.** Writing hello A's 256 MiB boot partition to `APP` over hello B took 33 s (about 8 MB/s). A cold boot then came up as hello A (identity `43f466623cf1`, `loglevel=7`). So a module NVIDIA's layout is already on needs only the boot chain, whose signed files are the same for every app, one `APP` write and a cold boot.
 - Reading `EKS`, writing the same bytes back and reading it again round-tripped byte for byte. CBoot's `EKS magic header mismatch` warning predates the write.
+
+## A whole first flash, from NVIDIA's kit (third PR)
+
+**Never send CBoot an OEM command (`0x05`) of any type but 1.** Type 9 provisions the eMMC's RPMB key, which can never be changed afterwards; a zero-argument probe did exactly that to node 3's module (2026-11-08). `flash` sends only the storage query, as fixed bytes nothing can vary: type 1 at offset 0, sub-command 1 at offset 4, zeroes to 48 bytes. A test pins them.
+
+### Decisions (JP, 2026-11-08)
+
+- **Every `flash` is a full first flash**, one code path, with no detection of an existing layout. In order, each write in a session of its own:
+  1. Boot CBoot's flashing server with the Go-built boot chain.
+  2. Query the eMMC's size.
+  3. Write `GPT`, which erases the eMMC.
+  4. Write every partition in NVIDIA's order, with `APP` taken from the image's MBR partition 1.
+  5. Write the BCT.
+  6. Flush, then cold-boot.
+- **Kit source.** By default `flash` downloads `l4t.R32_7_6` and streams it, never writing the 279 MB kit to disk. `--kit <file.tbz2>` reads a local copy instead. `Kit.Download` became `Kit.Open`, so the caller can watch the stream's progress.
+- **Licence.** On a cache miss that needs a download, `flash` shows `Kit.LicenseURL` and asks `[y/N]` on a terminal. `--accept-nvidia-license` skips the prompt. With no terminal and no flag it stops, naming the flag and the URL. `--kit` and a cache hit never ask: a `--kit` copy came from NVIDIA's own page.
+- **Cache.** The kit's extracted members (about 2.4 MB) live under `os.UserCacheDir()/gosd/l4t/<kit sha256>/`. They are the user's own download, never redistributed. A copy is written and synced in a temporary directory, then renamed into place, so a write cut short is never read back as complete. Each flash prunes everything else there, best-effort, and a failed cache write only prints a note.
+- **Fail fast before USB.** Before it waits for the module, `flash` checks that the image has an MBR, isn't truncated and that its boot partition fits `APP` (14 GiB). It also gets the kit, from the cache, the licence prompt and a download, or `--kit`, and builds the boot chain.
+- **Each partition write must end in CBoot's STATUS 0** within 30 s. `drain` used to treat silence as success. On the bench every write's STATUS came well within that, as the UART's half-second gaps between writes show.
+
+### Crash ordering
+
+Every flash is a whole first flash, so an interrupted one is recovered by flashing again from the start. The order only has to keep a half-written eMMC from booting:
+- The `GPT` write erases the boot device, where the BCT lives, before it sanitizes the user area and writes the GPTs. From then on the eMMC has no BCT.
+- The BCT is written last, once CBoot has confirmed every other write, so no BCT ever describes a partition still being written.
+- Without a BCT, the boot ROM boots nothing from the eMMC.
+- Recovery mode belongs to the boot ROM, which enters it on the recovery strap, so `jetson-flash flash` can always start over.
+
+**What this rests on is observed, not documented by NVIDIA:**
+- CBoot's console showed the erase order (2026-11-08).
+- A blank module showed nothing on power-on, and entered recovery mode on the strap (bean gosd-9o0m).
+- We haven't seen the boot ROM fall back to recovery mode by itself, and nothing relies on it.
+- **One window is open.** CBoot has a separate flush command, so it may buffer writes. A power cut between the BCT's STATUS and the flush could leave the BCT on the eMMC without everything before it. The BCT carries a CMAC of each NVC copy, presumably so the boot ROM rejects a torn one. Whether later stages catch a torn partition is NVIDIA's code, and unverified. Either way, the recovery strap still works.
+
+The same argument is in `internal/jetsonflash`'s `flash` doc.

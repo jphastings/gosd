@@ -67,9 +67,9 @@ func BuildFirstFlash(in Inputs, s Storage, now time.Time, random io.Reader) (Fir
 }
 
 const (
-	// appSize is NVIDIA's default ROOTFSSIZE. GoSD's boot volume goes in APP,
-	// so it fits whatever --boot-size an app picks.
-	appSize = 14 << 30
+	// AppSize is APP's size in bytes: NVIDIA's default ROOTFSSIZE. GoSD's
+	// boot volume goes in APP.
+	AppSize = 14 << 30
 
 	dtbFile = "kernel_tegra210-p3448-0002-p3449-0000-b00.dtb"
 	ptFile  = "crc-flash.xml.bin"
@@ -79,7 +79,7 @@ const (
 // layoutTags are flash.sh's substitutions into the layout template for this
 // module (p3449-0000+p3448-0002, FAB 300 or later).
 var layoutTags = strings.NewReplacer(
-	"APPSIZE", strconv.Itoa(appSize),
+	"APPSIZE", strconv.FormatInt(AppSize, 10),
 	"NXC", "NVC", "NVCTYPE", "bootloader", "NVCFILE", "nvtboot.bin",
 	"TXC", "TBC", "TBCTYPE", "bootloader", "TBCFILE", "nvtboot_cpu.bin",
 	"WX0", "WB0", "WB0TYPE", "WB0", "WB0FILE", "warmboot.bin",

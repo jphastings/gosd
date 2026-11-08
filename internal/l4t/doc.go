@@ -6,7 +6,8 @@
 // No NVIDIA tool runs: the formats were worked out by comparing the kit's raw
 // files with what NVIDIA's tools write, and the module's production fuses mean
 // everything is signed with an all-zero AES-CMAC key. The kit itself is never
-// re-hosted. [Kit.Download] fetches it from NVIDIA at a pinned hash and
-// streams it, keeping only the members needed, so it also fits on a device
-// with a tiny root filesystem.
+// re-hosted. [Kit.Open] fetches it from NVIDIA and [Kit.Read] streams it,
+// checking the pinned hash and keeping only the members needed, so it also
+// fits on a device with a tiny root filesystem. [Kit.Cache] keeps those
+// members, a few MB, so the next flash needn't fetch the kit again.
 package l4t

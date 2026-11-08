@@ -44,25 +44,3 @@ func TestBootROMFailuresSayWhatHappened(t *testing.T) {
 		})
 	}
 }
-
-func TestCheckRCMAppliesTheBootROMsLengthRules(t *testing.T) {
-	msg := func(size int, lengthField uint32) []byte {
-		return append(le32s(lengthField), make([]byte, size-4)...)
-	}
-	for name, tc := range map[string]struct {
-		msg []byte
-		ok  bool
-	}{
-		"QUERY_RCM_VERSION size":     {msg(1032, 1032), true},
-		"length field mismatch":      {msg(1032, 1048), false},
-		"length not 8 mod 16":        {msg(1040, 1040), false},
-		"shorter than its header":    {msg(1016, 1016), false},
-		"bigger than the ROM's IRAM": {msg(0x302a8+8, 0x302a8+8), false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := checkRCM(tc.msg); (err == nil) != tc.ok {
-				t.Errorf("checkRCM = %v, want ok=%v", err, tc.ok)
-			}
-		})
-	}
-}

@@ -62,21 +62,22 @@ func (in *Inputs) members() map[string]*[]byte {
 // maxMemberSize is several times the largest member (u-boot.bin, 650 KiB).
 const maxMemberSize = 4 << 20
 
-// Download fetches the kit from k.URL and returns its members, per [Kit.Read].
-func (k Kit) Download(ctx context.Context, c *http.Client) (Inputs, error) {
+// Open starts downloading the kit from k.URL. The caller passes the body to
+// [Kit.Read], which checks it against the pin, and closes it.
+func (k Kit) Open(ctx context.Context, c *http.Client) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.URL, nil)
 	if err != nil {
-		return Inputs{}, fmt.Errorf("building the request for %s failed: %w", k.URL, err)
+		return nil, fmt.Errorf("building the request for %s failed: %w", k.URL, err)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return Inputs{}, fmt.Errorf("downloading %s failed: %w; check the network and try again", k.URL, err)
+		return nil, fmt.Errorf("downloading %s failed: %w; check the network and try again", k.URL, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return Inputs{}, fmt.Errorf("downloading %s failed with HTTP %d; try again later, or download the kit from NVIDIA's L4T R32.7.6 page and use that copy", k.URL, resp.StatusCode)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("downloading %s failed with HTTP %d; try again later, or download the kit from NVIDIA's L4T R32.7.6 page and use that copy", k.URL, resp.StatusCode)
 	}
-	return k.Read(resp.Body)
+	return resp.Body, nil
 }
 
 // Read consumes a whole kit .tbz2 stream in one pass, returning its members

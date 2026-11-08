@@ -1,7 +1,3 @@
-// Package jetsonflash drives a Jetson Nano (Tegra210) eMMC module in USB
-// recovery mode without NVIDIA's host tools (bean gosd-32dw). For now it is
-// a spike: it boots the module as far as CBoot's flashing server, sending
-// files NVIDIA's own tools already signed.
 package jetsonflash
 
 import (
@@ -9,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/jphastings/gosd/internal/l4t"
 )
 
 const (
@@ -21,69 +17,13 @@ const (
 	bctSettle = time.Second
 )
 
-type spikeFiles struct{ rcm0, rcm1, bct, ebt, rp1 []byte }
-
-// RunSpike boots a module waiting in USB recovery mode as far as CBoot's
-// flashing server, using the NVIDIA-signed files in dir (an unpacked
-// massflash blob), and logs every USB transfer to log. It writes nothing to
-// the module's storage.
-func RunSpike(dir string, log io.Writer) error {
-	f, err := loadSpikeFiles(dir)
-	if err != nil {
-		return err
-	}
-	start := time.Now()
-	return spike(func() (conn, error) {
-		c, err := openRecovery(deviceWait)
-		if err != nil {
-			return nil, err
-		}
-		return tracedConn{conn: c, w: log, start: start}, nil
-	}, f, log)
-}
-
-func loadSpikeFiles(dir string) (spikeFiles, error) {
-	var f spikeFiles
-	for _, x := range []struct {
-		name string
-		dst  *[]byte
-	}{
-		{"rcm_0_encrypt.rcm", &f.rcm0},
-		{"rcm_1_encrypt.rcm", &f.rcm1},
-		{"P3448_A00_lpddr4_204Mhz_P987.bct", &f.bct},
-		{"cboot.bin", &f.ebt},
-		{"kernel_tegra210-p3448-0002-p3449-0000-b00.dtb", &f.rp1},
-	} {
-		b, err := os.ReadFile(filepath.Join(dir, x.name))
-		if err != nil {
-			return f, fmt.Errorf("reading NVIDIA's signed files: %w", err)
-		}
-		if filepath.Ext(x.name) == ".rcm" {
-			if err := checkRCM(b); err != nil {
-				return f, fmt.Errorf("%s isn't a signed RCM message: %w", x.name, err)
-			}
-		}
-		*x.dst = b
-	}
-	return f, nil
-}
-
-// spike runs bootToServer, then opens one more session to prove the server
-// answers.
-func spike(open func() (conn, error), f spikeFiles, log io.Writer) error {
-	if err := bootToServer(open, f, log, log); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintln(log, "== querying CBoot's flashing server")
-	return inSession(open, log, func(*session) error { return nil })
-}
-
 // bootToServer takes a module from the boot ROM to CBoot's flashing server,
 // reopening the device for each step as NVIDIA's nvaflash.sh runs a separate
 // tool for each. Progress goes to out and the protocol detail to log.
-func bootToServer(open func() (conn, error), f spikeFiles, out, log io.Writer) error {
+func bootToServer(open func() (conn, error), bc l4t.BootChain, out, log io.Writer) error {
+	_, _ = fmt.Fprintln(out, "== talking to the boot ROM")
 	err := withConn(open, func(c conn) error {
-		uid, err := bootROM(c, f.rcm0, f.rcm1)
+		uid, err := bootROM(c, bc.RCM0, bc.RCM1)
 		if err == nil {
 			_, _ = fmt.Fprintf(log, "BR_CID %s: the recovery applet is running\n", brCID(uid))
 		}
@@ -97,12 +37,12 @@ func bootToServer(open func() (conn, error), f spikeFiles, out, log io.Writer) e
 		name string
 		run  func(*session) error
 	}{
-		{"downloading the BCT", func(s *session) error { return s.download("bct", f.bct, bctSettle) }},
+		{"downloading the BCT", func(s *session) error { return s.download("bct", bc.BCT, bctSettle) }},
 		{"downloading ebt and rp1", func(s *session) error {
-			if err := s.download("ebt", f.ebt, quietWait); err != nil {
+			if err := s.download("ebt", bc.CBoot, quietWait); err != nil {
 				return err
 			}
-			return s.download("rp1", f.rp1, quietWait)
+			return s.download("rp1", bc.DTB, quietWait)
 		}},
 		{"booting CBoot's flashing server", (*session).bootFlashingServer},
 	}

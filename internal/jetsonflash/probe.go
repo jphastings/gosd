@@ -125,6 +125,9 @@ func probeOne(c conn, pc probeCmd, data io.ReadSeeker, wait time.Duration, out, 
 	if cmdErr = s.drain(wait); cmdErr != nil || data == nil {
 		return cmdErr, nil
 	}
+	if _, cmdErr = data.Seek(0, io.SeekStart); cmdErr != nil {
+		return cmdErr, nil
+	}
 	if cmdErr = s.stream(data); cmdErr != nil {
 		return cmdErr, nil
 	}

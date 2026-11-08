@@ -61,3 +61,20 @@ func sizes(transfers [][]byte) []int {
 	}
 	return n
 }
+
+// versionReply is what the applet and CBoot send back to a version query.
+func versionReply() [][]byte {
+	status := devicePacket(packetCmd, 3, le32s(cmdStatus, 0))
+	reply := slices.Concat(devicePacket(packetCmd, 1, le32s(0x08, 16)), devicePacket(packetData, 2, make([]byte, 16)), status)
+	return [][]byte{devicePacket(packetAck, 0, nil), reply, nil}
+}
+
+// download is the device's side of one image download or partition write
+// of one DATA packet: the empty CMD 0x08 after the command, the ACK of the
+// DATA, then the STATUS.
+func download(seq uint32) [][]byte {
+	return [][]byte{
+		devicePacket(packetAck, seq, nil), devicePacket(packetCmd, 9, le32s(0x08, 0)), nil,
+		devicePacket(packetAck, seq+1, nil), devicePacket(packetCmd, 9, le32s(cmdStatus, 0)), nil,
+	}
+}

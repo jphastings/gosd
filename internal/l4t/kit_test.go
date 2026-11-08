@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"os"
 	"path"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -51,5 +53,77 @@ func TestReadNamesAMissingMember(t *testing.T) {
 	_, err := kit.Read(bytes.NewReader(raw))
 	if err == nil || !strings.Contains(err.Error(), "tegra210-p3448-0002-p3449-0000-b00.dtb") {
 		t.Errorf("want an error naming the DTB, got %v", err)
+	}
+}
+
+func TestCacheRoundTripsTheMembers(t *testing.T) {
+	kit, raw := fixtureKit(t, "kit.tbz2")
+	in, err := kit.Read(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+
+	if err := kit.Cache(root, in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := kit.Cached(root)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, in) {
+		t.Error("the cached members differ from the kit's")
+	}
+	if files, _ := os.ReadDir(filepath.Join(root, kit.SHA256)); len(files) != len(in.members()) {
+		t.Errorf("cached %d files for %d members", len(files), len(in.members()))
+	}
+}
+
+// A write cut short leaves either the temporary directory or, from a writer
+// that wrote in place, a copy with members missing. Neither is a hit, and
+// caching again repairs it.
+func TestAnInterruptedCacheWriteIsNotAHit(t *testing.T) {
+	kit, raw := fixtureKit(t, "kit.tbz2")
+	in, err := kit.Read(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".partial-1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, kit.SHA256), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, kit.SHA256, "cboot.bin"), in.CBoot, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := kit.Cached(root); err == nil {
+		t.Fatal("a copy with members missing was a hit")
+	}
+	if err := kit.Cache(root, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kit.Cached(root); err != nil {
+		t.Errorf("caching again didn't repair it: %v", err)
+	}
+}
+
+func TestPruneKeepsOnlyThisKitsCopy(t *testing.T) {
+	kit := Kit{SHA256: "current"}
+	root := t.TempDir()
+	for _, d := range []string{"current", "superseded", ".partial-7"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	kit.Prune(root)
+
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 1 || entries[0].Name() != "current" {
+		t.Errorf("left %v, want only the current kit's copy", entries)
 	}
 }
