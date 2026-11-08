@@ -1,10 +1,11 @@
 ---
 # gosd-le3i
 title: 'jetson-flash: build every first-flash partition from NVIDIA''s kit in Go'
-status: in-progress
+status: completed
 type: task
+priority: normal
 created_at: 2026-11-08T12:24:40Z
-updated_at: 2026-11-08T12:24:40Z
+updated_at: 2026-11-08T12:47:32Z
 parent: gosd-72je
 ---
 
@@ -42,7 +43,7 @@ Found by comparing NVIDIA's kit files with what NVIDIA's tools wrote for this mo
 
 - [x] `internal/l4t`: read the further kit members, and build every first-flash partition, the partition table, `gpt.bin`, the version file and the final BCT, in write order.
 - [x] Tests: the rules on synthetic inputs, plus local-only gated tests proving byte identity with NVIDIA's output.
-- [ ] Record the bench findings, and the RPMB warning, in the Jetson Nano development notes.
+- [x] Record the bench findings, and the RPMB warning, in the Jetson Nano development notes.
 
 ## Summary of Changes
 
@@ -52,3 +53,4 @@ Found by comparing NVIDIA's kit files with what NVIDIA's tools wrote for this mo
 - Fails fast, naming the partition, when the reported eMMC is too small for the layout, a kit file has an unexpected shape or outgrows its partition, or the layout names a file gosd does not build.
 - Tests: synthetic-input tests for the write order, GPT placement and CRCs (LastUsable N−33, UDA to N−34), PT pointer offsets and GUID reuse, BCT entries and BFS/KFS sums over zero-padded files, the signed files, POSIX `cksum` vectors and the refusals. With `GOSD_L4T_KIT` and `GOSD_L4T_BLOB` set, a gated test feeds NVIDIA's own GUIDs and timestamp back in. It proves `gpt.bin` and every partition file identical to NVIDIA's, the partition table identical once its 81 pointer words are swapped for NVIDIA's, and the BCT identical when built over NVIDIA's partition table.
 - Fed the GUIDs and timestamp of the set that booted on the bench, the output was identical to that set, partition table and BCT included (checked locally, not committed).
+- The Jetson Nano development notes gain a section on a first flash without NVIDIA's tools: the `GPT` write as the setup step, the storage query, the warning never to send OEM type 9 (it provisioned this module's RPMB key), and which CBoot warnings are normal.

@@ -144,6 +144,40 @@ Turing Pi doesn't have; the module's own EEPROM, `3-a0`, reads fine.
   blob, with its scripts run on the BMC under a 32-bit ARM `qemu-i386`,
   flashed first time, in about a minute.
 
+## A first flash without NVIDIA's tools (2026-11-08, beans `gosd-32dw` and `gosd-le3i`)
+
+`jetson-flash` talks to the same CBoot flashing server NVIDIA's `tegradevflash`
+does. A first flash of a module NVIDIA's layout isn't on needs nothing more
+than a reflash does: just more partitions. What the bench established (node
+3; CBoot's console was read, NVIDIA's tools were not traced):
+
+- **Writing the `GPT` partition is the setup step.** No partition table is
+  uploaded separately. When CBoot's server receives a write named `GPT`, it
+  erases the boot device, sanitizes the user area, writes the protective MBR
+  and both GPTs from the data (the primary GPT from LBA 1, user area only),
+  and re-reads them. Every other partition, `PT` included, is then an
+  ordinary named write, in NVIDIA's order. The BCT goes last.
+- **The eMMC's size comes from OEM command `0x05`.** The GPT needs it. The
+  arguments are type 1 (platform details), then sub-command 1 (storage), in
+  the 48-byte argument buffer every command shares. The 32-byte reply
+  describes the boot device (16384 sectors here: boot0 plus boot1) and then
+  the user area (30777344 sectors on this module). Each is
+  `{u64 0; u32 sectors; u32 sector size}`.
+- **Never send OEM type 9: it provisions the eMMC's RPMB key, once and for
+  good.** A probe with zeroed arguments logged `Loading rollback key` and
+  `Rollback key provisioned successfully` on this module. An eMMC's RPMB
+  authentication key can never be changed after that. Type 15 updates the
+  rollback counter, and CBoot skips it on an unfused module. Don't sweep OEM
+  types: type 1 is the only one a flash needs.
+- **CBoot ignores the partition table's host pointers.** NVIDIA's tools
+  build `PT` by dumping raw 32-bit x86 structs, heap pointers included. A
+  table carrying string offsets in those words passed
+  `PT crc32 and magic check passed`, and the module booted BFS0.
+- **Normal warnings after a first flash.** `PT: Partition LNX NOT found`,
+  `PT: Partition NCT NOT found` and `Error initializing runtime service
+  trusty_fast` appear on every boot, including those after NVIDIA's own
+  flashes.
+
 ## Load-address budget: the initramfs is the tight one
 
 The eMMC module runs the same `p3450-0000` U-Boot build as the dev kit, and
