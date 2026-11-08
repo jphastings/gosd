@@ -2,6 +2,7 @@ package jetsonflash
 
 import (
 	"bytes"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,17 @@ func TestProbeSpecs(t *testing.T) {
 		if _, err := parseProbeSpecs([]string{bad}); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
+	}
+}
+
+func TestProbeSendsNoOEMCommandButType1(t *testing.T) {
+	for _, spec := range []string{"0x05:09000000", "0x05:0f000000", "0x05", "0x05:01", "0x04-0x06"} {
+		if err := RunProbe([]string{"0x01", spec}, ProbeOptions{}, io.Discard); err == nil || !strings.Contains(err.Error(), "RPMB") {
+			t.Errorf("%q: got %v, want a refusal naming the RPMB risk before anything is sent", spec, err)
+		}
+	}
+	if _, err := parseProbeSpecs([]string{"0x05:0100000001000000"}); err != nil {
+		t.Errorf("the storage query was refused: %v", err)
 	}
 }
 

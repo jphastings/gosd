@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,15 +26,20 @@ func cacheRoot() string {
 }
 
 // kitInputs returns the kit's members: from the cache under cache if a
-// complete copy is there, otherwise from o.Kit or, once the user has
-// accepted NVIDIA's licence, a download. Only a download needs the licence
-// accepted here: a copy passed with --kit came from NVIDIA's own page.
+// copy matching the kit's pins is there, otherwise from o.Kit or, once the
+// user has accepted NVIDIA's licence, a download. Only a download needs the
+// licence accepted here: a copy passed with --kit came from NVIDIA's own
+// page.
 func kitInputs(kit l4t.Kit, cache string, o FlashOptions, out io.Writer) (l4t.Inputs, error) {
 	if cache != "" {
-		if in, err := kit.Cached(cache); err == nil {
+		in, err := kit.Cached(cache)
+		if err == nil {
 			_, _ = fmt.Fprintln(out, "== using NVIDIA's L4T kit, cached in", filepath.Join(cache, kit.SHA256))
 			kit.Prune(cache)
 			return in, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			_, _ = fmt.Fprintf(out, "== not using the cached kit: %v\n", err)
 		}
 	}
 

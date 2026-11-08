@@ -1,20 +1,27 @@
 package l4t
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 )
 
-// Cached returns the kit's members as [Kit.Cache] stored them under root,
-// failing unless a complete copy is there.
+// Cached returns the kit's members as [Kit.Cache] stored them under root.
+// With no copy there, its error wraps [io/fs.ErrNotExist]. A copy with any
+// member missing or not matching its pin is never used: Cached deletes it,
+// and its error says why.
 func (k Kit) Cached(root string) (Inputs, error) {
 	dir := filepath.Join(root, k.SHA256)
+	if _, err := os.Stat(dir); err != nil {
+		return Inputs{}, err
+	}
 	var in Inputs
 	for name, dst := range in.members() {
 		b, err := os.ReadFile(filepath.Join(dir, path.Base(name)))
-		if err != nil {
-			return Inputs{}, err
+		if err != nil || !k.matches(name, b) {
+			_ = os.RemoveAll(dir)
+			return Inputs{}, fmt.Errorf("the cached %s in %s is missing or doesn't match the kit's, so that copy was deleted", path.Base(name), dir)
 		}
 		*dst = b
 	}
@@ -43,7 +50,7 @@ func (k Kit) Cache(root string, in Inputs) error {
 		return err
 	}
 	dir := filepath.Join(root, k.SHA256)
-	// Replace any copy already here, which Cached found incomplete.
+	// Replace any copy already here, which Cached didn't use.
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}

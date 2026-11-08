@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +32,13 @@ func servedKit(t *testing.T) (l4t.Kit, *int) {
 	}))
 	t.Cleanup(srv.Close)
 	sum := sha256.Sum256(raw)
-	return l4t.Kit{URL: srv.URL, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw)), LicenseURL: "https://nvidia.example/licence"}, &downloads
+	// Each fixture member holds its own file name.
+	pins := map[string]string{}
+	for member := range l4t.R32_7_6.Members {
+		sum := sha256.Sum256([]byte(path.Base(member)))
+		pins[member] = hex.EncodeToString(sum[:])
+	}
+	return l4t.Kit{URL: srv.URL, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw)), LicenseURL: "https://nvidia.example/licence", Members: pins}, &downloads
 }
 
 func TestNVIDIAsLicenceIsAskedForOnlyBeforeADownload(t *testing.T) {
@@ -88,5 +96,29 @@ func TestACachedKitIsNeitherDownloadedNorAskedForAgain(t *testing.T) {
 	}
 	if *downloads != 1 {
 		t.Errorf("downloaded the kit %d times, want once", *downloads)
+	}
+}
+
+func TestATamperedCachedMemberIsNeverUsed(t *testing.T) {
+	kit, downloads := servedKit(t)
+	cache := t.TempDir()
+	if _, err := kitInputs(kit, cache, FlashOptions{AcceptLicense: true}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, kit.SHA256, "cboot.bin"), []byte("not NVIDIA's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+
+	in, err := kitInputs(kit, cache, FlashOptions{AcceptLicense: true}, &out)
+
+	if err != nil || string(in.CBoot) != "cboot.bin" {
+		t.Fatalf("got %v and CBoot %q, want the kit's own members", err, in.CBoot)
+	}
+	if *downloads != 2 {
+		t.Errorf("downloaded the kit %d times, want twice", *downloads)
+	}
+	if !strings.Contains(out.String(), "not using the cached kit") || !strings.Contains(out.String(), "cboot.bin") {
+		t.Errorf("output %q doesn't say why the cache wasn't used", out.String())
 	}
 }

@@ -75,6 +75,7 @@ Do you accept it? [y/N] y
 == writing APP (256 MiB)
    10% of 256 MiB
    …
+== flushing to storage
 == writing BCT
 == flushing to storage
 == restarting the module
@@ -83,7 +84,8 @@ done: the module is booting the new image
 
 The kit is streamed, never stored: `jetson-flash` keeps the few MB it
 needs under `~/.cache/gosd/l4t`, so later flashes neither download it nor
-ask again.
+ask again. Each file is checked against its pinned hash every time it's
+read from there.
 
 - `--accept-nvidia-license` accepts the licence without asking, for
   scripts. Without a terminal to ask on, `jetson-flash` stops until you

@@ -84,7 +84,7 @@ func wire(typ, seq uint32, body ...[]byte) []byte {
 	return bytes.Join(frame(typ, seq, slices.Concat(body...)), nil)
 }
 
-func TestFlashWritesEveryPartitionWithTheBCTLast(t *testing.T) {
+func TestFlashWritesEveryPartitionAndFlushesItBeforeTheBCT(t *testing.T) {
 	path, boot := gosdImage(t)
 	ff := l4t.FirstFlash{
 		GPT:        []byte("gpt"),
@@ -94,23 +94,26 @@ func TestFlashWritesEveryPartitionWithTheBCTLast(t *testing.T) {
 	var planned l4t.Storage
 	plan := func(s l4t.Storage) (l4t.FirstFlash, error) { planned = s; return ff, nil }
 	query := storageSession()
-	writes := []struct {
-		name string
-		data []byte
-		dev  *fakeDevice
-	}{{"GPT", ff.GPT, nil}, {"PT", []byte("pt"), nil}, {"APP", boot, nil}, {"DTB", []byte("dtb"), nil}, {"BCT", ff.BCT, nil}}
+	const flushed = ""
+	steps := []struct {
+		write string // the partition written, or flushed
+		data  []byte
+		dev   *fakeDevice
+	}{{"GPT", ff.GPT, nil}, {"PT", []byte("pt"), nil}, {"APP", boot, nil}, {"DTB", []byte("dtb"), nil}, {flushed, nil, nil}, {"BCT", ff.BCT, nil}, {flushed, nil, nil}}
 	devs := []*fakeDevice{query}
-	for i := range writes {
-		writes[i].dev = &fakeDevice{in: slices.Concat(versionReply(), download(1))}
-		devs = append(devs, writes[i].dev)
+	for i, st := range steps {
+		steps[i].dev = &fakeDevice{in: slices.Concat(versionReply(), download(1))}
+		if st.write == flushed {
+			steps[i].dev = &fakeDevice{in: slices.Concat(versionReply(), [][]byte{
+				devicePacket(packetAck, 1, nil), devicePacket(packetCmd, 9, le32s(cmdStatus, 0)), nil,
+			})}
+		}
+		devs = append(devs, steps[i].dev)
 	}
-	flush := &fakeDevice{in: slices.Concat(versionReply(), [][]byte{
-		devicePacket(packetAck, 1, nil), devicePacket(packetCmd, 9, le32s(cmdStatus, 0)), nil,
-	})}
 	reboot := &fakeDevice{in: slices.Concat(versionReply(), [][]byte{devicePacket(packetAck, 1, nil)}), gone: errors.New("ESHUTDOWN")}
 	var out bytes.Buffer
 
-	if err := flash(sessions(append(devs, flush, reboot)...), bootChain(), plan, openBoot(t, path), &out, io.Discard); err != nil {
+	if err := flash(sessions(append(devs, reboot)...), bootChain(), plan, openBoot(t, path), &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,15 +126,18 @@ func TestFlashWritesEveryPartitionWithTheBCTLast(t *testing.T) {
 	if want := (l4t.Storage{BootSectors: 16384, UserSectors: 30777344}); planned != want {
 		t.Errorf("planned for %+v, want %+v", planned, want)
 	}
-	for _, w := range writes {
-		name := append([]byte(w.name), make([]byte, nameFieldSize-len(w.name))...)
-		size := binary.LittleEndian.AppendUint64(nil, uint64(len(w.data)))
-		if !bytes.Contains(sent(w.dev), wire(packetCmd, 1, le32s(cmdWritePartition), name, size)) || !bytes.Contains(sent(w.dev), wire(packetData, 2, w.data)) {
-			t.Errorf("the session for %s didn't write it with its data", w.name)
+	for i, st := range steps {
+		if st.write == flushed {
+			if !bytes.Contains(sent(st.dev), wire(packetCmd, 1, le32s(cmdFlush))) {
+				t.Errorf("session %d after the query didn't flush", i+1)
+			}
+			continue
 		}
-	}
-	if !bytes.Contains(sent(flush), wire(packetCmd, 1, le32s(cmdFlush))) {
-		t.Error("the session after the BCT didn't flush")
+		name := append([]byte(st.write), make([]byte, nameFieldSize-len(st.write))...)
+		size := binary.LittleEndian.AppendUint64(nil, uint64(len(st.data)))
+		if !bytes.Contains(sent(st.dev), wire(packetCmd, 1, le32s(cmdWritePartition), name, size)) || !bytes.Contains(sent(st.dev), wire(packetData, 2, st.data)) {
+			t.Errorf("session %d after the query didn't write %s with its data", i+1, st.write)
+		}
 	}
 	if !bytes.Contains(sent(reboot), wire(packetCmd, 1, le32s(cmdColdBoot, 0))) {
 		t.Error("the last session didn't cold-boot")

@@ -19,7 +19,13 @@ func fixtureKit(t *testing.T, name string) (Kit, []byte) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	return Kit{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw))}, raw
+	// Each fixture member holds its own file name.
+	pins := map[string]string{}
+	for member := range R32_7_6.Members {
+		sum := sha256.Sum256([]byte(path.Base(member)))
+		pins[member] = hex.EncodeToString(sum[:])
+	}
+	return Kit{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw)), Members: pins}, raw
 }
 
 func TestReadExtractsEveryMember(t *testing.T) {
@@ -40,6 +46,12 @@ func TestReadRefusesAWrongPin(t *testing.T) {
 	kit, raw := fixtureKit(t, "kit.tbz2")
 	if _, err := kit.Read(bytes.NewReader(raw[:len(raw)-1])); err == nil {
 		t.Error("a truncated kit was accepted")
+	}
+
+	const dtb = "Linux_for_Tegra/kernel/dtb/tegra210-p3448-0002-p3449-0000-b00.dtb"
+	kit.Members[dtb] = strings.Repeat("0", 64)
+	if _, err := kit.Read(bytes.NewReader(raw)); err == nil || !strings.Contains(err.Error(), dtb) {
+		t.Errorf("want an error naming the member that misses its pin, got %v", err)
 	}
 
 	kit.SHA256 = strings.Repeat("0", 64)

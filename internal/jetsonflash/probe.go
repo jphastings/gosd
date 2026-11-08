@@ -85,6 +85,11 @@ func parseProbeSpecs(specs []string) ([]probeCmd, error) {
 			return nil, fmt.Errorf("bad probe spec %q (want CMD, CMD:HEXARGS or FIRST-LAST): %w", spec, err)
 		}
 		for c := lo; c <= hi; c++ {
+			// CBoot pads short args with whatever its buffer held, so the
+			// type must be sent, not left to chance.
+			if c == cmdOEM && (len(args) < 4 || le32(args) != 1) {
+				return nil, fmt.Errorf("bad probe spec %q: OEM command 0x05 is only safe with args starting with type 1 (0x05:01000000…); type 9 permanently provisions the eMMC's RPMB key", spec)
+			}
 			cmds = append(cmds, probeCmd{uint32(c), args})
 		}
 	}

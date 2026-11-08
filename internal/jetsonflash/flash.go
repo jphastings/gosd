@@ -110,9 +110,9 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 
 // flash boots the module into CBoot's flashing server, reads the eMMC's
 // size, and writes plan's first flash for it with app as APP: GPT first,
-// then every partition in NVIDIA's order, then the BCT. Each write is a
-// session of its own and must end in CBoot's STATUS 0 before the next one
-// starts. Then it flushes and cold-boots.
+// then every partition in NVIDIA's order, then a flush, then the BCT. Each
+// write and flush is a session of its own and must end in CBoot's STATUS 0
+// before the next one starts. Then it flushes again and cold-boots.
 //
 // Crash ordering: every flash is a whole first flash, so an interrupted one
 // is recovered by flashing again from the start. The order only has to keep
@@ -120,9 +120,12 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 //   - The GPT write erases the boot device, where the BCT lives, before it
 //     sanitizes the user area and writes the GPTs. From then on the eMMC
 //     has no BCT.
-//   - The BCT is written last, once CBoot has confirmed every other write,
-//     so no BCT ever describes a partition still being written.
-//   - Without a BCT, the boot ROM boots nothing from the eMMC.
+//   - Every other write is confirmed by CBoot and then flushed before the
+//     BCT is written, so the BCT can't reach the eMMC ahead of anything it
+//     describes, however CBoot buffers writes.
+//   - The BCT is flushed in turn. Until it lands the eMMC has no BCT, and the
+//     boot ROM boots nothing from it. A BCT cut short fails its own CMAC,
+//     which the boot ROM presumably treats the same way.
 //   - Recovery mode belongs to the boot ROM, which enters it on the
 //     recovery strap, so `jetson-flash flash` can always start over.
 //
@@ -130,12 +133,8 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 // NVIDIA. CBoot's console showed the erase order. A blank module showed
 // nothing on power-on, and entered recovery mode on the strap. We haven't
 // seen the boot ROM fall back to recovery mode by itself, and nothing
-// relies on it. One window is open: CBoot has a separate flush command, so
-// it may buffer writes, and a power cut between the BCT's STATUS and the
-// flush could leave the BCT on the eMMC without everything before it. The
-// BCT carries a CMAC of each NVC copy, presumably so that the boot ROM
-// rejects a torn one; whether later stages catch a torn partition is
-// NVIDIA's code, and unverified. Either way the recovery strap still works.
+// relies on it. The flush before the BCT is pending bench confirmation:
+// CBoot hasn't yet been seen to take a write after a flush.
 func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (l4t.FirstFlash, error), app *io.SectionReader, out, log io.Writer) error {
 	if err := bootToServer(open, bc, out, log); err != nil {
 		return err
@@ -155,8 +154,7 @@ func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (
 		return err
 	}
 
-	writes := slices.Concat([]l4t.Partition{{Name: "GPT", Data: ff.GPT}}, ff.Partitions, []l4t.Partition{{Name: "BCT", Data: ff.BCT}})
-	for _, p := range writes {
+	write := func(p l4t.Partition) error {
 		var data io.Reader = bytes.NewReader(p.Data)
 		size := int64(len(p.Data))
 		switch p.Name {
@@ -171,17 +169,35 @@ func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (
 		if err := inSession(open, log, func(s *session) error { return s.writePartition(p.Name, data, size) }); err != nil {
 			return fmt.Errorf("writing %s: %w", p.Name, err)
 		}
+		return nil
+	}
+	flush := func() error {
+		_, _ = fmt.Fprintln(out, "== flushing to storage")
+		err := inSession(open, log, func(s *session) error {
+			if err := s.command(cmdFlush, nil); err != nil {
+				return err
+			}
+			return s.awaitStatus(writeSettle)
+		})
+		if err != nil {
+			return fmt.Errorf("flushing to storage: %w", err)
+		}
+		return nil
 	}
 
-	_, _ = fmt.Fprintln(out, "== flushing to storage")
-	err = inSession(open, log, func(s *session) error {
-		if err := s.command(cmdFlush, nil); err != nil {
+	for _, p := range slices.Concat([]l4t.Partition{{Name: "GPT", Data: ff.GPT}}, ff.Partitions) {
+		if err := write(p); err != nil {
 			return err
 		}
-		return s.drain(writeSettle)
-	})
-	if err != nil {
-		return fmt.Errorf("flushing to storage: %w", err)
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	if err := write(l4t.Partition{Name: "BCT", Data: ff.BCT}); err != nil {
+		return err
+	}
+	if err := flush(); err != nil {
+		return err
 	}
 
 	_, _ = fmt.Fprintln(out, "== restarting the module")
@@ -241,12 +257,18 @@ func (s *session) writePartition(name string, data io.Reader, size int64) error 
 	if err := s.stream(data); err != nil {
 		return err
 	}
-	confirmed := s.statuses
-	if err := s.drain(writeSettle); err != nil {
+	return s.awaitStatus(writeSettle)
+}
+
+// awaitStatus is drain for a command that must end in a STATUS: silence
+// until timeout is a failure, not the device having nothing to say.
+func (s *session) awaitStatus(timeout time.Duration) error {
+	before := s.statuses
+	if err := s.drain(timeout); err != nil {
 		return err
 	}
-	if s.statuses == confirmed {
-		return fmt.Errorf("CBoot didn't confirm the write within %s", writeSettle)
+	if s.statuses == before {
+		return fmt.Errorf("CBoot didn't confirm it within %s", timeout)
 	}
 	return nil
 }
