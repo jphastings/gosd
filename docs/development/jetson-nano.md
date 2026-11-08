@@ -45,7 +45,8 @@ the Turing Pi side is in [the shared Turing Pi 2 BMC notes](turing-pi-2-bmc.md).
   the eMMC) disabled, because the dev kit's module has none. Bean
   `gosd-wxy7` adds a kernel-build DTS patch that enables SDMMC4, disables
   SDMMC1 and SDMMC3, and aliases the eMMC to `mmc0`, so `APP` should
-  become `/dev/mmcblk0p1`. That's not yet proven on the bench.
+  become `/dev/mmcblk0p1`. With that patch the eMMC comes up as an HS400
+  `mmcblk0`, and gosd-init mounts `APP` as its boot partition.
 - **U-Boot sees the M.2 NVMe drive.** That's `nvme0`, the 477 GB drive in
   node 4's slot, where `/data` lives (see below). U-Boot also gets a DHCP
   lease, so PCIe and Ethernet work before Linux does.
@@ -87,6 +88,17 @@ The first boot on a blank drive takes longer: it writes GoSD's 512 MiB ext4
 seed image, superblock last, then grows it online to fill the drive. A
 power cut part-way through leaves the first MiB still zero, so the next boot
 simply formats again.
+
+The bench (2026-11-08, node 4's 477 GB drive) showed each case in turn:
+- a drive holding another ext4 volume was refused;
+- a blank drive was formatted;
+- the next boot adopted it;
+- a reflash with a different image adopted it again and put back the
+  `config/hostname` edit kept on `/data`.
+
+To set that up without a keyboard on U-Boot's console, a throwaway app
+cleared the old volume's first MiB. The hostname edit went into the image's
+boot partition before signing, standing in for someone editing the card.
 
 ## Things that look alarming but aren't
 

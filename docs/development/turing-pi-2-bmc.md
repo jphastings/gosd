@@ -110,7 +110,16 @@ Found with a Jetson Nano eMMC module in node 4 of a v2.4 board (see
   happily on the header.
 - **Wire the adapter's RX only, plus GND.** With the adapter's TX attached to
   the module's RX, recovery-mode flashing failed at the bootloader send every
-  time, until it was removed.
+  time, until it was removed. Whether TX also stops a normal boot is
+  unsettled: the attempts on 2026-11-08 that pointed that way all used the
+  back-to-back power cycle below.
+- **Leave a Jetson off for about 10 s before powering it back on.**
+  `tpi power -n <N> off; tpi power -n <N> on` back to back doesn't always
+  reset the module. Four times on 2026-11-08 it came back with nothing on its
+  console and no network, or hung right after U-Boot's `Starting kernel ...`.
+  Waiting 10 s between the two worked every time. The flashing script gets
+  away without the wait because it then waits for the recovery device and
+  fails clearly if none appears.
 - **`tpi usb flash -n <N>` holds the module's recovery strap** and routes its
   recovery USB port to the `USB_OTG` socket, or to the BMC with `--bmc`. After
   a power-on, NVIDIA's recovery device (`0955:7f21 NVIDIA Corp. APX`) appears

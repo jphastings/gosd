@@ -32,7 +32,12 @@ So the app ran with an empty, read-only `/data`.
 - [x] Crash-ordering argument (below).
 - [x] Independent adversarial review pass (CLAUDE.md: this formats and adopts on-disk state). It found no path that formats a drive holding someone's data; its fixes are in the second commit and folded into the sections below.
 - [x] Bench, drive holding something else → refused (2026-11-07): node 4's drive held an ext4 volume labelled `DISKTEST`. gosd-init named it, refused to reformat it as `hello-data`, wrote nothing, and mounted `/data` read-only; the app started.
-- [ ] Bench: blank drive → formatted; reboot → adopted; reflash → adopted, settings restored; drive removed → read-only `/data` at once. Expected console lines are in the Jetson Nano development notes.
+- [x] Bench: blank drive → formatted; reboot → adopted; reflash → adopted, settings restored (2026-11-08):
+  - A throwaway app (image identity `29d5a75b7d4c`, with `config/hostname` set to `nanobench` in its boot partition before signing) zeroed the `DISKTEST` volume's first MiB.
+  - The next boot logged `formatting the NVMe drive at /dev/nvme0n1 as ext4, labelled hello-data`, `/data is a new ext4 volume …` and `kept for the next re-flash: config/hostname`.
+  - A reboot logged `/data is the ext4 volume labelled hello-data already on the NVMe drive`.
+  - Reflashing plain `hello` (a different identity, default hostname) adopted the volume, logged `config/hostname restored from the copy kept …`, and came up as `nanobench` in that same boot.
+- [ ] Bench: drive removed → read-only `/data` at once. Expected console lines are in the Jetson Nano development notes.
 
 ## Design
 
