@@ -10,7 +10,7 @@ import (
 )
 
 // fakeDevice plays back scripted IN transfers, one per Read, and records
-// every OUT transfer. An empty script reads as a timeout.
+// every OUT transfer. A nil entry, like an empty script, reads as a timeout.
 type fakeDevice struct {
 	in  [][]byte
 	out [][]byte
@@ -25,9 +25,12 @@ func (f *fakeDevice) Read(p []byte, _ time.Duration) (int, error) {
 	if len(f.in) == 0 {
 		return 0, errTimeout
 	}
-	n := copy(p, f.in[0])
+	in := f.in[0]
 	f.in = f.in[1:]
-	return n, nil
+	if in == nil {
+		return 0, errTimeout
+	}
+	return copy(p, in), nil
 }
 
 func (f *fakeDevice) Close() error { return nil }

@@ -5,7 +5,6 @@
 package jetsonflash
 
 import (
-	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -14,20 +13,6 @@ import (
 	"path/filepath"
 	"time"
 )
-
-// SpikeOptions are the T210 nv3p facts the spike is still finding out on
-// the bench.
-type SpikeOptions struct {
-	// VersionCmd is the command every session opens with: NVIDIA's tools
-	// print "Applet version" (or "Cboot version") at the start of each run.
-	// Zero means tegrarcm's GET_PLATFORM_INFO.
-	VersionCmd uint32
-	// BootCmd boots the applet into CBoot's flashing server. Zero stops
-	// after downloading rp1.
-	BootCmd uint32
-	// BootArgs are BootCmd's arguments.
-	BootArgs []byte
-}
 
 const (
 	deviceWait = 10 * time.Second
@@ -42,7 +27,7 @@ type spikeFiles struct{ rcm0, rcm1, bct, ebt, rp1 []byte }
 // flashing server, using the NVIDIA-signed files in dir (an unpacked
 // massflash blob), and logs every USB transfer to log. It writes nothing to
 // the module's storage.
-func RunSpike(dir string, o SpikeOptions, log io.Writer) error {
+func RunSpike(dir string, log io.Writer) error {
 	f, err := loadSpikeFiles(dir)
 	if err != nil {
 		return err
@@ -54,7 +39,7 @@ func RunSpike(dir string, o SpikeOptions, log io.Writer) error {
 			return nil, err
 		}
 		return tracedConn{conn: c, w: log, start: start}, nil
-	}, f, o, log)
+	}, f, log)
 }
 
 func loadSpikeFiles(dir string) (spikeFiles, error) {
@@ -85,7 +70,7 @@ func loadSpikeFiles(dir string) (spikeFiles, error) {
 
 // spike reopens the device for each step, as NVIDIA's nvaflash.sh runs a
 // separate tool for each, and each of those opens with the version query.
-func spike(open func() (conn, error), f spikeFiles, o SpikeOptions, log io.Writer) error {
+func spike(open func() (conn, error), f spikeFiles, log io.Writer) error {
 	err := withConn(open, func(c conn) error {
 		uid, err := bootROM(c, f.rcm0, f.rcm1)
 		if err == nil {
@@ -110,17 +95,15 @@ func spike(open func() (conn, error), f spikeFiles, o SpikeOptions, log io.Write
 			return s.download("rp1", f.rp1, quietWait)
 		}},
 	}
-	if o.BootCmd != 0 {
-		steps = append(steps,
-			step{"booting recovery", func(s *session) error { return s.boot(o.BootCmd, o.BootArgs) }},
-			step{"querying CBoot's flashing server", func(*session) error { return nil }},
-		)
-	}
+	steps = append(steps,
+		step{"booting CBoot's flashing server", (*session).bootFlashingServer},
+		step{"querying CBoot's flashing server", func(*session) error { return nil }},
+	)
 	for _, st := range steps {
 		_, _ = fmt.Fprintf(log, "== %s\n", st.name)
 		err := withConn(open, func(c conn) error {
 			s := &session{c: c, log: log}
-			if err := s.version(cmp.Or(o.VersionCmd, cmdGetPlatformInfo)); err != nil {
+			if err := s.version(); err != nil {
 				return fmt.Errorf("version query: %w", err)
 			}
 			return st.run(s)
@@ -128,9 +111,6 @@ func spike(open func() (conn, error), f spikeFiles, o SpikeOptions, log io.Write
 		if err != nil {
 			return fmt.Errorf("%s: %w", st.name, err)
 		}
-	}
-	if o.BootCmd == 0 {
-		_, _ = fmt.Fprintln(log, "stopped after rp1: no boot command given")
 	}
 	return nil
 }
@@ -143,8 +123,8 @@ func withConn(open func() (conn, error), f func(conn) error) error {
 	return errors.Join(f(c), c.Close())
 }
 
-func (s *session) version(cmd uint32) error {
-	if err := s.command(cmd, nil); err != nil {
+func (s *session) version() error {
+	if err := s.command(cmdVersion, nil); err != nil {
 		return err
 	}
 	return s.drain(quietWait)
@@ -154,7 +134,7 @@ func (s *session) version(cmd uint32) error {
 // {char type[4]; u32; u32; u32 length}, which the applet answers with an
 // empty CMD 0x08, then one DATA packet carrying the image, then a STATUS
 // once it has checked (and, for the BCT, applied) it. The two middle words
-// are zero, as nvaflash.sh passes "0 0" for the load address and entry.
+// are the load address and entry point from the image's signature header.
 func (s *session) download(typ string, img []byte, settle time.Duration) error {
 	load, entry := loadAddrs(img)
 	args := append([]byte(typ+"\x00"), le32s(load, entry, uint32(len(img)))...)
@@ -170,8 +150,8 @@ func (s *session) download(typ string, img []byte, settle time.Duration) error {
 	return s.drain(settle)
 }
 
-func (s *session) boot(cmd uint32, args []byte) error {
-	if err := s.command(cmd, args); err != nil {
+func (s *session) bootFlashingServer() error {
+	if err := s.command(cmdBoot, le32s(bootFlashingServer)); err != nil {
 		return err
 	}
 	return s.drain(quietWait)

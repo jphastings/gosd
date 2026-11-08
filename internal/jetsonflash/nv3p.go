@@ -11,11 +11,9 @@ import (
 )
 
 // nv3p is NVIDIA's packet protocol between a host and the recovery applet,
-// and later CBoot's flashing server. The packet layout, checksum rule,
-// command numbers and NACK codes are facts from NVIDIA's open-source
-// tegrarcm (BSD-3-Clause, src/nv3p.h and src/nv3p.c), which documents the
-// T20-T124 generation; whether T210 kept them is what bean gosd-32dw's
-// spike is testing.
+// and later CBoot's flashing server. T210 speaks a variant of the one NVIDIA's
+// open-source tegrarcm documents for earlier chips; the constants here are
+// what the bench established for T210 (bean gosd-32dw).
 const (
 	// T210's applet NACKs tegrarcm's version 1 and speaks version 2.
 	nv3pVersion = 2
@@ -25,7 +23,9 @@ const (
 	packetAck  = 4
 	packetNack = 5
 
-	cmdGetPlatformInfo = 0x01
+	// cmdVersion asks for the running firmware's version; the applet and
+	// CBoot's flashing server both answer it.
+	cmdVersion = 0x01
 	// cmdDownload loads an image into the applet (T210; tegrarcm's DL_BCT
 	// and DL_BL were 0x04 and 0x06).
 	cmdDownload = 0x03
@@ -34,6 +34,11 @@ const (
 	// cmdStatus is how T210's applet reports an outcome, with args
 	// {u32 code; char msg[32]}. tegrarcm's STATUS was 0x0a, message first.
 	cmdStatus = 0x07
+	// cmdBoot takes a u32 boot type.
+	cmdBoot = 0x09
+	// bootFlashingServer is the boot type that brings up CBoot's flashing
+	// server.
+	bootFlashingServer = 0
 
 	// maxTransfer is the largest single bulk transfer: NVIDIA's T210 tool
 	// writes nv3p data 16 KiB at a time, and older kernels refuse more.

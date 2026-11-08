@@ -14,7 +14,7 @@ func TestCommandGoesOutOneFieldPerTransfer(t *testing.T) {
 	dev := &fakeDevice{in: [][]byte{unhex(t, "02000000 04000000 00000000 faffffff")}}
 	s := &session{c: dev, log: io.Discard}
 
-	if err := s.command(cmdGetPlatformInfo, nil); err != nil {
+	if err := s.command(cmdVersion, nil); err != nil {
 		t.Fatal(err)
 	}
 
