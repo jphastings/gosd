@@ -1,11 +1,11 @@
 ---
 # gosd-j18s
 title: 'Jetson Nano: put /data on the NVMe'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-07T22:18:22Z
+updated_at: 2026-11-08T08:27:51Z
 parent: gosd-72je
 ---
 
@@ -37,7 +37,7 @@ So the app ran with an empty, read-only `/data`.
   - The next boot logged `formatting the NVMe drive at /dev/nvme0n1 as ext4, labelled hello-data`, `/data is a new ext4 volume …` and `kept for the next re-flash: config/hostname`.
   - A reboot logged `/data is the ext4 volume labelled hello-data already on the NVMe drive`.
   - Reflashing plain `hello` (a different identity, default hostname) adopted the volume, logged `config/hostname restored from the copy kept …`, and came up as `nanobench` in that same boot.
-- [ ] Bench: drive removed → read-only `/data` at once. Expected console lines are in the Jetson Nano development notes.
+- [x] Bench: drive removed → read-only `/data` at once (2026-11-08). The module moved to node 3, whose M.2 slot is empty. About 4 s after `/init` started, gosd-init logged `mounting data partition failed; mounting /data read-only: no NVMe drive found: the PCIe bus has had no NVMe controller on it for 3s; …`, matching the development notes, and `/app` started straight after.
 
 ## Design
 
