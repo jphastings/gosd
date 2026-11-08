@@ -111,8 +111,10 @@ say so in the bean rather than silently diverging.
   `jetson-nano` (NVIDIA Jetson Nano 16GB **eMMC module** P3448-0002 only,
   Tegra210 — the SD-card dev kit was dropped 2026-11-07. Each flash writes
   NVIDIA's whole boot chain plus GoSD's FAT boot partition into NVIDIA's
-  `APP` partition, using NVIDIA's offline massflash blob run from a Turing
-  Pi 2 BMC, see `docs/jetson-nano-flashing.md`; never `tpi flash`, and never
+  `APP` partition, using `jetson-flash flash`, which builds the boot chain
+  from NVIDIA's L4T kit on the user's machine (never redistributed) and
+  runs on the Turing Pi 2 BMC or any Linux host cabled to the recovery USB,
+  see `docs/jetson-nano-flashing.md`; never `tpi flash`, and never
   through a Mac VM's USB passthrough, which loses data. GoSD ships no
   bootloader; `/data` lives on NVMe, always whole-device ext4 through
   `internal/blockmount` whatever `--data-filesystem` says, and gosd-init
