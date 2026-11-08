@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-07T23:37:18Z
+updated_at: 2026-11-08T08:46:10Z
 parent: gosd-72je
 ---
 
@@ -82,7 +82,7 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
 
 - [x] Map the server's commands by experiment (`jetson-flash probe`, hidden).
 - [x] Write `APP` and cold-boot into it.
-- [ ] A `jetson-flash` command that reflashes `APP` from a gosd `.img`.
+- [x] A `jetson-flash` command that reflashes `APP` from a gosd `.img`: `jetson-flash flash`. On the bench (2026-11-08, node 3) it reflashed hello A to hello B in 36 s from power-on, reading `APP` straight out of the `.img` with the first flash's blob for the boot chain, and the module came up as hello B (`loglevel=8`).
 - [ ] Offline signing in Go, so no NVIDIA tool runs at all.
 - [ ] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
 - [ ] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
