@@ -7,10 +7,10 @@ NVIDIA's own partition layout. A module straight from a distributor has
 nothing on it at all.
 
 `jetson-flash` puts an app on it over the module's USB recovery port. It
-erases the eMMC, then writes NVIDIA's boot chain, built on your machine from
-NVIDIA's L4T kit, with your app's boot partition as `APP`. No NVIDIA tool
-runs. Every flash is the same, whether the module is new or already runs an
-app.
+erases the whole eMMC, then writes NVIDIA's boot chain, built on your
+machine from NVIDIA's L4T kit, with your app's boot partition as `APP`. No
+NVIDIA tool runs. Every flash is the same, whether the module is new or
+already runs an app. It never touches the NVMe drive, where `/data` lives.
 
 Don't reach for `tpi flash`. It writes a whole disk image over the eMMC,
 which wipes out NVIDIA's boot chain, and it can't speak NVIDIA's flashing
@@ -126,9 +126,9 @@ A good boot shows, in order:
 - **`no Tegra210 in USB recovery mode (0955:7f21) appeared`.** Check
   `tpi usb status`: the node should be the device and the BMC the host.
   Then repeat step 2.
-- **A flash stopped part-way.** The eMMC is erased and boots nothing. Put
-  the module back into recovery mode and flash again: every flash starts
-  from scratch.
+- **A flash stopped part-way.** The eMMC may be partly written, so it may
+  not boot. Put the module back into recovery mode (step 2) and flash
+  again: every flash starts from scratch.
 - **The same step fails on every attempt.** On the module's console, look
   for `Data recieve from host failure with error 0x120000`. Data isn't
   arriving intact over USB, so the problem is on the host side. Use the

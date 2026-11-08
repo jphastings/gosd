@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ func gosdImage(t *testing.T) (path string, boot []byte) {
 
 func mbr(start, sectors uint32) []byte {
 	b := make([]byte, sectorSize)
+	b[0x1be+4] = 0x0c // FAT32 with LBA, as internal/image writes
 	binary.LittleEndian.PutUint32(b[0x1be+8:], start)
 	binary.LittleEndian.PutUint32(b[0x1be+12:], sectors)
 	b[510], b[511] = 0x55, 0xaa
@@ -160,6 +162,9 @@ func TestFlashStopsAtAWriteCBootNeverConfirms(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "writing GPT") || !strings.Contains(err.Error(), "didn't confirm") {
 		t.Fatalf("want an unconfirmed GPT write, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "recovery mode") || !strings.Contains(err.Error(), "run jetson-flash flash again") {
+		t.Errorf("%v doesn't say how to recover", err)
+	}
 	if opened != 6 {
 		t.Errorf("opened the device %d times, want 6 (boot ROM, three boot steps, the query, GPT) and nothing after", opened)
 	}
@@ -167,12 +172,15 @@ func TestFlashStopsAtAWriteCBootNeverConfirms(t *testing.T) {
 
 func TestRunFlashRefusesABadImageBeforeTouchingAnything(t *testing.T) {
 	tooBig := uint32(l4t.AppSize/sectorSize + 1)
+	linux := mbr(1, 2)
+	linux[0x1be+4] = 0x83
 	for name, tc := range map[string]struct {
 		mbr  []byte
 		size int64
 		want string
 	}{
 		"not a disk image": {make([]byte, sectorSize), 4 * sectorSize, "isn't a gosd image"},
+		"not FAT32":        {linux, 4 * sectorSize, "isn't a gosd image"},
 		"truncated":        {mbr(1, 8), 4 * sectorSize, "truncated"},
 		"too big for APP":  {mbr(1, tooBig), int64(1+tooBig) * sectorSize, "too big for the module's 14336 MiB APP partition"},
 	} {
@@ -191,5 +199,23 @@ func TestRunFlashRefusesABadImageBeforeTouchingAnything(t *testing.T) {
 				t.Fatalf("got %v, want an error mentioning %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// Each refusal RunFlash can make without the module comes before it is
+// opened: no Linux, then no licence (here, no terminal and no flag).
+func TestRunFlashRefusesBeforeOpeningTheDevice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	path, _ := gosdImage(t)
+	want := "--accept-nvidia-license"
+	if runtime.GOOS != "linux" {
+		want = "needs Linux"
+	}
+
+	err := RunFlash(path, FlashOptions{}, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want an error mentioning %q", err, want)
 	}
 }

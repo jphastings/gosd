@@ -2,8 +2,10 @@ package l4t
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -46,6 +48,10 @@ func TestReadRefusesAWrongPin(t *testing.T) {
 	kit, raw := fixtureKit(t, "kit.tbz2")
 	if _, err := kit.Read(bytes.NewReader(raw[:len(raw)-1])); err == nil {
 		t.Error("a truncated kit was accepted")
+	}
+	// Without a bound, reading this would never end.
+	if _, err := kit.Read(io.MultiReader(bytes.NewReader(raw), rand.Reader)); err == nil {
+		t.Error("an endless kit was accepted")
 	}
 
 	const dtb = "Linux_for_Tegra/kernel/dtb/tegra210-p3448-0002-p3449-0000-b00.dtb"

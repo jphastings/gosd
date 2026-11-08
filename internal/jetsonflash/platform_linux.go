@@ -34,6 +34,9 @@ type bulkTransfer struct {
 
 type usbfs struct{ fd int }
 
+// hostError says why this host can't flash a module: on Linux, nothing.
+func hostError() error { return nil }
+
 // openRecovery waits up to wait for a Tegra210 in USB recovery mode to
 // appear, then opens it through usbfs and claims its interface.
 func openRecovery(wait time.Duration) (conn, error) {

@@ -37,8 +37,7 @@ const (
 	// cmdWritePartition is the same command number as cmdDownload: CBoot's
 	// flashing server takes {char name[40]; u64 size} and then DATA.
 	cmdWritePartition = 0x03
-	// cmdOEM runs CBoot's OEM commands. Only ever send it oemStorageQuery:
-	// OEM type 9 permanently provisions the eMMC's RPMB key.
+	// cmdOEM runs CBoot's OEM commands; see checkOEM.
 	cmdOEM = 0x05
 	// cmdColdBoot takes u32 args {0}; the device drops off USB as it resets.
 	cmdColdBoot = 0x06
@@ -140,6 +139,11 @@ func (s *session) send(typ, seq uint32, body []byte) error {
 
 // command sends a CMD and waits for the device to acknowledge it.
 func (s *session) command(cmd uint32, args []byte) error {
+	if cmd == cmdOEM {
+		if err := checkOEM(args); err != nil {
+			return err
+		}
+	}
 	seq := s.seq
 	s.seq++
 	s.logf("→ CMD %#x seq %d, %d-byte args: % x", cmd, seq, len(args), args)
@@ -147,6 +151,17 @@ func (s *session) command(cmd uint32, args []byte) error {
 		return err
 	}
 	return s.expectAck(seq)
+}
+
+// checkOEM refuses OEM arguments that don't start with type 1, the only
+// type jetson-flash needs. Type 9 permanently provisions the eMMC's RPMB key
+// (bench, 2026-11-08), and CBoot pads short args with whatever its buffer
+// held, so the type must always be sent.
+func checkOEM(args []byte) error {
+	if len(args) < 4 || le32(args) != 1 {
+		return errors.New("OEM command 0x05 is only safe with args starting with type 1 (01000000); type 9 permanently provisions the eMMC's RPMB key")
+	}
+	return nil
 }
 
 // data sends b in DATA packets of at most dataChunk bytes, waiting for each

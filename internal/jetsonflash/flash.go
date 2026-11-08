@@ -57,6 +57,9 @@ func RunFlash(imagePath string, o FlashOptions, out io.Writer) (err error) {
 	if app.Size() > l4t.AppSize {
 		return fmt.Errorf("%s's boot partition is %d MiB, too big for the module's %d MiB APP partition; build it with a smaller --boot-size", imagePath, app.Size()>>20, l4t.AppSize>>20)
 	}
+	if err := hostError(); err != nil {
+		return err
+	}
 
 	in, err := kitInputs(l4t.R32_7_6, cacheRoot(), o, out)
 	if err != nil {
@@ -97,6 +100,10 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 	if mbr[510] != 0x55 || mbr[511] != 0xaa {
 		return nil, errors.New("it has no MBR")
 	}
+	// internal/image writes exactly this type for the boot partition.
+	if typ := mbr[0x1be+4]; typ != 0x0c {
+		return nil, fmt.Errorf("its first partition has type %#02x, not a gosd boot partition's FAT32 (0x0c)", typ)
+	}
 	start := int64(binary.LittleEndian.Uint32(mbr[0x1be+8:]))
 	count := int64(binary.LittleEndian.Uint32(mbr[0x1be+12:]))
 	if count == 0 {
@@ -114,27 +121,25 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 // write and flush is a session of its own and must end in CBoot's STATUS 0
 // before the next one starts. Then it flushes again and cold-boots.
 //
-// Crash ordering: every flash is a whole first flash, so an interrupted one
-// is recovered by flashing again from the start. The order only has to keep
-// a half-written eMMC from booting:
-//   - The GPT write erases the boot device, where the BCT lives, before it
-//     sanitizes the user area and writes the GPTs. From then on the eMMC
-//     has no BCT.
-//   - Every other write is confirmed by CBoot and then flushed before the
-//     BCT is written, so the BCT can't reach the eMMC ahead of anything it
-//     describes, however CBoot buffers writes.
-//   - The BCT is flushed in turn. Until it lands the eMMC has no BCT, and the
-//     boot ROM boots nothing from it. A BCT cut short fails its own CMAC,
-//     which the boot ROM presumably treats the same way.
-//   - Recovery mode belongs to the boot ROM, which enters it on the
-//     recovery strap, so `jetson-flash flash` can always start over.
+// Crash ordering. Recovery from an interrupted flash rests on two things:
+//   - The recovery strap puts the module into the boot ROM's USB recovery
+//     mode, which is in mask ROM, whatever the eMMC holds. Nothing
+//     jetson-flash sends can change that: it sends no fuse commands, and no
+//     OEM command but type 1.
+//   - Every run is a whole first flash from scratch, and depends on nothing
+//     already on the eMMC.
 //
-// All of that is observed on the bench (2026-11-08), not documented by
-// NVIDIA. CBoot's console showed the erase order. A blank module showed
-// nothing on power-on, and entered recovery mode on the strap. We haven't
-// seen the boot ROM fall back to recovery mode by itself, and nothing
-// relies on it. The flush before the BCT is pending bench confirmation:
-// CBoot hasn't yet been seen to take a write after a flush.
+// So whatever an interrupted flash leaves behind, strapping the module and
+// running `jetson-flash flash` again recovers it.
+//
+// Writing the BCT last, after every other write is confirmed and flushed,
+// is a best effort so that a plain power-on doesn't run a half-written boot
+// chain; recovery doesn't depend on it. Not yet observed: what a module does
+// on a plain power-on after the GPT write or part-way through a flash;
+// whether a boot-device erase cut short leaves an old BCT copy behind; and
+// whether the boot ROM rejects a torn BCT. The flush before the BCT is
+// pending bench confirmation: CBoot hasn't yet been seen to take a write
+// after a flush.
 func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (l4t.FirstFlash, error), app *io.SectionReader, out, log io.Writer) error {
 	if err := bootToServer(open, bc, out, log); err != nil {
 		return err
@@ -185,19 +190,22 @@ func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (
 		return nil
 	}
 
+	partlyWritten := func(err error) error {
+		return fmt.Errorf("%w; the module's eMMC may now be partly written, so it may not boot: put it back into recovery mode by power-cycling it with its recovery strap held (on a Turing Pi 2: tpi usb flash -n N --bmc, tpi power -n N off, wait 10 s, tpi power -n N on) and run jetson-flash flash again", err)
+	}
 	for _, p := range slices.Concat([]l4t.Partition{{Name: "GPT", Data: ff.GPT}}, ff.Partitions) {
 		if err := write(p); err != nil {
-			return err
+			return partlyWritten(err)
 		}
 	}
 	if err := flush(); err != nil {
-		return err
+		return partlyWritten(err)
 	}
 	if err := write(l4t.Partition{Name: "BCT", Data: ff.BCT}); err != nil {
-		return err
+		return partlyWritten(err)
 	}
 	if err := flush(); err != nil {
-		return err
+		return partlyWritten(err)
 	}
 
 	_, _ = fmt.Fprintln(out, "== restarting the module")
@@ -211,25 +219,22 @@ func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("restarting the module: %w", err)
+		return fmt.Errorf("restarting the module: %w; everything is written and flushed, so release the recovery strap and power-cycle the module to boot the new image", err)
 	}
 	_, _ = fmt.Fprintln(out, "done: the module is booting the new image")
 	return nil
 }
 
-// oemStorageQuery is the whole 48-byte argument buffer of the only OEM
-// command jetson-flash sends: type 1 (platform details), sub-command 1
-// (storage). Never send another type: type 9 provisions the eMMC's RPMB
-// key, which can never be undone (bench, 2026-11-08).
-var oemStorageQuery = [48]byte{0: 1, 4: 1}
-
-// storage asks CBoot's flashing server for the eMMC's size. It replies
-// {u64 0; u32 sectors; u32 sector size} for the boot device, then the same
-// for the user area.
+// storage asks CBoot's flashing server for the eMMC's size with OEM type 1
+// (platform details), sub-command 1 (storage), in the whole 48-byte argument
+// buffer. It replies {u64 0; u32 sectors; u32 sector size} for the boot
+// device, then the same for the user area.
 func (s *session) storage() (l4t.Storage, error) {
 	var reply []byte
 	s.onData = func(b []byte) { reply = append(reply, b...) }
-	if err := s.command(cmdOEM, oemStorageQuery[:]); err != nil {
+	args := make([]byte, 48)
+	args[0], args[4] = 1, 1
+	if err := s.command(cmdOEM, args); err != nil {
 		return l4t.Storage{}, err
 	}
 	if err := s.drain(replyTimeout); err != nil {

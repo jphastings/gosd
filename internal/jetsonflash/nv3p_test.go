@@ -86,3 +86,14 @@ func TestStatusMessageEndsAtTheFirstNUL(t *testing.T) {
 		t.Errorf("message %q, want %q", msg, "bad")
 	}
 }
+
+// Type 9 permanently provisions the eMMC's RPMB key; nothing may send it.
+func TestCommandSendsNoOEMCommandButType1(t *testing.T) {
+	for _, args := range [][]byte{le32s(9), le32s(0x0f), nil, {1}} {
+		dev := &fakeDevice{}
+		s := &session{c: dev, log: io.Discard}
+		if err := s.command(cmdOEM, args); err == nil || len(dev.out) != 0 {
+			t.Errorf("args % x: got %v after %d transfers, want a refusal with nothing sent", args, err, len(dev.out))
+		}
+	}
+}

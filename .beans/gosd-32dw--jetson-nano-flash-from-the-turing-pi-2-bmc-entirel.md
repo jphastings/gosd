@@ -122,22 +122,31 @@ Found by device experiments alone, reading CBoot's console as they ran. No NVIDI
 - **Licence.** On a cache miss that needs a download, `flash` shows `Kit.LicenseURL` and asks `[y/N]` on a terminal. `--accept-nvidia-license` skips the prompt. With no terminal and no flag it stops, naming the flag and the URL. `--kit` and a cache hit never ask: a `--kit` copy came from NVIDIA's own page.
 - **Cache.** The kit's extracted members (about 2.4 MB) live under `os.UserCacheDir()/gosd/l4t/<kit sha256>/`. They are the user's own download, never redistributed. A copy is written and synced in a temporary directory, then renamed into place, so a write cut short is never read back as complete. Each flash prunes everything else there, best-effort, and a failed cache write only prints a note.
 - **Every member has a pinned sha256** in `l4t.R32_7_6.Members`, keyed by its path in the kit, after gosd-1jjh's precedent. `Kit.Read` checks the pins behind the kit's own sha256. Every cache read checks them too. A cached copy with a member missing or mismatched is deleted, never used: `flash` prints one line saying why, and falls back to `--kit` or a download, with the licence prompt.
-- **`probe` refuses OEM command `0x05`** unless its args start with type 1, at parse time, before anything is sent. A range covering `0x05` is refused too. CBoot pads short args with whatever its buffer held, so the type can't be left out.
-- **Fail fast before USB.** Before it waits for the module, `flash` checks that the image has an MBR, isn't truncated and that its boot partition fits `APP` (14 GiB). It also gets the kit, from the cache, the licence prompt and a download, or `--kit`, and builds the boot chain.
+- **No OEM command but type 1 is ever sent.** The guard is at the choke point, `session.command`: a `0x05` whose args don't start with u32 type 1 is refused with nothing sent. `probe` runs the same check at parse time, so a bad spec, or a range covering `0x05`, fails before any USB. Short args are refused too, since CBoot pads them with whatever its buffer held.
+- **Fail fast before USB.** Before it waits for the module, `flash` does all of this:
+  - It checks the image: it has an MBR, its partition 1 has type `0x0c` (FAT32, exactly what `internal/image` writes), it isn't truncated, and its boot partition fits `APP` (14 GiB).
+  - It refuses a host that isn't Linux, before any licence prompt or download.
+  - It gets the kit: from the cache, or the licence prompt and a download, or `--kit`.
+  - It builds the boot chain.
+- **A failure after the `GPT` write has started says how to recover.** The message keeps its cause, then says the eMMC may be partly written and won't reliably boot, and to strap the module back into recovery mode and run `flash` again, with the `tpi` commands.
+- **`Kit.Read` reads at most one byte past the pinned size**, so an endless stream fails the size check instead of running forever.
 - **Each partition write and each flush must end in CBoot's STATUS 0** within 30 s. `drain` used to treat silence as success. On the bench every write's and the flush's reply came well within that, as the UART's half-second gaps between steps show.
 
 ### Crash ordering
 
-Every flash is a whole first flash, so an interrupted one is recovered by flashing again from the start. The order only has to keep a half-written eMMC from booting:
-- The `GPT` write erases the boot device, where the BCT lives, before it sanitizes the user area and writes the GPTs. From then on the eMMC has no BCT.
-- Every other write is confirmed by CBoot and then flushed before the BCT is written. So the BCT can't reach the eMMC ahead of anything it describes, however CBoot buffers writes.
-- The BCT is flushed in turn. Until it lands, the eMMC has no BCT, and the boot ROM boots nothing from it. A BCT cut short fails its own CMAC, which the boot ROM presumably treats the same way.
-- Recovery mode belongs to the boot ROM, which enters it on the recovery strap, so `jetson-flash flash` can always start over.
+Recovery from an interrupted flash rests on two things:
+- **The recovery strap puts the module into the boot ROM's USB recovery mode**, which is in mask ROM, whatever the eMMC holds. Nothing `jetson-flash` sends can change that: it sends no fuse commands, and no OEM command but type 1.
+- **Every run is a whole first flash from scratch**, and depends on nothing already on the eMMC.
 
-**What this rests on is observed, not documented by NVIDIA:**
-- CBoot's console showed the erase order (2026-11-08).
-- A blank module showed nothing on power-on, and entered recovery mode on the strap (bean gosd-9o0m).
-- We haven't seen the boot ROM fall back to recovery mode by itself, and nothing relies on it.
-- **The flush before the BCT is pending bench confirmation.** CBoot hasn't yet been seen to take a write after a flush. Without that flush, a power cut between the BCT's STATUS and the final flush could leave the BCT on the eMMC without everything before it.
+So whatever an interrupted flash leaves behind, strapping the module and running `jetson-flash flash` again recovers it.
+
+Writing the BCT last, after every other write is confirmed and flushed, is a best effort so that a plain power-on doesn't run a half-written boot chain. Recovery doesn't depend on it.
+
+**Not yet observed:**
+- what a module does on a plain power-on after the `GPT` write, or part-way through a flash;
+- whether a boot-device erase cut short leaves an old BCT copy behind;
+- whether the boot ROM rejects a torn BCT.
+
+The flush before the BCT is **pending bench confirmation**: CBoot hasn't yet been seen to take a write after a flush.
 
 The same argument is in `internal/jetsonflash`'s `flash` doc.

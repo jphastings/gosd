@@ -105,7 +105,9 @@ func (k Kit) Open(ctx context.Context, c *http.Client) (io.ReadCloser, error) {
 // decompression is the slow part.
 func (k Kit) Read(r io.Reader) (Inputs, error) {
 	h := sha256.New()
-	raw := &countingReader{r: io.TeeReader(r, h)}
+	// One byte past the pin is enough to fail the size check, so a stream
+	// can't run on forever.
+	raw := &countingReader{r: io.TeeReader(io.LimitReader(r, k.Size+1), h)}
 
 	var in Inputs
 	members := in.members()
