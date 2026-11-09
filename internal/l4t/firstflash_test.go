@@ -371,3 +371,22 @@ func walkPartitionTable(pt []byte) (entries, pointers []int) {
 	}
 	return entries, pointers
 }
+
+// The BCT downloaded in recovery mode is built before the eMMC's size is
+// known, so a user area of another size mustn't change it.
+func TestTheBCTDoesNotDependOnTheUserAreaSize(t *testing.T) {
+	seed := bytes.Repeat([]byte{0x5a}, 4096)
+	build := func(userSectors int64) FirstFlash {
+		ff, err := BuildFirstFlash(syntheticInputs(), Storage{BootSectors: syntheticStorage.BootSectors, UserSectors: userSectors}, time.Unix(0, 0), bytes.NewReader(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ff
+	}
+
+	a, b := build(syntheticStorage.UserSectors), build(syntheticStorage.UserSectors-4096)
+
+	if !bytes.Equal(a.BCT, b.BCT) {
+		t.Error("the BCT changed with the user area's size")
+	}
+}

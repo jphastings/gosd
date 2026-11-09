@@ -23,7 +23,9 @@ type Storage struct {
 // FirstFlash is every file a first flash writes, for a module that has never
 // had NVIDIA's layout on it. CBoot's flashing server takes GPT first, since
 // writing it erases the eMMC and lays out the user area, then Partitions in
-// order, then the BCT.
+// order, then the BCT. The BCT must also be the one downloaded in recovery
+// mode, before the eMMC's size can be read; it depends on the boot device's
+// size but not the user area's.
 type FirstFlash struct {
 	GPT        []byte
 	Partitions []Partition
@@ -59,7 +61,7 @@ func BuildFirstFlash(in Inputs, s Storage, now time.Time, random io.Reader) (Fir
 	if err := l.attach(files); err != nil {
 		return FirstFlash{}, err
 	}
-	bct, err := l.finalBCT(bc.BCT)
+	bct, err := l.finalBCT(bc.bct)
 	if err != nil {
 		return FirstFlash{}, err
 	}

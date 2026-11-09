@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,14 +53,16 @@ func openBoot(t *testing.T, path string) *io.SectionReader {
 
 func bootChain() l4t.BootChain {
 	img := make([]byte, 0x400)
-	return l4t.BootChain{RCM0: make([]byte, 1032), RCM1: make([]byte, 1032), BCT: img, CBoot: img, DTB: img}
+	return l4t.BootChain{RCM0: make([]byte, 1032), RCM1: make([]byte, 1032), CBoot: img, DTB: img}
 }
 
-// sessions scripts the boot sequence, then hands out rest in order.
-func sessions(rest ...*fakeDevice) func() (conn, error) {
+// sessions scripts the boot sequence, then hands out rest in order. It also
+// returns the session the BCT is downloaded in.
+func sessions(rest ...*fakeDevice) (open func() (conn, error), bct *fakeDevice) {
+	bct = &fakeDevice{in: slices.Concat(versionReply(), download(1))}
 	devs := slices.Concat([]*fakeDevice{
 		{in: [][]byte{make([]byte, 16), le32s(rcmVersion), le32s(0)}},
-		{in: slices.Concat(versionReply(), download(1))},
+		bct,
 		{in: slices.Concat(versionReply(), download(1), download(3))},
 		{in: slices.Concat(versionReply(), [][]byte{devicePacket(packetAck, 1, nil)})},
 	}, rest)
@@ -67,13 +70,14 @@ func sessions(rest ...*fakeDevice) func() (conn, error) {
 		d := devs[0]
 		devs = devs[1:]
 		return d, nil
-	}
+	}, bct
 }
 
-// storageSession answers the storage query as the bench module did: 16384
-// boot-device sectors and 30777344 user-area sectors.
-func storageSession() *fakeDevice {
-	reply := slices.Concat(make([]byte, 8), le32s(16384, 512), make([]byte, 8), le32s(30777344, 512))
+// storageSession answers the storage query with an eMMC of the given size;
+// the bench module's was 16384 boot-device sectors and 30777344 user-area
+// sectors.
+func storageSession(bootSectors, userSectors uint32) *fakeDevice {
+	reply := slices.Concat(make([]byte, 8), le32s(bootSectors, 512), make([]byte, 8), le32s(userSectors, 512))
 	return &fakeDevice{in: slices.Concat(versionReply(), [][]byte{
 		devicePacket(packetAck, 1, nil), devicePacket(packetCmd, 9, le32s(0x08, 32)),
 		devicePacket(packetData, 10, reply), devicePacket(packetCmd, 11, le32s(cmdStatus, 0)), nil,
@@ -91,11 +95,15 @@ func TestFlashWritesEveryPartitionAndFlushesItBeforeTheBCT(t *testing.T) {
 	ff := l4t.FirstFlash{
 		GPT:        []byte("gpt"),
 		Partitions: []l4t.Partition{{Name: "PT", Data: []byte("pt")}, {Name: "APP"}, {Name: "DTB", Data: []byte("dtb")}},
-		BCT:        []byte("bct"),
+		BCT:        bctFor(p3448Storage),
 	}
 	var planned l4t.Storage
-	plan := func(s l4t.Storage) (l4t.FirstFlash, error) { planned = s; return ff, nil }
-	query := storageSession()
+	plan := func(s l4t.Storage) (l4t.FirstFlash, error) {
+		planned = s
+		ff.BCT = bctFor(s)
+		return ff, nil
+	}
+	query := storageSession(16384, 30777344)
 	const flushed = ""
 	steps := []struct {
 		write string // the partition written, or flushed
@@ -115,8 +123,16 @@ func TestFlashWritesEveryPartitionAndFlushesItBeforeTheBCT(t *testing.T) {
 	reboot := &fakeDevice{in: slices.Concat(versionReply(), [][]byte{devicePacket(packetAck, 1, nil)}), gone: errors.New("ESHUTDOWN")}
 	var out bytes.Buffer
 
-	if err := flash(sessions(append(devs, reboot)...), bootChain(), plan, openBoot(t, path), &out, io.Discard); err != nil {
+	open, rcm := sessions(append(devs, reboot)...)
+
+	if err := flash(open, bootChain(), plan, openBoot(t, path), &out, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+
+	// CBoot's flashing server finds PT and the rest through the BCT
+	// downloaded in recovery mode, so it must be the BCT written last.
+	if !bytes.Contains(sent(rcm), wire(packetData, 2, bctFor(p3448Storage))) {
+		t.Error("the BCT downloaded in recovery mode isn't the one written last")
 	}
 
 	// OEM type 1, sub-command 1, and nothing else: type 9 would provision
@@ -154,7 +170,7 @@ func TestFlashStopsAtAWriteCBootNeverConfirms(t *testing.T) {
 	ff := l4t.FirstFlash{GPT: []byte("gpt"), Partitions: []l4t.Partition{{Name: "APP"}}, BCT: []byte("bct")}
 	unconfirmed := &fakeDevice{in: slices.Concat(versionReply(), download(1)[:4])}
 	opened := 0
-	devs := sessions(storageSession(), unconfirmed)
+	devs, _ := sessions(storageSession(16384, 30777344), unconfirmed)
 	open := func() (conn, error) { opened++; return devs() }
 
 	err := flash(open, bootChain(), func(l4t.Storage) (l4t.FirstFlash, error) { return ff, nil }, openBoot(t, path), io.Discard, io.Discard)
@@ -167,6 +183,28 @@ func TestFlashStopsAtAWriteCBootNeverConfirms(t *testing.T) {
 	}
 	if opened != 6 {
 		t.Errorf("opened the device %d times, want 6 (boot ROM, three boot steps, the query, GPT) and nothing after", opened)
+	}
+}
+
+// bctFor stands in for a BCT, which depends on the eMMC it's built for.
+func bctFor(s l4t.Storage) []byte { return fmt.Appendf(nil, "bct for %+v", s) }
+
+func TestFlashWritesNothingToAnEMMCItsBCTDoesntDescribe(t *testing.T) {
+	path, _ := gosdImage(t)
+	plan := func(s l4t.Storage) (l4t.FirstFlash, error) {
+		return l4t.FirstFlash{GPT: []byte("gpt"), Partitions: []l4t.Partition{{Name: "APP"}}, BCT: bctFor(s)}, nil
+	}
+	opened := 0
+	devs, _ := sessions(storageSession(8192, 30777344))
+	open := func() (conn, error) { opened++; return devs() }
+
+	err := flash(open, bootChain(), plan, openBoot(t, path), io.Discard, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), "8192-sector boot device") || !strings.Contains(err.Error(), "nothing has been written") {
+		t.Fatalf("want a refusal naming the boot device, got %v", err)
+	}
+	if opened != 5 {
+		t.Errorf("opened the device %d times, want 5 (boot ROM, three boot steps, the query) and no write", opened)
 	}
 }
 

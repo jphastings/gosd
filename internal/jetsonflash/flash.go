@@ -69,8 +69,15 @@ func RunFlash(imagePath string, o FlashOptions, out io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
+	// The GUIDs and the version file's time are drawn once, so that every
+	// plan for the same eMMC is the same, byte for byte.
+	seed := make([]byte, 4096) // ponytail: room for 256 GUIDs; R32.7.6's layout draws 40
+	if _, err := rand.Read(seed); err != nil {
+		return err
+	}
+	now := time.Now()
 	plan := func(s l4t.Storage) (l4t.FirstFlash, error) {
-		return l4t.BuildFirstFlash(in, s, time.Now(), rand.Reader)
+		return l4t.BuildFirstFlash(in, s, now, bytes.NewReader(seed))
 	}
 
 	log := io.Discard
@@ -115,11 +122,24 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 	return io.NewSectionReader(img, start*sectorSize, count*sectorSize), nil
 }
 
+// p3448Storage is the Jetson Nano 16GB eMMC module's (P3448-0002) eMMC as
+// CBoot's storage query reported it on the bench (node 3, 2026-11-08): the
+// boot device (boot0 and boot1), then the user area, in 512-byte sectors.
+var p3448Storage = l4t.Storage{BootSectors: 16384, UserSectors: 30777344}
+
 // flash boots the module into CBoot's flashing server, reads the eMMC's
 // size, and writes plan's first flash for it with app as APP: GPT first,
 // then every partition in NVIDIA's order, then a flush, then the BCT. Each
 // write and flush is a session of its own and must end in CBoot's STATUS 0
 // before the next one starts. Then it flushes again and cold-boots.
+//
+// The server finds the boot device's partitions through the BCT downloaded
+// in recovery mode, so, as in NVIDIA's flash, that is the BCT written last.
+// It has to be built before the eMMC's size can be read, so it is built for
+// p3448Storage's, and the plan is rebuilt for the size the query returns.
+// plan is deterministic, and the BCT doesn't depend on the user area's
+// size, so the two BCTs match unless the boot device differs; then nothing
+// is written.
 //
 // Crash ordering. Recovery from an interrupted flash rests on two things:
 //   - The recovery strap puts the module into the boot ROM's USB recovery
@@ -141,22 +161,30 @@ func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
 // pending bench confirmation: CBoot hasn't yet been seen to take a write
 // after a flush.
 func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (l4t.FirstFlash, error), app *io.SectionReader, out, log io.Writer) error {
-	if err := bootToServer(open, bc, out, log); err != nil {
+	booted, err := plan(p3448Storage)
+	if err != nil {
+		return err
+	}
+	if err := bootToServer(open, bc, booted.BCT, out, log); err != nil {
 		return err
 	}
 
 	_, _ = fmt.Fprintln(out, "== reading the eMMC's size")
 	var storage l4t.Storage
-	err := inSession(open, log, func(s *session) (err error) {
+	err = inSession(open, log, func(s *session) (err error) {
 		storage, err = s.storage()
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("reading the eMMC's size: %w", err)
 	}
+	_, _ = fmt.Fprintf(out, "   boot device %d sectors, user area %d\n", storage.BootSectors, storage.UserSectors)
 	ff, err := plan(storage)
 	if err != nil {
 		return err
+	}
+	if !bytes.Equal(ff.BCT, booted.BCT) {
+		return fmt.Errorf("the module's eMMC has a %d-sector boot device and a %d-sector user area, which need a different BCT from the one it was booted with, built for the Jetson Nano 16GB eMMC module's %d and %d; nothing has been written, so check that module (P3448-0002) is the one attached", storage.BootSectors, storage.UserSectors, p3448Storage.BootSectors, p3448Storage.UserSectors)
 	}
 
 	write := func(p l4t.Partition) error {

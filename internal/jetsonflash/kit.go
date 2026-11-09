@@ -87,7 +87,7 @@ func acceptLicense(kit l4t.Kit, o FlashOptions, out io.Writer) error {
 		return nil
 	}
 	if o.Terminal == nil {
-		return fmt.Errorf("jetson-flash builds the module's boot chain from NVIDIA's L4T kit, whose licence you must accept before it downloads the kit; read %s and, if you accept it, run again with --accept-nvidia-license", kit.LicenseURL)
+		return fmt.Errorf("the module's boot chain is built from NVIDIA's L4T kit, whose licence you must accept before it is downloaded; read %s and, if you accept it, run again with --accept-nvidia-license", kit.LicenseURL)
 	}
 	_, _ = fmt.Fprintf(out, "jetson-flash builds the module's boot chain from NVIDIA's L4T kit, which it downloads from NVIDIA. NVIDIA's licence applies:\n  %s\nDo you accept it? [y/N] ", kit.LicenseURL)
 	answer, _ := bufio.NewReader(o.Terminal).ReadString('\n')

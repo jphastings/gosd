@@ -50,7 +50,7 @@ func TestGoldenAgainstTheRealKit(t *testing.T) {
 	}{
 		"rcm_0": {bc.RCM0, "9eb594faa8f13d1d99368febc15fdf880e744e53716e662de86141ecc81403df"},
 		"rcm_1": {bc.RCM1, "5a299e8df8eccc5db2596f8492e7744ebae99473b2c915cbb1daa279e907c643"},
-		"bct":   {bc.BCT, "f7e6362074bcb8d4408ce2fbf497ceb947b765884b16b69f919bb12fbb84e0ea"},
+		"bct":   {bc.bct, "f7e6362074bcb8d4408ce2fbf497ceb947b765884b16b69f919bb12fbb84e0ea"},
 		"cboot": {bc.CBoot, "9a0a80e58da44538d35a7aa15334f6e8ba9eae97b4a37899de7716a437194f22"},
 		"dtb":   {bc.DTB, "af297f9c8e191dff7f50dcd686f3d8191f9d7fa00b8386c0ba25fea79fffc075"},
 	} {
@@ -157,7 +157,7 @@ func TestFirstFlashMatchesNVIDIAs(t *testing.T) {
 	if err := l.attach(files); err != nil {
 		t.Fatal(err)
 	}
-	bct, err := l.finalBCT(bc.BCT)
+	bct, err := l.finalBCT(bc.bct)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -173,6 +173,19 @@ than a reflash does: just more partitions. What the bench established (node
   build `PT` by dumping raw 32-bit x86 structs, heap pointers included. A
   table carrying string offsets in those words passed
   `PT crc32 and magic check passed`, and the module booted BFS0.
+- **CBoot's flashing server finds the boot device's partitions through the
+  BCT downloaded in recovery mode.** NVIDIA's flash adds the bootloader
+  entries and boot-file info to the BCT (`tegrabct --updatebfsinfo`), then
+  downloads that same file in recovery mode and writes it as `BCT` at the
+  end. Booted with a BCT that lacks them, the server logs `Tboot Info
+  missing from bct`, still takes `GPT`, then refuses `PT` with STATUS 4,
+  `Partition PT not found` (bench, 2026-11-09). `jetson-flash` builds the
+  final BCT before it can query the eMMC, for this module's 16384-sector
+  boot device. The BCT doesn't depend on the user area's size, so only a
+  boot device of another size is refused. A module whose user area isn't
+  30777344 sectors hasn't been flashed yet.
+- **`GPT`'s erase and sanitize took about 0.6 s** on this module, well
+  inside the 30 s `jetson-flash` allows each write.
 - **Normal warnings after a first flash.** `PT: Partition LNX NOT found`,
   `PT: Partition NCT NOT found` and `Error initializing runtime service
   trusty_fast` appear on every boot, including those after NVIDIA's own

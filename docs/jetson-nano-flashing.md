@@ -69,6 +69,7 @@ Do you accept it? [y/N] y
 == downloading ebt and rp1
 == booting CBoot's flashing server
 == reading the eMMC's size
+   boot device 16384 sectors, user area 30777344
 == writing GPT, which erases the eMMC
 == writing PT
    …

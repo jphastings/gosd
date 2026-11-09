@@ -111,7 +111,7 @@ Found by device experiments alone, reading CBoot's console as they ran. No NVIDI
 ### Decisions (JP, 2026-11-08)
 
 - **Every `flash` is a full first flash**, one code path, with no detection of an existing layout. In order, each write in a session of its own:
-  1. Boot CBoot's flashing server with the Go-built boot chain.
+  1. Boot CBoot's flashing server with the Go-built boot chain and the final BCT, built for the P3448-0002's eMMC (see the bench run below).
   2. Query the eMMC's size.
   3. Write `GPT`, which erases the eMMC.
   4. Write every partition in NVIDIA's order, with `APP` taken from the image's MBR partition 1.
@@ -127,10 +127,20 @@ Found by device experiments alone, reading CBoot's console as they ran. No NVIDI
   - It checks the image: it has an MBR, its partition 1 has type `0x0c` (FAT32, exactly what `internal/image` writes), it isn't truncated, and its boot partition fits `APP` (14 GiB).
   - It refuses a host that isn't Linux, before any licence prompt or download.
   - It gets the kit: from the cache, or the licence prompt and a download, or `--kit`.
-  - It builds the boot chain.
+  - It builds the boot chain, and the whole first flash for the P3448-0002's eMMC (16384 boot-device sectors, 30777344 user-area sectors, as measured on node 3), drawing the GUIDs and the version file's time once.
 - **A failure after the `GPT` write has started says how to recover.** The message keeps its cause, then says the eMMC may be partly written and won't reliably boot, and to strap the module back into recovery mode and run `flash` again, with the `tpi` commands.
 - **`Kit.Read` reads at most one byte past the pinned size**, so an endless stream fails the size check instead of running forever.
 - **Each partition write and each flush must end in CBoot's STATUS 0** within 30 s. `drain` used to treat silence as success. On the bench every write's and the flush's reply came well within that, as the UART's half-second gaps between steps show.
+
+### Bench run (2026-11-09, node 3)
+
+- The kit downloaded and decompressed on the BMC in under 6 minutes, in 17 MB of RSS. The boot chain, the storage query (16384 and 30777344 sectors) and `GPT` all worked. `GPT`'s erase and sanitize took about 0.6 s, confirmed 0.44 s after its data, well inside the 30 s `writeSettle`.
+- **The next write, `PT`, failed with STATUS 4, `Partition PT not found`.** The console had also logged `Tboot Info missing from bct`.
+- **CBoot's flashing server finds the boot device's partitions through the BCT downloaded in recovery mode.** NVIDIA's flash runs `tegrabct --updatebfsinfo`, downloads that same BCT in recovery mode and writes it as `BCT` at the end. We had downloaded `l4t.Build`'s bare BCT, with no bootloader entries or boot-file info. The earlier step-by-step run worked because it booted the server with NVIDIA's blob, so with NVIDIA's final BCT.
+- **The fix.** `flash` now builds the whole first flash before it touches USB, for the P3448-0002's measured eMMC, and downloads that plan's BCT in recovery mode. After the storage query it rebuilds the plan for the size the module reports, with the same GUIDs and time. It refuses before any write unless the rebuilt BCT is byte-identical to the downloaded one.
+  - The BCT depends on the boot device's size but not the user area's. That was checked with the real kit, and is pinned by a test: a different user area changes only `gpt.bin`. So only a boot device of another size is refused.
+  - **A module whose user area isn't 30777344 sectors hasn't been flashed yet.**
+  - `BootChain` no longer exports a BCT. The bare one is only what the final BCT is built on.
 
 ### Crash ordering
 

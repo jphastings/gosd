@@ -19,8 +19,9 @@ const (
 
 // bootToServer takes a module from the boot ROM to CBoot's flashing server,
 // reopening the device for each step as NVIDIA's nvaflash.sh runs a separate
-// tool for each. Progress goes to out and the protocol detail to log.
-func bootToServer(open func() (conn, error), bc l4t.BootChain, out, log io.Writer) error {
+// tool for each. The server finds the boot device's partitions through bct.
+// Progress goes to out and the protocol detail to log.
+func bootToServer(open func() (conn, error), bc l4t.BootChain, bct []byte, out, log io.Writer) error {
 	_, _ = fmt.Fprintln(out, "== talking to the boot ROM")
 	err := withConn(open, func(c conn) error {
 		uid, err := bootROM(c, bc.RCM0, bc.RCM1)
@@ -37,7 +38,7 @@ func bootToServer(open func() (conn, error), bc l4t.BootChain, out, log io.Write
 		name string
 		run  func(*session) error
 	}{
-		{"downloading the BCT", func(s *session) error { return s.download("bct", bc.BCT, bctSettle) }},
+		{"downloading the BCT", func(s *session) error { return s.download("bct", bct, bctSettle) }},
 		{"downloading ebt and rp1", func(s *session) error {
 			if err := s.download("ebt", bc.CBoot, quietWait); err != nil {
 				return err
