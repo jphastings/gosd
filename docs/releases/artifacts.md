@@ -19,9 +19,9 @@ versions are added below this heading.
 #### Jetson Nano kernel is now published in artifacts releases
 
 The Jetson Nano's compiled kernel is now attached to artifacts releases,
-alongside every other board's. It boots from the module's onboard eMMC,
-with NVMe support built in. The board isn't buildable via `gosd build` yet;
-that comes in a later step.
+alongside every other board's. It finds the 16GB eMMC module's onboard eMMC
+and has NVMe support built in. The board stays internal until a later
+release makes it available.
 
 ## 0.10.6 (2026-11-08)
 
