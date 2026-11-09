@@ -71,7 +71,9 @@ import (
 //   - v0.10.4: Turing RK1 kernel and U-Boot are now published in
 //     artifacts releases.
 //   - v0.10.5: vsock for hosting VMs in every arm64 kernel.
-const Version = "v0.10.5"
+//   - v0.10.6: Mainline-fleet kernels move to Linux 6.18.60; The Jetson
+//     Nano kernel finds the eMMC module's eMMC.
+const Version = "v0.10.6"
 
 // ManifestSHA256 is the SHA-256 (lowercase hex) of the manifest.json
 // published with the artifacts/<Version> release. It is the trust anchor for
@@ -85,7 +87,7 @@ const Version = "v0.10.5"
 // rewrites both (see docs/artifacts.md); by hand, it is
 //
 //	curl -sfL https://github.com/jphastings/gosd/releases/download/artifacts/<Version>/manifest.json | shasum -a 256
-const ManifestSHA256 = "ae16abda0734218cd06b94a37979590a342c6ab1a5e8a7e704b475d5d00e95cf"
+const ManifestSHA256 = "1256ab9cfa2f04ff087d90b255606f03f8eef86486dc7630be39b077e9f6544c"
 
 // repoSlug is the GitHub repository artifact releases are published to.
 const repoSlug = "jphastings/gosd"
