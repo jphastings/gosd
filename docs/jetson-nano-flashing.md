@@ -1,4 +1,4 @@
-# Putting an app onto a Jetson Nano eMMC module
+# Putting an app, or another OS, onto a Jetson Nano eMMC module
 
 GoSD's `jetson-nano` board is NVIDIA's 16GB eMMC production module
 (P3448-0002, NVIDIA part 900-13448-0020-000). It has no memory card slot,
@@ -8,7 +8,7 @@ nothing on it at all.
 
 `jetson-flash` puts an app on it over the module's USB recovery port. It
 erases the whole eMMC, then writes NVIDIA's boot chain, built on your
-machine from NVIDIA's L4T kit, with your app's boot partition as `APP`. No
+machine from NVIDIA's L4T kit, with your image's filesystem as `APP`. No
 NVIDIA tool runs. Every flash is the same, whether the module is new or
 already runs an app. It never touches the NVMe drive, where `/data` lives.
 
@@ -125,6 +125,58 @@ A good boot shows, in order:
 2. `U-Boot 2020.04-g904285e3a7`.
 3. `Found /extlinux/extlinux.conf`.
 4. Linux starting with GoSD's command line.
+
+## Flashing another OS
+
+`jetson-flash` doesn't care that the image is GoSD's. NVIDIA's U-Boot
+boots whatever `APP` holds, so an image of another OS works if `APP` can
+take it. The image is one of:
+
+- a GPT disk image: `APP` is its partition named `APP`, otherwise its
+  first partition;
+- an MBR disk image: `APP` is its first partition;
+- a bare ext4 or FAT filesystem image.
+
+The chosen filesystem must be FAT or ext4, which is all NVIDIA's U-Boot
+reads, and it must fit in `APP`, which is 14 GiB. `jetson-flash` checks
+both before it touches the module. It writes the filesystem as it is, at
+about 10 MB/s, so a smaller image flashes faster: a 7 GiB one takes about
+12 minutes. Grow it into the rest of `APP` once it's running, with
+`sudo resize2fs /dev/mmcblk0p1`.
+
+The OS has to do the rest. It must carry an `extlinux.conf` for U-Boot to
+find (`/boot/extlinux/extlinux.conf`, or `/extlinux/extlinux.conf` if
+`APP` is its boot partition), and a kernel that runs on the Nano with the
+device tree NVIDIA's boot chain provides, or names its own with an `FDT`
+line.
+
+### JetPack
+
+NVIDIA's own Ubuntu boots this way. JetPack 4.6.6 (L4T R32.7.6, the
+release `jetson-flash`'s boot chain comes from) flashed as a bare ext4
+image comes up to a login prompt. To make that image on a Linux machine,
+follow NVIDIA's guide to the kit, but put the sample root filesystem in a
+loop-mounted ext4 image instead of the kit's `rootfs` directory, and
+don't run `flash.sh`. `apply_binaries.sh` wants `qemu-user-static`
+installed, even on an arm64 machine.
+
+```sh
+cd Linux_for_Tegra
+truncate -s 7G system.img
+mkfs.ext4 -L APP system.img
+sudo mount -o loop system.img rootfs
+sudo tar -xpf Tegra_Linux_Sample-Root-Filesystem_R32.7.6_aarch64.tbz2 -C rootfs
+sudo ./apply_binaries.sh
+sudo ./tools/l4t_create_default_user.sh -u <user> -p <password> -n <hostname> --accept-license
+sudo umount -R rootfs
+jetson-flash flash system.img
+```
+
+`l4t_create_default_user.sh` skips JetPack's first-boot setup, which
+otherwise waits for a keyboard and screen. JetPack never grows its root
+filesystem by itself on the eMMC module: it only does that when `APP` is
+the disk's last partition, and in NVIDIA's eMMC layout `APP` is the
+first.
 
 ## If something goes wrong
 

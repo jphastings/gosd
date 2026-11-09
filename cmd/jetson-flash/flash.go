@@ -13,8 +13,8 @@ func newFlashCmd() *cobra.Command {
 	var trace bool
 	cmd := &cobra.Command{
 		Use:   "flash [flags] <image.img>",
-		Short: "Flash a gosd image onto a Jetson Nano eMMC module in USB recovery mode",
-		Long:  "Erases the module's eMMC, then writes NVIDIA's boot chain, built from NVIDIA's L4T kit, with the image's boot partition as APP.",
+		Short: "Flash an OS image onto a Jetson Nano eMMC module in USB recovery mode",
+		Long:  "Erases the module's eMMC, then writes NVIDIA's boot chain, built from NVIDIA's L4T kit, with the image's filesystem as APP (the 14 GiB partition NVIDIA's U-Boot boots from). The image is a GPT or MBR disk image, taking its partition named APP, else its first, or a bare ext4 or FAT filesystem image.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if trace {

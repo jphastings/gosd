@@ -69,8 +69,8 @@ func BuildFirstFlash(in Inputs, s Storage, now time.Time, random io.Reader) (Fir
 }
 
 const (
-	// AppSize is APP's size in bytes: NVIDIA's default ROOTFSSIZE. GoSD's
-	// boot volume goes in APP.
+	// AppSize is APP's size in bytes: NVIDIA's default ROOTFSSIZE. The
+	// flashed OS's filesystem, which U-Boot boots from, goes in APP.
 	AppSize = 14 << 30
 
 	dtbFile = "kernel_tegra210-p3448-0002-p3449-0000-b00.dtb"
