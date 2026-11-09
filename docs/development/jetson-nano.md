@@ -173,10 +173,60 @@ than a reflash does: just more partitions. What the bench established (node
   build `PT` by dumping raw 32-bit x86 structs, heap pointers included. A
   table carrying string offsets in those words passed
   `PT crc32 and magic check passed`, and the module booted BFS0.
+- **CBoot's flashing server finds the boot device's partitions through the
+  BCT downloaded in recovery mode.** NVIDIA's flash adds the bootloader
+  entries and boot-file info to the BCT (`tegrabct --updatebfsinfo`), then
+  downloads that same file in recovery mode and writes it as `BCT` at the
+  end. Booted with a BCT that lacks them, the server logs `Tboot Info
+  missing from bct`, still takes `GPT`, then refuses `PT` with STATUS 4,
+  `Partition PT not found` (bench, 2026-11-09). `jetson-flash` builds the
+  final BCT before it can query the eMMC, for this module's 16384-sector
+  boot device. The BCT doesn't depend on the user area's size, so only a
+  boot device of another size is refused. A module whose user area isn't
+  30777344 sectors hasn't been flashed yet.
+- **`GPT`'s erase and sanitize took about 0.6 s** on this module, well
+  inside the 30 s `jetson-flash` allows each write.
 - **Normal warnings after a first flash.** `PT: Partition LNX NOT found`,
   `PT: Partition NCT NOT found` and `Error initializing runtime service
   trusty_fast` appear on every boot, including those after NVIDIA's own
   flashes.
+
+### `jetson-flash flash` end to end (2026-11-09, node 3)
+
+With NVIDIA's kit already cached, `jetson-flash flash hello-b.img` took the
+module from an erased eMMC to `gosd hello: listening on [::]:80`. CBoot
+logged `Booting BFS0`, `PT crc32 and magic check passed` and `Using BFS PT
+to query partitions`. Timed from the program's start, with `--trace`:
+
+| Step | Time |
+| --- | --- |
+| Recovery mode to CBoot's flashing server | 2.9 s |
+| `GPT`, from its data to its STATUS, erase and sanitize included | about 1.4 s |
+| The boot device's partitions | about 14 s |
+| `APP` (256 MiB), from the write command to its STATUS | 32 s (about 8 MB/s) |
+| Each flush, to its STATUS | 0.27 s |
+| `BCT`, after the first flush | 0.9 s |
+| Total, to the cold boot | 63 s |
+
+The first run also downloads and unpacks NVIDIA's kit, which took under 6
+minutes on the BMC, in 17 MB of RSS.
+
+- **CBoot's STATUS messages carry stray bytes** after `GPT`, `APP`, `BCT`
+  and the flushes (`"\x96"`, `":\xbd…"`), apparently an uninitialised
+  buffer. The code is 0, and only the code means anything.
+- **With no BCT, the boot ROM falls back to USB recovery by itself.** A
+  flash that stopped just after the `GPT` write left the boot device
+  erased, the user area sanitized and fresh GPTs, with nothing else
+  written. A plain power-on, with the strap released
+  (`tpi usb device -n 3 --bmc`), printed nothing on the console and brought
+  up `0955:7f21` on the BMC's USB. As a control, the same power-on after a
+  complete flash booted the app, with no recovery device. So a flash
+  interrupted after the `GPT` erase can be re-run without the strap. This
+  is observed, not guaranteed. A power-on part-way through the boot
+  device's writes, an erase cut short and a torn BCT haven't been seen, and
+  the strap remains their way back. It also differs from the module straight
+  from the distributor above, which showed no recovery device; why isn't
+  known.
 
 ## Load-address budget: the initramfs is the tight one
 

@@ -10,18 +10,23 @@ import (
 	"strings"
 )
 
-// BootChain is the five signed files the Tegra X1 boot ROM and its recovery
-// applet need to start CBoot's flashing server on a Jetson Nano.
+// BootChain is the signed files the Tegra X1 boot ROM and its recovery
+// applet need to start CBoot's flashing server on a Jetson Nano, all but the
+// BCT. CBoot's flashing server finds the boot device's partitions through
+// the BCT downloaded in recovery mode, so that BCT must be the one a first
+// flash writes, [FirstFlash.BCT], as NVIDIA's own flash downloads it.
 type BootChain struct {
-	RCM0, RCM1, BCT, CBoot, DTB []byte
+	RCM0, RCM1, CBoot, DTB []byte
+	// bct has no bootloader entries or boot-file info: it is what
+	// FirstFlash.BCT is built on, and boots a server that can't find PT.
+	bct []byte
 }
 
 // The module has production fuses and no SBK, so everything is signed with
 // an all-zero AES-CMAC key and nothing is encrypted.
 var zeroKey [16]byte
 
-// Build signs the kit's raw files into a BootChain. The BCT is built without
-// bootloader entries, which booting into recovery does not need.
+// Build signs the kit's raw files into a BootChain.
 func Build(in Inputs) (BootChain, error) {
 	cboot, err := signHeadered("cboot.bin", in.CBoot)
 	if err != nil {
@@ -34,7 +39,7 @@ func Build(in Inputs) (BootChain, error) {
 	return BootChain{
 		RCM0:  rcm(opcodeNoPayload, nil, 0),
 		RCM1:  rcm(opcodeRecoveryApplet, in.Recovery, recoveryLoadAddress),
-		BCT:   bct,
+		bct:   bct,
 		CBoot: cboot,
 		DTB:   wrap("DTB\x00", in.DTB, unspecified),
 	}, nil

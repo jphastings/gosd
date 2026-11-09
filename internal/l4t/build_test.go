@@ -87,10 +87,10 @@ func TestBuildSignsEveryFile(t *testing.T) {
 		t.Error("dtb is not a padded DTB-headed image")
 	}
 
-	if len(bc.BCT) != bctLen {
-		t.Fatalf("BCT is %d bytes, want %d", len(bc.BCT), bctLen)
+	if len(bc.bct) != bctLen {
+		t.Fatalf("BCT is %d bytes, want %d", len(bc.bct), bctLen)
 	}
-	assertSigned(t, "bct", bc.BCT, 0x310, 0x510, 0x2800)
+	assertSigned(t, "bct", bc.bct, 0x310, 0x510, 0x2800)
 }
 
 func TestBuildPlacesSDRAMValuesInFileOrder(t *testing.T) {
@@ -104,7 +104,7 @@ func TestBuildPlacesSDRAMValuesInFileOrder(t *testing.T) {
 		if c.field == 0 {
 			want = 3
 		}
-		if got := binary.LittleEndian.Uint32(bc.BCT[at:]); got != want {
+		if got := binary.LittleEndian.Uint32(bc.bct[at:]); got != want {
 			t.Errorf("SDRAM[%d] field %d at %#x = %#x, want %#x", c.set, c.field, at, got, want)
 		}
 	}

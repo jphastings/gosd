@@ -85,6 +85,11 @@ func parseProbeSpecs(specs []string) ([]probeCmd, error) {
 			return nil, fmt.Errorf("bad probe spec %q (want CMD, CMD:HEXARGS or FIRST-LAST): %w", spec, err)
 		}
 		for c := lo; c <= hi; c++ {
+			if c == cmdOEM {
+				if err := checkOEM(args); err != nil {
+					return nil, fmt.Errorf("bad probe spec %q: %w", spec, err)
+				}
+			}
 			cmds = append(cmds, probeCmd{uint32(c), args})
 		}
 	}
@@ -123,6 +128,9 @@ func probeOne(c conn, pc probeCmd, data io.ReadSeeker, wait time.Duration, out, 
 		return cmdErr, nil
 	}
 	if cmdErr = s.drain(wait); cmdErr != nil || data == nil {
+		return cmdErr, nil
+	}
+	if _, cmdErr = data.Seek(0, io.SeekStart); cmdErr != nil {
 		return cmdErr, nil
 	}
 	if cmdErr = s.stream(data); cmdErr != nil {

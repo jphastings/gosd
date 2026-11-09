@@ -23,7 +23,9 @@ type Storage struct {
 // FirstFlash is every file a first flash writes, for a module that has never
 // had NVIDIA's layout on it. CBoot's flashing server takes GPT first, since
 // writing it erases the eMMC and lays out the user area, then Partitions in
-// order, then the BCT.
+// order, then the BCT. The BCT must also be the one downloaded in recovery
+// mode, before the eMMC's size can be read; it depends on the boot device's
+// size but not the user area's.
 type FirstFlash struct {
 	GPT        []byte
 	Partitions []Partition
@@ -59,7 +61,7 @@ func BuildFirstFlash(in Inputs, s Storage, now time.Time, random io.Reader) (Fir
 	if err := l.attach(files); err != nil {
 		return FirstFlash{}, err
 	}
-	bct, err := l.finalBCT(bc.BCT)
+	bct, err := l.finalBCT(bc.bct)
 	if err != nil {
 		return FirstFlash{}, err
 	}
@@ -67,9 +69,9 @@ func BuildFirstFlash(in Inputs, s Storage, now time.Time, random io.Reader) (Fir
 }
 
 const (
-	// appSize is NVIDIA's default ROOTFSSIZE. GoSD's boot volume goes in APP,
-	// so it fits whatever --boot-size an app picks.
-	appSize = 14 << 30
+	// AppSize is APP's size in bytes: NVIDIA's default ROOTFSSIZE. GoSD's
+	// boot volume goes in APP.
+	AppSize = 14 << 30
 
 	dtbFile = "kernel_tegra210-p3448-0002-p3449-0000-b00.dtb"
 	ptFile  = "crc-flash.xml.bin"
@@ -79,7 +81,7 @@ const (
 // layoutTags are flash.sh's substitutions into the layout template for this
 // module (p3449-0000+p3448-0002, FAB 300 or later).
 var layoutTags = strings.NewReplacer(
-	"APPSIZE", strconv.Itoa(appSize),
+	"APPSIZE", strconv.FormatInt(AppSize, 10),
 	"NXC", "NVC", "NVCTYPE", "bootloader", "NVCFILE", "nvtboot.bin",
 	"TXC", "TBC", "TBCTYPE", "bootloader", "TBCFILE", "nvtboot_cpu.bin",
 	"WX0", "WB0", "WB0TYPE", "WB0", "WB0FILE", "warmboot.bin",

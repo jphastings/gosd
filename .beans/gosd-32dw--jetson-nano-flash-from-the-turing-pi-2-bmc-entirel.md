@@ -5,7 +5,7 @@ status: in-progress
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
-updated_at: 2026-11-08T08:46:10Z
+updated_at: 2026-11-09T07:00:00Z
 parent: gosd-72je
 ---
 
@@ -83,9 +83,12 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
 - [x] Map the server's commands by experiment (`jetson-flash probe`, hidden).
 - [x] Write `APP` and cold-boot into it.
 - [x] A `jetson-flash` command that reflashes `APP` from a gosd `.img`: `jetson-flash flash`. On the bench (2026-11-08, node 3) it reflashed hello A to hello B in 36 s from power-on, reading `APP` straight out of the `.img` with the first flash's blob for the boot chain, and the module came up as hello B (`loglevel=8`).
-- [ ] Offline signing in Go, so no NVIDIA tool runs at all.
-- [ ] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
+- [x] Offline signing in Go, so no NVIDIA tool runs at all.
+  - `flash` builds the boot chain and every partition from NVIDIA's L4T kit with `internal/l4t` (beans gosd-9ned and gosd-le3i); the blob-dir argument, the blob loader and `spike` are gone.
+- [x] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
+  - Every `flash` is now a first flash. As one command it took node 3's module from an erased eMMC to hello B serving HTTP in 63 s (2026-11-09, run 2 below).
 - [ ] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
+  - Acceptance is done (third PR, below). Releases are a later PR.
 
 ### Bench findings (2026-11-08, node 3)
 
@@ -100,3 +103,81 @@ Found by device experiments alone, reading CBoot's console as they ran. No NVIDI
 - **Args longer than a command's struct hang the server.** It ACKs them, then logs `Command receive is failed with error 0x120000` and `hanging in flashing server`, and needs a power cycle. Shorter args are padded with whatever was in its buffer, which is how an empty write revealed its size field.
 - **Reflashing is one write.** Writing hello A's 256 MiB boot partition to `APP` over hello B took 33 s (about 8 MB/s). A cold boot then came up as hello A (identity `43f466623cf1`, `loglevel=7`). So a module NVIDIA's layout is already on needs only the boot chain, whose signed files are the same for every app, one `APP` write and a cold boot.
 - Reading `EKS`, writing the same bytes back and reading it again round-tripped byte for byte. CBoot's `EKS magic header mismatch` warning predates the write.
+
+## A whole first flash, from NVIDIA's kit (third PR)
+
+**Never send CBoot an OEM command (`0x05`) of any type but 1.** Type 9 provisions the eMMC's RPMB key, which can never be changed afterwards; a zero-argument probe did exactly that to node 3's module (2026-11-08). `flash` sends only the storage query, as fixed bytes nothing can vary: type 1 at offset 0, sub-command 1 at offset 4, zeroes to 48 bytes. A test pins them.
+
+### Decisions (JP, 2026-11-08)
+
+- **Every `flash` is a full first flash**, one code path, with no detection of an existing layout. In order, each write in a session of its own:
+  1. Boot CBoot's flashing server with the Go-built boot chain and the final BCT, built for the P3448-0002's eMMC (see the bench run below).
+  2. Query the eMMC's size.
+  3. Write `GPT`, which erases the eMMC.
+  4. Write every partition in NVIDIA's order, with `APP` taken from the image's MBR partition 1.
+  5. Flush. On the bench CBoot took the BCT write after it (2026-11-09, run 2).
+  6. Write the BCT.
+  7. Flush, then cold-boot.
+- **Kit source.** By default `flash` downloads `l4t.R32_7_6` and streams it, never writing the 279 MB kit to disk. `--kit <file.tbz2>` reads a local copy instead. `Kit.Download` became `Kit.Open`, so the caller can watch the stream's progress.
+- **Licence.** On a cache miss that needs a download, `flash` shows `Kit.LicenseURL` and asks `[y/N]` on a terminal. `--accept-nvidia-license` skips the prompt. With no terminal and no flag it stops, naming the flag and the URL. `--kit` and a cache hit never ask: a `--kit` copy came from NVIDIA's own page.
+- **Cache.** The kit's extracted members (about 2.4 MB) live under `os.UserCacheDir()/gosd/l4t/<kit sha256>/`. They are the user's own download, never redistributed. A copy is written and synced in a temporary directory, then renamed into place, so a write cut short is never read back as complete. Each flash prunes everything else there, best-effort, and a failed cache write only prints a note.
+- **Every member has a pinned sha256** in `l4t.R32_7_6.Members`, keyed by its path in the kit, after gosd-1jjh's precedent. `Kit.Read` checks the pins behind the kit's own sha256. Every cache read checks them too. A cached copy with a member missing or mismatched is deleted, never used: `flash` prints one line saying why, and falls back to `--kit` or a download, with the licence prompt.
+- **No OEM command but type 1 is ever sent.** The guard is at the choke point, `session.command`: a `0x05` whose args don't start with u32 type 1 is refused with nothing sent. `probe` runs the same check at parse time, so a bad spec, or a range covering `0x05`, fails before any USB. Short args are refused too, since CBoot pads them with whatever its buffer held.
+- **Fail fast before USB.** Before it waits for the module, `flash` does all of this:
+  - It checks the image: it has an MBR, its partition 1 has type `0x0c` (FAT32, exactly what `internal/image` writes), it isn't truncated, and its boot partition fits `APP` (14 GiB).
+  - It refuses a host that isn't Linux, before any licence prompt or download.
+  - It gets the kit: from the cache, or the licence prompt and a download, or `--kit`.
+  - It builds the boot chain, and the whole first flash for the P3448-0002's eMMC (16384 boot-device sectors, 30777344 user-area sectors, as measured on node 3), drawing the GUIDs and the version file's time once.
+- **A failure after the `GPT` write has started says how to recover.** The message keeps its cause, then says the eMMC may be partly written and won't reliably boot, and to strap the module back into recovery mode and run `flash` again, with the `tpi` commands.
+- **`Kit.Read` reads at most one byte past the pinned size**, so an endless stream fails the size check instead of running forever.
+- **Each partition write and each flush must end in CBoot's STATUS 0** within 30 s. `drain` used to treat silence as success. On the bench (run 2) every STATUS came well within that: `GPT`'s about 1.4 s after its data, erase and sanitize included, and each flush's in 0.27 s.
+
+### Bench runs (2026-11-09, node 3)
+
+**Run 1 failed, and found the BCT bug:**
+- The kit downloaded and decompressed on the BMC in under 6 minutes, in 17 MB of RSS. The boot chain, the storage query (16384 and 30777344 sectors) and `GPT` all worked. `GPT`'s erase and sanitize took about 0.6 s, confirmed 0.44 s after its data, well inside the 30 s `writeSettle`.
+- **The next write, `PT`, failed with STATUS 4, `Partition PT not found`.** The console had also logged `Tboot Info missing from bct`.
+- **CBoot's flashing server finds the boot device's partitions through the BCT downloaded in recovery mode.** NVIDIA's flash runs `tegrabct --updatebfsinfo`, downloads that same BCT in recovery mode and writes it as `BCT` at the end. We had downloaded `l4t.Build`'s bare BCT, with no bootloader entries or boot-file info. The earlier step-by-step run worked because it booted the server with NVIDIA's blob, so with NVIDIA's final BCT.
+- **The fix.** `flash` now builds the whole first flash before it touches USB, for the P3448-0002's measured eMMC, and downloads that plan's BCT in recovery mode. After the storage query it rebuilds the plan for the size the module reports, with the same GUIDs and time. It refuses before any write unless the rebuilt BCT is byte-identical to the downloaded one.
+  - The BCT depends on the boot device's size but not the user area's. That was checked with the real kit, and is pinned by a test: a different user area changes only `gpt.bin`. So only a boot device of another size is refused.
+  - **A module whose user area isn't 30777344 sectors hasn't been flashed yet.**
+  - `BootChain` no longer exports a BCT. The bare one is only what the final BCT is built on.
+
+**Run 2 succeeded:** the fixed binary (sha256 `da5053b5…`) flashed `hello-b.img` with `--trace`, without `--accept-nvidia-license`, and with no terminal.
+- **The cache was hit:** `== using NVIDIA's L4T kit, cached in /root/.cache/gosd/l4t/865717…`. There was no download and no licence prompt, as designed.
+- **The whole flash worked.** The storage query reported 16384 and 30777344 sectors, then came `GPT`, `PT` … `VER`, `APP` (256 MiB), `DTB` … `RP4`, a flush, `BCT`, a flush and a cold boot. It printed `done` and exited 0.
+- **The module booted.** CBoot logged `Booting BFS0`, `PT crc32 and magic check passed` and `Using BFS PT to query partitions`. Then came U-Boot, Linux 6.18.60 and gosd-init with its boot partition on `/dev/mmcblk0p1`, and `gosd hello: listening on [::]:80`. `/data` fell back to read-only because node 3's M.2 slot is empty, which is expected there.
+- **Timings, from the program's start:**
+  - recovery mode to CBoot's flashing server: 2.9 s;
+  - `GPT` from its data to its STATUS, erase and sanitize included: about 1.4 s;
+  - the boot device's partitions: about 14 s;
+  - `APP`, 256 MiB, from the write command to its STATUS: 32 s, about 8 MB/s;
+  - each flush's STATUS: 0.27 s;
+  - `BCT` after the first flush, accepted and confirmed: 0.9 s;
+  - in total, 63 s to the cold boot.
+- **CBoot's STATUS messages carry stray bytes**, such as `"\x96"` and `":\xbd…"`, apparently an uninitialised buffer. The code is 0, and only the code matters.
+
+**An interrupted flash, then a plain power-on:**
+- Run 1 stopped right after the `GPT` write. The boot device was erased, the user area sanitized and the GPTs fresh, with nothing else written.
+- Node 3 was then powered on normally, with the strap released (`tpi usb device -n 3 --bmc`). The console printed nothing, and the boot ROM's recovery device, `0955:7f21`, appeared on the BMC's USB by itself.
+- As a control, the same power-on after run 2's complete flash booted hello B to `listening`, with no recovery device. So `tpi usb device … --bmc` does release the strap.
+- **So with no BCT, the boot ROM falls back to USB recovery by itself**, and a flash interrupted after the `GPT` erase can be re-run without the strap. This is observed, not guaranteed.
+
+### Crash ordering
+
+Recovery from an interrupted flash rests on two things:
+- **The recovery strap puts the module into the boot ROM's USB recovery mode**, which is in mask ROM, whatever the eMMC holds. Nothing `jetson-flash` sends can change that: it sends no fuse commands, and no OEM command but type 1.
+- **Every run is a whole first flash from scratch**, and depends on nothing already on the eMMC.
+
+So whatever an interrupted flash leaves behind, strapping the module and running `jetson-flash flash` again recovers it.
+
+**Observed, not guaranteed:** with no BCT, the boot ROM falls back to USB recovery by itself (run 1, with run 2 as the control, above). So a flash interrupted after the `GPT` erase needs no strap to re-run.
+
+**Still unobserved**, so the strap is their backstop:
+- a power-on part-way through the boot device's writes;
+- a boot-device erase cut short, which may leave an old BCT copy behind;
+- a BCT torn part-way.
+
+Writing the BCT last, after every other write is confirmed and flushed, then flushing it too, is a best effort so that a plain power-on doesn't run a half-written boot chain. Recovery doesn't depend on it. On the bench (run 2), CBoot took the BCT write after the first flush, and both flushes ended in a STATUS.
+
+The same argument is in `internal/jetsonflash`'s `flash` doc.

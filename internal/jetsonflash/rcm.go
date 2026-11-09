@@ -60,18 +60,6 @@ func bootROM(c conn, rcm0, rcm1 []byte) ([]byte, error) {
 	return uid, nil
 }
 
-// checkRCM applies the boot ROM's own pre-signature checks to a signed RCM
-// message, so a wrong file fails here rather than after a power-cycle.
-func checkRCM(m []byte) error {
-	if len(m) < 4 || int64(le32(m)) != int64(len(m)) {
-		return errors.New("its length field doesn't match its size")
-	}
-	if l := len(m); l < 0x400 || l >= 0x302a8 || l&0xf != 8 {
-		return fmt.Errorf("its length, %d bytes, isn't one the boot ROM accepts", l)
-	}
-	return nil
-}
-
 // brCID renders a UID the way NVIDIA's tools print it, as one
 // little-endian 128-bit number, so it can be compared with their logs.
 func brCID(uid []byte) string {
