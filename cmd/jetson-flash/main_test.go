@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestFlashRefusesAFileThatIsntAGosdImage(t *testing.T) {
+func TestFlashRefusesAFileThatIsntAFlashableImage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "blank.img")
 	if err := os.WriteFile(path, make([]byte, 4096), 0o644); err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestFlashRefusesAFileThatIsntAGosdImage(t *testing.T) {
 	root.SetArgs([]string{"flash", path})
 
 	err := root.Execute()
-	if err == nil || !strings.Contains(err.Error(), "isn't a gosd image") {
-		t.Fatalf("want a not-a-gosd-image error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "can't flash") {
+		t.Fatalf("want a refusal, got %v", err)
 	}
 }

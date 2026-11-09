@@ -1,4 +1,4 @@
-# Putting an app onto a Jetson Nano eMMC module
+# Putting an app, or another OS, onto a Jetson Nano eMMC module
 
 GoSD's `jetson-nano` board is NVIDIA's 16GB eMMC production module
 (P3448-0002, NVIDIA part 900-13448-0020-000). It has no memory card slot,
@@ -8,7 +8,7 @@ nothing on it at all.
 
 `jetson-flash` puts an app on it over the module's USB recovery port. It
 erases the whole eMMC, then writes NVIDIA's boot chain, built on your
-machine from NVIDIA's L4T kit, with your app's boot partition as `APP`. No
+machine from NVIDIA's L4T kit, with your image's filesystem as `APP`. No
 NVIDIA tool runs. Every flash is the same, whether the module is new or
 already runs an app. It never touches the NVMe drive, where `/data` lives.
 
@@ -125,6 +125,29 @@ A good boot shows, in order:
 2. `U-Boot 2020.04-g904285e3a7`.
 3. `Found /extlinux/extlinux.conf`.
 4. Linux starting with GoSD's command line.
+
+## Flashing another OS
+
+`jetson-flash` doesn't care that the image is GoSD's. NVIDIA's U-Boot
+boots whatever `APP` holds, so an image of another OS works if `APP` can
+take it. The image is one of:
+
+- a GPT disk image: `APP` is its partition named `APP`, otherwise its
+  first partition;
+- an MBR disk image: `APP` is its first partition;
+- a bare ext4 or FAT filesystem image.
+
+The chosen filesystem must be FAT or ext4, which is all NVIDIA's U-Boot
+reads, and it must fit in `APP`, which is 14 GiB. `jetson-flash` checks
+both before it touches the module. It writes the filesystem as it is, so
+`APP` takes a root filesystem no bigger than the image, and a full-size
+one takes about half an hour, at about 8 MB/s.
+
+The OS has to do the rest. It must carry an `extlinux.conf` for U-Boot to
+find (`/boot/extlinux/extlinux.conf`, or `/extlinux/extlinux.conf` if
+`APP` is its boot partition), and a kernel that runs on the Nano with the
+device tree NVIDIA's boot chain provides, or names its own with an `FDT`
+line.
 
 ## If something goes wrong
 

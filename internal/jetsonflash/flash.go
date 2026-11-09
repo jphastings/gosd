@@ -2,7 +2,8 @@
 // module waiting in USB recovery mode, without NVIDIA's host tools (bean
 // gosd-32dw). It boots the module into CBoot's flashing server with the boot
 // chain internal/l4t builds from NVIDIA's L4T kit, then writes every
-// partition of a first flash, with the image's boot partition as APP.
+// partition of a first flash, with the image's root or boot filesystem as
+// APP.
 package jetsonflash
 
 import (
@@ -14,7 +15,9 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/jphastings/gosd/internal/l4t"
 )
@@ -41,7 +44,7 @@ type FlashOptions struct {
 	Trace io.Writer
 }
 
-// RunFlash writes a gosd image to a Jetson Nano eMMC module in USB recovery
+// RunFlash writes an image to a Jetson Nano eMMC module in USB recovery
 // mode, erasing everything on its eMMC. Everything that can fail without the
 // module is checked before it is touched. Progress goes to out.
 func RunFlash(imagePath string, o FlashOptions, out io.Writer) (err error) {
@@ -50,12 +53,16 @@ func RunFlash(imagePath string, o FlashOptions, out io.Writer) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, img.Close()) }()
-	app, err := bootPartition(img)
+	info, err := img.Stat()
 	if err != nil {
-		return fmt.Errorf("%s isn't a gosd image: %w; build one with `gosd build --board jetson-nano`", imagePath, err)
+		return err
+	}
+	app, err := bootPartition(img, info.Size())
+	if err != nil {
+		return fmt.Errorf("can't flash %s: %w; give it a GPT or MBR disk image, or a bare ext4 or FAT filesystem image", imagePath, err)
 	}
 	if app.Size() > l4t.AppSize {
-		return fmt.Errorf("%s's boot partition is %d MiB, too big for the module's %d MiB APP partition; build it with a smaller --boot-size", imagePath, app.Size()>>20, l4t.AppSize>>20)
+		return fmt.Errorf("can't flash %s: the filesystem it would write as APP is %d MiB, too big for the module's %d MiB APP partition; shrink that filesystem and its partition", imagePath, app.Size()>>20, l4t.AppSize>>20)
 	}
 	if err := hostError(); err != nil {
 		return err
@@ -98,28 +105,112 @@ func RunFlash(imagePath string, o FlashOptions, out io.Writer) (err error) {
 	return flash(open, bc, plan, app, out, log)
 }
 
-// bootPartition returns MBR partition 1 of a disk image as a reader.
-func bootPartition(img io.ReaderAt) (*io.SectionReader, error) {
-	mbr := make([]byte, sectorSize)
-	if _, err := img.ReadAt(mbr, 0); err != nil {
-		return nil, fmt.Errorf("reading its first sector: %w", err)
+// probeSize covers every signature bootPartition reads: the GPT header, a
+// FAT boot sector and an ext4 superblock.
+const probeSize = 2048
+
+// bootPartition returns the part of an image that becomes APP, which NVIDIA's
+// U-Boot scans for extlinux.conf: the partition named APP of a GPT disk
+// image, otherwise its first; partition 1 of an MBR disk image; or the whole
+// of a bare ext4 or FAT filesystem image. The image's own bytes say which
+// it is. The chosen region must hold FAT or ext4, the only filesystems
+// U-Boot reads.
+func bootPartition(img io.ReaderAt, imgSize int64) (*io.SectionReader, error) {
+	head, err := sectorsAt(img, 0)
+	if err != nil {
+		return nil, fmt.Errorf("reading its first sectors: %w", err)
 	}
-	if mbr[510] != 0x55 || mbr[511] != 0xaa {
-		return nil, errors.New("it has no MBR")
+	var start, size int64
+	switch {
+	case string(head[sectorSize:sectorSize+8]) == "EFI PART": // before ext4: its entries start at byte 1024
+		start, size, err = gptApp(img, head[sectorSize:])
+	case isFAT(head): // before MBR: a FAT boot sector also ends in 0x55aa
+		size = imgSize
+	case head[510] == 0x55 && head[511] == 0xaa:
+		start = int64(binary.LittleEndian.Uint32(head[0x1be+8:])) * sectorSize
+		size = int64(binary.LittleEndian.Uint32(head[0x1be+12:])) * sectorSize
+		if size == 0 {
+			return nil, errors.New("its first partition is empty")
+		}
+	case isExt4(head):
+		size = imgSize
+	default:
+		return nil, errors.New("it has no GPT, no MBR and no ext4 or FAT filesystem at its start")
 	}
-	// internal/image writes exactly this type for the boot partition.
-	if typ := mbr[0x1be+4]; typ != 0x0c {
-		return nil, fmt.Errorf("its first partition has type %#02x, not a gosd boot partition's FAT32 (0x0c)", typ)
+	if err != nil {
+		return nil, err
 	}
-	start := int64(binary.LittleEndian.Uint32(mbr[0x1be+8:]))
-	count := int64(binary.LittleEndian.Uint32(mbr[0x1be+12:]))
-	if count == 0 {
-		return nil, errors.New("its first partition is empty")
+	if start+size > imgSize {
+		return nil, errors.New("it ends before its partition does, so it's probably truncated")
 	}
-	if _, err := img.ReadAt(make([]byte, 1), (start+count)*sectorSize-1); err != nil {
-		return nil, errors.New("it ends before its first partition does, so it's probably truncated")
+	fs, err := sectorsAt(img, start)
+	if err != nil {
+		return nil, fmt.Errorf("reading the partition it would write as APP: %w", err)
 	}
-	return io.NewSectionReader(img, start*sectorSize, count*sectorSize), nil
+	if !isFAT(fs) && !isExt4(fs) {
+		return nil, errors.New("the partition it would write as APP holds neither FAT nor ext4, the only filesystems NVIDIA's U-Boot reads")
+	}
+	return io.NewSectionReader(img, start, size), nil
+}
+
+// sectorsAt reads probeSize bytes at off, zero-filled past the image's end.
+func sectorsAt(img io.ReaderAt, off int64) ([]byte, error) {
+	b := make([]byte, probeSize)
+	if _, err := img.ReadAt(b, off); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return b, nil
+}
+
+func isFAT(b []byte) bool {
+	return string(b[0x52:0x5a]) == "FAT32   " || string(b[0x36:0x39]) == "FAT"
+}
+
+func isExt4(b []byte) bool { return binary.LittleEndian.Uint16(b[1080:]) == 0xef53 }
+
+// gptApp finds the byte range of the partition named APP in a GPT whose
+// header is hdr, or else of its first partition.
+func gptApp(img io.ReaderAt, hdr []byte) (start, size int64, err error) {
+	entriesAt := int64(binary.LittleEndian.Uint64(hdr[72:]))
+	count := int64(binary.LittleEndian.Uint32(hdr[80:]))
+	entrySize := int64(binary.LittleEndian.Uint32(hdr[84:]))
+	if entrySize < 128 || count*entrySize > 1<<20 || entriesAt>>40 != 0 {
+		return 0, 0, errors.New("its GPT is malformed")
+	}
+	entries := make([]byte, count*entrySize)
+	if _, err := img.ReadAt(entries, entriesAt*sectorSize); err != nil {
+		return 0, 0, errors.New("it ends before its GPT's partition entries do, so it's probably truncated")
+	}
+	var chosen []byte
+	for i := int64(0); i < count; i++ {
+		e := entries[i*entrySize : (i+1)*entrySize]
+		if !slices.ContainsFunc(e[:16], func(b byte) bool { return b != 0 }) {
+			continue
+		}
+		if chosen == nil {
+			chosen = e
+		}
+		if gptName(e[56:128]) == appPartition {
+			chosen = e
+			break
+		}
+	}
+	if chosen == nil {
+		return 0, 0, errors.New("its GPT has no partitions")
+	}
+	first, last := binary.LittleEndian.Uint64(chosen[32:]), binary.LittleEndian.Uint64(chosen[40:])
+	if last < first || last>>40 != 0 {
+		return 0, 0, errors.New("its GPT has a partition with an impossible size")
+	}
+	return int64(first) * sectorSize, int64(last-first+1) * sectorSize, nil
+}
+
+func gptName(b []byte) string {
+	units := make([]uint16, len(b)/2)
+	for i := range units {
+		units[i] = binary.LittleEndian.Uint16(b[2*i:])
+	}
+	return strings.TrimRight(string(utf16.Decode(units)), "\x00")
 }
 
 // p3448Storage is the Jetson Nano 16GB eMMC module's (P3448-0002) eMMC as

@@ -12,43 +12,137 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/jphastings/gosd/internal/l4t"
 )
 
-// gosdImage is an MBR whose partition 1 starts at sector 2 and holds two
-// sectors of recognisable bytes, with a sector of other content after it.
-func gosdImage(t *testing.T) (path string, boot []byte) {
-	t.Helper()
-	boot = bytes.Repeat([]byte{0xb0}, 2*sectorSize)
-	path = filepath.Join(t.TempDir(), "app.img")
-	if err := os.WriteFile(path, slices.Concat(mbr(2, 2), make([]byte, sectorSize), boot, make([]byte, sectorSize)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path, boot
+// fatFS and ext4FS are four sectors that carry just the signatures
+// bootPartition looks for, then recognisable filler.
+func fatFS() []byte  { return fsWith(0x52, []byte("FAT32   ")) }
+func ext4FS() []byte { return fsWith(1080, []byte{0x53, 0xef}) }
+
+func fsWith(at int, magic []byte) []byte {
+	b := bytes.Repeat([]byte{0xb0}, 4*sectorSize)
+	copy(b, make([]byte, 1024))
+	copy(b[at:], magic)
+	return b
 }
 
-func mbr(start, sectors uint32) []byte {
+// mbrImage is an MBR whose partition 1 starts at sector 2, with a sector of
+// other content after it.
+func mbrImage(typ byte, fs []byte) []byte {
 	b := make([]byte, sectorSize)
-	b[0x1be+4] = 0x0c // FAT32 with LBA, as internal/image writes
-	binary.LittleEndian.PutUint32(b[0x1be+8:], start)
-	binary.LittleEndian.PutUint32(b[0x1be+12:], sectors)
+	b[0x1be+4] = typ
+	binary.LittleEndian.PutUint32(b[0x1be+8:], 2)
+	binary.LittleEndian.PutUint32(b[0x1be+12:], uint32(len(fs)/sectorSize))
 	b[510], b[511] = 0x55, 0xaa
-	return b
+	return slices.Concat(b, make([]byte, sectorSize), fs, make([]byte, sectorSize))
+}
+
+type gptPart struct {
+	name string
+	fs   []byte
+}
+
+// gptImage has its header at sector 1, four entries at sector 2, and the
+// partitions from sector 3.
+func gptImage(parts ...gptPart) []byte {
+	hdr := make([]byte, sectorSize)
+	copy(hdr, "EFI PART")
+	binary.LittleEndian.PutUint64(hdr[72:], 2)
+	binary.LittleEndian.PutUint32(hdr[80:], 4)
+	binary.LittleEndian.PutUint32(hdr[84:], 128)
+	entries := make([]byte, 4*128)
+	var data []byte
+	next := uint64(3)
+	for i, p := range parts {
+		e := entries[i*128:]
+		e[0] = 1
+		sectors := uint64(len(p.fs) / sectorSize)
+		binary.LittleEndian.PutUint64(e[32:], next)
+		binary.LittleEndian.PutUint64(e[40:], next+sectors-1)
+		for j, u := range utf16.Encode([]rune(p.name)) {
+			binary.LittleEndian.PutUint16(e[56+2*j:], u)
+		}
+		next += sectors
+		data = append(data, p.fs...)
+	}
+	return slices.Concat(make([]byte, sectorSize), hdr, entries, data)
+}
+
+func writeImage(t *testing.T, b []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "app.img")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// gosdImage is an image in gosd's shape: an MBR with a FAT32 partition 1.
+func gosdImage(t *testing.T) (path string, boot []byte) {
+	t.Helper()
+	boot = fatFS()
+	return writeImage(t, mbrImage(0x0c, boot)), boot
 }
 
 func openBoot(t *testing.T, path string) *io.SectionReader {
 	t.Helper()
-	img, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = img.Close() })
-	part, err := bootPartition(img)
+	part, err := bootPartitionOf(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return part
+}
+
+func bootPartitionOf(path string) (*io.SectionReader, error) {
+	img, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := img.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return bootPartition(img, info.Size())
+}
+
+func TestBootPartitionPicksAPPFromEveryImageShape(t *testing.T) {
+	for name, tc := range map[string]struct {
+		image []byte
+		want  []byte // APP's content, or nil if the image must be refused
+		err   string
+	}{
+		"MBR with FAT32 (gosd)":  {mbrImage(0x0c, fatFS()), fatFS(), ""},
+		"MBR with ext4":          {mbrImage(0x83, ext4FS()), ext4FS(), ""},
+		"GPT with APP second":    {gptImage(gptPart{"esp", fatFS()}, gptPart{"APP", ext4FS()}), ext4FS(), ""},
+		"GPT without APP":        {gptImage(gptPart{"rootfs", fatFS()}, gptPart{"data", ext4FS()}), fatFS(), ""},
+		"bare ext4":              {ext4FS(), ext4FS(), ""},
+		"bare FAT":               {fatFS(), fatFS(), ""},
+		"no layout":              {make([]byte, 4*sectorSize), nil, "no GPT, no MBR and no ext4"},
+		"MBR with other content": {mbrImage(0x83, fsWith(0, nil)), nil, "neither FAT nor ext4"},
+		"GPT with other content": {gptImage(gptPart{"APP", fsWith(0, nil)}), nil, "neither FAT nor ext4"},
+		"MBR cut short":          {mbrImage(0x83, ext4FS())[:5*sectorSize], nil, "truncated"},
+		"GPT with no partitions": {gptImage(), nil, "no partitions"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			part, err := bootPartitionOf(writeImage(t, tc.image))
+
+			if tc.want == nil {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("got %v, want an error mentioning %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := io.ReadAll(part); !bytes.Equal(got, tc.want) {
+				t.Errorf("APP isn't the expected filesystem (%d bytes, want %d)", len(got), len(tc.want))
+			}
+		})
+	}
 }
 
 func bootChain() l4t.BootChain {
@@ -208,35 +302,19 @@ func TestFlashWritesNothingToAnEMMCItsBCTDoesntDescribe(t *testing.T) {
 	}
 }
 
-func TestRunFlashRefusesABadImageBeforeTouchingAnything(t *testing.T) {
-	tooBig := uint32(l4t.AppSize/sectorSize + 1)
-	linux := mbr(1, 2)
-	linux[0x1be+4] = 0x83
-	for name, tc := range map[string]struct {
-		mbr  []byte
-		size int64
-		want string
-	}{
-		"not a disk image": {make([]byte, sectorSize), 4 * sectorSize, "isn't a gosd image"},
-		"not FAT32":        {linux, 4 * sectorSize, "isn't a gosd image"},
-		"truncated":        {mbr(1, 8), 4 * sectorSize, "truncated"},
-		"too big for APP":  {mbr(1, tooBig), int64(1+tooBig) * sectorSize, "too big for the module's 14336 MiB APP partition"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "app.img")
-			if err := os.WriteFile(path, tc.mbr, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Truncate(path, tc.size); err != nil {
-				t.Fatal(err)
-			}
+func TestRunFlashRefusesAnImageTooBigForAPPBeforeTouchingAnything(t *testing.T) {
+	sectors := uint32(l4t.AppSize/sectorSize + 1)
+	b := mbrImage(0x0c, fatFS())
+	binary.LittleEndian.PutUint32(b[0x1be+12:], sectors)
+	path := writeImage(t, b)
+	if err := os.Truncate(path, int64(2+sectors)*sectorSize); err != nil {
+		t.Fatal(err)
+	}
 
-			err := RunFlash(path, FlashOptions{}, io.Discard)
+	err := RunFlash(path, FlashOptions{}, io.Discard)
 
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("got %v, want an error mentioning %q", err, tc.want)
-			}
-		})
+	if err == nil || !strings.Contains(err.Error(), "too big for the module's 14336 MiB APP partition") {
+		t.Fatalf("got %v, want a too-big refusal", err)
 	}
 }
 
