@@ -191,6 +191,43 @@ than a reflash does: just more partitions. What the bench established (node
   trusty_fast` appear on every boot, including those after NVIDIA's own
   flashes.
 
+### `jetson-flash flash` end to end (2026-11-09, node 3)
+
+With NVIDIA's kit already cached, `jetson-flash flash hello-b.img` took the
+module from an erased eMMC to `gosd hello: listening on [::]:80`. CBoot
+logged `Booting BFS0`, `PT crc32 and magic check passed` and `Using BFS PT
+to query partitions`. Timed from the program's start, with `--trace`:
+
+| Step | Time |
+| --- | --- |
+| Recovery mode to CBoot's flashing server | 2.9 s |
+| `GPT`, from its data to its STATUS, erase and sanitize included | about 1.4 s |
+| The boot device's partitions | about 14 s |
+| `APP` (256 MiB), from the write command to its STATUS | 32 s (about 8 MB/s) |
+| Each flush, to its STATUS | 0.27 s |
+| `BCT`, after the first flush | 0.9 s |
+| Total, to the cold boot | 63 s |
+
+The first run also downloads and unpacks NVIDIA's kit, which took under 6
+minutes on the BMC, in 17 MB of RSS.
+
+- **CBoot's STATUS messages carry stray bytes** after `GPT`, `APP`, `BCT`
+  and the flushes (`"\x96"`, `":\xbd…"`), apparently an uninitialised
+  buffer. The code is 0, and only the code means anything.
+- **With no BCT, the boot ROM falls back to USB recovery by itself.** A
+  flash that stopped just after the `GPT` write left the boot device
+  erased, the user area sanitized and fresh GPTs, with nothing else
+  written. A plain power-on, with the strap released
+  (`tpi usb device -n 3 --bmc`), printed nothing on the console and brought
+  up `0955:7f21` on the BMC's USB. As a control, the same power-on after a
+  complete flash booted the app, with no recovery device. So a flash
+  interrupted after the `GPT` erase can be re-run without the strap. This
+  is observed, not guaranteed. A power-on part-way through the boot
+  device's writes, an erase cut short and a torn BCT haven't been seen, and
+  the strap remains their way back. It also differs from the module straight
+  from the distributor above, which showed no recovery device; why isn't
+  known.
+
 ## Load-address budget: the initramfs is the tight one
 
 The eMMC module runs the same `p3450-0000` U-Boot build as the dev kit, and

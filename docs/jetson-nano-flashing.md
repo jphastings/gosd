@@ -57,6 +57,10 @@ tpi power -n 4 on
 /mnt/sdcard/jetson-flash flash /mnt/sdcard/myapp-jetson-nano.img
 ```
 
+It takes about a minute once the kit is cached. The first run also
+downloads and unpacks NVIDIA's 266 MiB kit, which took under 6 minutes on a
+Turing Pi 2 BMC.
+
 ```
 jetson-flash builds the module's boot chain from NVIDIA's L4T kit, which it downloads from NVIDIA. NVIDIA's licence applies:
   https://developer.nvidia.com/downloads/embedded/l4t/r32_release_v7.6/t186/tegra_software_license_agreement-tegra-linux.txt

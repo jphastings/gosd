@@ -152,14 +152,20 @@ var p3448Storage = l4t.Storage{BootSectors: 16384, UserSectors: 30777344}
 // So whatever an interrupted flash leaves behind, strapping the module and
 // running `jetson-flash flash` again recovers it.
 //
+// Observed on the bench, not guaranteed (2026-11-09): with no BCT, the boot
+// ROM falls back to USB recovery mode by itself. A flash stopped just after
+// the GPT write, then a plain power-on with the strap released, brought up
+// the recovery device with nothing on the console; the same power-on after
+// a complete flash booted the app. Still unobserved, so the strap is their
+// backstop: a power-on part-way through the boot device's writes, a
+// boot-device erase cut short (which may leave an old BCT copy), and a BCT
+// torn part-way.
+//
 // Writing the BCT last, after every other write is confirmed and flushed,
-// is a best effort so that a plain power-on doesn't run a half-written boot
-// chain; recovery doesn't depend on it. Not yet observed: what a module does
-// on a plain power-on after the GPT write or part-way through a flash;
-// whether a boot-device erase cut short leaves an old BCT copy behind; and
-// whether the boot ROM rejects a torn BCT. The flush before the BCT is
-// pending bench confirmation: CBoot hasn't yet been seen to take a write
-// after a flush.
+// then flushing it too, is a best effort so that a plain power-on doesn't
+// run a half-written boot chain; recovery doesn't depend on it. On the
+// bench, CBoot took the BCT write after the first flush, and both flushes
+// ended in a STATUS.
 func flash(open func() (conn, error), bc l4t.BootChain, plan func(l4t.Storage) (l4t.FirstFlash, error), app *io.SectionReader, out, log io.Writer) error {
 	booted, err := plan(p3448Storage)
 	if err != nil {
