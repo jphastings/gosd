@@ -1,3 +1,14 @@
+## 0.8.10 (2026-11-09)
+
+### Fixes
+
+#### Board images are now built from artifacts v0.10.6
+
+`gosd build` downloads the board kernels and bootloaders published as
+v0.10.6, which brings:
+
+- Mainline-fleet kernels move to Linux 6.18.60
+
 ## 0.8.9 (2026-11-08)
 
 ### Fixes
