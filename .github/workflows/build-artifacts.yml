@@ -568,6 +568,7 @@ jobs:
             dist/cubie-a5e.tar.zst \
             dist/qemu-virt.tar.zst \
             dist/turing-rk1.tar.zst \
+            dist/jetson-nano.tar.zst \
             dist/manifest.json
 
       - name: Upload dist/ for workflow_dispatch inspection
