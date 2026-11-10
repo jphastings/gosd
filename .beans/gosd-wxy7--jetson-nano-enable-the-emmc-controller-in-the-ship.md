@@ -1,7 +1,7 @@
 ---
 # gosd-wxy7
 title: 'Jetson Nano: enable the eMMC controller in the shipped device tree'
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-11-07T20:59:10Z
@@ -17,8 +17,12 @@ Ship a kernel-build DTS patch under `build/boards/jetson-nano/kernel/patches/`, 
 - [x] Disable SDMMC1, the dev kit's SD slot. It isn't on the module, so nothing should probe an empty socket.
 - [x] Pin the `mmcblk` numbering with `aliases`, so `APP` is a predictable `mmcblkNp1`. gosd-init only tries `mmcblk0p1`, `mmcblk1p1` and `vda1`.
 - [x] Check what gosd-init's data candidates (`mmcblk{0,1}p2`) then hit. That's NVIDIA's raw `DTB` partition, so the mount should fail harmlessly, but confirm it. `/data` belongs on the NVMe (see the NVMe data bean).
-- [ ] Do the artifacts release: tag first, bump second.
+- [x] Do the artifacts release: tag first, bump second.
   - Note (2026-11-09): the Jetson tarball first ships in the release after the gosd-uw32 PR 1 change lands; v0.10.6 listed the board but did not upload its tarball.
+  - `artifacts/v0.10.7` carries `jetson-nano.tar.zst`, and #419 pinned it. Verified on 2026-11-10 from main at that pin (`f3dcebe`), three ways:
+    - **Clean machine.** A fresh `HOME` with no `--board` and no `--artifacts-dir` built all eight public boards' `hello` images from a real download in 31 s. An explicit `--board jetson-nano` build also succeeded.
+    - **Offline.** With a dead proxy and `GOPROXY=off`, both builds re-ran entirely from cache.
+    - **Content.** The released `tegra210-p3450-0000.dtb`, run through `dtc -I dtb -O dts`, has `mmc@700b0600` (the eMMC) `okay`, with `mmc0 = "/mmc@700b0600"`. `mmc@700b0000`, `700b0200` and `700b0400` are `disabled`. The released `kernel.config` has `CONFIG_BLK_DEV_NVME=y` and `CONFIG_MMC_SDHCI_TEGRA=y`.
 - [x] Bench (2026-11-07, Turing Pi 2 node 4, kernel v6.18.60 built locally with this patch): `mmc0: new HS400 MMC card at address 0001` (DG4016, 14.7 GiB), `mmcblk0: p1 ... p17` plus `mmcblk0boot0`/`boot1`/`rpmb`, then gosd-init's `boot partition mounted at /boot from /dev/mmcblk0p1`; the app started and served HTTP.
 
 ## Implementation notes
@@ -36,3 +40,9 @@ Ship a kernel-build DTS patch under `build/boards/jetson-nano/kernel/patches/`, 
 Sources:
 - Linux v6.18.60: `arch/arm64/boot/dts/nvidia/tegra210.dtsi`, `tegra210-p2180.dtsi` and `tegra210-p3450-0000.dts`.
 - NVIDIA L4T R32.7.6's device trees as mirrored by OE4T: https://github.com/OE4T/linux-tegra-4.9/tree/oe4t-patches-l4t-r32.7.6/nvidia/platform/t210/porg/kernel-dts (`tegra210-p3448-0002-p3449-0000-b00.dts`, `tegra210-porg-p3448-common.dtsi`, `porg-platforms/tegra210-porg-power-tree-p3448-0000-a00.dtsi`, `porg-platforms/tegra210-porg-pmic-p3448-0000-a00.dtsi`).
+
+## Summary of Changes
+
+- **Device tree:** `build/boards/jetson-nano/kernel/patches/0001-enable-emmc.patch` enables the eMMC module's SDMMC4 and disables SDMMC1 and SDMMC3. It also pins `mmc0` to the eMMC, so gosd-init finds `APP` at `/dev/mmcblk0p1`.
+- **Kernel config:** the fragment requires `CONFIG_EFI_PARTITION` and NVMe support.
+- **Release:** the change shipped in `artifacts/v0.10.7`, which #419 pinned; verified three ways above.
