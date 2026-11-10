@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jphastings/gosd/internal/boards"
 	"github.com/jphastings/gosd/internal/diskfmt"
@@ -1097,5 +1098,43 @@ func TestParseExtraTagsRejectsGosdPrefixedTagEvenForAnUnregisteredBoard(t *testi
 	}
 	if !strings.Contains(err.Error(), "gosd_some_future_board") {
 		t.Errorf("error = %q, want it to name the rejected tag", err)
+	}
+}
+
+func TestBuildHelpGroupsEveryFlagUnderSections(t *testing.T) {
+	cmd := newBuildCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := out.String()
+
+	at := 0
+	for _, marker := range []string{"Flags:", "--build-config", "Runtime:", "--usb-gadget", "User Experience:", "--data-filesystem", "Go build:", "--ldflags", "Advanced:", "--artifacts-dir"} {
+		i := strings.Index(help[at:], marker)
+		if i < 0 {
+			t.Fatalf("%q missing or out of order in help:\n%s", marker, help)
+		}
+		at += i
+	}
+}
+
+func TestEveryFlagAppearsInItsCommandHelp(t *testing.T) {
+	for _, cmd := range []*cobra.Command{newBuildCmd(), newRunCmd(), newBuildKernelCmd(), newBuildExternalCmd()} {
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"--help"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Name != "help" && !strings.Contains(out.String(), "--"+f.Name+" ") {
+				t.Errorf("%s: --%s missing from help", cmd.Name(), f.Name)
+			}
+		})
 	}
 }

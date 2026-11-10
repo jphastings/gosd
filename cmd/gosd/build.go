@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jphastings/gosd/internal/boards"
 	// Registers every board gosd ships, via boardset's init(). Dropping
@@ -85,8 +86,8 @@ const defaultDataFilesystem = "fat32"
 func newBuildCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build [path-to-main-package]",
-		Short: "Cross-compile a Go app and assemble it into a bootable SD-card image",
-		Long: `Cross-compile a Go app and assemble it into a bootable SD-card image.
+		Short: "Cross-compile a Go app into a bootable SD-card image",
+		Long: `Cross-compile a Go app into a bootable SD-card image.
 
 Downloaded board artifacts (kernel/bootloader), the CA bundle, and any
 --ingress binary are cached under your OS user cache dir (e.g.
@@ -100,64 +101,109 @@ not touch the cache at all.`,
 		RunE: runBuild,
 	}
 
-	cmd.Flags().StringVar(&buildConfigFile, "build-config", "",
-		"read build options from this TOML file, so a repository can check in its canonical build: every key is a flag of the same name (a --<section>-<rest> flag lives at [section] rest, and [app] main stands in for the package-path argument), a flag passed on the command line wins per key, and relative paths in the file resolve against the file's own directory (default: gosd-build.toml in the working directory, when one exists); see docs/build-config.md")
-	cmd.Flags().StringArrayVar(&boardIDs, "board", nil,
-		fmt.Sprintf("board to build for (repeatable); omit to build all boards: %s", strings.Join(boards.IDs(), ", ")))
-	cmd.Flags().StringVarP(&output, "output", "o", "",
-		"output .img file when building one board, or output directory when building several")
-	cmd.Flags().StringVar(&configDir, "boot-config-dir", "",
-		fmt.Sprintf("directory of setting files to overlay onto gosd's own %s/ tree: one value per file, each documented by a <name>%s sidecar (its own, or gosd's when the file only overrides a value); the merged tree is written to the boot partition, so a card's owner can edit it in any text editor (default: a %s directory beside the app's main package, when one exists)",
-			configtree.Dir, configtree.DocSuffix, configtree.Dir))
-	cmd.Flags().StringVar(&artifactsDir, "artifacts-dir", "",
-		"directory of local kernel/firmware/bootloader files, checked before falling back to a pinned-URL download")
-	cmd.Flags().StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy); also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
-	cmd.Flags().StringVar(&dataSize, "data-size", defaultDataSize,
-		"size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand' to keep the image small and have the device create the partition on first boot, filling the rest of the card; default 0 omits the partition entirely, so persistent /data is opt-in")
-	cmd.Flags().StringVar(&bootSize, "boot-size", defaultBootSize,
-		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); default 256MiB fits every stock board's kernel/initramfs, but a large app may need more - the build fails with an actionable error naming this flag if it doesn't fit; this size becomes part of the app's on-disk layout, so changing it in a later release erases the data partition on upgrade (see docs/design/upgrade-path.md §0.4)")
-	cmd.Flags().BoolVar(&catalogFlag, "publish-catalog", false,
-		"also emit a Raspberry Pi Imager custom-repository os_list.json (per image, plus a combined file) alongside the built image(s); requires --publish-base-url")
-	cmd.Flags().StringVar(&publishBaseURL, "publish-base-url", "",
-		"absolute http(s) URL the built image(s) will be hosted at, used to build the catalog's download links; required by --publish-catalog, and validated at build time like --app-support-url so a broken (or plaintext-http) link can't reach an end user's Imager")
-	cmd.Flags().BoolVar(&usbGadget, "usb-gadget", false,
-		"boot the board's USB port in peripheral mode, required if your app uses the gadget package (on the Pi Zero 2W this repurposes its only USB port from host to peripheral mode; no effect on Radxa Zero 3E)")
-	cmd.Flags().StringVar(&kernelCfgPath, "kernel-config", "",
-		fmt.Sprintf("developer kernel overlay config, read for its [[firmware]] entries only (default: %s in the working directory, if present)", defaultKernelConfigFile))
-	cmd.Flags().StringArrayVar(&withExternal, "with-external", nil,
-		"prebuilt static executable to bundle into the image at <path>[:<dest>] (repeatable); dest must be absolute, default /bin/<basename of path>; the binary must be a fully static ELF matching each selected board's architecture")
-	cmd.Flags().IntVar(&consoleBaud, "console-baud", 0,
-		"override the serial console baud rate baked into the boot config (e.g. 115200); default: each board's own rate (1500000 on the Rockchip boards, 115200 on the Pi boards) - useful when a USB-serial adapter can't reliably read the default rate (see COMPATIBILITY.md); the UART device itself (ttyS2, etc.) is unaffected, only its rate")
-	cmd.Flags().StringArrayVar(&kernelParams, "kernel-param", nil,
-		"extra kernel command-line parameter to bake into the boot config (repeatable), e.g. --kernel-param snd_bcm2835.enable_hdmi=1; gosd writes it wherever the board's family reads its command line from - cmdline.txt on the Pi boards, extlinux.conf's append line on the others - so one flag covers every board you build for, and a parameter a given board's kernel doesn't recognise is simply inert there; validated for shape only (no whitespace, no newlines, a name before any =), never against a list of known parameters")
-	cmd.Flags().BoolVar(&dataFlush, "data-flush", false,
-		"mount the data partition, and any emmc/disk vfat volume, with the vfat \"flush\" option, pushing a file's data and metadata to the card promptly on close(2); default false uses normal Linux writeback (~30s dirty_expire) for faster writes, which is fine for apps using the documented durable-write pattern (fsync+rename, see docs/runtime.md#making-a-write-durable) - flush trades that write speed for prompter (but still not durable on its own) writeback; override per-device with the card's own config/data_flush setting")
-	cmd.Flags().StringVar(&dataFilesystem, "data-filesystem", defaultDataFilesystem,
-		"filesystem for the writable data partition, fat32 or ext4; default fat32 is readable in any computer's SD card reader, while ext4 is journaled and survives rapid power-off but cannot be read by macOS or Windows hosts; changing it between releases is an on-disk layout change like --boot-size, so an upgrading device's existing data partition is erased and re-established (see docs/design/upgrade-path.md)")
-	cmd.Flags().StringVar(&labelPrefix, "label-prefix", "",
-		fmt.Sprintf("prefix for the two partition volume labels, at most %d characters of [A-Za-z0-9_-]: the partitions are labelled <prefix>%s and <prefix>%s, so a flashed card shows up on a computer named after your app (default: the app's name, truncated to fit); the label is part of the app's on-disk layout like --boot-size, so changing it in a later release erases the data partition on upgrade (see docs/design/upgrade-path.md §0.4)",
-			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
-	cmd.Flags().StringArrayVar(&placeholders, "placeholder", nil,
-		"reserve a fixed-size comment-padded placeholder file on the boot partition at <path>=<size> (e.g. --placeholder backupist.yaml=32KiB, repeatable) and write a <image>.inject.json manifest beside each built image recording the absolute byte ranges a provisioning tool can overwrite with same-length bytes in the downloaded .img without any FAT tooling; see docs/image-injection.md")
-	cmd.Flags().StringArrayVar(&ingressFlags, "ingress", nil,
-		fmt.Sprintf("bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s); the tunnel itself is declared on-device in the card's config/ingress/<value>/ settings - cloudflared is arm64 boards only (its official arm release is GOARM=7 and faults on pi-zero-w's armv6), tailscale-funnel supports every board but needs a data partition (--data-size) to keep its tailnet identity across reboots", strings.Join(ingressAgentNames(), ", ")))
-	cmd.Flags().StringVar(&supportURL, "app-support-url", "",
-		"absolute http(s) URL for your app's support site, baked into config.json; the device points here in LAST_FATAL_ERROR.md when it has no specific fix to suggest (optional, but validated as an absolute http(s) URL at build time - a broken link in a crash report is worse than none)")
-	cmd.Flags().StringVar(&appVersion, "app-version", "",
-		"free-form version string for your app (e.g. 1.4.2), baked into config.json and shown in LAST_FATAL_ERROR.md's image line; a value starting git: instead resolves at build time from your app repository's tags - git:v*.*.* finds the matching tag nearest HEAD, describe-style, strips the pattern's literal prefix, and appends -dirty on an unclean worktree (see docs/build-config.md) - and any other value is never interpreted by gosd (optional - when omitted, the report falls back to the image's content-derived identity alone); --ldflags can reference this resolved value via {{.AppVersion}} to also stamp it into the compiled binary")
-	cmd.Flags().StringVar(&ldflags, "ldflags", "",
-		`arguments for go build's -ldflags, applied to your app's compile only (never gosd-init): e.g. --ldflags="-X main.version={{.AppVersion}}" to stamp --app-version's resolved value (including a git: resolution) into the compiled binary - {{.AppVersion}} is the one template token --ldflags supports; any other {{...}} is refused, and referencing it with no --app-version given is refused too (see docs/build-config.md)`)
-	cmd.Flags().StringVar(&tags, "tags", "",
-		"extra Go build tags for your app's compile (comma- or space-separated, same as go build -tags), merged with - never replacing - gosd's own mandatory gosd/gosd_<board> tags (see docs/board-build-tags.md); a gosd or gosd_-prefixed value is refused, since gosd always adds those tags itself")
-	cmd.Flags().BoolVar(&trimpath, "trimpath", false,
-		"pass -trimpath to your app's go build compile, removing local filesystem paths from the compiled binary")
-	cmd.Flags().StringVar(&gcflags, "gcflags", "",
-		"arguments for go build's -gcflags, applied to your app's compile only (never gosd-init)")
-	cmd.Flags().StringVar(&asmflags, "asmflags", "",
-		"arguments for go build's -asmflags, applied to your app's compile only (never gosd-init)")
+	basics := newFlagSection("Flags")
+	basics.StringVar(&buildConfigFile, "build-config", "",
+		"TOML build config; all options below (eg. --<section>-<key> <value>) can be put in a config file (key = value in a [section]). gosd docs build-config")
+	basics.StringArrayVar(&boardIDs, "board", nil,
+		fmt.Sprintf("board to build for, repeatable (default: all): %s", strings.Join(boards.IDs(), ", ")))
+	basics.StringVarP(&output, "output", "o", "",
+		"output .img file, or directory when building several boards")
+	basics.StringVar(&configDir, "boot-config-dir", "",
+		"directory of default device settings, one value per file. gosd docs config")
+	basics.StringVar(&dataSize, "data-size", defaultDataSize,
+		"size of the writable /data partition (eg. 2GiB), or 'expand' to fill the card; 0 for none")
+
+	runtimeFlags := newFlagSection("Runtime")
+	runtimeFlags.BoolVar(&usbGadget, "usb-gadget", false,
+		"boot with the USB port in peripheral mode, required by the gadget package")
+	runtimeFlags.BoolVar(&dataFlush, "data-flush", false,
+		"write files on FAT volumes to the card on close at runtime; slower, and not as safe as fsync. gosd docs runtime")
+	runtimeFlags.IntVar(&consoleBaud, "console-baud", 0,
+		"serial console baud rate (default: the board's own)")
+	runtimeFlags.StringArrayVar(&kernelParams, "kernel-param", nil,
+		"extra kernel command-line parameter (repeatable)")
+	runtimeFlags.StringArrayVar(&withExternal, "with-external", nil,
+		"static executable to bundle, as <path>[:<dest>] (repeatable). gosd docs externals")
+
+	ux := newFlagSection("User Experience")
+	ux.StringVar(&dataFilesystem, "data-filesystem", defaultDataFilesystem,
+		"/data filesystem: fat32 (readable on any computer) or ext4 (survives power cuts, unreadable on macOS and Windows); changing it in a later release erases /data on update")
+	ux.StringVar(&labelPrefix, "label-prefix", "",
+		"prefix of the card's partition labels (default: the app's name); changing it in a later release erases /data on update")
+	ux.StringArrayVar(&placeholders, "placeholder", nil,
+		"reserve a boot-partition file, as <path>=<size>, to fill in after download in the browser (repeatable). gosd docs image-injection")
+	ux.StringArrayVar(&ingressFlags, "ingress", nil,
+		fmt.Sprintf("expose your app's HTTP service to the internet using %s (repeatable). gosd docs ingress", strings.Join(ingressAgentNames(), " or ")))
+	ux.StringVar(&supportURL, "app-support-url", "",
+		"your app's support URL, shown in crash reports")
+	ux.StringVar(&appVersion, "app-version", "",
+		"your app's version, shown in crash reports; git:v*.*.* reads it from your git tags. gosd docs build-config")
+	ux.BoolVar(&catalogFlag, "publish-catalog", false,
+		"also write a Raspberry Pi Imager catalog; requires --publish-base-url. gosd docs publishing")
+	ux.StringVar(&publishBaseURL, "publish-base-url", "",
+		"URL the images will be hosted at, for the catalog's download links")
+
+	goBuild := newFlagSection("Go build")
+	goBuild.StringVar(&ldflags, "ldflags", "",
+		"go build -ldflags for your app; {{.AppVersion}} expands to --app-version")
+	goBuild.StringVar(&tags, "tags", "",
+		"extra go build -tags for your app. gosd docs board-build-tags")
+	goBuild.BoolVar(&trimpath, "trimpath", false,
+		"go build -trimpath for your app")
+	goBuild.StringVar(&gcflags, "gcflags", "",
+		"go build -gcflags for your app")
+	goBuild.StringVar(&asmflags, "asmflags", "",
+		"go build -asmflags for your app")
+
+	advanced := newFlagSection("Advanced")
+	advanced.StringVar(&artifactsDir, "artifacts-dir", "",
+		"directory of kernel, firmware and bootloader files to use before downloading")
+	advanced.StringVar(&bootSize, "boot-size", defaultBootSize,
+		"size of the boot partition; changing it in a later release erases /data on update")
+	advanced.StringVar(&gosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
+		"build gosd-init, the program that boots your app, from this source directory")
+	advanced.StringVar(&kernelCfgPath, "kernel-config", "",
+		"kernel config whose [[firmware]] entries to bundle. gosd docs custom-kernels")
+
+	useFlagSections(cmd, basics, runtimeFlags, ux, goBuild, advanced)
 
 	return cmd
+}
+
+// flagSection is a titled group of flags in a command's help.
+type flagSection struct {
+	title string
+	*pflag.FlagSet
+}
+
+func newFlagSection(title string) flagSection {
+	flags := pflag.NewFlagSet(title, pflag.ContinueOnError)
+	flags.SortFlags = false
+	return flagSection{title, flags}
+}
+
+// useFlagSections registers every section's flags on cmd and prints them
+// under their titles in its help, in registration order.
+func useFlagSections(cmd *cobra.Command, sections ...flagSection) {
+	all := pflag.NewFlagSet(cmd.Name(), pflag.ContinueOnError)
+	all.SortFlags = false
+	for _, s := range sections {
+		cmd.Flags().AddFlagSet(s.FlagSet)
+		all.AddFlagSet(s.FlagSet)
+	}
+	cmd.SetUsageFunc(func(c *cobra.Command) error {
+		// Rendering every flag at once gives all sections one shared
+		// description column; it prints one line per flag, in section order.
+		lines := strings.Split(all.FlagUsages(), "\n")
+		_, _ = fmt.Fprintf(c.OutOrStderr(), "Usage:\n  %s\n", c.UseLine())
+		for _, s := range sections {
+			n := 0
+			s.VisitAll(func(*pflag.Flag) { n++ })
+			_, _ = fmt.Fprintf(c.OutOrStderr(), "\n%s:\n%s\n", s.title, strings.Join(lines[:n], "\n"))
+			lines = lines[n:]
+		}
+		return nil
+	})
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {

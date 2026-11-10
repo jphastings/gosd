@@ -58,15 +58,15 @@ This command requires Docker or Podman to be installed and running.`,
 	}
 
 	cmd.Flags().StringVar(&externalConfigPath, "config", defaultExternalConfigFile,
-		"gosd-external.toml recipe to build from")
+		"recipe to build from. gosd docs externals")
 	cmd.Flags().StringArrayVar(&externalNames, "name", nil,
-		"external to build (repeatable); omit to build every [external.<name>] recipe in --config")
+		"external to build, repeatable (default: all in --config)")
 	cmd.Flags().StringArrayVar(&externalArchTokens, "arch", nil,
-		fmt.Sprintf("arch to build (repeatable): %s; omit to build every arch each selected recipe declares", strings.Join(sortedArchTokens(), ", ")))
+		fmt.Sprintf("architecture to build, repeatable (default: all the recipe declares): %s", strings.Join(sortedArchTokens(), ", ")))
 	cmd.Flags().StringVarP(&externalOutput, "output", "o", defaultExternalOutputDir,
 		"output directory, written as <output>/<arch>/<name>")
 	cmd.Flags().StringVar(&externalBuilderPref, "builder", "",
-		fmt.Sprintf("container runtime to use: %s or %s (default: the recipe's own [external.<name>].builder, or auto-detect if that's unset too)", container.RuntimeDocker, container.RuntimePodman))
+		fmt.Sprintf("container runtime: %s or %s (default: auto-detect)", container.RuntimeDocker, container.RuntimePodman))
 
 	return cmd
 }
