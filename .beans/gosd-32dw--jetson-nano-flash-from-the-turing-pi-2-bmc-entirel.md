@@ -1,7 +1,7 @@
 ---
 # gosd-32dw
 title: 'jetson-flash: flash a Jetson Nano eMMC module without NVIDIA''s tools'
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-11-07T20:59:10Z
@@ -87,8 +87,8 @@ The binary should be `CGO_ENABLED=0`: `GOARCH=arm GOARM=7` for the BMC, and any 
   - `flash` builds the boot chain and every partition from NVIDIA's L4T kit with `internal/l4t` (beans gosd-9ned and gosd-le3i); the blob-dir argument, the blob loader and `spike` are gone.
 - [x] A first flash of a module NVIDIA's layout isn't on yet: the partition table, every partition, the BCT last.
   - Every `flash` is now a first flash. As one command it took node 3's module from an erased eMMC to hello B serving HTTP in 63 s (2026-11-09, run 2 below).
-- [ ] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
-  - Acceptance is done (third PR, below). Releases are a later PR.
+- [x] Licence acceptance, and releases for `linux/arm`, `linux/arm64` and `linux/amd64`.
+  - Acceptance is done (third PR, below). Releases are the fourth PR, below.
 
 ### Bench findings (2026-11-08, node 3)
 
@@ -181,3 +181,7 @@ So whatever an interrupted flash leaves behind, strapping the module and running
 Writing the BCT last, after every other write is confirmed and flushed, then flushing it too, is a best effort so that a plain power-on doesn't run a half-written boot chain. Recovery doesn't depend on it. On the bench (run 2), CBoot took the BCT write after the first flush, and both flushes ended in a STATUS.
 
 The same argument is in `internal/jetsonflash`'s `flash` doc.
+
+## Summary of Changes
+
+Each `gosd/v*` release now gets `jetson-flash-linux-arm`, `jetson-flash-linux-arm64`, `jetson-flash-linux-amd64` and `jetson-flash-SHA256SUMS` attached by `release-jetson-flash.yml`, which fires on the tag knope pushes. Built `CGO_ENABLED=0 -trimpath`, Linux only. A manual dispatch can re-attach to an existing tag, or, without a tag, upload the files as a workflow artifact for pre-merge testing. The flashing doc now leads with downloading and verifying the prebuilt binary on the BMC.
