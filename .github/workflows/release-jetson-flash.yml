@@ -3,12 +3,15 @@ name: Release jetson-flash
 # Attaches prebuilt jetson-flash binaries to the gosd/v* release knope
 # creates (bean gosd-32dw). Linux only: it talks to usbfs. linux/arm is for
 # the Turing Pi 2 BMC (ARMv7). A dispatch run with a `tag` re-attaches to
-# that release; one without builds the dispatched ref and surfaces the files
-# as a workflow artifact for pre-merge testing.
+# that release; one without, or a PR that edits this file, builds the ref and
+# surfaces the files as a workflow artifact for pre-merge testing.
 on:
   push:
     tags:
       - "gosd/v*"
+  pull_request:
+    paths:
+      - .github/workflows/release-jetson-flash.yml
   workflow_dispatch:
     inputs:
       tag:
