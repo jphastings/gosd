@@ -33,13 +33,13 @@ protocol anyway.
 ## 1. Copy `jetson-flash` and the image to the BMC
 
 `jetson-flash` only runs on Linux, so from a Mac you run it on the BMC. Find
-the newest `gosd/v…` release on [gosd's releases
+the newest `jetson-flash/v…` release on [gosd's releases
 page](https://github.com/jphastings/gosd/releases) and download its prebuilt
 binary on the BMC, replacing `X.Y.Z` with that version:
 
 ```sh
 cd /mnt/sdcard
-BASE=https://github.com/jphastings/gosd/releases/download/gosd/vX.Y.Z
+BASE=https://github.com/jphastings/gosd/releases/download/jetson-flash/vX.Y.Z
 curl -fLO $BASE/jetson-flash-linux-arm
 curl -fLO $BASE/jetson-flash-SHA256SUMS
 grep " jetson-flash-linux-arm$" jetson-flash-SHA256SUMS | sha256sum -c -
