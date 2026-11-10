@@ -23,6 +23,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newCacheCmd())
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newDocsCmd())
 
 	// --version is what people try first, so it prints exactly what the
 	// version subcommand does rather than cobra's bare version string.

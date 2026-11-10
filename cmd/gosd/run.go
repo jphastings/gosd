@@ -18,7 +18,6 @@ import (
 	"github.com/jphastings/gosd/internal/diskfmt"
 	"github.com/jphastings/gosd/internal/image"
 	"github.com/jphastings/gosd/internal/kernelparam"
-	"github.com/jphastings/gosd/internal/naming"
 	"github.com/jphastings/gosd/internal/pipeline"
 	"github.com/jphastings/gosd/internal/qemurun"
 )
@@ -67,37 +66,45 @@ place and prints its path instead.`,
 		RunE: runRun,
 	}
 
-	cmd.Flags().StringVar(&runBuildConfigFile, "build-config", "",
-		"same flag as gosd build's --build-config: read build options from this TOML file (default: gosd-build.toml in the working directory, when one exists); gosd run honours the keys whose flags it mirrors and ignores build-only keys - see docs/build-config.md")
-	cmd.Flags().IntVar(&runPort, "port", qemurun.DefaultPort,
-		"host port forwarded to the guest's HTTP port 80")
-	cmd.Flags().IntVar(&runMemoryMiB, "memory", qemurun.DefaultMemoryMiB,
-		"guest RAM in MiB")
-	cmd.Flags().StringArrayVar(&runQemuArgs, "qemu-arg", nil,
-		"extra argument to pass through to qemu-system-aarch64 (repeatable)")
-	cmd.Flags().BoolVar(&runKeep, "keep", false,
-		"keep the built image and temp build directory after qemu exits, instead of deleting them")
-	cmd.Flags().BoolVar(&runDisplay, "display", false,
-		"open qemu's default host display window (Cocoa on macOS, GTK on Linux) showing the guest's virtio-gpu output; serial console stays on this terminal")
-	cmd.Flags().StringVar(&runConfigDir, "boot-config-dir", "",
-		fmt.Sprintf("same flag as gosd build's --boot-config-dir: a directory of setting files to overlay onto gosd's own %s/ tree (default: a %s directory beside the app's main package, when one exists)", configtree.Dir, configtree.Dir))
-	cmd.Flags().StringVar(&runArtifactsDir, "artifacts-dir", "",
-		"directory containing a local qemu-virt kernel (Image), checked before falling back to a pinned-URL/release download")
-	cmd.Flags().StringVar(&runGosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
-		"directory containing gosd-init's main package source; overrides gosd's normal detection (dev checkout, then module cache) for unusual setups (default: $GOSD_INIT_SRC, the hook package managers use to point at their bundled copy, same as gosd build); also locates cmd/gosd-tsfunnel's source (its gosd-tsfunnel sibling directory) when --ingress tailscale-funnel is selected")
-	cmd.Flags().StringVar(&runBootSize, "boot-size", defaultBootSize,
-		"size of the FAT32 boot partition (e.g. 512MiB, 2GiB); same flag as gosd build's --boot-size, useful for checking a large app still fits before a real build")
-	cmd.Flags().BoolVar(&runDataFlush, "data-flush", false,
-		"same flag as gosd build's --data-flush: mount the data partition, and any emmc/disk vfat volume, with the vfat \"flush\" option; default false (normal Linux writeback)")
-	cmd.Flags().StringVar(&runLabelPrefix, "label-prefix", "",
-		fmt.Sprintf("same flag as gosd build's --label-prefix: prefix for the two partition volume labels, at most %d characters of [A-Za-z0-9_-], so the partitions are labelled <prefix>%s and <prefix>%s (default: the app's name, truncated to fit)",
-			naming.LabelPrefixMaxLength, naming.BootLabelSuffix, naming.DataLabelSuffix))
-	cmd.Flags().StringArrayVar(&runIngress, "ingress", nil,
-		fmt.Sprintf("same flag as gosd build's --ingress: bake in a client that exposes an app's HTTP service to the public internet with zero app code (repeatable; supported values: %s) - qemu-virt is arm64, so this exercises the runtime path in CI", strings.Join(ingressAgentNames(), ", ")))
-	cmd.Flags().StringArrayVar(&runKernelParams, "kernel-param", nil,
-		"same flag as gosd build's --kernel-param: an extra kernel command-line parameter to boot with (repeatable), e.g. --kernel-param loglevel=8 - qemu-virt is the one board with no boot config in its image (qemu is handed the command line directly), so gosd run appends these to qemu's -append instead")
-	cmd.Flags().StringVar(&runDataSize, "data-size", defaultDataSize,
-		"same flag as gosd build's --data-size: size of the writable data partition (e.g. 512MiB, 2GiB), or 'expand'; default 0 omits the partition - required by some --ingress agents (e.g. tailscale-funnel) that need to persist state across reboots")
+	basics := newFlagSection("Flags")
+	basics.StringVar(&runBuildConfigFile, "build-config", "",
+		"TOML build config, as used by gosd build. gosd docs build-config")
+	basics.IntVar(&runPort, "port", qemurun.DefaultPort,
+		"port on this machine forwarded to the app's port 80")
+	basics.IntVar(&runMemoryMiB, "memory", qemurun.DefaultMemoryMiB,
+		"virtual machine RAM, in MiB")
+	basics.BoolVar(&runKeep, "keep", false,
+		"keep the built image after qemu exits")
+	basics.BoolVar(&runDisplay, "display", false,
+		"show the virtual machine's screen in a window")
+	basics.StringVar(&runConfigDir, "boot-config-dir", "",
+		"directory of default device settings, one value per file. gosd docs config")
+	basics.StringVar(&runDataSize, "data-size", defaultDataSize,
+		"size of the writable /data partition (eg. 2GiB), or 'expand' to fill the card; 0 for none")
+
+	runtimeFlags := newFlagSection("Runtime")
+	runtimeFlags.BoolVar(&runDataFlush, "data-flush", false,
+		"write files on FAT volumes to the card on close at runtime; slower, and not as safe as fsync. gosd docs runtime")
+	runtimeFlags.StringArrayVar(&runKernelParams, "kernel-param", nil,
+		"extra kernel command-line parameter (repeatable)")
+
+	ux := newFlagSection("User Experience")
+	ux.StringVar(&runLabelPrefix, "label-prefix", "",
+		"prefix of the card's partition labels (default: the app's name)")
+	ux.StringArrayVar(&runIngress, "ingress", nil,
+		fmt.Sprintf("expose your app's HTTP service to the internet using %s (repeatable). gosd docs ingress", strings.Join(ingressAgentNames(), " or ")))
+
+	advanced := newFlagSection("Advanced")
+	advanced.StringArrayVar(&runQemuArgs, "qemu-arg", nil,
+		"extra qemu-system-aarch64 argument (repeatable)")
+	advanced.StringVar(&runArtifactsDir, "artifacts-dir", "",
+		"directory of the qemu-virt kernel to use before downloading")
+	advanced.StringVar(&runBootSize, "boot-size", defaultBootSize,
+		"size of the boot partition")
+	advanced.StringVar(&runGosdInitSrc, "gosd-init-src", os.Getenv("GOSD_INIT_SRC"),
+		"build gosd-init, the program that boots your app, from this source directory")
+
+	useFlagSections(cmd, basics, runtimeFlags, ux, advanced)
 
 	return cmd
 }

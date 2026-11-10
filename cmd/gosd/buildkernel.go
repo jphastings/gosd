@@ -55,16 +55,21 @@ This command requires Docker or Podman to be installed and running.`,
 		RunE: runBuildKernel,
 	}
 
-	cmd.Flags().StringArrayVar(&kernelBoardIDs, "board", nil,
-		fmt.Sprintf("board to build a kernel for (repeatable); omit to build every public board: %s", strings.Join(boards.IDs(), ", ")))
-	cmd.Flags().StringVarP(&kernelOutput, "output", "o", defaultKernelOutputDir,
-		"flat artifact output directory, ready for gosd build --artifacts-dir")
-	cmd.Flags().StringVar(&kernelConfigPath, "config", "",
-		fmt.Sprintf("developer overlay config (default: %s in the working directory, if present)", defaultKernelConfigFile))
-	cmd.Flags().StringVar(&kernelBuilderPref, "builder", "",
-		fmt.Sprintf("container runtime to use: %s or %s (default: gosd-kernel.toml's [kernel].builder, or auto-detect if that's unset too)", container.RuntimeDocker, container.RuntimePodman))
-	cmd.Flags().StringVar(&kernelStagingDir, "staging", "",
-		"also emit the staging/<board>/ layout build/artifacts/package.sh consumes (CI use)")
+	basics := newFlagSection("Flags")
+	basics.StringArrayVar(&kernelBoardIDs, "board", nil,
+		fmt.Sprintf("board to build a kernel for, repeatable (default: all): %s", strings.Join(boards.IDs(), ", ")))
+	basics.StringVarP(&kernelOutput, "output", "o", defaultKernelOutputDir,
+		"output directory, ready for gosd build --artifacts-dir")
+	basics.StringVar(&kernelConfigPath, "config", "",
+		"TOML kernel config, declaring the extra drivers to compile in. gosd docs custom-kernels")
+	basics.StringVar(&kernelBuilderPref, "builder", "",
+		fmt.Sprintf("container runtime: %s or %s (default: auto-detect)", container.RuntimeDocker, container.RuntimePodman))
+
+	advanced := newFlagSection("Advanced")
+	advanced.StringVar(&kernelStagingDir, "staging", "",
+		"also write the staging/<board>/ layout used by gosd's release CI")
+
+	useFlagSections(cmd, basics, advanced)
 
 	return cmd
 }
