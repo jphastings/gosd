@@ -1,0 +1,67 @@
+name: Release jetson-flash
+
+# Attaches prebuilt jetson-flash binaries to the gosd/v* release knope
+# creates (bean gosd-32dw). Linux only: it talks to usbfs. linux/arm is for
+# the Turing Pi 2 BMC (ARMv7). A dispatch run with a `tag` re-attaches to
+# that release; one without, or a PR that edits this file, builds the ref and
+# surfaces the files as a workflow artifact for pre-merge testing.
+on:
+  push:
+    tags:
+      - "gosd/v*"
+  pull_request:
+    paths:
+      - .github/workflows/release-jetson-flash.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach to (blank: build only, no upload)"
+        required: false
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to upload assets to a GitHub Release
+    env:
+      RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG || github.ref }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          mkdir dist
+          GOARCH=arm GOARM=7 go build -trimpath -o dist/jetson-flash-linux-arm ./cmd/jetson-flash
+          GOARCH=arm64 go build -trimpath -o dist/jetson-flash-linux-arm64 ./cmd/jetson-flash
+          GOARCH=amd64 go build -trimpath -o dist/jetson-flash-linux-amd64 ./cmd/jetson-flash
+          cd dist
+          sha256sum jetson-flash-linux-* > jetson-flash-SHA256SUMS
+
+      - name: Upload assets to the release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" --clobber \
+            dist/jetson-flash-linux-arm \
+            dist/jetson-flash-linux-arm64 \
+            dist/jetson-flash-linux-amd64 \
+            dist/jetson-flash-SHA256SUMS
+
+      - name: Upload dist/ for workflow_dispatch inspection
+        if: env.RELEASE_TAG == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jetson-flash
+          path: dist/
+          retention-days: 7

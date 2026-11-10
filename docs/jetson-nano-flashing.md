@@ -32,12 +32,35 @@ protocol anyway.
 
 ## 1. Copy `jetson-flash` and the image to the BMC
 
+`jetson-flash` only runs on Linux, so from a Mac you run it on the BMC. Find
+the newest `gosd/v…` release on [gosd's releases
+page](https://github.com/jphastings/gosd/releases) and download its prebuilt
+binary on the BMC, replacing `X.Y.Z` with that version:
+
+```sh
+cd /mnt/sdcard
+BASE=https://github.com/jphastings/gosd/releases/download/gosd/vX.Y.Z
+curl -fLO $BASE/jetson-flash-linux-arm
+curl -fLO $BASE/jetson-flash-SHA256SUMS
+grep " jetson-flash-linux-arm$" jetson-flash-SHA256SUMS | sha256sum -c -
+mv jetson-flash-linux-arm jetson-flash
+chmod +x jetson-flash
+```
+
+Then copy the image over from your computer:
+
+```sh
+scp myapp-jetson-nano.img root@turingpi.local:/mnt/sdcard/
+```
+
+On a Linux PC, download `jetson-flash-linux-arm64` or
+`jetson-flash-linux-amd64` the same way. Or build from a checkout, with the
+`GOARCH` of the machine that will run it (`arm` with `GOARM=7` for the BMC):
+
 ```sh
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build ./cmd/jetson-flash
 scp jetson-flash myapp-jetson-nano.img root@turingpi.local:/mnt/sdcard/
 ```
-
-For a Linux PC, build with its own `GOARCH` (`arm64` or `amd64`).
 
 ## 2. Put the node into recovery mode
 
