@@ -100,6 +100,21 @@ To set that up without a keyboard on U-Boot's console, a throwaway app
 cleared the old volume's first MiB. The hostname edit went into the image's
 boot partition before signing, standing in for someone editing the card.
 
+On 2026-11-10 a `v0.10.7` `hello` image, flashed by `jetson-flash` on node 4,
+came up as `nanobench` rather than `hello`, with its boot counter already
+at 1. That hostname edit and the counter had survived an erase of the whole
+eMMC, so after a reflash look for the module under its old name or its DHCP
+address: `hello.local` won't answer.
+
+Hard power cuts on that image (`tpi power off`, 10 s, `tpi power on`): 11 of
+12 came back, about 25 s to HTTP, with the counter going up by one each
+time. The other was the first cut after the flash, straight after the
+recovery strap was released and after 12 minutes of uptime. It hadn't
+answered HTTP after 404 s, and the counter shows it never reached the app.
+The serial adapter wasn't on node 4's header, so where it stopped is
+unknown. Toggling the strap first (3 tries) and 12 minutes of uptime
+(1 try) didn't bring it back.
+
 ## Things that look alarming but aren't
 
 On every boot, CBoot logs EEPROM read failures for `1-a0` and `3-ae`, and

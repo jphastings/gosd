@@ -1,7 +1,7 @@
 ---
 # gosd-9o0m
 title: 'Jetson Nano eMMC module: bench bring-up'
-status: todo
+status: in-progress
 type: task
 priority: normal
 created_at: 2026-11-01T11:18:51Z
@@ -26,6 +26,7 @@ Bench bring-up of the eMMC module (P3448-0002, board 3448-0002-401, revision G.0
 **Blocked:**
 
 - [x] gosd-init mounts its boot partition from `/dev/mmcblk0p1` with gosd-wxy7's patch: an HS400 eMMC, NVIDIA's 17 partitions visible.
-- [ ] `/data` on the NVMe: gosd-j18s.
+- [x] `/data` on the NVMe: gosd-j18s. On 2026-11-10 (node 4, `hello` from main at the `v0.10.7` pin, flashed by `jetson-flash`), the boot counter and the `config/hostname` edit survived an erase of the whole eMMC, so they aren't on it.
 - [x] Network up (DHCP lease), mDNS (`hello.local`), HTTP 200 from `hello`, NTP sync. The kernel reports 3899012K/4161536K RAM available (4 GiB). `r8169` asks for `rtl_nic/rtl8168f-2.fw`, which isn't shipped; the link works without it.
 - [ ] Power-cycle survival; a USB stick visible to the `disk` package.
+  - Power cycles (2026-11-10): 11 of 12 hard cuts came back in about 25 s, the counter going 2 to 13. The first cut after the flash never reached the app, and with no console on node 4 the cause is unknown; `docs/development/jetson-nano.md` has the detail. It stays unticked until that's explained or stops being a concern, and until a USB stick has been tried.
