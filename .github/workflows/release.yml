@@ -59,7 +59,8 @@ jobs:
       - run: knope release --verbose
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-      # knope creates release tags (gosd/v*, artifacts/v*, npm/gosd/v*) via
+      # knope creates release tags (gosd/v*, artifacts/v*, npm/gosd/v*,
+      # jetson-flash/v*) via
       # the GitHub API, but the plain vX.Y.Z Go-module tag only locally.
       - name: Push the Go module tag
         run: git push origin --tags

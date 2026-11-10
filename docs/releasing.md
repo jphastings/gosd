@@ -1,7 +1,8 @@
 # Releasing: change files, the release PR, and what merging it does
 
-GoSD ships three independent release surfaces — the `gosd` CLI, board
-artifacts (kernels/U-Boot), and the `@jphastings/gosd` npm package — and
+GoSD ships four independent release surfaces — the `gosd` CLI, board
+artifacts (kernels/U-Boot), the `@jphastings/gosd` npm package, and the
+`jetson-flash` tool — and
 releases every one of them through [knope](https://knope.tech/), configured
 in `knope.toml`. This repo does not use conventional commits: a small
 markdown **change file** is the only input to what gets released and what
@@ -16,7 +17,7 @@ its notes say.
    that has at least one pending change file.
 3. Merging that PR is the deliberate release act. knope tags each package
    that has pending changes and creates a GitHub release for it, with notes
-   drawn straight from the change files. The artifacts and npm pipelines
+   drawn straight from the change files. The artifacts, npm and jetson-flash pipelines
    fire from their tags exactly as they did before knope — nothing about
    `build-artifacts.yml` or `publish-npm.yml`'s triggers changed.
 
@@ -70,7 +71,7 @@ Prose explaining the change, written for someone reading the release, not
 someone reading the diff.
 ```
 
-The package names are `gosd`, `artifacts`, and `npm/gosd`. A single change
+The package names are `gosd`, `artifacts`, `npm/gosd`, and `jetson-flash`. A single change
 file may list more than one package if a PR affects more than one surface.
 Bump types are `major`, `minor`, or `patch`; the `gosd` package also accepts
 `note`, which lands its entry in a "Notes" changelog section — useful for a
@@ -122,6 +123,9 @@ either.
   existing staged, tokenless publish to the npm `next` dist-tag. Promoting
   a version to `latest` is still a manual step — see
   [publishing js/packages/\*](../js/PUBLISHING.md).
+- **jetson-flash** — a `jetson-flash/vX.Y.Z` GitHub release, whose tag fires
+  `release-jetson-flash.yml` to attach the prebuilt Linux binaries and their
+  checksums.
 
 ## Combined-PR ordering discipline
 

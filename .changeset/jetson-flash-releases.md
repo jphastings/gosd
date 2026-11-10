@@ -1,7 +1,9 @@
 ---
-gosd: minor
+jetson-flash: minor
 ---
 
-#### Prebuilt `jetson-flash` binaries with every release
+#### First release of `jetson-flash`
 
-Each gosd release now carries `jetson-flash` for Linux on ARMv7 (the Turing Pi 2 BMC), arm64 and amd64, plus a `jetson-flash-SHA256SUMS` file, so flashing a Jetson Nano no longer needs a Go toolchain.
+`jetson-flash` flashes an OS image onto a Jetson Nano 16GB eMMC module in USB recovery mode, from Linux, with no NVIDIA tools needed.
+
+Each release carries prebuilt binaries for Linux on ARMv7 (which suits the Turing Pi 2's BMC), arm64 and amd64, plus a `jetson-flash-SHA256SUMS` file.

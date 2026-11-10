@@ -1,5 +1,5 @@
-# Release automation (knope.tech) across the three release surfaces:
-# the gosd CLI, board artifacts, and the npm package. See docs/releasing.md.
+# Release automation (knope.tech) across the four release surfaces:
+# the gosd CLI, board artifacts, the npm package, and jetson-flash. See docs/releasing.md.
 
 [changes]
 # This repo does not use conventional commits: change files (.changeset/*.md)
@@ -30,6 +30,13 @@ changelog = "docs/releases/artifacts.md"
 [packages."npm/gosd"]
 versioned_files = ["js/packages/gosd/package.json"]
 changelog = "js/packages/gosd/CHANGELOG.md"
+
+# The jetson-flash binary. Tag jetson-flash/vX.Y.Z fires
+# release-jetson-flash.yml, which attaches the prebuilt binaries.
+# build/jetson-flash/VERSION is release-automation bookkeeping only.
+[packages.jetson-flash]
+versioned_files = [{ path = "build/jetson-flash/VERSION", regex = '(?<version>\d+\.\d+\.\d+)' }]
+changelog = "docs/releases/jetson-flash.md"
 
 [github]
 owner = "jphastings"
@@ -80,7 +87,7 @@ base = "main"
 template = "chore: prepare release"
 
 [workflows.steps.body]
-template = "Merging this PR tags and publishes every release listed in the diff (the artifacts/npm pipelines fire from their tags). Close it to hold releases; it will be recreated on the next push to main with pending change files."
+template = "Merging this PR tags and publishes every release listed in the diff (the artifacts/npm/jetson-flash pipelines fire from their tags). Close it to hold releases; it will be recreated on the next push to main with pending change files."
 
 # Run by .github/workflows/release.yml when the knope/release PR merges.
 [[workflows]]
