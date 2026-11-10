@@ -64,7 +64,11 @@ say so in the bean rather than silently diverging.
 ## Project-wide locked decisions
 
 - **Module path:** `github.com/jphastings/gosd`. **License:** MIT (LICENSE file).
-- **Language:** pure Go everywhere; `CGO_ENABLED=0`. No build step may require
+- **Language:** Go. Everything `gosd` builds for a device (the app and
+  gosd-init) is `CGO_ENABLED=0`. Code in this repo that runs on a host,
+  `gosd` and `jetson-flash` included, may use cgo where it has to (decided
+  2026-11-10, JP), but bias towards cgo-free: keeping `gosd` cgo-free is what
+  makes it easy to compile for every platform. No build step may require
   root, Docker, or Linux — `go test ./...` must pass on macOS and Linux.
   Linux-only runtime code goes behind build tags. **Carve-out:** `gosd build`
   itself never requires Docker; `gosd build-kernel` (opt-in custom kernel
